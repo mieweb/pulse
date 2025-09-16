@@ -297,6 +297,9 @@ export default function PreviewScreen() {
 
       setConcatenatedVideoUri(outputUri);
 
+      // Reset useSecondPlayer to false so player1 (with concatenated video) is visible
+      setUseSecondPlayer(false);
+
       // Load concatenated video
       console.log("📺 Loading concatenated video into player...");
       setIsLoadingVideo(true);
