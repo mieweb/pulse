@@ -8,6 +8,8 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
+  AppStateStatus,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -30,6 +32,7 @@ export default function PreviewScreen() {
   const [concatPhase, setConcatPhase] = useState<string>("");
   const [draft, setDraft] = useState<any>(null);
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
+  const [isResumingPlayback, setIsResumingPlayback] = useState(false);
 
   const player1 = useVideoPlayer(null, (player) => {
     if (player) {
@@ -66,12 +69,84 @@ export default function PreviewScreen() {
     }
   });
 
+  // Monitor video player state to ensure continuous playback (only for segment cycling mode)
+  useEventListener(player1, "playingChange", (event) => {
+    if (
+      !event.isPlaying &&
+      !isResumingPlayback &&
+      !isLoading &&
+      !concatenatedVideoUri &&
+      videoUris.length > 0
+    ) {
+      // If video stopped playing unexpectedly, try to resume
+      setTimeout(() => {
+        if (player1 && !player1.playing) {
+          player1.play();
+        }
+      }, 50);
+    }
+  });
+
+  useEventListener(player2, "playingChange", (event) => {
+    if (
+      !event.isPlaying &&
+      !isResumingPlayback &&
+      !isLoading &&
+      !concatenatedVideoUri &&
+      videoUris.length > 1
+    ) {
+      // If video stopped playing unexpectedly, try to resume
+      setTimeout(() => {
+        if (player2 && !player2.playing) {
+          player2.play();
+        }
+      }, 50);
+    }
+  });
+
   const advanceToNextVideo = () => {
     setCurrentVideoIndex((prev) => {
       const nextIndex = prev < videoUris.length - 1 ? prev + 1 : 0;
       return nextIndex;
     });
   };
+
+  // Handle app state changes to resume video playback (only for segment cycling mode)
+  const handleAppStateChange = useCallback(
+    (nextAppState: AppStateStatus) => {
+      // Only handle app state changes for segment cycling mode, not merged videos
+      if (
+        nextAppState === "active" &&
+        !isResumingPlayback &&
+        !concatenatedVideoUri
+      ) {
+        setIsResumingPlayback(true);
+
+        // Add a small delay to ensure the app is fully active
+        setTimeout(() => {
+          try {
+            // Resume the current active player for segment cycling mode
+            const currentPlayer = useSecondPlayer ? player2 : player1;
+            if (currentPlayer && !currentPlayer.playing) {
+              currentPlayer.play();
+            }
+          } catch (error) {
+            console.error("Error resuming video playback:", error);
+          } finally {
+            // Reset the flag after a delay to allow for future resumptions
+            setTimeout(() => setIsResumingPlayback(false), 500);
+          }
+        }, 50);
+      }
+    },
+    [
+      player1,
+      player2,
+      useSecondPlayer,
+      concatenatedVideoUri,
+      isResumingPlayback,
+    ]
+  );
 
   useEffect(() => {
     const loadDraft = async () => {
@@ -102,6 +177,15 @@ export default function PreviewScreen() {
 
     loadDraft();
   }, [draftId]);
+
+  // Set up AppState listener to handle app foreground/background
+  useEffect(() => {
+    const subscription = AppState.addEventListener(
+      "change",
+      handleAppStateChange
+    );
+    return () => subscription?.remove();
+  }, [handleAppStateChange]);
 
   useEffect(() => {
     const setupPlayers = async () => {
