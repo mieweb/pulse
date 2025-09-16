@@ -135,7 +135,7 @@ jobs:
   # iOS build job
   build-ios:
     name: Build iOS
-    runs-on: macos-latest
+    runs-on: macos-14-xlarge  # Apple Silicon runner for main builds
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_ios }}
     needs: lint-and-test
     
