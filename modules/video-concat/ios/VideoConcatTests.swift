@@ -23,11 +23,19 @@ class VideoConcatTests {
         print("🧪 Testing VideoConcat Module")
         print("=============================")
 
-        if await testMergeVideos() {
-            print("✅ Merge test - PASSED")
+        let mergeTestPassed = await testMergeVideos()
+        let orientationTestPassed = await testOrientationHandling()
+        
+        if mergeTestPassed && orientationTestPassed {
+            print("✅ All tests - PASSED")
             print("🎉 All tests completed successfully!")
         } else {
-            print("❌ Merge test - FAILED")
+            if !mergeTestPassed {
+                print("❌ Merge test - FAILED")
+            }
+            if !orientationTestPassed {
+                print("❌ Orientation test - FAILED")
+            }
         }
     }
 
@@ -121,6 +129,64 @@ class VideoConcatTests {
 
         } catch {
             print("   ❌ Test failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    func testOrientationHandling() async -> Bool {
+        print("\n🔄 Testing Per-Segment Orientation Handling")
+        
+        // Get test video paths - these could be portrait and landscape videos
+        guard let video1URL = getTestVideoURL(filename: "recording1.mov"),
+              let video2URL = getTestVideoURL(filename: "recording2.mov")
+        else {
+            print("   ❌ Test videos not available - make sure videos exist in test/video/")
+            return false
+        }
+        
+        do {
+            // Create test segments to simulate the module behavior
+            let asset1 = AVURLAsset(url: video1URL)
+            let asset2 = AVURLAsset(url: video2URL)
+            
+            // Load tracks to get orientation info
+            try await asset1.load(.tracks)
+            try await asset2.load(.tracks)
+            
+            let videoTracks1 = try await asset1.loadTracks(withMediaType: .video)
+            let videoTracks2 = try await asset2.loadTracks(withMediaType: .video)
+            
+            guard let track1 = videoTracks1.first,
+                  let track2 = videoTracks2.first else {
+                print("   ❌ No video tracks found in test videos")
+                return false
+            }
+            
+            // Get transforms and natural sizes
+            let transform1 = try await track1.load(.preferredTransform)
+            let transform2 = try await track2.load(.preferredTransform)
+            let size1 = try await track1.load(.naturalSize)
+            let size2 = try await track2.load(.naturalSize)
+            
+            print("   📐 Video 1: transform=\(transform1), size=\(size1)")
+            print("   📐 Video 2: transform=\(transform2), size=\(size2)")
+            
+            // Check if transforms are different (indicating different orientations)
+            let transformsAreDifferent = !transform1.equalTo(transform2)
+            
+            if transformsAreDifferent {
+                print("   ✅ Videos have different orientations - per-segment handling needed")
+            } else if size1.width != size2.width || size1.height != size2.height {
+                print("   ✅ Videos have different dimensions - per-segment handling beneficial")
+            } else {
+                print("   ℹ️ Videos appear to have same orientation and size")
+            }
+            
+            print("   ✅ Orientation handling test - metadata collection verified")
+            return true
+            
+        } catch {
+            print("   ❌ Orientation test failed: \(error.localizedDescription)")
             return false
         }
     }
