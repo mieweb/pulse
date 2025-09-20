@@ -5,7 +5,8 @@ import { fileStore } from "@/utils/fileStore";
 import { useEventListener } from "expo";
 import { router, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
-import React, { useCallback, useEffect, useState } from "react";
+import * as Sharing from "expo-sharing";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -13,6 +14,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   View,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -33,6 +35,12 @@ export default function PreviewScreen() {
   const [draft, setDraft] = useState<any>(null);
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
   const [isResumingPlayback, setIsResumingPlayback] = useState(false);
+
+  // Refs to store timeout IDs for proper cleanup
+  const player1ResumeTimeoutRef = useRef<number | null>(null);
+  const player2ResumeTimeoutRef = useRef<number | null>(null);
+  const appStateResumeTimeoutRef = useRef<number | null>(null);
+  const appStateResetTimeoutRef = useRef<number | null>(null);
 
   const player1 = useVideoPlayer(null, (player) => {
     if (player) {
@@ -78,11 +86,17 @@ export default function PreviewScreen() {
       !concatenatedVideoUri &&
       videoUris.length > 0
     ) {
+      // Clear any existing timeout
+      if (player1ResumeTimeoutRef.current) {
+        clearTimeout(player1ResumeTimeoutRef.current);
+      }
+
       // If video stopped playing unexpectedly, try to resume
-      setTimeout(() => {
+      player1ResumeTimeoutRef.current = setTimeout(() => {
         if (player1 && !player1.playing) {
           player1.play();
         }
+        player1ResumeTimeoutRef.current = null;
       }, 50);
     }
   });
@@ -95,11 +109,17 @@ export default function PreviewScreen() {
       !concatenatedVideoUri &&
       videoUris.length > 1
     ) {
+      // Clear any existing timeout
+      if (player2ResumeTimeoutRef.current) {
+        clearTimeout(player2ResumeTimeoutRef.current);
+      }
+
       // If video stopped playing unexpectedly, try to resume
-      setTimeout(() => {
+      player2ResumeTimeoutRef.current = setTimeout(() => {
         if (player2 && !player2.playing) {
           player2.play();
         }
+        player2ResumeTimeoutRef.current = null;
       }, 50);
     }
   });
@@ -122,8 +142,16 @@ export default function PreviewScreen() {
       ) {
         setIsResumingPlayback(true);
 
+        // Clear any existing timeouts
+        if (appStateResumeTimeoutRef.current) {
+          clearTimeout(appStateResumeTimeoutRef.current);
+        }
+        if (appStateResetTimeoutRef.current) {
+          clearTimeout(appStateResetTimeoutRef.current);
+        }
+
         // Add a small delay to ensure the app is fully active
-        setTimeout(() => {
+        appStateResumeTimeoutRef.current = setTimeout(() => {
           try {
             // Resume the current active player for segment cycling mode
             const currentPlayer = useSecondPlayer ? player2 : player1;
@@ -134,8 +162,12 @@ export default function PreviewScreen() {
             console.error("Error resuming video playback:", error);
           } finally {
             // Reset the flag after a delay to allow for future resumptions
-            setTimeout(() => setIsResumingPlayback(false), 500);
+            appStateResetTimeoutRef.current = setTimeout(() => {
+              setIsResumingPlayback(false);
+              appStateResetTimeoutRef.current = null;
+            }, 500);
           }
+          appStateResumeTimeoutRef.current = null;
         }, 50);
       }
     },
@@ -187,6 +219,25 @@ export default function PreviewScreen() {
     return () => subscription?.remove();
   }, [handleAppStateChange]);
 
+  // Cleanup timeouts on component unmount
+  useEffect(() => {
+    return () => {
+      // Clear all timeouts when component unmounts
+      if (player1ResumeTimeoutRef.current) {
+        clearTimeout(player1ResumeTimeoutRef.current);
+      }
+      if (player2ResumeTimeoutRef.current) {
+        clearTimeout(player2ResumeTimeoutRef.current);
+      }
+      if (appStateResumeTimeoutRef.current) {
+        clearTimeout(appStateResumeTimeoutRef.current);
+      }
+      if (appStateResetTimeoutRef.current) {
+        clearTimeout(appStateResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const setupPlayers = async () => {
       if (videoUris.length > 0 && !isLoading) {
@@ -230,6 +281,27 @@ export default function PreviewScreen() {
   const handleClose = useCallback(() => {
     router.back();
   }, []);
+
+  const shareVideo = async (videoUri: string) => {
+    try {
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (!isAvailable) {
+        Alert.alert(
+          "Sharing not available",
+          "Sharing is not available on this device."
+        );
+        return;
+      }
+
+      await Sharing.shareAsync(videoUri, {
+        mimeType: "video/mp4",
+        dialogTitle: "Share your merged video",
+      });
+    } catch (error) {
+      console.error("❌ Failed to share video:", error);
+      Alert.alert("Share Failed", "Could not share the video.");
+    }
+  };
 
   if (isLoading || videoUris.length === 0) {
     return (
@@ -308,7 +380,11 @@ export default function PreviewScreen() {
         await player1.replaceAsync(outputUri);
 
         // Wait a moment for the video to load its metadata and orientation
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise<void>((resolve) => {
+          const timeoutId = setTimeout(resolve, 1000);
+          // Note: This timeout is intentionally not stored in a ref since it's awaited
+          // and will complete before the function returns
+        });
 
         setIsLoadingVideo(false);
         player1.play();
@@ -370,6 +446,16 @@ export default function PreviewScreen() {
           <ThemedText style={styles.buttonText}>
             {isConcatenating ? "Processing..." : "Merge Videos"}
           </ThemedText>
+        </TouchableOpacity>
+      )}
+
+      {/* Add share button - only show if concatenated */}
+      {concatenatedVideoUri && (
+        <TouchableOpacity
+          style={[styles.shareButton, { bottom: insets.bottom + 20 }]}
+          onPress={() => shareVideo(concatenatedVideoUri)}
+        >
+          <ThemedText style={styles.buttonText}>Share Video</ThemedText>
         </TouchableOpacity>
       )}
 
@@ -444,6 +530,17 @@ const styles = StyleSheet.create({
     height: 50,
     borderRadius: 25,
     backgroundColor: "#ff0000",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  shareButton: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "#007AFF",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 10,
