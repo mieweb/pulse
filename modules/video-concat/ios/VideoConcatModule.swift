@@ -27,8 +27,9 @@ struct RecordingSegment: Record {
 public class VideoConcatModule: Module {
     
     // Helper function to create video composition that matches preview behavior
-    private func createVideoComposition(from composition: AVMutableComposition) -> AVMutableVideoComposition? {
-        guard let videoTrack = composition.tracks(withMediaType: .video).first else {
+    private func createVideoComposition(from composition: AVMutableComposition, segmentMetadata: [SegmentMetadata]) -> AVMutableVideoComposition? {
+        guard let videoTrack = composition.tracks(withMediaType: .video).first,
+              !segmentMetadata.isEmpty else {
             return nil
         }
         
@@ -36,8 +37,8 @@ public class VideoConcatModule: Module {
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30) // 30 FPS
         
         // Use the natural size of the first video as the base, or a reasonable default
-        let naturalSize = videoTrack.naturalSize
-        let baseSize = naturalSize.width > 0 && naturalSize.height > 0 ? naturalSize : CGSize(width: 1080, height: 1920)
+        let firstSegmentSize = segmentMetadata.first?.naturalSize ?? CGSize(width: 1080, height: 1920)
+        let baseSize = firstSegmentSize.width > 0 && firstSegmentSize.height > 0 ? firstSegmentSize : CGSize(width: 1080, height: 1920)
         
         // For mobile video, prefer portrait orientation (9:16)
         // But maintain the aspect ratio of the content
@@ -56,35 +57,44 @@ public class VideoConcatModule: Module {
         videoComposition.renderSize = renderSize
         print("🎬 VideoComposition: Render size set to \(renderSize)")
         
-        // Create instruction for the video track
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: composition.duration)
+        // Create per-segment instructions
+        var instructions: [AVMutableVideoCompositionInstruction] = []
         
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        for segmentData in segmentMetadata {
+            let instruction = AVMutableVideoCompositionInstruction()
+            instruction.timeRange = segmentData.timeRange
+            
+            let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+            
+            // Calculate transform to fill the render size (like contentFit="cover")
+            let naturalSize = segmentData.naturalSize
+            let scaleX = renderSize.width / naturalSize.width
+            let scaleY = renderSize.height / naturalSize.height
+            let scale = max(scaleX, scaleY) // Use larger scale to fill (cover behavior)
+            
+            // Center the video
+            let scaledWidth = naturalSize.width * scale
+            let scaledHeight = naturalSize.height * scale
+            let offsetX = (renderSize.width - scaledWidth) / 2
+            let offsetY = (renderSize.height - scaledHeight) / 2
+            
+            var transform = CGAffineTransform(scaleX: scale, y: scale)
+            transform = transform.translatedBy(x: offsetX, y: offsetY)
+            
+            // Apply the segment's preferred transform first, then our scaling
+            let originalTransform = segmentData.preferredTransform
+            transform = originalTransform.concatenating(transform)
+            
+            // Set transform for this segment's time range
+            layerInstruction.setTransform(transform, at: segmentData.timeRange.start)
+            
+            instruction.layerInstructions = [layerInstruction]
+            instructions.append(instruction)
+            
+            print("🎬 VideoComposition: Added instruction for segment at \(CMTimeGetSeconds(segmentData.timeRange.start))s - \(CMTimeGetSeconds(CMTimeRangeGetEnd(segmentData.timeRange)))s")
+        }
         
-        // Calculate transform to fill the render size (like contentFit="cover")
-        let scaleX = renderSize.width / naturalSize.width
-        let scaleY = renderSize.height / naturalSize.height
-        let scale = max(scaleX, scaleY) // Use larger scale to fill (cover behavior)
-        
-        // Center the video
-        let scaledWidth = naturalSize.width * scale
-        let scaledHeight = naturalSize.height * scale
-        let offsetX = (renderSize.width - scaledWidth) / 2
-        let offsetY = (renderSize.height - scaledHeight) / 2
-        
-        var transform = CGAffineTransform(scaleX: scale, y: scale)
-        transform = transform.translatedBy(x: offsetX, y: offsetY)
-        
-        // Apply the original video's preferred transform first, then our scaling
-        let originalTransform = videoTrack.preferredTransform
-        transform = originalTransform.concatenating(transform)
-        
-        // Set transform for the entire duration to ensure consistency
-        layerInstruction.setTransform(transform, at: .zero)
-        
-        instruction.layerInstructions = [layerInstruction]
-        videoComposition.instructions = [instruction]
+        videoComposition.instructions = instructions
         
         return videoComposition
     }
@@ -100,7 +110,13 @@ public class VideoConcatModule: Module {
         let insertTime: CMTime
     }
     
-    private func processVideoSegment(config: SegmentProcessingConfig) async throws -> CMTime {
+    private struct SegmentMetadata {
+        let timeRange: CMTimeRange
+        let preferredTransform: CGAffineTransform
+        let naturalSize: CGSize
+    }
+    
+    private func processVideoSegment(config: SegmentProcessingConfig) async throws -> (CMTime, SegmentMetadata?) {
         print("🎬 VideoConcat: Processing segment \(config.index + 1)/\(config.totalSegments)")
         print("   - ID: \(config.segment.id)")
         print("   - URI: \(config.segment.uri)")
@@ -141,7 +157,7 @@ public class VideoConcatModule: Module {
         // Get source tracks
         guard let sourceVideoTrack = videoTracks.first else {
             print("   ⚠️ VideoConcat: No video track found, skipping segment")
-            return config.insertTime
+            return (config.insertTime, nil)
         }
         print("   - Found video track")
         
@@ -174,7 +190,7 @@ public class VideoConcatModule: Module {
         // Validate the time range has a positive duration
         guard timeRange.duration.isValid && timeRange.duration.seconds > 0 else {
             print("   ⚠️ VideoConcat: Invalid time range duration")
-            return config.insertTime
+            return (config.insertTime, nil)
         }
         
         print("   - Time range: \(CMTimeGetSeconds(startTime))s to \(CMTimeGetSeconds(actualEndTime))s")
@@ -184,6 +200,16 @@ public class VideoConcatModule: Module {
         try config.videoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: config.insertTime)
         print("   - Inserted video track with quality preservation")
         
+        // Collect segment metadata for video composition
+        let preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
+        let naturalSize = try await sourceVideoTrack.load(.naturalSize)
+        
+        let segmentMetadata = SegmentMetadata(
+            timeRange: CMTimeRange(start: config.insertTime, duration: timeRange.duration),
+            preferredTransform: preferredTransform,
+            naturalSize: naturalSize
+        )
+        
         // Insert audio if available
         if let sourceAudioTrack = audioTracks.first {
             try config.audioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: config.insertTime)
@@ -192,7 +218,7 @@ public class VideoConcatModule: Module {
             print("   - No audio track found")
         }
         
-        return CMTimeAdd(config.insertTime, timeRange.duration)
+        return (CMTimeAdd(config.insertTime, timeRange.duration), segmentMetadata)
     }
     
     private func setupExportSession(
@@ -268,6 +294,8 @@ public class VideoConcatModule: Module {
             
             // Process each segment
             var insertTime = CMTime.zero
+            var segmentMetadata: [SegmentMetadata] = []
+            
             for (index, segment) in segments.enumerated() {
                 let config = SegmentProcessingConfig(
                     segment: segment,
@@ -277,13 +305,19 @@ public class VideoConcatModule: Module {
                     audioTrack: audioTrack,
                     insertTime: insertTime
                 )
-                insertTime = try await processVideoSegment(config: config)
+                let (nextInsertTime, metadata) = try await processVideoSegment(config: config)
+                insertTime = nextInsertTime
+                
+                // Collect metadata for segments that have video tracks
+                if let metadata = metadata {
+                    segmentMetadata.append(metadata)
+                }
             }
             
             print("🎬 VideoConcat: All segments processed, creating export session")
             
             // Set up export session
-            let videoComposition = createVideoComposition(from: composition)
+            let videoComposition = createVideoComposition(from: composition, segmentMetadata: segmentMetadata)
             let (exportSession, outputURL) = try setupExportSession(
                 for: composition,
                 videoComposition: videoComposition
