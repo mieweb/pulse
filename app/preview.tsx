@@ -6,6 +6,7 @@ import { useEventListener } from "expo";
 import { router, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import * as Sharing from "expo-sharing";
+import * as MediaLibrary from "expo-media-library";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -34,6 +35,7 @@ export default function PreviewScreen() {
   const [concatPhase, setConcatPhase] = useState<string>("");
   const [draft, setDraft] = useState<any>(null);
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
+  const [isSavingSegments, setIsSavingSegments] = useState(false);
   // Refs to store timeout IDs for proper cleanup
   const appStateResumeTimeoutRef = useRef<number | null>(null);
   const appStateResetTimeoutRef = useRef<number | null>(null);
@@ -252,6 +254,61 @@ export default function PreviewScreen() {
     }
   };
 
+  const saveSegmentsToCameraRoll = async () => {
+    if (!draft || !draft.segments || draft.segments.length === 0) {
+      Alert.alert("No Segments", "No video segments found to save.");
+      return;
+    }
+
+    try {
+      setIsSavingSegments(true);
+
+      // Convert relative paths to absolute paths for saving
+      const segmentsWithAbsolutePaths = draft.segments.map((segment: any) =>
+        fileStore.toAbsolutePath(segment.uri)
+      );
+
+      let savedCount = 0;
+      const totalSegments = segmentsWithAbsolutePaths.length;
+
+      // Save each segment to camera roll
+      for (let i = 0; i < segmentsWithAbsolutePaths.length; i++) {
+        try {
+          await MediaLibrary.saveToLibraryAsync(segmentsWithAbsolutePaths[i]);
+          savedCount++;
+        } catch (segmentError) {
+          console.error(`❌ Failed to save segment ${i + 1}:`, segmentError);
+          // Continue with other segments even if one fails
+        }
+      }
+
+      if (savedCount === totalSegments) {
+        Alert.alert(
+          "Success",
+          `All ${savedCount} video segments have been saved to your camera roll.`
+        );
+      } else if (savedCount > 0) {
+        Alert.alert(
+          "Partial Success",
+          `${savedCount} out of ${totalSegments} video segments were saved to your camera roll.`
+        );
+      } else {
+        Alert.alert(
+          "Save Failed",
+          "Could not save any video segments to your camera roll."
+        );
+      }
+    } catch (error) {
+      console.error("❌ Failed to save segments:", error);
+      Alert.alert(
+        "Save Failed",
+        "An error occurred while saving the video segments."
+      );
+    } finally {
+      setIsSavingSegments(false);
+    }
+  };
+
   if (isLoading || videoUris.length === 0) {
     return (
       <View style={styles.container}>
@@ -387,17 +444,41 @@ export default function PreviewScreen() {
         <ThemedText style={styles.closeText}>×</ThemedText>
       </TouchableOpacity>
 
-      {/* Add concatenate button - only show if not concatenated */}
+      {/* Add buttons - only show if not concatenated */}
       {!concatenatedVideoUri && (
-        <TouchableOpacity
-          style={[styles.concatenateButton, { bottom: insets.bottom + 20 }]}
-          onPress={handleConcatenate}
-          disabled={isConcatenating}
-        >
-          <ThemedText style={styles.buttonText}>
-            {isConcatenating ? "Processing..." : "Merge Videos"}
-          </ThemedText>
-        </TouchableOpacity>
+        <View style={[styles.buttonContainer, { bottom: insets.bottom + 20 }]}>
+          {/* Only show merge button if there are multiple segments */}
+          {videoUris.length > 1 && (
+            <TouchableOpacity
+              style={[styles.concatenateButton, { flex: 1, marginRight: 10 }]}
+              onPress={handleConcatenate}
+              disabled={isConcatenating}
+            >
+              <ThemedText style={styles.buttonText}>
+                {isConcatenating ? "Processing..." : "Merge Videos"}
+              </ThemedText>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={[
+              styles.saveSegmentsButton,
+              videoUris.length === 1
+                ? styles.fullWidthButton
+                : { flex: 1, marginLeft: videoUris.length > 1 ? 10 : 0 },
+            ]}
+            onPress={saveSegmentsToCameraRoll}
+            disabled={isSavingSegments}
+          >
+            <ThemedText style={styles.buttonText}>
+              {isSavingSegments
+                ? "Saving..."
+                : videoUris.length === 1
+                ? "Save Video"
+                : "Save Segments"}
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* Add share button - only show if concatenated */}
@@ -411,11 +492,13 @@ export default function PreviewScreen() {
       )}
 
       {/* Loading overlay */}
-      {(isConcatenating || isLoadingVideo) && (
+      {(isConcatenating || isLoadingVideo || isSavingSegments) && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#ffffff" />
           <ThemedText style={styles.loadingText}>
-            {isLoadingVideo
+            {isSavingSegments
+              ? "Saving segments to camera roll..."
+              : isLoadingVideo
               ? "Loading merged video..."
               : concatPhase === "processing"
               ? `Processing segment ${
@@ -425,7 +508,7 @@ export default function PreviewScreen() {
               ? "Finalizing video..."
               : "Merging videos..."}
           </ThemedText>
-          {!isLoadingVideo && (
+          {!isLoadingVideo && !isSavingSegments && (
             <ThemedText style={styles.progressText}>
               {Math.round(concatProgress * 100)}%
             </ThemedText>
@@ -474,16 +557,29 @@ const styles = StyleSheet.create({
     textAlignVertical: "center",
     includeFontPadding: false,
   },
-  concatenateButton: {
+  buttonContainer: {
     position: "absolute",
     left: 20,
     right: 20,
+    flexDirection: "row",
+    zIndex: 10,
+  },
+  concatenateButton: {
     height: 50,
     borderRadius: 25,
     backgroundColor: "#ff0000",
     justifyContent: "center",
     alignItems: "center",
-    zIndex: 10,
+  },
+  saveSegmentsButton: {
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "#34C759",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullWidthButton: {
+    flex: 1,
   },
   shareButton: {
     position: "absolute",
