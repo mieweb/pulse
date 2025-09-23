@@ -34,11 +34,7 @@ export default function PreviewScreen() {
   const [concatPhase, setConcatPhase] = useState<string>("");
   const [draft, setDraft] = useState<any>(null);
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
-  const [isResumingPlayback, setIsResumingPlayback] = useState(false);
-
   // Refs to store timeout IDs for proper cleanup
-  const player1ResumeTimeoutRef = useRef<number | null>(null);
-  const player2ResumeTimeoutRef = useRef<number | null>(null);
   const appStateResumeTimeoutRef = useRef<number | null>(null);
   const appStateResetTimeoutRef = useRef<number | null>(null);
 
@@ -46,6 +42,8 @@ export default function PreviewScreen() {
     if (player) {
       player.loop = false;
       player.muted = false;
+      // Ensure player starts from beginning
+      player.currentTime = 0;
     }
   });
 
@@ -53,6 +51,8 @@ export default function PreviewScreen() {
     if (player) {
       player.loop = false;
       player.muted = false;
+      // Ensure player starts from beginning
+      player.currentTime = 0;
     }
   });
 
@@ -62,67 +62,24 @@ export default function PreviewScreen() {
   useEventListener(player1, "playToEnd", () => {
     // Only handle segment cycling if we're not in merged video mode
     if (videoUris.length > 1 && !concatenatedVideoUri) {
+      // Switch to player2 and advance to next video
       setUseSecondPlayer(true);
-      player2.play();
       advanceToNextVideo();
+      player2.play();
     }
   });
 
   useEventListener(player2, "playToEnd", () => {
     // Only handle segment cycling if we're not in merged video mode
     if (videoUris.length > 1 && !concatenatedVideoUri) {
+      // Switch to player1 and advance to next video
       setUseSecondPlayer(false);
-      player1.play();
       advanceToNextVideo();
+      player1.play();
     }
   });
 
-  // Monitor video player state to ensure continuous playback (only for segment cycling mode)
-  useEventListener(player1, "playingChange", (event) => {
-    if (
-      !event.isPlaying &&
-      !isResumingPlayback &&
-      !isLoading &&
-      !concatenatedVideoUri &&
-      videoUris.length > 0
-    ) {
-      // Clear any existing timeout
-      if (player1ResumeTimeoutRef.current) {
-        clearTimeout(player1ResumeTimeoutRef.current);
-      }
-
-      // If video stopped playing unexpectedly, try to resume
-      player1ResumeTimeoutRef.current = setTimeout(() => {
-        if (player1 && !player1.playing) {
-          player1.play();
-        }
-        player1ResumeTimeoutRef.current = null;
-      }, 50);
-    }
-  });
-
-  useEventListener(player2, "playingChange", (event) => {
-    if (
-      !event.isPlaying &&
-      !isResumingPlayback &&
-      !isLoading &&
-      !concatenatedVideoUri &&
-      videoUris.length > 1
-    ) {
-      // Clear any existing timeout
-      if (player2ResumeTimeoutRef.current) {
-        clearTimeout(player2ResumeTimeoutRef.current);
-      }
-
-      // If video stopped playing unexpectedly, try to resume
-      player2ResumeTimeoutRef.current = setTimeout(() => {
-        if (player2 && !player2.playing) {
-          player2.play();
-        }
-        player2ResumeTimeoutRef.current = null;
-      }, 50);
-    }
-  });
+  // Player state monitoring removed for cleaner experience
 
   const advanceToNextVideo = () => {
     setCurrentVideoIndex((prev) => {
@@ -131,53 +88,34 @@ export default function PreviewScreen() {
     });
   };
 
-  // Handle app state changes to resume video playback (only for segment cycling mode)
+  // Function to reset both players to clean state
+  const resetPlayers = async () => {
+    try {
+      player1.pause();
+      player2.pause();
+      player1.currentTime = 0;
+      player2.currentTime = 0;
+      // Small delay to ensure players are reset
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 50);
+      });
+    } catch (error) {
+      console.error("Error resetting players:", error);
+    }
+  };
+
+  // Simple app state handling
   const handleAppStateChange = useCallback(
     (nextAppState: AppStateStatus) => {
-      // Only handle app state changes for segment cycling mode, not merged videos
-      if (
-        nextAppState === "active" &&
-        !isResumingPlayback &&
-        !concatenatedVideoUri
-      ) {
-        setIsResumingPlayback(true);
-
-        // Clear any existing timeouts
-        if (appStateResumeTimeoutRef.current) {
-          clearTimeout(appStateResumeTimeoutRef.current);
+      if (nextAppState === "active" && !concatenatedVideoUri) {
+        // Simple resume - just play the current active player
+        const currentPlayer = useSecondPlayer ? player2 : player1;
+        if (currentPlayer && !currentPlayer.playing) {
+          currentPlayer.play();
         }
-        if (appStateResetTimeoutRef.current) {
-          clearTimeout(appStateResetTimeoutRef.current);
-        }
-
-        // Add a small delay to ensure the app is fully active
-        appStateResumeTimeoutRef.current = setTimeout(() => {
-          try {
-            // Resume the current active player for segment cycling mode
-            const currentPlayer = useSecondPlayer ? player2 : player1;
-            if (currentPlayer && !currentPlayer.playing) {
-              currentPlayer.play();
-            }
-          } catch (error) {
-            console.error("Error resuming video playback:", error);
-          } finally {
-            // Reset the flag after a delay to allow for future resumptions
-            appStateResetTimeoutRef.current = setTimeout(() => {
-              setIsResumingPlayback(false);
-              appStateResetTimeoutRef.current = null;
-            }, 500);
-          }
-          appStateResumeTimeoutRef.current = null;
-        }, 50);
       }
     },
-    [
-      player1,
-      player2,
-      useSecondPlayer,
-      concatenatedVideoUri,
-      isResumingPlayback,
-    ]
+    [player1, player2, useSecondPlayer, concatenatedVideoUri]
   );
 
   useEffect(() => {
@@ -223,12 +161,6 @@ export default function PreviewScreen() {
   useEffect(() => {
     return () => {
       // Clear all timeouts when component unmounts
-      if (player1ResumeTimeoutRef.current) {
-        clearTimeout(player1ResumeTimeoutRef.current);
-      }
-      if (player2ResumeTimeoutRef.current) {
-        clearTimeout(player2ResumeTimeoutRef.current);
-      }
       if (appStateResumeTimeoutRef.current) {
         clearTimeout(appStateResumeTimeoutRef.current);
       }
@@ -242,12 +174,19 @@ export default function PreviewScreen() {
     const setupPlayers = async () => {
       if (videoUris.length > 0 && !isLoading) {
         try {
+          // Reset players before setting up new videos
+          await resetPlayers();
+
+          // Load first video into player1 and start playing
           await player1.replaceAsync(videoUris[0]);
           player1.play();
 
+          // Reset video index to start from beginning
+          setCurrentVideoIndex(0);
+
+          // If there are multiple videos, preload the second one into player2
           if (videoUris.length > 1) {
-            const nextIndex = videoUris.length > 1 ? 1 : 0;
-            await player2.replaceAsync(videoUris[nextIndex]);
+            await player2.replaceAsync(videoUris[1]);
           }
         } catch (error) {
           console.error("Player setup failed:", error);
@@ -263,23 +202,33 @@ export default function PreviewScreen() {
       if (videoUris.length <= 1) return;
 
       try {
+        // Calculate the next video index
         const nextIndex =
           currentVideoIndex < videoUris.length - 1 ? currentVideoIndex + 1 : 0;
         const nextVideoUri = videoUris[nextIndex];
 
-        await nextPlayer.replaceAsync(nextVideoUri);
+        // Load the next video into the inactive player
+        const inactivePlayer = useSecondPlayer ? player1 : player2;
+        await inactivePlayer.replaceAsync(nextVideoUri);
       } catch (error) {
         console.error("Preload failed:", error);
       }
     };
 
-    if (videoUris.length > 0) {
+    if (videoUris.length > 0 && !concatenatedVideoUri) {
       preloadNext();
     }
-  }, [currentVideoIndex, videoUris, nextPlayer]);
+  }, [
+    currentVideoIndex,
+    videoUris,
+    useSecondPlayer,
+    concatenatedVideoUri,
+    player1,
+    player2,
+  ]);
 
   const handleClose = useCallback(() => {
-    router.back();
+    router.push("/preview");
   }, []);
 
   const shareVideo = async (videoUri: string) => {
@@ -321,7 +270,6 @@ export default function PreviewScreen() {
     if (!draftId) return;
 
     try {
-      console.log("🎬 Starting video concatenation...");
       setIsConcatenating(true);
 
       const draft = await DraftStorage.getDraftById(draftId);
@@ -330,22 +278,11 @@ export default function PreviewScreen() {
         return;
       }
 
-      console.log("📝 Draft loaded:", {
-        id: draft.id,
-        segments: draft.segments.length,
-        totalDuration: draft.totalDuration,
-      });
-
       // Set up progress listener
       const progressListener = VideoConcatModule.addListener(
         "onProgress",
         (event) => {
           const { progress, currentSegment, phase } = event.progress;
-          console.log(
-            `📊 Progress: ${Math.round(progress * 100)}% - Segment ${
-              currentSegment + 1
-            } - ${phase}`
-          );
           setConcatProgress(progress);
           setConcatPhase(phase);
         }
@@ -358,11 +295,9 @@ export default function PreviewScreen() {
       }));
 
       // Start concatenation
-      console.log("🚀 Calling native export function...");
       const outputUri = await VideoConcatModule.export(
         segmentsWithAbsolutePaths
       );
-      console.log("✅ Concatenation completed:", outputUri);
 
       // Remove progress listener
       progressListener?.remove();
@@ -373,10 +308,27 @@ export default function PreviewScreen() {
       setUseSecondPlayer(false);
 
       // Load concatenated video
-      console.log("📺 Loading concatenated video into player...");
       setIsLoadingVideo(true);
 
       try {
+        // Stop and reset both players before loading concatenated video
+        player1.pause();
+        player2.pause();
+
+        // Reset player positions to ensure clean state
+        player1.currentTime = 0;
+        player2.currentTime = 0;
+
+        // Clear any existing video sources to prevent state conflicts
+        await player1.replaceAsync(null);
+        await player2.replaceAsync(null);
+
+        // Small delay to ensure players are fully reset
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 100);
+        });
+
+        // Load the concatenated video into player1
         await player1.replaceAsync(outputUri);
 
         // Wait a moment for the video to load its metadata and orientation
@@ -388,7 +340,6 @@ export default function PreviewScreen() {
 
         setIsLoadingVideo(false);
         player1.play();
-        console.log("▶️ Video playback started");
       } catch (videoLoadError) {
         console.error("❌ Failed to load concatenated video:", videoLoadError);
         // Reset the concatenated video state if loading fails
