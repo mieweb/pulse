@@ -298,6 +298,7 @@ export default function ShortsScreen() {
                 style={styles.camera}
                 mode="video"
                 facing={cameraFacing}
+                orientation="portrait"
                 enableTorch={torchEnabled}
                 zoom={zoom}
                 {...(Platform.OS === "ios"

@@ -21,10 +21,10 @@ else
     exit 1
 fi
 
-echo "🧪 Running VideoConcat Module Tests..."
+echo "🧪 Running Enhanced VideoConcat Module Tests with Orientation Detection..."
 echo
 
-# Run the test
+# Run the enhanced test
 swift "$PWD/test/video/RunTests.swift"
 
 # Check exit code

@@ -6,7 +6,6 @@ import { useEventListener } from "expo";
 import { router, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import * as Sharing from "expo-sharing";
-import * as MediaLibrary from "expo-media-library";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -35,7 +34,6 @@ export default function PreviewScreen() {
   const [concatPhase, setConcatPhase] = useState<string>("");
   const [draft, setDraft] = useState<any>(null);
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
-  const [isSavingSegments, setIsSavingSegments] = useState(false);
   // Refs to store timeout IDs for proper cleanup
   const appStateResumeTimeoutRef = useRef<number | null>(null);
   const appStateResetTimeoutRef = useRef<number | null>(null);
@@ -229,9 +227,37 @@ export default function PreviewScreen() {
     player2,
   ]);
 
-  const handleClose = useCallback(() => {
-    router.push("/preview");
-  }, []);
+  const handleClose = useCallback(async () => {
+    if (concatenatedVideoUri) {
+      // If we're viewing the merged video, go back to playing segments
+      setConcatenatedVideoUri(null);
+      // Reset to first video and start playing
+      setCurrentVideoIndex(0);
+      setUseSecondPlayer(false);
+
+      // Reset players and load first video
+      try {
+        player1.pause();
+        player2.pause();
+        player1.currentTime = 0;
+        player2.currentTime = 0;
+
+        // Load first video and start playing
+        await player1.replaceAsync(videoUris[0]);
+        player1.play();
+
+        // Preload second video if available
+        if (videoUris.length > 1) {
+          await player2.replaceAsync(videoUris[1]);
+        }
+      } catch (error) {
+        console.error("Error resetting players:", error);
+      }
+    } else {
+      // If we're viewing segments, dismiss the screen
+      router.dismiss();
+    }
+  }, [concatenatedVideoUri, player1, player2, videoUris]);
 
   const shareVideo = async (videoUri: string) => {
     try {
@@ -251,61 +277,6 @@ export default function PreviewScreen() {
     } catch (error) {
       console.error("❌ Failed to share video:", error);
       Alert.alert("Share Failed", "Could not share the video.");
-    }
-  };
-
-  const saveSegmentsToCameraRoll = async () => {
-    if (!draft || !draft.segments || draft.segments.length === 0) {
-      Alert.alert("No Segments", "No video segments found to save.");
-      return;
-    }
-
-    try {
-      setIsSavingSegments(true);
-
-      // Convert relative paths to absolute paths for saving
-      const segmentsWithAbsolutePaths = draft.segments.map((segment: any) =>
-        fileStore.toAbsolutePath(segment.uri)
-      );
-
-      let savedCount = 0;
-      const totalSegments = segmentsWithAbsolutePaths.length;
-
-      // Save each segment to camera roll
-      for (let i = 0; i < segmentsWithAbsolutePaths.length; i++) {
-        try {
-          await MediaLibrary.saveToLibraryAsync(segmentsWithAbsolutePaths[i]);
-          savedCount++;
-        } catch (segmentError) {
-          console.error(`❌ Failed to save segment ${i + 1}:`, segmentError);
-          // Continue with other segments even if one fails
-        }
-      }
-
-      if (savedCount === totalSegments) {
-        Alert.alert(
-          "Success",
-          `All ${savedCount} video segments have been saved to your camera roll.`
-        );
-      } else if (savedCount > 0) {
-        Alert.alert(
-          "Partial Success",
-          `${savedCount} out of ${totalSegments} video segments were saved to your camera roll.`
-        );
-      } else {
-        Alert.alert(
-          "Save Failed",
-          "Could not save any video segments to your camera roll."
-        );
-      }
-    } catch (error) {
-      console.error("❌ Failed to save segments:", error);
-      Alert.alert(
-        "Save Failed",
-        "An error occurred while saving the video segments."
-      );
-    } finally {
-      setIsSavingSegments(false);
     }
   };
 
@@ -338,8 +309,10 @@ export default function PreviewScreen() {
       // Set up progress listener
       const progressListener = VideoConcatModule.addListener(
         "onProgress",
-        (event) => {
-          const { progress, currentSegment, phase } = event.progress;
+        (event: any) => {
+          console.log("Progress event received:", event);
+          const { progress, currentSegment, phase } = event;
+          console.log("Progress values:", { progress, currentSegment, phase });
           setConcatProgress(progress);
           setConcatPhase(phase);
         }
@@ -423,7 +396,7 @@ export default function PreviewScreen() {
         showsTimecodes={false}
         requiresLinearPlayback={true}
         contentFit="cover"
-        nativeControls={concatenatedVideoUri ? true : false}
+        nativeControls={false}
       />
 
       <VideoView
@@ -441,50 +414,26 @@ export default function PreviewScreen() {
         style={[styles.closeButton, { top: insets.top + 20 }]}
         onPress={handleClose}
       >
-        <ThemedText style={styles.closeText}>×</ThemedText>
+        <ThemedText style={styles.closeText}>{"×"}</ThemedText>
       </TouchableOpacity>
 
-      {/* Add buttons - only show if not concatenated */}
-      {!concatenatedVideoUri && (
-        <View style={[styles.buttonContainer, { bottom: insets.bottom + 20 }]}>
-          {/* Only show merge button if there are multiple segments */}
-          {videoUris.length > 1 && (
-            <TouchableOpacity
-              style={[styles.concatenateButton, { flex: 1, marginRight: 10 }]}
-              onPress={handleConcatenate}
-              disabled={isConcatenating}
-            >
-              <ThemedText style={styles.buttonText}>
-                {isConcatenating ? "Processing..." : "Merge Videos"}
-              </ThemedText>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={[
-              styles.saveSegmentsButton,
-              videoUris.length === 1
-                ? styles.fullWidthButton
-                : { flex: 1, marginLeft: videoUris.length > 1 ? 10 : 0 },
-            ]}
-            onPress={saveSegmentsToCameraRoll}
-            disabled={isSavingSegments}
-          >
-            <ThemedText style={styles.buttonText}>
-              {isSavingSegments
-                ? "Saving..."
-                : videoUris.length === 1
-                ? "Save Video"
-                : "Save Segments"}
-            </ThemedText>
-          </TouchableOpacity>
-        </View>
+      {/* Add merge button - only show if not concatenated and multiple segments */}
+      {!concatenatedVideoUri && videoUris.length > 1 && (
+        <TouchableOpacity
+          style={[styles.concatenateButton, { bottom: insets.bottom + 20 }]}
+          onPress={handleConcatenate}
+          disabled={isConcatenating}
+        >
+          <ThemedText style={styles.buttonText}>
+            {isConcatenating ? "Processing..." : "Merge Videos"}
+          </ThemedText>
+        </TouchableOpacity>
       )}
 
       {/* Add share button - only show if concatenated */}
       {concatenatedVideoUri && (
         <TouchableOpacity
-          style={[styles.shareButton, { bottom: insets.bottom + 20 }]}
+          style={[styles.shareButton, { bottom: insets.bottom + 30 }]}
           onPress={() => shareVideo(concatenatedVideoUri)}
         >
           <ThemedText style={styles.buttonText}>Share Video</ThemedText>
@@ -492,13 +441,11 @@ export default function PreviewScreen() {
       )}
 
       {/* Loading overlay */}
-      {(isConcatenating || isLoadingVideo || isSavingSegments) && (
+      {(isConcatenating || isLoadingVideo) && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#ffffff" />
           <ThemedText style={styles.loadingText}>
-            {isSavingSegments
-              ? "Saving segments to camera roll..."
-              : isLoadingVideo
+            {isLoadingVideo
               ? "Loading merged video..."
               : concatPhase === "processing"
               ? `Processing segment ${
@@ -508,7 +455,7 @@ export default function PreviewScreen() {
               ? "Finalizing video..."
               : "Merging videos..."}
           </ThemedText>
-          {!isLoadingVideo && !isSavingSegments && (
+          {!isLoadingVideo && (
             <ThemedText style={styles.progressText}>
               {Math.round(concatProgress * 100)}%
             </ThemedText>
@@ -557,29 +504,16 @@ const styles = StyleSheet.create({
     textAlignVertical: "center",
     includeFontPadding: false,
   },
-  buttonContainer: {
+  concatenateButton: {
     position: "absolute",
     left: 20,
     right: 20,
-    flexDirection: "row",
-    zIndex: 10,
-  },
-  concatenateButton: {
     height: 50,
     borderRadius: 25,
     backgroundColor: "#ff0000",
     justifyContent: "center",
     alignItems: "center",
-  },
-  saveSegmentsButton: {
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "#34C759",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  fullWidthButton: {
-    flex: 1,
+    zIndex: 10,
   },
   shareButton: {
     position: "absolute",
