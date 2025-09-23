@@ -6,7 +6,7 @@ export interface ExportProgress {
 
 export interface VideoConcatModuleEvents {
   [key: string]: (params: any) => void;  // Add index signature
-  onProgress: (event: { progress: ExportProgress }) => void;
+  onProgress: (event: ExportProgress) => void;
 }
 
 // Payload for simple change events emitted by the web shim
