@@ -6,6 +6,7 @@ import { useEventListener } from "expo";
 import { router, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import * as Sharing from "expo-sharing";
+import { MaterialIcons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -423,20 +424,38 @@ export default function PreviewScreen() {
           style={[styles.concatenateButton, { bottom: insets.bottom + 20 }]}
           onPress={handleConcatenate}
           disabled={isConcatenating}
+          activeOpacity={0.8}
         >
-          <ThemedText style={styles.buttonText}>
-            {isConcatenating ? "Processing..." : "Merge Videos"}
-          </ThemedText>
+          <View style={styles.buttonContent}>
+            <MaterialIcons
+              name={isConcatenating ? "hourglass-empty" : "merge-type"}
+              size={20}
+              color="#ffffff"
+              style={styles.buttonIcon}
+            />
+            <ThemedText style={styles.buttonText}>
+              {isConcatenating ? "Processing..." : "Merge Videos"}
+            </ThemedText>
+          </View>
         </TouchableOpacity>
       )}
 
       {/* Add share button - only show if concatenated */}
       {concatenatedVideoUri && (
         <TouchableOpacity
-          style={[styles.shareButton, { bottom: insets.bottom + 30 }]}
+          style={[styles.shareButton, { bottom: insets.bottom + 20 }]}
           onPress={() => shareVideo(concatenatedVideoUri)}
+          activeOpacity={0.8}
         >
-          <ThemedText style={styles.buttonText}>Share Video</ThemedText>
+          <View style={styles.buttonContent}>
+            <MaterialIcons
+              name="share"
+              size={20}
+              color="#ffffff"
+              style={styles.buttonIcon}
+            />
+            <ThemedText style={styles.buttonText}>Share Video</ThemedText>
+          </View>
         </TouchableOpacity>
       )}
 
@@ -508,29 +527,61 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 20,
     right: 20,
-    height: 50,
-    borderRadius: 25,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: "#ff0000",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 10,
+    shadowColor: "#ff0000",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
   },
   shareButton: {
     position: "absolute",
     left: 20,
     right: 20,
-    height: 50,
-    borderRadius: 25,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: "#007AFF",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 10,
+    shadowColor: "#007AFF",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+  },
+  buttonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buttonIcon: {
+    marginRight: 8,
   },
   buttonText: {
     color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 17,
+    fontWeight: "700",
     fontFamily: "Roboto-Bold",
+    letterSpacing: 0.5,
+    textShadowColor: "rgba(0, 0, 0, 0.3)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
