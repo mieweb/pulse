@@ -423,10 +423,6 @@ const styles = StyleSheet.create({
     top: "70%",
     left: 50,
     right: 50,
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
-    borderRadius: 80,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
     zIndex: 10,
   },
   continuingDraftText: {

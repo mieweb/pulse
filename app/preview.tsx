@@ -17,6 +17,7 @@ import {
   View,
   Alert,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function PreviewScreen() {
@@ -28,13 +29,9 @@ export default function PreviewScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [useSecondPlayer, setUseSecondPlayer] = useState(false);
   const [isConcatenating, setIsConcatenating] = useState(false);
-  const [concatenatedVideoUri, setConcatenatedVideoUri] = useState<
-    string | null
-  >(null);
   const [concatProgress, setConcatProgress] = useState(0);
   const [concatPhase, setConcatPhase] = useState<string>("");
   const [draft, setDraft] = useState<any>(null);
-  const [isLoadingVideo, setIsLoadingVideo] = useState(false);
   // Refs to store timeout IDs for proper cleanup
   const appStateResumeTimeoutRef = useRef<number | null>(null);
   const appStateResetTimeoutRef = useRef<number | null>(null);
@@ -61,8 +58,8 @@ export default function PreviewScreen() {
   const nextPlayer = useSecondPlayer ? player1 : player2;
 
   useEventListener(player1, "playToEnd", () => {
-    // Only handle segment cycling if we're not in merged video mode
-    if (videoUris.length > 1 && !concatenatedVideoUri) {
+    // Handle segment cycling
+    if (videoUris.length > 1) {
       // Switch to player2 and advance to next video
       setUseSecondPlayer(true);
       advanceToNextVideo();
@@ -71,8 +68,8 @@ export default function PreviewScreen() {
   });
 
   useEventListener(player2, "playToEnd", () => {
-    // Only handle segment cycling if we're not in merged video mode
-    if (videoUris.length > 1 && !concatenatedVideoUri) {
+    // Handle segment cycling
+    if (videoUris.length > 1) {
       // Switch to player1 and advance to next video
       setUseSecondPlayer(false);
       advanceToNextVideo();
@@ -108,7 +105,7 @@ export default function PreviewScreen() {
   // Simple app state handling
   const handleAppStateChange = useCallback(
     (nextAppState: AppStateStatus) => {
-      if (nextAppState === "active" && !concatenatedVideoUri) {
+      if (nextAppState === "active") {
         // Simple resume - just play the current active player
         const currentPlayer = useSecondPlayer ? player2 : player1;
         if (currentPlayer && !currentPlayer.playing) {
@@ -116,7 +113,7 @@ export default function PreviewScreen() {
         }
       }
     },
-    [player1, player2, useSecondPlayer, concatenatedVideoUri]
+    [player1, player2, useSecondPlayer]
   );
 
   useEffect(() => {
@@ -158,7 +155,7 @@ export default function PreviewScreen() {
     return () => subscription?.remove();
   }, [handleAppStateChange]);
 
-  // Cleanup timeouts on component unmount
+  // Cleanup timeouts and pause players on component unmount
   useEffect(() => {
     return () => {
       // Clear all timeouts when component unmounts
@@ -168,8 +165,29 @@ export default function PreviewScreen() {
       if (appStateResetTimeoutRef.current) {
         clearTimeout(appStateResetTimeoutRef.current);
       }
+
+      // Pause all players when component unmounts
+      player1.pause();
+      player2.pause();
     };
-  }, []);
+  }, [player1, player2]);
+
+  // Pause players when screen loses focus
+  useFocusEffect(
+    useCallback(() => {
+      // Screen is focused - resume playing if needed
+      const currentPlayer = useSecondPlayer ? player2 : player1;
+      if (currentPlayer && !currentPlayer.playing && videoUris.length > 0) {
+        currentPlayer.play();
+      }
+
+      return () => {
+        // Screen is losing focus - pause all players
+        player1.pause();
+        player2.pause();
+      };
+    }, [player1, player2, useSecondPlayer, videoUris.length])
+  );
 
   useEffect(() => {
     const setupPlayers = async () => {
@@ -216,70 +234,15 @@ export default function PreviewScreen() {
       }
     };
 
-    if (videoUris.length > 0 && !concatenatedVideoUri) {
+    if (videoUris.length > 0) {
       preloadNext();
     }
-  }, [
-    currentVideoIndex,
-    videoUris,
-    useSecondPlayer,
-    concatenatedVideoUri,
-    player1,
-    player2,
-  ]);
+  }, [currentVideoIndex, videoUris, useSecondPlayer, player1, player2]);
 
   const handleClose = useCallback(async () => {
-    if (concatenatedVideoUri) {
-      // If we're viewing the merged video, go back to playing segments
-      setConcatenatedVideoUri(null);
-      // Reset to first video and start playing
-      setCurrentVideoIndex(0);
-      setUseSecondPlayer(false);
-
-      // Reset players and load first video
-      try {
-        player1.pause();
-        player2.pause();
-        player1.currentTime = 0;
-        player2.currentTime = 0;
-
-        // Load first video and start playing
-        await player1.replaceAsync(videoUris[0]);
-        player1.play();
-
-        // Preload second video if available
-        if (videoUris.length > 1) {
-          await player2.replaceAsync(videoUris[1]);
-        }
-      } catch (error) {
-        console.error("Error resetting players:", error);
-      }
-    } else {
-      // If we're viewing segments, dismiss the screen
-      router.dismiss();
-    }
-  }, [concatenatedVideoUri, player1, player2, videoUris]);
-
-  const shareVideo = async (videoUri: string) => {
-    try {
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (!isAvailable) {
-        Alert.alert(
-          "Sharing not available",
-          "Sharing is not available on this device."
-        );
-        return;
-      }
-
-      await Sharing.shareAsync(videoUri, {
-        mimeType: "video/mp4",
-        dialogTitle: "Share your merged video",
-      });
-    } catch (error) {
-      console.error("❌ Failed to share video:", error);
-      Alert.alert("Share Failed", "Could not share the video.");
-    }
-  };
+    // Dismiss the screen
+    router.dismiss();
+  }, []);
 
   if (isLoading || videoUris.length === 0) {
     return (
@@ -333,55 +296,18 @@ export default function PreviewScreen() {
       // Remove progress listener
       progressListener?.remove();
 
-      setConcatenatedVideoUri(outputUri);
+      // Pause all players before navigating
+      player1.pause();
+      player2.pause();
 
-      // Reset useSecondPlayer to false so player1 (with concatenated video) is visible
-      setUseSecondPlayer(false);
-
-      // Load concatenated video
-      setIsLoadingVideo(true);
-
-      try {
-        // Stop and reset both players before loading concatenated video
-        player1.pause();
-        player2.pause();
-
-        // Reset player positions to ensure clean state
-        player1.currentTime = 0;
-        player2.currentTime = 0;
-
-        // Clear any existing video sources to prevent state conflicts
-        await player1.replaceAsync(null);
-        await player2.replaceAsync(null);
-
-        // Small delay to ensure players are fully reset
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 100);
-        });
-
-        // Load the concatenated video into player1
-        await player1.replaceAsync(outputUri);
-
-        // Wait a moment for the video to load its metadata and orientation
-        await new Promise<void>((resolve) => {
-          const timeoutId = setTimeout(resolve, 1000);
-          // Note: This timeout is intentionally not stored in a ref since it's awaited
-          // and will complete before the function returns
-        });
-
-        setIsLoadingVideo(false);
-        player1.play();
-      } catch (videoLoadError) {
-        console.error("❌ Failed to load concatenated video:", videoLoadError);
-        // Reset the concatenated video state if loading fails
-        setConcatenatedVideoUri(null);
-        setIsLoadingVideo(false);
-        throw videoLoadError; // Re-throw to be caught by outer catch
-      }
+      // Navigate to merged video screen
+      router.push({
+        pathname: "/merged-video",
+        params: { videoUri: outputUri },
+      });
     } catch (error) {
       console.error("❌ Concatenation failed:", error);
-      // Reset states on any error
-      setConcatenatedVideoUri(null);
+      Alert.alert("Merge Failed", "Could not merge videos. Please try again.");
     } finally {
       setIsConcatenating(false);
     }
@@ -418,8 +344,8 @@ export default function PreviewScreen() {
         <ThemedText style={styles.closeText}>{"×"}</ThemedText>
       </TouchableOpacity>
 
-      {/* Add merge button - only show if not concatenated and multiple segments */}
-      {!concatenatedVideoUri && videoUris.length > 1 && (
+      {/* Add merge button - only show if multiple segments */}
+      {videoUris.length > 1 && (
         <TouchableOpacity
           style={[styles.concatenateButton, { bottom: insets.bottom + 20 }]}
           onPress={handleConcatenate}
@@ -440,33 +366,12 @@ export default function PreviewScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Add share button - only show if concatenated */}
-      {concatenatedVideoUri && (
-        <TouchableOpacity
-          style={[styles.shareButton, { bottom: insets.bottom + 20 }]}
-          onPress={() => shareVideo(concatenatedVideoUri)}
-          activeOpacity={0.8}
-        >
-          <View style={styles.buttonContent}>
-            <MaterialIcons
-              name="share"
-              size={20}
-              color="#ffffff"
-              style={styles.buttonIcon}
-            />
-            <ThemedText style={styles.buttonText}>Share Video</ThemedText>
-          </View>
-        </TouchableOpacity>
-      )}
-
       {/* Loading overlay */}
-      {(isConcatenating || isLoadingVideo) && (
+      {isConcatenating && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#ffffff" />
           <ThemedText style={styles.loadingText}>
-            {isLoadingVideo
-              ? "Loading merged video..."
-              : concatPhase === "processing"
+            {concatPhase === "processing"
               ? `Processing segment ${
                   Math.round(concatProgress * draft?.segments.length || 0) + 1
                 }...`
@@ -474,11 +379,9 @@ export default function PreviewScreen() {
               ? "Finalizing video..."
               : "Merging videos..."}
           </ThemedText>
-          {!isLoadingVideo && (
-            <ThemedText style={styles.progressText}>
-              {Math.round(concatProgress * 100)}%
-            </ThemedText>
-          )}
+          <ThemedText style={styles.progressText}>
+            {Math.round(concatProgress * 100)}%
+          </ThemedText>
         </View>
       )}
     </View>
@@ -534,27 +437,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     zIndex: 10,
     shadowColor: "#ff0000",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.1)",
-  },
-  shareButton: {
-    position: "absolute",
-    left: 20,
-    right: 20,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#007AFF",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 10,
-    shadowColor: "#007AFF",
     shadowOffset: {
       width: 0,
       height: 4,
