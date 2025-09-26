@@ -73,6 +73,14 @@ export default function RootLayout() {
               animation: "fade",
             }}
           />
+          <Stack.Screen
+            name="merged-video"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "none",
+            }}
+          />
         </Stack>
         <StatusBar style="auto" />
         <PermissionMonitor />
