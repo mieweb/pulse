@@ -1,8 +1,7 @@
 import React from "react";
 import { StyleSheet, TouchableOpacity, Alert } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import * as DocumentPicker from "expo-document-picker";
-import { getThumbnailAsync } from "expo-video-thumbnails";
+import * as MediaLibrary from "expo-media-library";
 import { fileStore } from "@/utils/fileStore";
 import { RecordingSegment } from "@/components/RecordingProgressBar";
 import { v4 as uuidv4 } from "uuid";
@@ -22,107 +21,77 @@ export default function AddSegmentButton({
 }: AddSegmentButtonProps) {
   const handleAddSegment = async () => {
     try {
-      // Open document picker for video files
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ["video/*"],
-        copyToCacheDirectory: true,
-        multiple: false,
+      // Check and request media library permissions
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          "Permission Required",
+          "Please allow access to your photo library to select videos."
+        );
+        return;
+      }
+
+      // Get video assets from the user's photo library
+      const assets = await MediaLibrary.getAssetsAsync({
+        mediaType: MediaLibrary.MediaType.video,
+        first: 50, // Get first 50 videos
+        sortBy: MediaLibrary.SortBy.creationTime,
       });
 
-      if (result.canceled) {
-        return;
-      }
-
-      const selectedFile = result.assets[0];
-      
-      // Validate file size (50MB limit)
-      const maxSizeInBytes = 50 * 1024 * 1024; // 50MB
-      if (selectedFile.size && selectedFile.size > maxSizeInBytes) {
+      if (assets.assets.length === 0) {
         Alert.alert(
-          "File Too Large",
-          "Please select a video file smaller than 50MB."
+          "No Videos Found",
+          "No videos were found in your photo library."
         );
         return;
       }
 
-      // Get video duration using video thumbnails (workaround approach)
-      let videoDuration = 5; // Default fallback duration in seconds
-      try {
-        // Generate thumbnail to access video metadata (we don't use the actual dimensions)
-        await getThumbnailAsync(
-          selectedFile.uri,
-          {
-            time: 0, // Get thumbnail at start of video
-          }
-        );
-        
-        // Since we can't get exact duration easily, we'll estimate based on file size
-        // This is a rough estimation - could be improved with native module
-        if (selectedFile.size) {
-          const sizeInMB = selectedFile.size / (1024 * 1024);
-          // Very rough estimation: smaller files = shorter videos, larger files = longer videos
-          // Adjust these values based on testing
-          if (sizeInMB < 5) {
-            videoDuration = Math.max(3, Math.min(10, sizeInMB * 2));
-          } else if (sizeInMB < 20) {
-            videoDuration = Math.max(10, Math.min(30, sizeInMB * 1.5));
-          } else {
-            videoDuration = Math.max(30, Math.min(60, sizeInMB));
-          }
-        }
-      } catch (error) {
-        console.warn("Could not estimate video duration:", error);
-        // Use default duration if estimation fails
-        videoDuration = 5;
-      }
+      // For now, we'll show a simple selection dialog
+      // In a production app, you might want to create a custom video picker UI
 
-      // Ask user to confirm the estimated duration or let them input the actual duration
+      // Create alert with video options
+      const alertButtons = [
+        ...assets.assets.slice(0, 10).map((asset, index) => ({
+          text: `Video ${index + 1} (${Math.round(asset.duration)}s)`,
+          onPress: () => selectVideo(asset),
+        })),
+        { text: "Cancel", style: "cancel" as "cancel" }
+      ];
+
       Alert.alert(
-        "Video Duration",
-        `We estimated this video is about ${Math.round(videoDuration)} seconds long. Is this correct?`,
-        [
-          {
-            text: "Different Length",
-            onPress: () => {
-              Alert.prompt(
-                "Enter Video Duration",
-                "Please enter the actual duration in seconds:",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Add Video",
-                    onPress: (inputDuration) => {
-                      const duration = parseInt(inputDuration || "5", 10);
-                      if (isNaN(duration) || duration <= 0) {
-                        Alert.alert("Invalid Duration", "Please enter a valid duration in seconds.");
-                        return;
-                      }
-                      addVideoSegment(selectedFile, duration);
-                    },
-                  },
-                ],
-                "plain-text",
-                videoDuration.toString()
-              );
-            },
-          },
-          {
-            text: "Correct",
-            onPress: () => addVideoSegment(selectedFile, videoDuration),
-          },
-        ]
+        "Select a Video",
+        "Choose a video from your photo library:",
+        alertButtons,
+        { cancelable: true }
       );
     } catch (error) {
-      console.error("Error adding video segment:", error);
+      console.error("Error accessing photo library:", error);
       Alert.alert(
         "Error",
-        "Failed to add video segment. Please try again or select a different file."
+        "Failed to access your photo library. Please try again."
       );
     }
   };
 
-  const addVideoSegment = async (selectedFile: any, videoDuration: number) => {
+  const selectVideo = async (asset: MediaLibrary.Asset) => {
     try {
+      // Get asset info to access the file
+      const assetInfo = await MediaLibrary.getAssetInfoAsync(asset);
+      
+      if (!assetInfo.localUri && !assetInfo.uri) {
+        Alert.alert(
+          "Error",
+          "Could not access the selected video file."
+        );
+        return;
+      }
+
+      const videoUri = assetInfo.localUri || assetInfo.uri;
+      const videoDuration = Math.round(asset.duration); // Duration is already in seconds
+      
+      // Validate file size if available (MediaLibrary doesn't provide file size directly)
+      // We'll skip file size validation for media library assets since they're from the user's library
+
       // Check if adding this segment would exceed total duration
       if (usedDuration + videoDuration > totalDuration) {
         Alert.alert(
@@ -136,7 +105,7 @@ export default function AddSegmentButton({
       const segmentId = `imported_${uuidv4()}`;
       const storedUri = await fileStore.importSegment({
         draftId: Date.now().toString(), // Temporary draft ID - will be handled by useDraftManager
-        srcUri: selectedFile.uri,
+        srcUri: videoUri,
         segmentId: segmentId,
       });
 
@@ -149,10 +118,10 @@ export default function AddSegmentButton({
 
       onSegmentAdd(newSegment);
     } catch (error) {
-      console.error("Error storing video segment:", error);
+      console.error("Error processing selected video:", error);
       Alert.alert(
         "Error",
-        "Failed to store video segment. Please try again."
+        "Failed to process the selected video. Please try again."
       );
     }
   };
