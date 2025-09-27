@@ -46,6 +46,19 @@ export default function MergedVideoScreen() {
     setupPlayer();
   }, [videoUri, player]);
 
+  // Cleanup player on component unmount
+  useEffect(() => {
+    return () => {
+      try {
+        if (player && typeof player.pause === "function") {
+          player.pause();
+        }
+      } catch (error) {
+        // Silently ignore - player is already destroyed
+      }
+    };
+  }, [player]);
+
   const handleBack = useCallback(() => {
     router.back();
   }, []);
