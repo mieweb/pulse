@@ -1,3 +1,4 @@
+import AddSegmentButton from "@/components/AddSegmentButton";
 import CameraControls from "@/components/CameraControls";
 import RecordButton from "@/components/RecordButton";
 import RecordingProgressBar, {
@@ -61,6 +62,7 @@ export default function UploadScreen() {
     handleUndoSegment,
     handleRedoSegment,
     updateSegmentsAfterRecording,
+    addImportedSegment,
   } = useDraftManager(draftId, selectedDuration, "upload");
 
   // Camera control states
@@ -188,6 +190,14 @@ export default function UploadScreen() {
 
   const handleRedoSegmentWrapper = async () => {
     await handleRedoSegment(selectedDuration);
+  };
+
+  const handleAddSegment = async (segment: RecordingSegment) => {
+    try {
+      await addImportedSegment(segment, selectedDuration);
+    } catch (error) {
+      console.error("Failed to add segment:", error);
+    }
   };
 
   // Button touch coordination handlers
@@ -386,6 +396,16 @@ export default function UploadScreen() {
 
           {redoStack.length > 0 && !isRecording && (
             <RedoSegmentButton onRedoSegment={handleRedoSegmentWrapper} />
+          )}
+
+          {/* Add Segment Button - allows users to import video files */}
+          {!isRecording && (
+            <AddSegmentButton
+              onSegmentAdd={handleAddSegment}
+              totalDuration={selectedDuration}
+              usedDuration={totalUsedDuration}
+              disabled={isRecording}
+            />
           )}
 
           {recordingSegments.length > 0 && currentDraftId && !isRecording && (

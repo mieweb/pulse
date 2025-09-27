@@ -30,6 +30,7 @@ interface DraftManagerActions {
   handleUndoSegment: (selectedDuration: number) => Promise<void>;
   handleRedoSegment: (selectedDuration: number) => Promise<void>;
   updateSegmentsAfterRecording: (newSegment: RecordingSegment, selectedDuration: number) => Promise<void>;
+  addImportedSegment: (segment: RecordingSegment, selectedDuration: number) => Promise<void>;
 }
 
 /**
@@ -467,6 +468,80 @@ export function useDraftManager(
     }
   };
 
+  const addImportedSegment = async (
+    segment: RecordingSegment,
+    duration: number
+  ) => {
+    const prevRedo = redoStack;
+
+    try {
+      // Determine target draft id for file import and metadata save
+      const targetDraftId = forceNewNext
+        ? Date.now().toString()
+        : (currentDraftId ?? draftId ?? Date.now().toString());
+      
+      console.log(`[DraftManager] Adding imported segment - Target draft ID: ${targetDraftId}`);
+
+      // Ensure directories exist and import the video file into managed storage
+      await fileStore.ensureDraftDirs(targetDraftId);
+      const managedUri = await fileStore.importSegment({
+        draftId: targetDraftId,
+        srcUri: segment.uri,
+        segmentId: segment.id,
+      });
+
+      // Clear redo stack in state (new import invalidates redo)
+      setRedoStack([]);
+
+      // Append the imported segment with managed URI
+      const importedSegment: RecordingSegment = { ...segment, uri: managedUri };
+      const updatedSegments = [...recordingSegments, importedSegment];
+      setRecordingSegments(updatedSegments);
+
+      // Persist draft metadata
+      if (currentDraftId && !forceNewNext) {
+        // Convert segments to relative paths for storage
+        const segmentsForStorage = updatedSegments.map(segment => ({
+          ...segment,
+          uri: fileStore.toRelativePath(segment.uri)
+        }));
+        await DraftStorage.updateDraft(currentDraftId, segmentsForStorage, duration);
+        console.log(`[DraftManager] Import segment - Updated existing draft: ${currentDraftId}`);
+      } else {
+        const preferredId = forceNewNext ? targetDraftId : (originalDraftId || draftId || targetDraftId);
+        // Convert segments to relative paths for storage
+        const segmentsForStorage = updatedSegments.map(segment => ({
+          ...segment,
+          uri: fileStore.toRelativePath(segment.uri)
+        }));
+        const newDraftId = await DraftStorage.saveDraft(
+          segmentsForStorage,
+          duration,
+          mode,
+          preferredId
+        );
+        setCurrentDraftId(newDraftId);
+        setOriginalDraftId(preferredId);
+        setHasStartedOver(false);
+        console.log(`[DraftManager] Import segment - Created new draft: ${newDraftId}`);
+        if (forceNewNext) setForceNewNext(false);
+      }
+
+      // Delete redo files now that redo stack is cleared and not referenced
+      if (prevRedo.length > 0) {
+        console.log(`[DraftManager] Deleting ${prevRedo.length} redo files`);
+        // Convert relative paths to absolute paths for deletion
+        const absoluteUris = prevRedo.map((s) => fileStore.toAbsolutePath(s.uri));
+        await fileStore.deleteUris(absoluteUris);
+      }
+
+      lastSegmentCount.current = updatedSegments.length;
+    } catch (error) {
+      console.error("Import segment failed:", error);
+      throw error; // Re-throw so the AddSegmentButton can handle it
+    }
+  };
+
   return {
     // State
     recordingSegments,
@@ -486,5 +561,6 @@ export function useDraftManager(
     handleUndoSegment,
     handleRedoSegment,
     updateSegmentsAfterRecording,
+    addImportedSegment,
   };
 } 
