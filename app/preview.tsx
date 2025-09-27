@@ -5,7 +5,6 @@ import { fileStore } from "@/utils/fileStore";
 import { useEventListener } from "expo";
 import { router, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
-import * as Sharing from "expo-sharing";
 import { MaterialIcons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -89,10 +88,14 @@ export default function PreviewScreen() {
   // Function to reset both players to clean state
   const resetPlayers = async () => {
     try {
-      player1.pause();
-      player2.pause();
-      player1.currentTime = 0;
-      player2.currentTime = 0;
+      if (player1 && typeof player1.pause === "function") {
+        player1.pause();
+        player1.currentTime = 0;
+      }
+      if (player2 && typeof player2.pause === "function") {
+        player2.pause();
+        player2.currentTime = 0;
+      }
       // Small delay to ensure players are reset
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 50);
@@ -166,9 +169,22 @@ export default function PreviewScreen() {
         clearTimeout(appStateResetTimeoutRef.current);
       }
 
-      // Pause all players when component unmounts
-      player1.pause();
-      player2.pause();
+      // Safely pause all players when component unmounts
+      try {
+        if (player1 && typeof player1.pause === "function") {
+          player1.pause();
+        }
+      } catch (error) {
+        // Silently ignore - player is already destroyed
+      }
+
+      try {
+        if (player2 && typeof player2.pause === "function") {
+          player2.pause();
+        }
+      } catch (error) {
+        // Silently ignore - player is already destroyed
+      }
     };
   }, [player1, player2]);
 
@@ -182,9 +198,22 @@ export default function PreviewScreen() {
       }
 
       return () => {
-        // Screen is losing focus - pause all players
-        player1.pause();
-        player2.pause();
+        // Screen is losing focus - safely pause all players
+        try {
+          if (player1 && typeof player1.pause === "function") {
+            player1.pause();
+          }
+        } catch (error) {
+          // Silently ignore - player is already destroyed
+        }
+
+        try {
+          if (player2 && typeof player2.pause === "function") {
+            player2.pause();
+          }
+        } catch (error) {
+          // Silently ignore - player is already destroyed
+        }
       };
     }, [player1, player2, useSecondPlayer, videoUris.length])
   );
@@ -297,8 +326,21 @@ export default function PreviewScreen() {
       progressListener?.remove();
 
       // Pause all players before navigating
-      player1.pause();
-      player2.pause();
+      try {
+        if (player1 && typeof player1.pause === "function") {
+          player1.pause();
+        }
+      } catch (error) {
+        // Silently ignore - player is already destroyed
+      }
+
+      try {
+        if (player2 && typeof player2.pause === "function") {
+          player2.pause();
+        }
+      } catch (error) {
+        // Silently ignore - player is already destroyed
+      }
 
       // Navigate to merged video screen
       router.push({
