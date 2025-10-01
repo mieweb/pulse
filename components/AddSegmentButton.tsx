@@ -1,10 +1,11 @@
-import React from "react";
+import React, { useState } from "react";
 import { StyleSheet, TouchableOpacity, Alert } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import * as MediaLibrary from "expo-media-library";
 import { fileStore } from "@/utils/fileStore";
 import { RecordingSegment } from "@/components/RecordingProgressBar";
 import { v4 as uuidv4 } from "uuid";
+import VideoSelectorModal from "@/components/VideoSelectorModal";
 
 interface AddSegmentButtonProps {
   onSegmentAdd: (segment: RecordingSegment) => void;
@@ -19,6 +20,8 @@ export default function AddSegmentButton({
   usedDuration,
   disabled = false,
 }: AddSegmentButtonProps) {
+  const [isModalVisible, setIsModalVisible] = useState(false);
+
   const handleAddSegment = async () => {
     try {
       // Check and request media library permissions
@@ -31,39 +34,8 @@ export default function AddSegmentButton({
         return;
       }
 
-      // Get video assets from the user's photo library
-      const assets = await MediaLibrary.getAssetsAsync({
-        mediaType: MediaLibrary.MediaType.video,
-        first: 50, // Get first 50 videos
-        sortBy: MediaLibrary.SortBy.creationTime,
-      });
-
-      if (assets.assets.length === 0) {
-        Alert.alert(
-          "No Videos Found",
-          "No videos were found in your photo library."
-        );
-        return;
-      }
-
-      // For now, we'll show a simple selection dialog
-      // In a production app, you might want to create a custom video picker UI
-
-      // Create alert with video options
-      const alertButtons = [
-        ...assets.assets.slice(0, 10).map((asset, index) => ({
-          text: `Video ${index + 1} (${Math.round(asset.duration)}s)`,
-          onPress: () => selectVideo(asset),
-        })),
-        { text: "Cancel", style: "cancel" as "cancel" }
-      ];
-
-      Alert.alert(
-        "Select a Video",
-        "Choose a video from your photo library:",
-        alertButtons,
-        { cancelable: true }
-      );
+      // Open the video selector modal
+      setIsModalVisible(true);
     } catch (error) {
       console.error("Error accessing photo library:", error);
       Alert.alert(
@@ -73,7 +45,7 @@ export default function AddSegmentButton({
     }
   };
 
-  const selectVideo = async (asset: MediaLibrary.Asset) => {
+  const handleSelectVideo = async (asset: MediaLibrary.Asset) => {
     try {
       // Get asset info to access the file
       const assetInfo = await MediaLibrary.getAssetInfoAsync(asset);
@@ -88,9 +60,6 @@ export default function AddSegmentButton({
 
       const videoUri = assetInfo.localUri || assetInfo.uri;
       const videoDuration = Math.round(asset.duration); // Duration is already in seconds
-      
-      // Validate file size if available (MediaLibrary doesn't provide file size directly)
-      // We'll skip file size validation for media library assets since they're from the user's library
 
       // Check if adding this segment would exceed total duration
       if (usedDuration + videoDuration > totalDuration) {
@@ -127,14 +96,22 @@ export default function AddSegmentButton({
   };
 
   return (
-    <TouchableOpacity
-      style={[styles.addSegmentButton, disabled && styles.disabled]}
-      onPress={handleAddSegment}
-      disabled={disabled}
-      activeOpacity={0.7}
-    >
-      <MaterialIcons name="add" size={26} color={disabled ? "#666" : "black"} />
-    </TouchableOpacity>
+    <>
+      <TouchableOpacity
+        style={[styles.addSegmentButton, disabled && styles.disabled]}
+        onPress={handleAddSegment}
+        disabled={disabled}
+        activeOpacity={0.7}
+      >
+        <MaterialIcons name="add" size={26} color={disabled ? "#666" : "black"} />
+      </TouchableOpacity>
+
+      <VideoSelectorModal
+        visible={isModalVisible}
+        onClose={() => setIsModalVisible(false)}
+        onSelectVideo={handleSelectVideo}
+      />
+    </>
   );
 }
 
