@@ -9,6 +9,8 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import TimeSelectorButton from "@/components/TimeSelectorButton";
 import UndoSegmentButton from "@/components/UndoSegmentButton";
+import * as ImagePicker from "expo-image-picker";
+import * as VideoThumbnails from "expo-video-thumbnails";
 import { useDraftManager } from "@/hooks/useDraftManager";
 import {
   VideoStabilization,
@@ -18,7 +20,13 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { CameraType, CameraView } from "expo-camera";
 import { router, useLocalSearchParams } from "expo-router";
 import * as React from "react";
-import { Platform, StyleSheet, TouchableOpacity, View } from "react-native";
+import {
+  Alert,
+  Platform,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import {
   PanGestureHandler,
   PinchGestureHandler,
@@ -262,6 +270,58 @@ export default function ShortsScreen() {
     router.push("/(tabs)");
   };
 
+  const handleAddVideoFromLibrary = async () => {
+    try {
+      // Launch the native video picker directly
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["videos"],
+        allowsEditing: true, // Allow trimming
+        quality: 1, // Full quality
+        videoMaxDuration: 300, // 5 minutes max
+        allowsMultipleSelection: false,
+        exif: false, // Don't include EXIF data
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+
+        // Get the actual video duration in seconds
+        let actualDuration = 0;
+        if (asset.duration) {
+          // Convert from milliseconds to seconds if needed
+          actualDuration =
+            asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+        }
+
+        // Generate thumbnail
+        const thumbnailUri = await VideoThumbnails.getThumbnailAsync(
+          asset.uri,
+          {
+            time: 1000, // 1 second into the video
+            quality: 0.8,
+          }
+        ).catch(() => null);
+
+        // Create a recording segment from the selected video
+        const segment: RecordingSegment = {
+          id: Date.now().toString(),
+          uri: asset.uri,
+          duration: actualDuration,
+        };
+
+        // Add the segment to the current recording
+        await updateSegmentsAfterRecording(segment, selectedDuration);
+
+        console.log("Video added from library:", asset.uri);
+      }
+    } catch (error) {
+      console.error("Video selection failed:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to select video";
+      Alert.alert("Error", errorMessage);
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
       <PanGestureHandler onGestureEvent={handleScreenPanGesture}>
@@ -322,6 +382,17 @@ export default function ShortsScreen() {
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
             />
+          )}
+
+          {/* Video Library Button */}
+          {!isRecording && (
+            <TouchableOpacity
+              style={styles.videoLibraryButton}
+              onPress={handleAddVideoFromLibrary}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons name="add" size={26} color="black" />
+            </TouchableOpacity>
           )}
 
           {showContinuingIndicator && (
@@ -464,5 +535,17 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0, 0, 0, 0.7)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+  },
+  videoLibraryButton: {
+    position: "absolute",
+    bottom: 40,
+    right: 80, // Position to the left of the preview button
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
   },
 });
