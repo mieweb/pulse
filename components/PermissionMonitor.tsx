@@ -1,5 +1,5 @@
 import { useCameraPermissions, useMicrophonePermissions } from "expo-camera";
-import { usePermissions } from "expo-media-library";
+import * as ImagePicker from "expo-image-picker";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Alert,
@@ -23,30 +23,42 @@ export function PermissionMonitor() {
   const [cameraPermissions, requestCameraPermissions] = useCameraPermissions();
   const [microphonePermissions, requestMicrophonePermissions] =
     useMicrophonePermissions();
-  const [mediaLibraryPermissions, requestMediaLibraryPermissions] =
-    usePermissions();
+  const [mediaLibraryPermissions, setMediaLibraryPermissions] = useState<{
+    granted: boolean;
+    canAskAgain: boolean;
+  }>({ granted: false, canAskAgain: true });
 
   const checkPermissions = useCallback(async () => {
-    const [cameraStatus, microphoneStatus, mediaLibraryStatus] =
-      await Promise.all([
-        requestCameraPermissions(),
-        requestMicrophonePermissions(),
-        requestMediaLibraryPermissions(),
-      ]);
+    const [cameraStatus, microphoneStatus] = await Promise.all([
+      requestCameraPermissions(),
+      requestMicrophonePermissions(),
+    ]);
+
+    // Check media library permissions using ImagePicker
+    const mediaLibraryStatus =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    setMediaLibraryPermissions({
+      granted: mediaLibraryStatus.status === "granted",
+      canAskAgain: mediaLibraryStatus.canAskAgain,
+    });
 
     const hasAllPermissions =
       cameraStatus.granted &&
       microphoneStatus.granted &&
-      mediaLibraryStatus.granted;
+      mediaLibraryStatus.status === "granted";
 
     setShowMonitor(!hasAllPermissions);
-  }, [requestCameraPermissions, requestMicrophonePermissions, requestMediaLibraryPermissions]);
+  }, [requestCameraPermissions, requestMicrophonePermissions]);
 
-  const handleAppStateChange = useCallback(async (nextAppState: AppStateStatus) => {
-    if (nextAppState === "active") {
-      await checkPermissions();
-    }
-  }, [checkPermissions]);
+  const handleAppStateChange = useCallback(
+    async (nextAppState: AppStateStatus) => {
+      if (nextAppState === "active") {
+        await checkPermissions();
+      }
+    },
+    [checkPermissions]
+  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener(
@@ -58,17 +70,24 @@ export function PermissionMonitor() {
   }, [checkPermissions, handleAppStateChange]);
 
   async function handleUpdatePermissions() {
-    const [cameraStatus, microphoneStatus, mediaLibraryStatus] =
-      await Promise.all([
-        requestCameraPermissions(),
-        requestMicrophonePermissions(),
-        requestMediaLibraryPermissions(),
-      ]);
+    const [cameraStatus, microphoneStatus] = await Promise.all([
+      requestCameraPermissions(),
+      requestMicrophonePermissions(),
+    ]);
+
+    // Request media library permissions using ImagePicker
+    const mediaLibraryStatus =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    setMediaLibraryPermissions({
+      granted: mediaLibraryStatus.status === "granted",
+      canAskAgain: mediaLibraryStatus.canAskAgain,
+    });
 
     const allGranted =
       cameraStatus.granted &&
       microphoneStatus.granted &&
-      mediaLibraryStatus.granted;
+      mediaLibraryStatus.status === "granted";
 
     if (allGranted) {
       setShowMonitor(false);
