@@ -69,7 +69,7 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Prebuild iOS project
-        run: expo prebuild --platform ios --clean
+        run: npx expo prebuild
 
       - name: Install iOS dependencies
         run: |
