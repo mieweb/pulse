@@ -80,60 +80,58 @@ jobs:
       - name: Build iOS Archive
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
-          # Create build directory
           mkdir -p ./build
-          
-          # Build without code signing for CI (will be signed during export)
+
           xcodebuild archive \
-            -workspace $IOS_WORKSPACE \
-            -scheme $IOS_SCHEME \
-            -configuration $IOS_CONFIGURATION \
-            -destination $IOS_DESTINATION \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration "$IOS_CONFIGURATION" \
+            -destination "$IOS_DESTINATION" \
             -archivePath ./build/pulse.xcarchive \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+            -allowProvisioningUpdates \
+            -appleID "${APPLE_ID}" \
+            -appleIDPassword "${APPLE_ID_PASSWORD}" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
 
       - name: Export IPA
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
-          cat > exportOptions.plist << EOF
+          cat > exportOptions.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>method</key>
-              <string>app-store</string>
-              <key>teamID</key>
-              <string>$APPLE_TEAM_ID</string>
-              <key>uploadBitcode</key>
-              <false/>
-              <key>uploadSymbols</key>
-              <true/>
-              <key>compileBitcode</key>
-              <false/>
-              <key>signingStyle</key>
-              <string>automatic</string>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>signingStyle</key>
+            <string>automatic</string>
           </dict>
           </plist>
           EOF
-          
+
           xcodebuild -exportArchive \
             -archivePath ./build/pulse.xcarchive \
             -exportPath ./build \
             -exportOptionsPlist exportOptions.plist \
-            -allowProvisioningUpdates
+            -allowProvisioningUpdates \
+            -appleID "${APPLE_ID}" \
+            -appleIDPassword "${APPLE_ID_PASSWORD}"
 
-      - name: Upload to TestFlight
+      - name: Upload to TestFlight (Transporter)
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
-          xcrun altool --upload-app \
-            --type ios \
-            --file ./build/pulse.ipa \
-            --username "$APPLE_ID" \
-            --password "$APPLE_ID_PASSWORD"
+          xcrun iTMSTransporter -m upload \
+            -assetFile ./build/pulse.ipa \
+            -u "${APPLE_ID}" \
+            -p "${APPLE_ID_PASSWORD}" \
+            -v informational
 
       - name: Skip build notification
         if: ${{ inputs.skip_build == true }}
