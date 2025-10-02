@@ -84,8 +84,10 @@ jobs:
       - name: Authenticate with Apple
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
-          # Create API key file from secret
-          echo "${API_KEY_PATH}" | base64 -d > AuthKey_${API_KEY_ID}.p8
+          # Create API key file from secret with absolute path
+          API_KEY_FILE="$(pwd)/AuthKey_${API_KEY_ID}.p8"
+          echo "${API_KEY_PATH}" | base64 -d > "$API_KEY_FILE"
+          echo "API_KEY_FILE=$API_KEY_FILE" >> $GITHUB_ENV
           
           # Authenticate with Apple using altool
           xcrun altool --store-password-in-keychain-item "ALTOOL_AUTH" \
@@ -104,7 +106,7 @@ jobs:
             -destination "$IOS_DESTINATION" \
             -archivePath ./build/pulse.xcarchive \
             -allowProvisioningUpdates \
-            -authenticationKeyPath "./AuthKey_${API_KEY_ID}.p8" \
+            -authenticationKeyPath "$API_KEY_FILE" \
             -authenticationKeyID "${API_KEY_ID}" \
             -authenticationKeyIssuerID "${API_KEY_ISSUER_ID}" \
             CODE_SIGN_STYLE=Automatic \
