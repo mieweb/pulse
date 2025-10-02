@@ -77,6 +77,14 @@ jobs:
           pod install --repo-update
           cd ..
 
+      - name: Authenticate with Apple
+        if: ${{ !inputs.skip_build || inputs.skip_build == false }}
+        run: |
+          # Authenticate with Apple using altool
+          xcrun altool --store-password-in-keychain-item "ALTOOL_AUTH" \
+            -u "${APPLE_ID}" \
+            -p "${APPLE_ID_PASSWORD}"
+
       - name: Build iOS Archive
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
