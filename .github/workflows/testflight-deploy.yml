@@ -35,6 +35,10 @@ env:
   APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
   ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+  # App Store Connect API Key for authentication
+  API_KEY_ID: ${{ secrets.API_KEY_ID }}
+  API_KEY_ISSUER_ID: ${{ secrets.API_KEY_ISSUER_ID }}
+  API_KEY_PATH: ${{ secrets.API_KEY_PATH }}
   
   # iOS build configuration
   IOS_SCHEME: 'pulse'
@@ -80,6 +84,9 @@ jobs:
       - name: Authenticate with Apple
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
+          # Create API key file from secret
+          echo "${API_KEY_PATH}" | base64 -d > AuthKey_${API_KEY_ID}.p8
+          
           # Authenticate with Apple using altool
           xcrun altool --store-password-in-keychain-item "ALTOOL_AUTH" \
             -u "${APPLE_ID}" \
@@ -97,6 +104,9 @@ jobs:
             -destination "$IOS_DESTINATION" \
             -archivePath ./build/pulse.xcarchive \
             -allowProvisioningUpdates \
+            -authenticationKeyPath "./AuthKey_${API_KEY_ID}.p8" \
+            -authenticationKeyID "${API_KEY_ID}" \
+            -authenticationKeyIssuerID "${API_KEY_ISSUER_ID}" \
             CODE_SIGN_STYLE=Automatic \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
 
