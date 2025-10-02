@@ -89,8 +89,6 @@ jobs:
             -destination "$IOS_DESTINATION" \
             -archivePath ./build/pulse.xcarchive \
             -allowProvisioningUpdates \
-            -appleID "${APPLE_ID}" \
-            -appleIDPassword "${APPLE_ID_PASSWORD}" \
             CODE_SIGN_STYLE=Automatic \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
 
@@ -120,18 +118,16 @@ jobs:
             -archivePath ./build/pulse.xcarchive \
             -exportPath ./build \
             -exportOptionsPlist exportOptions.plist \
-            -allowProvisioningUpdates \
-            -appleID "${APPLE_ID}" \
-            -appleIDPassword "${APPLE_ID_PASSWORD}"
+            -allowProvisioningUpdates
 
-      - name: Upload to TestFlight (Transporter)
+      - name: Upload to TestFlight
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
-          xcrun iTMSTransporter -m upload \
-            -assetFile ./build/pulse.ipa \
-            -u "${APPLE_ID}" \
-            -p "${APPLE_ID_PASSWORD}" \
-            -v informational
+          xcrun altool --upload-app \
+            --type ios \
+            --file ./build/pulse.ipa \
+            --username "${APPLE_ID}" \
+            --password "${APPLE_ID_PASSWORD}"
 
       - name: Skip build notification
         if: ${{ inputs.skip_build == true }}
