@@ -7,15 +7,15 @@ permissions:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to deploy to'
+        description: "Environment to deploy to"
         required: true
-        default: 'production'
+        default: "production"
         type: choice
         options:
           - production
           - staging
       skip_build:
-        description: 'Skip the build step (use existing build)'
+        description: "Skip the build step (use existing build)"
         required: false
         default: false
         type: boolean
@@ -23,7 +23,7 @@ permissions:
   # Tag-based deployment for version releases
   push:
     tags:
-      - 'v*.*.*'  # Matches v1.0.0, v2.1.3, etc.
+      - "v*.*.*" # Matches v1.0.0, v2.1.3, etc.
 
   # Release-based deployment (optional)
   release:
@@ -36,18 +36,18 @@ env:
   API_KEY_ID: ${{ secrets.API_KEY_ID }}
   API_KEY_ISSUER_ID: ${{ secrets.API_KEY_ISSUER_ID }}
   API_KEY_PATH: ${{ secrets.API_KEY_PATH }}
-  
+
   # iOS build configuration
-  IOS_SCHEME: 'pulse'
-  IOS_WORKSPACE: 'ios/pulse.xcworkspace'
-  IOS_CONFIGURATION: 'Release'
-  IOS_DESTINATION: 'generic/platform=iOS'
+  IOS_SCHEME: "pulse"
+  IOS_WORKSPACE: "ios/pulse.xcworkspace"
+  IOS_CONFIGURATION: "Release"
+  IOS_DESTINATION: "generic/platform=iOS"
 
 jobs:
   deploy-ios:
     name: Deploy iOS App to TestFlight
     runs-on: macos-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,8 +55,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm install
@@ -107,7 +107,7 @@ jobs:
       - name: Export IPA
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
-          cat > exportOptions.plist << 'EOF'
+          cat > exportOptions.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -115,7 +115,7 @@ jobs:
             <key>method</key>
             <string>app-store-connect</string>
             <key>teamID</key>
-            <string>${APPLE_TEAM_ID}</string>
+            <string>$APPLE_TEAM_ID</string>
             <key>uploadSymbols</key>
             <true/>
             <key>compileBitcode</key>
