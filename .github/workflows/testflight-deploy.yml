@@ -30,11 +30,8 @@ permissions:
     types: [published]
 
 env:
-  # Apple credentials for TestFlight upload
-  APPLE_ID: ${{ secrets.APPLE_ID }}
-  APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+  # Apple Developer Team ID
   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-  ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
   # App Store Connect API Key for authentication
   API_KEY_ID: ${{ secrets.API_KEY_ID }}
   API_KEY_ISSUER_ID: ${{ secrets.API_KEY_ISSUER_ID }}
@@ -81,18 +78,13 @@ jobs:
           pod install --repo-update
           cd ..
 
-      - name: Authenticate with Apple
+      - name: Setup API Key Authentication
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
           # Create API key file from secret with absolute path
           API_KEY_FILE="$(pwd)/AuthKey_${API_KEY_ID}.p8"
           echo "${API_KEY_PATH}" | base64 -d > "$API_KEY_FILE"
           echo "API_KEY_FILE=$API_KEY_FILE" >> $GITHUB_ENV
-          
-          # Authenticate with Apple using altool
-          xcrun altool --store-password-in-keychain-item "ALTOOL_AUTH" \
-            -u "${APPLE_ID}" \
-            -p "${APPLE_ID_PASSWORD}"
 
       - name: Build iOS Archive
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
@@ -138,7 +130,10 @@ jobs:
             -archivePath ./build/pulse.xcarchive \
             -exportPath ./build \
             -exportOptionsPlist exportOptions.plist \
-            -allowProvisioningUpdates
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$API_KEY_FILE" \
+            -authenticationKeyID "${API_KEY_ID}" \
+            -authenticationKeyIssuerID "${API_KEY_ISSUER_ID}"
 
       - name: Upload to TestFlight
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
@@ -146,8 +141,8 @@ jobs:
           xcrun altool --upload-app \
             --type ios \
             --file ./build/pulse.ipa \
-            --username "${APPLE_ID}" \
-            --password "${APPLE_ID_PASSWORD}"
+            --apiKey "${API_KEY_ID}" \
+            --apiIssuer "${API_KEY_ISSUER_ID}"
 
       - name: Skip build notification
         if: ${{ inputs.skip_build == true }}
