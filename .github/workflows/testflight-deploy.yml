@@ -138,6 +138,10 @@ jobs:
       - name: Upload to TestFlight
         if: ${{ !inputs.skip_build || inputs.skip_build == false }}
         run: |
+          # Copy API key to expected location for altool
+          mkdir -p ~/.appstoreconnect/private_keys
+          cp "$API_KEY_FILE" ~/.appstoreconnect/private_keys/
+
           xcrun altool --upload-app \
             --type ios \
             --file ./build/pulse.ipa \
