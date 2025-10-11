@@ -62,6 +62,7 @@ export default function ShortsScreen() {
     hasStartedOver,
     isContinuingLastDraft,
     showContinuingIndicator,
+    loadedDuration,
     handleStartOver,
     handleStartNew,
     handleSaveAsDraft,
@@ -69,6 +70,7 @@ export default function ShortsScreen() {
     handleUndoSegment,
     handleRedoSegment,
     updateSegmentsAfterRecording,
+    updateDraftDuration,
   } = useDraftManager(draftId, selectedDuration);
 
   // Camera control states
@@ -145,8 +147,17 @@ export default function ShortsScreen() {
     }
   };
 
+  // Restore loaded duration when draft is loaded
+  React.useEffect(() => {
+    if (loadedDuration !== null && loadedDuration !== selectedDuration) {
+      setSelectedDuration(loadedDuration);
+    }
+  }, [loadedDuration]);
+
   const handleTimeSelect = (timeInSeconds: number) => {
     setSelectedDuration(timeInSeconds);
+    // Immediately update the draft with the new duration
+    updateDraftDuration(timeInSeconds);
   };
 
   const handleFlipCamera = () => {

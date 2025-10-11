@@ -77,11 +77,8 @@ export default function ReorderSegmentsScreen() {
           segments: updatedSegments,
         };
 
-        // Calculate total duration
-        const totalDuration = updatedSegments.reduce(
-          (total, segment) => total + segment.duration,
-          0
-        );
+        // Use the original draft's totalDuration (selected duration limit)
+        const totalDuration = draft.totalDuration;
 
         // Save the updated draft
         await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
