@@ -188,6 +188,15 @@ export default function ShortsScreen() {
     }
   };
 
+  const handleReorderSegments = () => {
+    if (currentDraftId) {
+      router.push({
+        pathname: "/reordersegments",
+        params: { draftId: currentDraftId },
+      });
+    }
+  };
+
   const handleSaveAsDraftWrapper = async (
     segments: RecordingSegment[],
     options?: { forceNew?: boolean }
@@ -381,6 +390,9 @@ export default function ShortsScreen() {
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
+              onReorderSegments={
+                recordingSegments.length > 1 ? handleReorderSegments : undefined
+              }
             />
           )}
 
