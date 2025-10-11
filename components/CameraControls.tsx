@@ -5,6 +5,7 @@ import React from "react";
 import { Platform, StyleSheet, TouchableOpacity, View } from "react-native";
 import VideoStabilizationControl from "./VideoStabilizationControl";
 import { VideoStabilization } from "@/constants/camera";
+import { Fontisto } from "@expo/vector-icons";
 
 interface CameraControlsProps {
   onFlipCamera?: () => void;
@@ -13,6 +14,7 @@ interface CameraControlsProps {
   cameraFacing?: CameraType;
   videoStabilizationMode?: VideoStabilization;
   onVideoStabilizationChange?: (mode: VideoStabilization) => void;
+  onReorderSegments?: () => void;
 }
 
 export default function CameraControls({
@@ -22,6 +24,7 @@ export default function CameraControls({
   cameraFacing = "back",
   videoStabilizationMode = VideoStabilization.off,
   onVideoStabilizationChange,
+  onReorderSegments,
 }: CameraControlsProps) {
   const getTorchIcon = () => {
     return torchEnabled ? (
@@ -57,6 +60,16 @@ export default function CameraControls({
           onStabilizationModeChange={onVideoStabilizationChange}
           compact
         />
+      )}
+
+      {/* Reorder segments button */}
+      {onReorderSegments && (
+        <TouchableOpacity
+          style={styles.controlButton}
+          onPress={onReorderSegments}
+        >
+          <Fontisto name="arrow-swap" size={24} color="white" />
+        </TouchableOpacity>
       )}
     </View>
   );
