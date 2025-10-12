@@ -1,0 +1,66 @@
+# GitHub Pages Configuration for Pulse App Website
+
+# Site settings
+title: "Pulse - Video Recorder"
+description: "Professional video recording made simple. Create stunning segmented videos with intuitive drag-and-drop reordering."
+url: "https://mieweb.github.io"
+baseurl: "/pulse"
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+theme: minima
+
+# Exclude files from processing
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/
+
+# Include files
+include:
+  - _redirects
+
+# Collections
+collections:
+  docs:
+    output: true
+    permalink: /:collection/:name/
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "default"
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"
+
+# Plugins
+plugins:
+  - jekyll-feed
+  - jekyll-sitemap
+  - jekyll-seo-tag
+
+# SEO
+author: "Pulse Team"
+social:
+  name: "Pulse Video Recorder"
+  links:
+    - "https://apps.apple.com/app/pulse-video-recorder/id6748621024"
+
+# Analytics (optional - add your tracking ID)
+# google_analytics: UA-XXXXXXXXX-X
+
+# Comments (optional - add your Disqus shortname)
+# disqus:
+#   shortname: your-disqus-shortname
