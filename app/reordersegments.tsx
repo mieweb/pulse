@@ -118,12 +118,14 @@ export default function ReorderSegmentsScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <SegmentReorderListVertical
-        segments={segments}
-        onSegmentsReorder={handleSegmentsReorder}
-        onSave={handleSave}
-        onCancel={handleCancel}
-      />
+      <View style={styles.contentContainer}>
+        <SegmentReorderListVertical
+          segments={segments}
+          onSegmentsReorder={handleSegmentsReorder}
+          onSave={handleSave}
+          onCancel={handleCancel}
+        />
+      </View>
     </View>
   );
 }
@@ -132,6 +134,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#000",
+  },
+  contentContainer: {
+    flex: 1,
+    width: "100%",
   },
   loadingContainer: {
     justifyContent: "center",

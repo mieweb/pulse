@@ -2,42 +2,10 @@ import { ThemedText } from "@/components/ThemedText";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
 import { MaterialIcons } from "@expo/vector-icons";
 import React, { useState, useCallback, useEffect } from "react";
-import {
-  StyleSheet,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  Dimensions,
-  Image,
-} from "react-native";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  runOnJS,
-} from "react-native-reanimated";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { StyleSheet, View, TouchableOpacity, Image } from "react-native";
+import Sortable from "react-native-sortables";
 
-const { width: screenWidth } = Dimensions.get("window");
-const ITEM_HEIGHT = 80;
 const THUMBNAIL_SIZE = 60;
-
-function DropIndicator({
-  index,
-  isVisible,
-  totalSegments,
-}: DropIndicatorProps) {
-  if (!isVisible) return null;
-
-  // Clamp the index to valid range
-  const clampedIndex = Math.max(0, Math.min(index, totalSegments - 1));
-
-  return (
-    <View
-      style={[styles.dropIndicator, { top: clampedIndex * (ITEM_HEIGHT + 8) }]}
-    />
-  );
-}
 
 interface Segment {
   id: string;
@@ -52,43 +20,14 @@ interface SegmentReorderListVerticalProps {
   onCancel: () => void;
 }
 
-interface DropIndicatorProps {
-  index: number;
-  isVisible: boolean;
-  totalSegments: number;
-}
-
 interface SegmentItemProps {
-  segment: Segment;
+  item: Segment;
   index: number;
-  totalSegments: number;
-  onDragStart: (index: number) => void;
-  onDragEnd: (fromIndex: number, toIndex: number) => void;
-  onDragUpdate: (fromIndex: number, toIndex: number) => void;
-  isDragging: boolean;
-  draggedIndex: number | null;
 }
 
-function SegmentItem({
-  segment,
-  index,
-  totalSegments,
-  onDragStart,
-  onDragEnd,
-  onDragUpdate,
-  isDragging,
-  draggedIndex,
-}: SegmentItemProps) {
+function SegmentItem({ item: segment, index }: SegmentItemProps) {
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-
-  // Animation values
-  const translateY = useSharedValue(0);
-  const scale = useSharedValue(1);
-  const zIndex = useSharedValue(0);
-
-  const isBeingDragged = draggedIndex === index;
-  const isDragTarget = isDragging && !isBeingDragged;
 
   // Generate thumbnail on mount
   useEffect(() => {
@@ -110,52 +49,6 @@ function SegmentItem({
     loadThumbnail();
   }, [segment.uri]);
 
-  // Gesture handler for drag and drop
-  const panGesture = Gesture.Pan()
-    .onStart(() => {
-      zIndex.value = 100;
-      scale.value = 1.02;
-      runOnJS(onDragStart)(index);
-    })
-    .onUpdate((event) => {
-      translateY.value = event.translationY;
-
-      // Calculate drop target based on absolute position relative to other segments
-      const currentPosition = index * (ITEM_HEIGHT + 8) + event.translationY;
-      const targetIndex = Math.round(currentPosition / (ITEM_HEIGHT + 8));
-      const clampedIndex = Math.max(
-        0,
-        Math.min(targetIndex, totalSegments - 1)
-      );
-      runOnJS(onDragUpdate)(index, clampedIndex);
-    })
-    .onEnd(() => {
-      // Calculate drop target based on absolute position relative to other segments
-      const currentPosition = index * (ITEM_HEIGHT + 8) + translateY.value;
-      const targetIndex = Math.round(currentPosition / (ITEM_HEIGHT + 8));
-      const clampedIndex = Math.max(
-        0,
-        Math.min(targetIndex, totalSegments - 1)
-      );
-
-      // Reset position with minimal animation
-      translateY.value = 0;
-      scale.value = 1;
-      zIndex.value = 0;
-
-      runOnJS(onDragEnd)(index, clampedIndex);
-    });
-
-  // Animated styles
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }, { scale: scale.value }],
-    zIndex: zIndex.value,
-  }));
-
-  const containerStyle = useAnimatedStyle(() => ({
-    opacity: isDragTarget ? 0.7 : 1,
-  }));
-
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -163,41 +56,37 @@ function SegmentItem({
   };
 
   return (
-    <Animated.View style={[styles.itemContainer, containerStyle]}>
-      <GestureDetector gesture={panGesture}>
-        <Animated.View style={[styles.segmentItem, animatedStyle]}>
-          {/* Thumbnail */}
-          <View style={styles.thumbnailContainer}>
-            {isLoading ? (
-              <View style={styles.loadingThumbnail}>
-                <MaterialIcons name="video-library" size={24} color="#666" />
-              </View>
-            ) : thumbnailUri ? (
-              <Image source={{ uri: thumbnailUri }} style={styles.thumbnail} />
-            ) : (
-              <View style={styles.errorThumbnail}>
-                <MaterialIcons name="error" size={24} color="#666" />
-              </View>
-            )}
+    <View style={styles.segmentItem}>
+      {/* Thumbnail */}
+      <View style={styles.thumbnailContainer}>
+        {isLoading ? (
+          <View style={styles.loadingThumbnail}>
+            <MaterialIcons name="video-library" size={24} color="#666" />
           </View>
+        ) : thumbnailUri ? (
+          <Image source={{ uri: thumbnailUri }} style={styles.thumbnail} />
+        ) : (
+          <View style={styles.errorThumbnail}>
+            <MaterialIcons name="error" size={24} color="#666" />
+          </View>
+        )}
+      </View>
 
-          {/* Segment info */}
-          <View style={styles.segmentInfo}>
-            <ThemedText style={styles.segmentNumber}>
-              Segment {index + 1}
-            </ThemedText>
-            <ThemedText style={styles.segmentDuration}>
-              {formatDuration(segment.duration)}
-            </ThemedText>
-          </View>
+      {/* Segment info */}
+      <View style={styles.segmentInfo}>
+        <ThemedText style={styles.segmentNumber}>
+          Segment {index + 1}
+        </ThemedText>
+        <ThemedText style={styles.segmentDuration}>
+          {formatDuration(segment.duration)}
+        </ThemedText>
+      </View>
 
-          {/* Reorder indicator */}
-          <View style={styles.reorderIndicator}>
-            <MaterialIcons name="reorder" size={20} color="#999" />
-          </View>
-        </Animated.View>
-      </GestureDetector>
-    </Animated.View>
+      {/* Reorder indicator */}
+      <View style={styles.reorderIndicator}>
+        <MaterialIcons name="reorder" size={20} color="#999" />
+      </View>
+    </View>
   );
 }
 
@@ -209,60 +98,23 @@ export default function SegmentReorderListVertical({
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
-  const [isDragging, setIsDragging] = useState(false);
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [dropIndicatorIndex, setDropIndicatorIndex] = useState<number | null>(
-    null
-  );
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Animation for save button
-  const saveButtonScale = useSharedValue(1);
-
-  const handleDragStart = useCallback((index: number) => {
-    setIsDragging(true);
-    setDraggedIndex(index);
-    setDropIndicatorIndex(index);
-  }, []);
-
-  const handleDragUpdate = useCallback((fromIndex: number, toIndex: number) => {
-    setDropIndicatorIndex(toIndex);
-  }, []);
-
-  const handleDragEnd = useCallback(
-    (fromIndex: number, toIndex: number) => {
-      setIsDragging(false);
-      setDraggedIndex(null);
-      setDropIndicatorIndex(null);
-
-      if (fromIndex !== toIndex && toIndex < reorderedSegments.length) {
-        const newSegments = [...reorderedSegments];
-        const [movedSegment] = newSegments.splice(fromIndex, 1);
-        newSegments.splice(toIndex, 0, movedSegment);
-
-        setReorderedSegments(newSegments);
-        setHasChanges(true);
-        onSegmentsReorder(newSegments);
-      }
+  const handleOrderChange = useCallback(
+    (newOrder: Segment[]) => {
+      setReorderedSegments(newOrder);
+      setHasChanges(true);
+      onSegmentsReorder(newOrder);
     },
-    [reorderedSegments, onSegmentsReorder]
+    [onSegmentsReorder]
   );
 
   const handleSave = useCallback(() => {
     if (hasChanges) {
-      saveButtonScale.value = 0.98;
-      setTimeout(() => {
-        saveButtonScale.value = 1;
-      }, 100);
-
       onSave(reorderedSegments);
       setHasChanges(false);
     }
-  }, [hasChanges, reorderedSegments, onSave, saveButtonScale]);
-
-  const animatedSaveButtonStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: saveButtonScale.value }],
-  }));
+  }, [hasChanges, reorderedSegments, onSave]);
 
   const totalDuration = reorderedSegments.reduce(
     (total, segment) => total + segment.duration,
@@ -289,44 +141,33 @@ export default function SegmentReorderListVertical({
             {reorderedSegments.length} segments •{" "}
             {formatTotalDuration(totalDuration)}
           </ThemedText>
+          <View style={styles.infoTag}>
+            <MaterialIcons name="info" size={14} color="#ff0000" />
+            <ThemedText style={styles.infoTagText}>Hold to drag</ThemedText>
+          </View>
         </View>
 
         {/* Invisible spacer to balance the close button */}
         <View style={styles.headerSpacer} />
       </View>
 
-      {/* Segments List */}
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.segmentsContainer}>
-          {reorderedSegments.map((segment, index) => (
-            <SegmentItem
-              key={segment.id}
-              segment={segment}
-              index={index}
-              totalSegments={reorderedSegments.length}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-              onDragUpdate={handleDragUpdate}
-              isDragging={isDragging}
-              draggedIndex={draggedIndex}
-            />
-          ))}
-          <DropIndicator
-            index={dropIndicatorIndex || 0}
-            isVisible={isDragging && dropIndicatorIndex !== null}
-            totalSegments={reorderedSegments.length}
-          />
-        </View>
-      </ScrollView>
+      {/* Sortable List */}
+      <View style={styles.sortableContainer}>
+        <Sortable.Grid
+          data={reorderedSegments}
+          renderItem={({ item, index }) => (
+            <SegmentItem item={item} index={index} />
+          )}
+          columns={1}
+          rowGap={8}
+          onDragEnd={({ data }) => {
+            handleOrderChange(data);
+          }}
+        />
+      </View>
 
       {/* Save Button */}
-      <Animated.View
-        style={[styles.saveButtonContainer, animatedSaveButtonStyle]}
-      >
+      <View style={styles.saveButtonContainer}>
         <TouchableOpacity
           style={[styles.saveButton, !hasChanges && styles.disabledSaveButton]}
           onPress={handleSave}
@@ -347,7 +188,7 @@ export default function SegmentReorderListVertical({
             {hasChanges ? "Save New Order" : "No Changes"}
           </ThemedText>
         </TouchableOpacity>
-      </Animated.View>
+      </View>
     </View>
   );
 }
@@ -394,26 +235,26 @@ const styles = StyleSheet.create({
     fontFamily: "Roboto-Regular",
     marginTop: 2,
   },
-  scrollView: {
+  infoTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 0, 0, 0.1)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 8,
+    alignSelf: "center",
+  },
+  infoTagText: {
+    color: "#ff0000",
+    fontSize: 12,
+    fontFamily: "Roboto-Regular",
+    marginLeft: 4,
+  },
+  sortableContainer: {
     flex: 1,
-  },
-  scrollContent: {
     padding: 20,
-  },
-  segmentsContainer: {
-    position: "relative",
-  },
-  dropIndicator: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    height: 2,
-    backgroundColor: "#ff0000",
-    borderRadius: 1,
-    zIndex: 1000,
-  },
-  itemContainer: {
-    marginBottom: 8,
+    width: "100%",
   },
   segmentItem: {
     flexDirection: "row",
@@ -423,6 +264,8 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.1)",
+    width: "100%",
+    minHeight: 80,
   },
   thumbnailContainer: {
     marginRight: 12,
