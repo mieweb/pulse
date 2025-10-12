@@ -155,6 +155,23 @@ export default function ShortsScreen() {
   }, [loadedDuration]);
 
   const handleTimeSelect = (timeInSeconds: number) => {
+    // Check if current segments exceed the new duration limit
+    const currentTotalDuration = recordingSegments.reduce(
+      (total, seg) => total + seg.duration,
+      0
+    );
+
+    if (currentTotalDuration > timeInSeconds) {
+      Alert.alert(
+        "Duration Too Low",
+        `Current segments (${Math.round(
+          currentTotalDuration
+        )}s) exceed ${timeInSeconds}s limit. Undo segments first.`,
+        [{ text: "OK", style: "default" }]
+      );
+      return;
+    }
+
     setSelectedDuration(timeInSeconds);
     // Immediately update the draft with the new duration
     updateDraftDuration(timeInSeconds);
@@ -322,6 +339,27 @@ export default function ShortsScreen() {
           }
         ).catch(() => null);
 
+        // Check if adding this video would exceed the total duration limit
+        const currentTotalDuration = recordingSegments.reduce(
+          (total, seg) => total + seg.duration,
+          0
+        );
+        const newTotalDuration = currentTotalDuration + actualDuration;
+
+        if (newTotalDuration > selectedDuration) {
+          const remainingTime = selectedDuration - currentTotalDuration;
+          Alert.alert(
+            "Video Too Long",
+            `Video (${Math.round(
+              actualDuration
+            )}s) exceeds ${selectedDuration}s limit. Remaining: ${Math.round(
+              remainingTime
+            )}s`,
+            [{ text: "OK" }]
+          );
+          return;
+        }
+
         // Create a recording segment from the selected video
         const segment: RecordingSegment = {
           id: Date.now().toString(),
@@ -470,7 +508,7 @@ export default function ShortsScreen() {
 
           <RecordButton
             cameraRef={cameraRef}
-            maxDuration={60}
+            maxDuration={180}
             totalDuration={selectedDuration}
             usedDuration={totalUsedDuration}
             holdDelay={300}

@@ -64,11 +64,13 @@ export default function UploadScreen() {
     hasStartedOver,
     isContinuingLastDraft: _isContinuingLastDraft, // eslint-disable-line @typescript-eslint/no-unused-vars
     showContinuingIndicator,
+    loadedDuration,
     handleStartOver,
     handleClose,
     handleUndoSegment,
     handleRedoSegment,
     updateSegmentsAfterRecording,
+    updateDraftDuration,
   } = useDraftManager(draftId, selectedDuration, "upload");
 
   // Camera control states
@@ -102,6 +104,13 @@ export default function UploadScreen() {
     (total, segment) => total + segment.duration,
     0
   );
+
+  // Auto-load the selected duration from the draft
+  React.useEffect(() => {
+    if (loadedDuration !== null && loadedDuration !== selectedDuration) {
+      setSelectedDuration(loadedDuration);
+    }
+  }, [loadedDuration]);
 
   const handleRecordingStart = (
     mode: "tap" | "hold",
@@ -146,7 +155,26 @@ export default function UploadScreen() {
   };
 
   const handleTimeSelect = (timeInSeconds: number) => {
+    // Check if current segments exceed the new duration limit
+    const currentTotalDuration = recordingSegments.reduce(
+      (total, seg) => total + seg.duration,
+      0
+    );
+
+    if (currentTotalDuration > timeInSeconds) {
+      Alert.alert(
+        "Duration Limit Too Low",
+        `Your current segments (${Math.round(
+          currentTotalDuration
+        )}s) exceed the new duration limit of ${timeInSeconds}s.\n\nPlease undo some segments first to reduce the total duration.`,
+        [{ text: "OK", style: "default" }]
+      );
+      return;
+    }
+
     setSelectedDuration(timeInSeconds);
+    // Immediately update the draft with the new duration
+    updateDraftDuration(timeInSeconds);
   };
 
   const handleFlipCamera = () => {
@@ -183,6 +211,15 @@ export default function UploadScreen() {
     if (currentDraftId && recordingSegments.length > 0) {
       router.push({
         pathname: "/preview",
+        params: { draftId: currentDraftId },
+      });
+    }
+  };
+
+  const handleReorderSegments = () => {
+    if (currentDraftId && recordingSegments.length > 1) {
+      router.push({
+        pathname: "/reordersegments",
         params: { draftId: currentDraftId },
       });
     }
@@ -376,6 +413,9 @@ export default function UploadScreen() {
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
+              onReorderSegments={
+                recordingSegments.length > 1 ? handleReorderSegments : undefined
+              }
             />
           )}
 
@@ -439,7 +479,7 @@ export default function UploadScreen() {
 
           <RecordButton
             cameraRef={cameraRef}
-            maxDuration={60}
+            maxDuration={180}
             totalDuration={selectedDuration}
             usedDuration={totalUsedDuration}
             holdDelay={300}

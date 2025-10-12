@@ -27,7 +27,7 @@ interface RecordButtonProps {
 
 export default function RecordButton({
   cameraRef,
-  maxDuration = 60,
+  maxDuration = 180,
   onRecordingStart,
   onRecordingComplete,
   onRecordingProgress,

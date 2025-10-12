@@ -13,9 +13,3 @@ export interface VideoConcatModuleEvents {
 export type ChangeEventPayload = {
   value: string;
 };
-
-// Props supported by the native/web view component
-export type VideoConcatViewProps = {
-  url: string;
-  onLoad: (event: { nativeEvent: { url: string } }) => void;
-};

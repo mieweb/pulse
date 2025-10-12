@@ -1,5 +1,5 @@
 import { ThemedText } from "@/components/ThemedText";
-import SegmentReorderList from "@/components/SegmentReorderList";
+import SegmentReorderListVertical from "@/components/SegmentReorderListVertical";
 import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import { router, useLocalSearchParams } from "expo-router";
@@ -118,7 +118,7 @@ export default function ReorderSegmentsScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <SegmentReorderList
+      <SegmentReorderListVertical
         segments={segments}
         onSegmentsReorder={handleSegmentsReorder}
         onSave={handleSave}
