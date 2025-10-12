@@ -1,6 +1,6 @@
 # Pulse
 
-> Secure institutional knowledge sharing through short-form video content
+> **Secure Institutional Knowledge Sharing Through Short-Form Video Content**
 
 <div align="center">
   <img alt="Pulse Logo" height="200" src="./assets/images/pulse-logo.png" />
@@ -12,18 +12,86 @@
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8.3-blue.svg?style=flat&logo=typescript)](https://www.typescriptlang.org/)
   [![AVFoundation](https://img.shields.io/badge/AVFoundation-Hardware%20Accelerated-green.svg?style=flat&logo=apple)](https://developer.apple.com/av-foundation/)
   [![Media3](https://img.shields.io/badge/Media3-Android%20Video-orange.svg?style=flat&logo=android)](https://developer.android.com/guide/topics/media/media3)
+  [![Institutional](https://img.shields.io/badge/Institutional-Knowledge%20Sharing-purple.svg?style=flat&logo=graduation-cap)](https://github.com/mieweb/pulse)
 </div>
 
-A React Native app for creating and sharing short-form video content with segmented recording, native video processing, and secure institutional knowledge sharing capabilities.
+**Pulse** is a React Native application designed specifically for **institutional knowledge sharing** and **training documentation**. Built for organizations that need to capture, organize, and share institutional knowledge through short-form video content with enterprise-grade security and professional editing capabilities.
 
-## Features
+## 🎯 Purpose & Vision
 
-- **Segmented Recording** - Record multiple clips that combine seamlessly
-- **Time Selection** - Choose from 15s, 30s, 1m, or 3m recording durations
-- **Native Video Processing** - Hardware-accelerated video concatenation with AVFoundation
-- **Deep Linking** - Custom `pulsecam://` URL scheme for direct app access
-- **Cross-Platform** - React Native with Expo for iOS and Android
-- **Real-Time Progress** - Live progress tracking and auto-save functionality
+Pulse addresses the critical need for modern institutional knowledge management by providing:
+
+- **Secure Video Documentation**: Capture institutional procedures, training materials, and knowledge transfer sessions
+- **Professional Content Creation**: Advanced editing tools for creating polished institutional content
+- **Cross-Platform Accessibility**: Works seamlessly across iOS and Android devices
+- **Local-First Security**: All content remains on-device until explicitly shared through secure channels
+
+### Institutional Use Cases
+
+- **Training Documentation**: Create step-by-step training videos for new employees
+- **Process Documentation**: Record institutional procedures and workflows
+- **Knowledge Transfer**: Capture expert knowledge before staff transitions
+- **Compliance Training**: Develop engaging compliance and safety training materials
+- **Institutional Memory**: Preserve institutional knowledge and best practices
+
+## 🚀 Key Features
+
+### Professional Recording & Editing
+
+- **Segmented Recording** - Record multiple clips that combine seamlessly for comprehensive training content
+- **Time Selection** - Choose from 15s, 30s, 1m, or 3m recording durations perfect for different training scenarios
+- **Native Video Processing** - Hardware-accelerated video concatenation with AVFoundation for professional quality
+- **Drag & Drop Reordering** - Intuitive visual reordering with real-time drop indicators for content organization
+- **Undo/Redo System** - Full editing control with persistent storage across app sessions
+
+### Institutional Security & Workflow
+
+- **Local-First Storage** - All content remains secure on your device until explicitly shared
+- **Deep Linking** - Custom `pulsecam://` URL scheme for direct app access and institutional integration
+- **Draft Management** - Auto-save your work and continue later with intelligent draft system
+- **Cross-Platform** - React Native with Expo for iOS and Android ensuring organization-wide compatibility
+- **Real-Time Progress** - Live progress tracking and auto-save functionality for uninterrupted workflow
+
+### Professional Controls
+
+- **Camera Controls** - Flash, camera flip, zoom, and stabilization for professional-quality recordings
+- **Video Library Integration** - Import existing videos from your gallery and mix with new recordings
+- **Smart Duration Management** - Set recording limits and prevent content from exceeding institutional guidelines
+- **Hardware Acceleration** - Native video processing for optimal performance on all devices
+
+## 📚 Research Context
+
+Pulse is developed as part of ongoing research into **institutional knowledge management** and **video-based documentation systems**. The project explores:
+
+- **Business Value Assessment**: How video documentation impacts ticket resolution time, knowledge adoption, and collaboration efficiency
+- **Technical Scalability**: Challenges in scaling secure video capture, editing, and delivery for organizational use
+- **User Adoption Studies**: Factors influencing adoption of video-first knowledge-sharing platforms in institutional settings
+
+### Research Objectives
+
+1. **Evaluate Business Value**: Compare organizational outcomes between traditional documentation and video-first approaches
+2. **Design & Develop Platform**: Implement secure cross-platform mobile app with scalable backend pipeline
+3. **Assess Adoption & Usability**: Conduct user studies to analyze usability, knowledge retention, and satisfaction
+
+## 🏢 Institutional Deployment
+
+### For Organizations
+
+Pulse is designed for institutional deployment with the following considerations:
+
+- **Security-First Design**: All content remains on-device until explicitly shared through secure channels
+- **Compliance Ready**: Built with institutional data policies and compliance requirements in mind
+- **Scalable Architecture**: Designed to integrate with existing institutional infrastructure
+- **Cross-Platform Support**: Ensures all team members can participate regardless of device
+
+### Future Backend Integration
+
+Planned features for institutional deployment:
+
+- **Cloudflare Stream Integration**: Secure video hosting and adaptive streaming
+- **Institutional Authentication**: Integration with existing organizational identity systems
+- **Content Management**: Centralized content library with access controls
+- **Analytics Dashboard**: Usage analytics and content effectiveness metrics
 
 ## Installation
 
@@ -133,11 +201,13 @@ This project includes automated CodeQL security analysis for Swift/iOS code. The
 If you need to update the workspace name or scheme used by CodeQL:
 
 1. **Workspace Changes**: If you rename the Xcode workspace file, update the `-workspace` parameter in `.github/workflows/codeql.yml`:
+
    ```bash
    -workspace YourNewWorkspace.xcworkspace \
    ```
 
 2. **Scheme Changes**: If you rename the app scheme, update the `-scheme` parameter in `.github/workflows/codeql.yml`:
+
    ```bash
    -scheme YourNewScheme \
    ```
@@ -145,6 +215,7 @@ If you need to update the workspace name or scheme used by CodeQL:
 3. **Target Changes**: If you add new Swift files or targets, ensure they are included in the main app scheme for CodeQL analysis.
 
 The CodeQL analysis requires:
+
 - CocoaPods dependencies installed (`pod install`)
 - Code signing disabled (`CODE_SIGNING_ALLOWED=NO`)
 - Metro bundler skipped (`RCT_NO_LAUNCH_PACKAGER=1`, `SKIP_BUNDLING=1`)
@@ -188,9 +259,25 @@ eas build --platform android --profile production
 
 ## Acknowledgments
 
-Special thanks to [**Medical Informatics Engineering, Inc.**](https://github.com/mieweb) and [**Doug Horner**](https://github.com/horner) for supporting this project. Doug's passion for short-form content and knowledge sharing directly inspired the development of secure institutional video capabilities that make complex information accessible and engaging.
+### Development Team
 
-**Core Developer:** [Priyam](https://github.com/morepriyam)
+- **Primary Developer**: [Priyam More](https://github.com/morepriyam) - Research and development of institutional knowledge sharing platform
+- **Institutional Partner**: [**Medical Informatics Engineering, Inc.**](https://github.com/mieweb) - Providing research context and institutional requirements
+- **Research Advisor**: [**Doug Horner**](https://github.com/horner) - Guidance on institutional knowledge management and video-based documentation systems
+
+### Technology Stack
+
+- Built with [React Native](https://reactnative.dev/) and [Expo](https://expo.dev/) for cross-platform institutional deployment
+- Video processing powered by native AVFoundation (iOS) and Media3 (Android) for professional quality
+- Icons by [Expo Symbols](https://expo.dev/guides/using-symbols/) for consistent institutional branding
+
+### Research & Development
+
+This project is part of ongoing research into institutional knowledge management and video-based documentation systems. Special thanks to the institutional partners and research participants who have contributed to the development and validation of this platform.
+
+### Future Collaborations
+
+We welcome partnerships with institutions interested in implementing video-based knowledge sharing systems. Contact us to discuss collaboration opportunities and institutional deployment strategies.
 
 ## License
 
@@ -199,5 +286,5 @@ Special thanks to [**Medical Informatics Engineering, Inc.**](https://github.com
 ---
 
 <div align="center">
-Made with ❤️ for content creators everywhere
+Made with ❤️ for institutional knowledge sharing and professional training
 </div>

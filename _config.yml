@@ -1,8 +1,8 @@
 # GitHub Pages Configuration for Pulse App Website
 
 # Site settings
-title: "Pulse - Video Recorder"
-description: "Professional video recording made simple. Create stunning segmented videos with intuitive drag-and-drop reordering."
+title: "Pulse - Institutional Knowledge Sharing Platform"
+description: "Secure institutional knowledge sharing through short-form video content. Create professional training documentation, capture institutional procedures, and share knowledge across your organization with enterprise-grade security."
 url: "https://mieweb.github.io"
 baseurl: "/pulse"
 
@@ -52,11 +52,12 @@ plugins:
   - jekyll-seo-tag
 
 # SEO
-author: "Pulse Team"
+author: "Pulse Institutional Knowledge Sharing Team"
 social:
-  name: "Pulse Video Recorder"
+  name: "Pulse - Institutional Knowledge Sharing Platform"
   links:
     - "https://apps.apple.com/app/pulse-video-recorder/id6748621024"
+    - "https://github.com/mieweb/pulse"
 
 # Analytics (optional - add your tracking ID)
 # google_analytics: UA-XXXXXXXXX-X
