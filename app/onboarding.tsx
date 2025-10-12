@@ -49,27 +49,35 @@ export default function OnboardingScreen() {
             Welcome to Pulse
           </ThemedText>
           <ThemedText style={styles.welcomeSubtext}>
-            Create and share short videos with ease
+            Secure institutional knowledge sharing through video
           </ThemedText>
         </ThemedView>
         <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Smart Recording</ThemedText>
+          <ThemedText type="subtitle">Hold to Record</ThemedText>
           <ThemedText>
-            Hold to record 60s - 3min shorts with segmented recording and camera
-            controls.
+            Hold the record button to capture segments with tap or hold
+            gestures. Set duration limits from 15s to 3 minutes.
           </ThemedText>
         </ThemedView>
         <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Professional Tools</ThemedText>
+          <ThemedText type="subtitle">Drag & Drop Reordering</ThemedText>
           <ThemedText>
-            Access camera controls, focus, and effects to create polished
-            content.
+            Reorder your video segments with intuitive drag & drop interface and
+            visual drop indicators for perfect content flow.
           </ThemedText>
         </ThemedView>
         <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Seamless Sharing</ThemedText>
+          <ThemedText type="subtitle">Hardware Accelerated Merge</ThemedText>
           <ThemedText>
-            Share your videos securely with adaptive playback for all devices.
+            Lightning-fast video processing with native AVFoundation and Media3
+            for professional-quality merged videos.
+          </ThemedText>
+        </ThemedView>
+        <ThemedView style={styles.stepContainer}>
+          <ThemedText type="subtitle">Smart Draft System</ThemedText>
+          <ThemedText>
+            Auto-save your work with intelligent draft management. Undo/redo
+            functionality with persistent storage across sessions.
           </ThemedText>
         </ThemedView>
       </ThemedView>
