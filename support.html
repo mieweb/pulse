@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Support - Pulse Video Recorder</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f8f9fa;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 60px 0;
+            margin-bottom: 40px;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        
+        .content {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        
+        .content h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.8rem;
+        }
+        
+        .content h3 {
+            color: #555;
+            margin: 25px 0 15px 0;
+            font-size: 1.3rem;
+        }
+        
+        .content p {
+            margin-bottom: 15px;
+            color: #666;
+        }
+        
+        .content ul {
+            margin: 15px 0 15px 20px;
+            color: #666;
+        }
+        
+        .content li {
+            margin-bottom: 8px;
+        }
+        
+        .faq-item {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .faq-question {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .faq-answer {
+            color: #666;
+        }
+        
+        .contact-section {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .contact-section h2 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        .contact-section p {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        
+        .contact-button {
+            display: inline-block;
+            background: #ff6b6b;
+            color: white;
+            padding: 12px 25px;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: 600;
+            transition: transform 0.3s ease;
+        }
+        
+        .contact-button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 30px 0;
+            color: #666;
+        }
+        
+        .footer a {
+            color: #ff6b6b;
+            text-decoration: none;
+            margin: 0 15px;
+        }
+        
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>Support</h1>
+            <p>Get help with Pulse Video Recorder</p>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="content">
+            <h2>Getting Started</h2>
+            <p>Welcome to Pulse! Here's how to get the most out of your video recording experience:</p>
+            
+            <h3>Basic Recording</h3>
+            <ul>
+                <li><strong>Tap to Record:</strong> Tap the record button for quick clips</li>
+                <li><strong>Hold to Record:</strong> Hold the button for longer recordings</li>
+                <li><strong>Drag to Zoom:</strong> While holding, drag up/down to zoom in/out</li>
+                <li><strong>Pinch to Zoom:</strong> Use pinch gestures to zoom the camera</li>
+            </ul>
+            
+            <h3>Segment Management</h3>
+            <ul>
+                <li><strong>View Segments:</strong> See all your recorded segments in the progress bar</li>
+                <li><strong>Undo/Redo:</strong> Use the undo/redo buttons to manage your segments</li>
+                <li><strong>Reorder:</strong> Tap the reorder button (when you have 2+ segments) to rearrange</li>
+                <li><strong>Drag & Drop:</strong> In reorder mode, drag segments to new positions</li>
+            </ul>
+            
+            <h3>Duration Settings</h3>
+            <ul>
+                <li><strong>Set Duration:</strong> Use the time selector to set recording limits (15s to 3min)</li>
+                <li><strong>Auto-Save:</strong> Your duration preference is automatically saved</li>
+                <li><strong>Validation:</strong> App prevents setting duration lower than current segments</li>
+            </ul>
+        </div>
+        
+        <div class="content">
+            <h2>Frequently Asked Questions</h2>
+            
+            <div class="faq-item">
+                <div class="faq-question">How do I reorder my video segments?</div>
+                <div class="faq-answer">Record 2 or more segments, then tap the reorder button (6-dot icon) in the camera controls. Drag any segment to a new position and watch the red line show where it will be placed.</div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">Can I import videos from my photo library?</div>
+                <div class="faq-answer">Yes! Tap the "+" button in the camera interface to import videos from your photo library. They'll be added as segments that you can reorder with your recorded clips.</div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">How do I set a recording duration limit?</div>
+                <div class="faq-answer">Use the time selector button (clock icon) to choose from 15 seconds to 3 minutes. The app will prevent you from recording beyond this limit.</div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">Where are my videos saved?</div>
+                <div class="faq-answer">All videos are saved locally on your device. You can access them through the preview screen and share them using your device's sharing options.</div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">Can I continue recording later?</div>
+                <div class="faq-answer">Yes! Your recordings are automatically saved as drafts. You can close the app and return later to continue recording more segments.</div>
+            </div>
+            
+            <div class="faq-item">
+                <div class="faq-question">How do I use camera controls?</div>
+                <div class="faq-answer">Tap the camera controls button to access flash, camera flip, and video stabilization options. These controls are only available when not recording.</div>
+            </div>
+        </div>
+        
+        <div class="content">
+            <h2>Troubleshooting</h2>
+            
+            <h3>Camera Issues</h3>
+            <ul>
+                <li><strong>Camera not working:</strong> Check that you've granted camera permissions in Settings > Privacy & Security > Camera</li>
+                <li><strong>Poor video quality:</strong> Ensure good lighting and clean camera lens</li>
+                <li><strong>Audio issues:</strong> Check microphone permissions in Settings > Privacy & Security > Microphone</li>
+            </ul>
+            
+            <h3>Performance Issues</h3>
+            <ul>
+                <li><strong>App running slowly:</strong> Close other apps and restart Pulse</li>
+                <li><strong>Storage issues:</strong> Free up space on your device by deleting unused apps or photos</li>
+                <li><strong>Recording stops unexpectedly:</strong> Check available storage space and battery level</li>
+            </ul>
+            
+            <h3>Feature Issues</h3>
+            <ul>
+                <li><strong>Reorder not working:</strong> Make sure you have at least 2 segments recorded</li>
+                <li><strong>Duration limit not working:</strong> Check that you've selected a duration using the time selector</li>
+                <li><strong>Import not working:</strong> Grant photo library permissions in Settings > Privacy & Security > Photos</li>
+            </ul>
+        </div>
+        
+        <div class="contact-section">
+            <h2>Still Need Help?</h2>
+            <p>If you can't find the answer you're looking for, we're here to help!</p>
+            <a href="mailto:priyamrmore@gmail.com" class="contact-button">Contact Support</a>
+        </div>
+    </div>
+    
+    <div class="footer">
+        <div class="container">
+            <a href="index.html">Home</a>
+            <a href="privacy.html">Privacy Policy</a>
+            <a href="mailto:priyamrmore@gmail.com">Contact</a>
+        </div>
+    </div>
+</body>
+</html>
