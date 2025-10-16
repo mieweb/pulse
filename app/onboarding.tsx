@@ -55,29 +55,21 @@ export default function OnboardingScreen() {
         <ThemedView style={styles.stepContainer}>
           <ThemedText type="subtitle">Hold to Record</ThemedText>
           <ThemedText>
-            Hold the record button to capture segments with tap or hold
-            gestures. Set duration limits from 15s to 3 minutes.
+            Hold the record button to capture video segments. Set duration
+            limits from 15s to 3 minutes.
           </ThemedText>
         </ThemedView>
         <ThemedView style={styles.stepContainer}>
           <ThemedText type="subtitle">Drag & Drop Reordering</ThemedText>
           <ThemedText>
-            Reorder your video segments with intuitive drag & drop interface and
-            visual drop indicators for perfect content flow.
-          </ThemedText>
-        </ThemedView>
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Hardware Accelerated Merge</ThemedText>
-          <ThemedText>
-            Lightning-fast video processing with native AVFoundation and Media3
-            for professional-quality merged videos.
+            Reorder your video segments with intuitive drag & drop interface for
+            perfect content flow.
           </ThemedText>
         </ThemedView>
         <ThemedView style={styles.stepContainer}>
           <ThemedText type="subtitle">Smart Draft System</ThemedText>
           <ThemedText>
-            Auto-save your work with intelligent draft management. Undo/redo
-            functionality with persistent storage across sessions.
+            Auto-save your work with intelligent draft management.
           </ThemedText>
         </ThemedView>
       </ThemedView>
@@ -125,10 +117,10 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+    gap: 4,
+    marginBottom: 4,
     paddingHorizontal: 24,
-    padding: 16,
+    padding: 10,
     borderRadius: 12,
     marginHorizontal: 16,
   },
