@@ -1,3 +1,4 @@
 [submodule "video-consumer"]
 	path = video-consumer
 	url = https://github.com/morepriyam/pulse-video-consumer.git
+	branch = main
