@@ -3,6 +3,7 @@ import { DraftMode, DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useRef, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 
 const REDO_STACK_KEY = "redo_stack";
 
@@ -30,28 +31,33 @@ interface DraftManagerActions {
   handleClose: () => Promise<void>;
   handleUndoSegment: (selectedDuration: number) => Promise<void>;
   handleRedoSegment: (selectedDuration: number) => Promise<void>;
-  updateSegmentsAfterRecording: (newSegment: RecordingSegment, selectedDuration: number) => Promise<void>;
+  updateSegmentsAfterRecording: (
+    newSegment: RecordingSegment,
+    selectedDuration: number
+  ) => Promise<void>;
   updateDraftDuration: (newDuration: number) => Promise<void>;
 }
 
 /**
  * Custom hook for managing draft recording state and operations.
- * 
+ *
  * Handles:
  * - Auto-loading last modified draft on mount
  * - Auto-saving segments as they're recorded
  * - Undo/redo stack with persistence
  * - Draft lifecycle (save, delete, start over)
- * 
+ *
  * @param draftId - Optional specific draft to load
  * @param selectedDuration - Total recording duration limit
  */
 export function useDraftManager(
   draftId?: string,
   selectedDuration: number = 60,
-  mode: DraftMode = 'camera'
+  mode: DraftMode = "camera"
 ): DraftManagerState & DraftManagerActions {
-  const [recordingSegments, setRecordingSegments] = useState<RecordingSegment[]>([]);
+  const [recordingSegments, setRecordingSegments] = useState<
+    RecordingSegment[]
+  >([]);
   const [redoStack, setRedoStack] = useState<RecordingSegment[]>([]);
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
   const [originalDraftId, setOriginalDraftId] = useState<string | null>(null);
@@ -94,15 +100,22 @@ export function useDraftManager(
             setIsContinuingLastDraft(false);
           } else {
             // Only auto-load last draft in camera mode, not in upload mode
-            draftToLoad = mode === 'camera' ? await DraftStorage.getLastModifiedDraft(mode) : null;
+            draftToLoad =
+              mode === "camera"
+                ? await DraftStorage.getLastModifiedDraft(mode)
+                : null;
             setIsContinuingLastDraft(!!draftToLoad);
           }
         }
 
         if (draftToLoad) {
-          console.log(`[DraftManager] Loaded draft: ${draftToLoad.id} (${draftToLoad.segments.length} segments, ${draftToLoad.totalDuration}s)`);
+          console.log(
+            `[DraftManager] Loaded draft: ${draftToLoad.id} (${draftToLoad.segments.length} segments, ${draftToLoad.totalDuration}s)`
+          );
           // Convert relative paths to absolute paths for use
-          const segmentsWithAbsolutePaths = fileStore.convertSegmentsToAbsolute(draftToLoad.segments);
+          const segmentsWithAbsolutePaths = fileStore.convertSegmentsToAbsolute(
+            draftToLoad.segments
+          );
           setRecordingSegments(segmentsWithAbsolutePaths);
           setCurrentDraftId(draftToLoad.id);
           setOriginalDraftId(draftToLoad.id);
@@ -124,14 +137,17 @@ export function useDraftManager(
 
         if (redoData && redoData.segments) {
           if (draftToLoad) {
-            const shouldLoadRedoStack = redoData.draftId === draftToLoad.id || !redoData.draftId;
+            const shouldLoadRedoStack =
+              redoData.draftId === draftToLoad.id || !redoData.draftId;
             const redoSegments = shouldLoadRedoStack ? redoData.segments : [];
             // Convert relative paths to absolute paths for redo stack
             setRedoStack(fileStore.convertSegmentsToAbsolute(redoSegments));
           } else {
             // No draft loaded: always load redo stack to continue last work-in-progress
             // Convert relative paths to absolute paths for redo stack
-            setRedoStack(fileStore.convertSegmentsToAbsolute(redoData.segments));
+            setRedoStack(
+              fileStore.convertSegmentsToAbsolute(redoData.segments)
+            );
           }
         } else {
           setRedoStack([]);
@@ -173,9 +189,9 @@ export function useDraftManager(
       try {
         if (currentDraftId) {
           // Convert absolute paths back to relative paths for storage
-          const segmentsForStorage = recordingSegments.map(segment => ({
+          const segmentsForStorage = recordingSegments.map((segment) => ({
             ...segment,
-            uri: fileStore.toRelativePath(segment.uri)
+            uri: fileStore.toRelativePath(segment.uri),
           }));
           await DraftStorage.updateDraft(
             currentDraftId,
@@ -185,15 +201,15 @@ export function useDraftManager(
           console.log(`[DraftManager] Auto-saved: ${currentDraftId}`);
         } else {
           // Convert absolute paths back to relative paths for storage
-          const segmentsForStorage = recordingSegments.map(segment => ({
+          const segmentsForStorage = recordingSegments.map((segment) => ({
             ...segment,
-            uri: fileStore.toRelativePath(segment.uri)
+            uri: fileStore.toRelativePath(segment.uri),
           }));
           const newDraftId = await DraftStorage.saveDraft(
             segmentsForStorage,
             selectedDuration,
             mode,
-            draftId  // Pass the URL's draft ID
+            draftId // Pass the URL's draft ID
           );
           setCurrentDraftId(newDraftId);
           setHasStartedOver(false);
@@ -215,9 +231,9 @@ export function useDraftManager(
     const saveRedoStack = async () => {
       try {
         // Convert absolute paths back to relative paths for storage
-        const segmentsForStorage = redoStack.map(segment => ({
+        const segmentsForStorage = redoStack.map((segment) => ({
           ...segment,
-          uri: fileStore.toRelativePath(segment.uri)
+          uri: fileStore.toRelativePath(segment.uri),
         }));
         const redoData = {
           draftId: currentDraftId ?? originalDraftId ?? null,
@@ -251,20 +267,35 @@ export function useDraftManager(
     lastSegmentCount.current = 0;
   };
 
-  const handleSaveAsDraft = async (segments: RecordingSegment[], duration: number, options?: { forceNew?: boolean }) => {
+  const handleSaveAsDraft = async (
+    segments: RecordingSegment[],
+    duration: number,
+    options?: { forceNew?: boolean }
+  ) => {
     try {
       // Convert segments to relative paths for storage
-      const segmentsForStorage = segments.map(segment => ({
+      const segmentsForStorage = segments.map((segment) => ({
         ...segment,
-        uri: fileStore.toRelativePath(segment.uri)
+        uri: fileStore.toRelativePath(segment.uri),
       }));
-      
+
       if (currentDraftId && !hasStartedOver && !options?.forceNew) {
-        await DraftStorage.updateDraft(currentDraftId, segmentsForStorage, duration);
+        await DraftStorage.updateDraft(
+          currentDraftId,
+          segmentsForStorage,
+          duration
+        );
         console.log(`[DraftManager] Saved & reset: ${currentDraftId}`);
       } else {
-        const preferredId = options?.forceNew ? undefined : (originalDraftId || draftId || undefined);
-        const newId = await DraftStorage.saveDraft(segmentsForStorage, duration, mode, preferredId);
+        const preferredId = options?.forceNew
+          ? undefined
+          : originalDraftId || draftId || undefined;
+        const newId = await DraftStorage.saveDraft(
+          segmentsForStorage,
+          duration,
+          mode,
+          preferredId
+        );
         setCurrentDraftId(newId);
         if (options?.forceNew) {
           // Ensure the next recording starts a new id by clearing original
@@ -285,7 +316,9 @@ export function useDraftManager(
     if (hasStartedOver && originalDraftId && recordingSegments.length === 0) {
       try {
         await DraftStorage.deleteDraft(originalDraftId);
-        console.log(`[DraftManager] WHOLE DRAFT DELETED - Original: ${originalDraftId}`);
+        console.log(
+          `[DraftManager] WHOLE DRAFT DELETED - Original: ${originalDraftId}`
+        );
       } catch (error) {
         console.error("Delete failed:", error);
       }
@@ -302,9 +335,13 @@ export function useDraftManager(
               ? parsed
               : parsed?.segments || [];
             if (segmentsToDelete.length > 0) {
-              console.log(`[DraftManager] Closing - Deleting ${segmentsToDelete.length} redo files`);
+              console.log(
+                `[DraftManager] Closing - Deleting ${segmentsToDelete.length} redo files`
+              );
               // Convert relative paths to absolute paths for deletion
-              const absoluteUris = segmentsToDelete.map((s: any) => fileStore.toAbsolutePath(s.uri));
+              const absoluteUris = segmentsToDelete.map((s: any) =>
+                fileStore.toAbsolutePath(s.uri)
+              );
               await fileStore.deleteUris(absoluteUris);
             }
           } catch {}
@@ -334,16 +371,24 @@ export function useDraftManager(
             await DraftStorage.deleteDraft(currentDraftId, { keepFiles: true });
             setCurrentDraftId(null);
             setHasStartedOver(false);
-            console.log(`[DraftManager] WHOLE DRAFT DELETED - Undo (metadata only): ${currentDraftId}`);
-        } else {
-          // Convert segments to relative paths for storage
-          const segmentsForStorage = updatedSegments.map(segment => ({
-            ...segment,
-            uri: fileStore.toRelativePath(segment.uri)
-          }));
-          await DraftStorage.updateDraft(currentDraftId, segmentsForStorage, duration);
-          console.log(`[DraftManager] Undo - Updated draft: ${currentDraftId}`);
-        }
+            console.log(
+              `[DraftManager] WHOLE DRAFT DELETED - Undo (metadata only): ${currentDraftId}`
+            );
+          } else {
+            // Convert segments to relative paths for storage
+            const segmentsForStorage = updatedSegments.map((segment) => ({
+              ...segment,
+              uri: fileStore.toRelativePath(segment.uri),
+            }));
+            await DraftStorage.updateDraft(
+              currentDraftId,
+              segmentsForStorage,
+              duration
+            );
+            console.log(
+              `[DraftManager] Undo - Updated draft: ${currentDraftId}`
+            );
+          }
         } catch (error) {
           console.error("Undo failed:", error);
           // Revert on error
@@ -371,21 +416,30 @@ export function useDraftManager(
           // Re-create using the original draft id if available so existing files (segments/thumb) are reused
           const preferredId = originalDraftId || draftId;
           // Convert segments to relative paths for storage
-          const segmentsForStorage = updatedSegments.map(segment => ({
+          const segmentsForStorage = updatedSegments.map((segment) => ({
             ...segment,
-            uri: fileStore.toRelativePath(segment.uri)
+            uri: fileStore.toRelativePath(segment.uri),
           }));
-          const newDraftId = await DraftStorage.saveDraft(segmentsForStorage, duration, mode, preferredId || undefined);
+          const newDraftId = await DraftStorage.saveDraft(
+            segmentsForStorage,
+            duration,
+            mode,
+            preferredId || undefined
+          );
           setCurrentDraftId(newDraftId);
           setHasStartedOver(false);
           console.log(`[DraftManager] Redo - Created new draft: ${newDraftId}`);
         } else {
           // Convert segments to relative paths for storage
-          const segmentsForStorage = updatedSegments.map(segment => ({
+          const segmentsForStorage = updatedSegments.map((segment) => ({
             ...segment,
-            uri: fileStore.toRelativePath(segment.uri)
+            uri: fileStore.toRelativePath(segment.uri),
           }));
-          await DraftStorage.updateDraft(currentDraftId, segmentsForStorage, duration);
+          await DraftStorage.updateDraft(
+            currentDraftId,
+            segmentsForStorage,
+            duration
+          );
           console.log(`[DraftManager] Redo - Updated draft: ${currentDraftId}`);
         }
       } catch (error) {
@@ -407,10 +461,12 @@ export function useDraftManager(
     try {
       // Determine target draft id for file import and metadata save
       const targetDraftId = forceNewNext
-        ? Date.now().toString()
-        : (currentDraftId ?? draftId ?? Date.now().toString());
-      
-      console.log(`[DraftManager] Recording segment - Target draft ID: ${targetDraftId}`);
+        ? uuidv4()
+        : currentDraftId ?? draftId ?? uuidv4();
+
+      console.log(
+        `[DraftManager] Recording segment - Target draft ID: ${targetDraftId}`
+      );
 
       // Ensure directories exist and import the recorded file into managed storage
       await fileStore.ensureDraftDirs(targetDraftId);
@@ -424,25 +480,36 @@ export function useDraftManager(
       setRedoStack([]);
 
       // Append the imported segment with managed URI
-      const importedSegment: RecordingSegment = { ...newSegment, uri: managedUri };
+      const importedSegment: RecordingSegment = {
+        ...newSegment,
+        uri: managedUri,
+      };
       const updatedSegments = [...recordingSegments, importedSegment];
       setRecordingSegments(updatedSegments);
 
       // Persist draft metadata
       if (currentDraftId && !forceNewNext) {
         // Convert segments to relative paths for storage
-        const segmentsForStorage = updatedSegments.map(segment => ({
+        const segmentsForStorage = updatedSegments.map((segment) => ({
           ...segment,
-          uri: fileStore.toRelativePath(segment.uri)
+          uri: fileStore.toRelativePath(segment.uri),
         }));
-        await DraftStorage.updateDraft(currentDraftId, segmentsForStorage, duration);
-        console.log(`[DraftManager] Recording segment - Updated existing draft: ${currentDraftId}`);
+        await DraftStorage.updateDraft(
+          currentDraftId,
+          segmentsForStorage,
+          duration
+        );
+        console.log(
+          `[DraftManager] Recording segment - Updated existing draft: ${currentDraftId}`
+        );
       } else {
-        const preferredId = forceNewNext ? targetDraftId : (originalDraftId || draftId || targetDraftId);
+        const preferredId = forceNewNext
+          ? targetDraftId
+          : originalDraftId || draftId || targetDraftId;
         // Convert segments to relative paths for storage
-        const segmentsForStorage = updatedSegments.map(segment => ({
+        const segmentsForStorage = updatedSegments.map((segment) => ({
           ...segment,
-          uri: fileStore.toRelativePath(segment.uri)
+          uri: fileStore.toRelativePath(segment.uri),
         }));
         const newDraftId = await DraftStorage.saveDraft(
           segmentsForStorage,
@@ -453,7 +520,9 @@ export function useDraftManager(
         setCurrentDraftId(newDraftId);
         setOriginalDraftId(preferredId);
         setHasStartedOver(false);
-        console.log(`[DraftManager] Recording segment - Created new draft: ${newDraftId}`);
+        console.log(
+          `[DraftManager] Recording segment - Created new draft: ${newDraftId}`
+        );
         if (forceNewNext) setForceNewNext(false);
       }
 
@@ -461,7 +530,9 @@ export function useDraftManager(
       if (prevRedo.length > 0) {
         console.log(`[DraftManager] Deleting ${prevRedo.length} redo files`);
         // Convert relative paths to absolute paths for deletion
-        const absoluteUris = prevRedo.map((s) => fileStore.toAbsolutePath(s.uri));
+        const absoluteUris = prevRedo.map((s) =>
+          fileStore.toAbsolutePath(s.uri)
+        );
         await fileStore.deleteUris(absoluteUris);
       }
 
@@ -475,17 +546,23 @@ export function useDraftManager(
     try {
       if (currentDraftId) {
         // Convert segments to relative paths for storage
-        const segmentsForStorage = recordingSegments.map(segment => ({
+        const segmentsForStorage = recordingSegments.map((segment) => ({
           ...segment,
-          uri: fileStore.toRelativePath(segment.uri)
+          uri: fileStore.toRelativePath(segment.uri),
         }));
-        await DraftStorage.updateDraft(currentDraftId, segmentsForStorage, newDuration);
-        console.log(`[DraftManager] Updated draft duration: ${currentDraftId} -> ${newDuration}s`);
+        await DraftStorage.updateDraft(
+          currentDraftId,
+          segmentsForStorage,
+          newDuration
+        );
+        console.log(
+          `[DraftManager] Updated draft duration: ${currentDraftId} -> ${newDuration}s`
+        );
       } else if (recordingSegments.length > 0) {
         // Create a new draft with the selected duration if we have segments but no draft
-        const segmentsForStorage = recordingSegments.map(segment => ({
+        const segmentsForStorage = recordingSegments.map((segment) => ({
           ...segment,
-          uri: fileStore.toRelativePath(segment.uri)
+          uri: fileStore.toRelativePath(segment.uri),
         }));
         const newDraftId = await DraftStorage.saveDraft(
           segmentsForStorage,
@@ -494,7 +571,9 @@ export function useDraftManager(
           draftId
         );
         setCurrentDraftId(newDraftId);
-        console.log(`[DraftManager] Created draft with duration: ${newDraftId} -> ${newDuration}s`);
+        console.log(
+          `[DraftManager] Created draft with duration: ${newDraftId} -> ${newDuration}s`
+        );
       }
     } catch (error) {
       console.error("Failed to update draft duration:", error);
@@ -523,4 +602,4 @@ export function useDraftManager(
     updateSegmentsAfterRecording,
     updateDraftDuration,
   };
-} 
+}

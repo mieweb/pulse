@@ -319,7 +319,8 @@ export default function PreviewScreen() {
 
       // Start concatenation
       const outputUri = await VideoConcatModule.export(
-        segmentsWithAbsolutePaths
+        segmentsWithAbsolutePaths,
+        draftId
       );
 
       // Remove progress listener
@@ -345,7 +346,7 @@ export default function PreviewScreen() {
       // Navigate to merged video screen
       router.push({
         pathname: "/merged-video",
-        params: { videoUri: outputUri },
+        params: { videoUri: outputUri, draftId: draftId },
       });
     } catch (error) {
       console.error("❌ Concatenation failed:", error);
@@ -395,12 +396,16 @@ export default function PreviewScreen() {
           activeOpacity={0.8}
         >
           <View style={styles.buttonContent}>
-            <MaterialIcons
-              name={isConcatenating ? "hourglass-empty" : "merge-type"}
-              size={20}
-              color="#ffffff"
-              style={styles.buttonIcon}
-            />
+            {isConcatenating ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <MaterialIcons
+                name="merge-type"
+                size={20}
+                color="#ffffff"
+                style={styles.buttonIcon}
+              />
+            )}
             <ThemedText style={styles.buttonText}>
               {isConcatenating ? "Processing..." : "Merge Videos"}
             </ThemedText>
@@ -472,8 +477,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 20,
     right: 20,
-    height: 56,
-    borderRadius: 28,
+    height: 50,
+    borderRadius: 8,
     backgroundColor: "#ff0000",
     justifyContent: "center",
     alignItems: "center",
@@ -499,13 +504,8 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: "#ffffff",
-    fontSize: 17,
-    fontWeight: "700",
-    fontFamily: "Roboto-Bold",
-    letterSpacing: 0.5,
-    textShadowColor: "rgba(0, 0, 0, 0.3)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    fontSize: 16,
+    fontWeight: "600",
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,

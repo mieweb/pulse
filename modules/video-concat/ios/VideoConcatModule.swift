@@ -20,7 +20,8 @@ public class VideoConcatModule: Module {
         
         Events("onProgress")
         
-        AsyncFunction("export") { (segments: [RecordingSegment]) -> String in
+        AsyncFunction("export") { (segments: [RecordingSegment], draftId: String) -> String in
+            
             // Create a mutable composition to hold the concatenated video
             let composition = AVMutableComposition()
             
@@ -96,13 +97,19 @@ public class VideoConcatModule: Module {
                 }
             }
             
-            // Create output URL for the merged video
-            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+            // Create output URL for the merged video using draftId
+            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(draftId).appendingPathExtension("mp4")
+            
+            // Remove existing file if it exists to avoid conflicts
+            if FileManager.default.fileExists(atPath: outputURL.path) {
+                try FileManager.default.removeItem(at: outputURL)
+            }
             
             // Create export session with highest quality preset
             guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
                 throw NSError(domain: "VideoConcat", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create export session"])
             }
+            
             
             // Configure export settings
             exporter.outputURL = outputURL
@@ -118,7 +125,7 @@ public class VideoConcatModule: Module {
             
             // Export the composition to MP4 file
             try await exporter.export()
-            
+
             // Verify export was successful
             guard exporter.status == .completed else {
                 throw NSError(domain: "VideoConcat", code: 3, userInfo: [NSLocalizedDescriptionKey: "Export failed with status: \(exporter.status.rawValue)"])
