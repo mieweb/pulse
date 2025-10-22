@@ -2,3 +2,6 @@
 	path = video-consumer
 	url = https://github.com/morepriyam/pulse-video-consumer.git
 	branch = main
+[submodule "pulse-desktop"]
+	path = pulse-desktop
+	url = https://github.com/mieweb/pulse-desktop
