@@ -1,9 +1,11 @@
 import { Redirect, useLocalSearchParams } from "expo-router";
-import { validate as uuidValidate, version as uuidVersion } from "uuid";
 
-// Validate UUID v4
-const isUUIDv4 = (uuid: string) =>
-  uuidValidate(uuid) && uuidVersion(uuid) === 4;
+// Simple UUID v4 validation (basic format check)
+const isUUIDv4 = (uuid: string) => {
+  const uuidv4Regex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidv4Regex.test(uuid);
+};
 
 export default function Index() {
   const params = useLocalSearchParams<{

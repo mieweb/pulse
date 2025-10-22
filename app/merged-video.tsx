@@ -8,16 +8,25 @@ import {
   ActivityIndicator,
   Alert,
   StyleSheet,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
+import * as FileSystem from "expo-file-system";
 
 export default function MergedVideoScreen() {
-  const { videoUri } = useLocalSearchParams<{ videoUri: string }>();
+  const { videoUri, draftId } = useLocalSearchParams<{
+    videoUri: string;
+    draftId: string;
+  }>();
   const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadLink, setUploadLink] = useState("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const player = useVideoPlayer(videoUri, (player) => {
     if (player) {
@@ -33,7 +42,8 @@ export default function MergedVideoScreen() {
         try {
           setIsLoading(true);
           await player.replaceAsync(videoUri);
-          player.play();
+          // Don't auto-play in thumbnail mode
+          player.pause();
         } catch (error) {
           console.error("Failed to load merged video:", error);
           Alert.alert("Error", "Failed to load merged video");
@@ -45,6 +55,13 @@ export default function MergedVideoScreen() {
 
     setupPlayer();
   }, [videoUri, player]);
+
+  // Pause video when not in fullscreen
+  useEffect(() => {
+    if (!isFullscreen) {
+      player.pause();
+    }
+  }, [isFullscreen, player]);
 
   // Cleanup player on component unmount
   useEffect(() => {
@@ -62,6 +79,18 @@ export default function MergedVideoScreen() {
   const handleBack = useCallback(() => {
     router.back();
   }, []);
+
+  const toggleFullscreen = () => {
+    if (!isFullscreen) {
+      // Enter fullscreen and start playback
+      setIsFullscreen(true);
+      player.play();
+    } else {
+      // Exit fullscreen and pause
+      setIsFullscreen(false);
+      player.pause();
+    }
+  };
 
   const shareVideo = async () => {
     if (!videoUri) return;
@@ -86,15 +115,33 @@ export default function MergedVideoScreen() {
     }
   };
 
+  const uploadVideo = async () => {
+    if (!videoUri) return;
+
+    if (!uploadLink) {
+      Alert.alert("Upload Link Required", "Please enter an upload link first.");
+      return;
+    }
+
+    // TODO: Implement upload logic using uploadLink
+    console.log("Upload to:", uploadLink);
+    Alert.alert(
+      "Upload Logic",
+      "Upload functionality will be implemented here."
+    );
+  };
+
   if (isLoading) {
     return (
       <ThemedView style={styles.container}>
-        <TouchableOpacity
-          style={[styles.closeButton, { top: insets.top + 20 }]}
-          onPress={handleBack}
-        >
-          <ThemedText style={styles.closeText}>×</ThemedText>
-        </TouchableOpacity>
+        {/* Header */}
+        <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+            <MaterialIcons name="arrow-back" size={24} color="#ffffff" />
+          </TouchableOpacity>
+          <ThemedText style={styles.headerTitle}>Upload Video</ThemedText>
+          <View style={styles.headerSpacer} />
+        </View>
 
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#ffffff" />
@@ -108,39 +155,120 @@ export default function MergedVideoScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <VideoView
-        player={player}
-        style={styles.video}
-        allowsFullscreen={true}
-        allowsPictureInPicture={false}
-        showsTimecodes={false}
-        requiresLinearPlayback={true}
-        contentFit="cover"
-        nativeControls={false}
-      />
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+        <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+          <MaterialIcons name="arrow-back" size={24} color="#ffffff" />
+        </TouchableOpacity>
+        <ThemedText style={styles.headerTitle}>Upload Video</ThemedText>
+        <View style={styles.headerSpacer} />
+      </View>
 
-      <TouchableOpacity
-        style={[styles.closeButton, { top: insets.top + 20 }]}
-        onPress={handleBack}
-      >
-        <ThemedText style={styles.closeText}>×</ThemedText>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.shareButton, { bottom: insets.bottom + 20 }]}
-        onPress={shareVideo}
-        activeOpacity={0.8}
-      >
-        <View style={styles.buttonContent}>
-          <MaterialIcons
-            name="share"
-            size={20}
-            color="#ffffff"
-            style={styles.buttonIcon}
-          />
-          <ThemedText style={styles.buttonText}>Share Video</ThemedText>
+      <View style={styles.content}>
+        {/* Video Thumbnail */}
+        <View style={styles.videoSection}>
+          <TouchableOpacity
+            style={styles.videoThumbnail}
+            onPress={toggleFullscreen}
+          >
+            <VideoView
+              player={player}
+              style={styles.thumbnailVideo}
+              allowsFullscreen={false}
+              allowsPictureInPicture={false}
+              showsTimecodes={false}
+              requiresLinearPlayback={false}
+              contentFit="cover"
+              nativeControls={false}
+            />
+            <View style={styles.playOverlay}>
+              <MaterialIcons name="play-arrow" size={40} color="#ffffff" />
+            </View>
+          </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+
+        {/* Upload Link Input */}
+        <View style={styles.inputSection}>
+          <ThemedText style={styles.inputLabel}>Upload Link</ThemedText>
+          <TextInput
+            style={styles.uploadLinkInput}
+            placeholder="Paste your organization's upload link here"
+            placeholderTextColor="#666"
+            value={uploadLink}
+            onChangeText={setUploadLink}
+            autoCapitalize="none"
+            keyboardType="url"
+            returnKeyType="done"
+            blurOnSubmit={true}
+            onSubmitEditing={() => {
+              // Dismiss keyboard when done is pressed
+            }}
+          />
+        </View>
+
+        {/* Action Buttons */}
+        <View style={styles.actionButtons}>
+          <TouchableOpacity
+            style={[
+              styles.uploadButton,
+              isUploading && styles.uploadButtonDisabled,
+            ]}
+            onPress={uploadVideo}
+            activeOpacity={0.8}
+            disabled={isUploading}
+          >
+            {isUploading ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <MaterialIcons name="cloud-upload" size={20} color="#ffffff" />
+            )}
+            <ThemedText style={styles.buttonText}>
+              {isUploading ? "Uploading..." : "Upload to Cloud"}
+            </ThemedText>
+          </TouchableOpacity>
+
+          {/* Separator */}
+          <View style={styles.separator}>
+            <View style={styles.separatorLine} />
+            <ThemedText style={styles.separatorText}>or</ThemedText>
+            <View style={styles.separatorLine} />
+          </View>
+
+          <TouchableOpacity
+            style={styles.saveButton}
+            onPress={shareVideo}
+            activeOpacity={0.8}
+          >
+            <MaterialIcons name="download" size={20} color="#ffffff" />
+            <ThemedText style={styles.buttonText}>Save to Device</ThemedText>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Fullscreen Video Overlay */}
+      {isFullscreen && (
+        <View style={styles.fullscreenOverlay}>
+          <View style={styles.fullscreenVideo}>
+            <VideoView
+              player={player}
+              style={styles.fullscreenVideoPlayer}
+              allowsFullscreen={true}
+              allowsPictureInPicture={false}
+              showsTimecodes={false}
+              requiresLinearPlayback={true}
+              contentFit="cover"
+              nativeControls={true}
+            />
+          </View>
+
+          <TouchableOpacity
+            style={styles.fullscreenCloseButton}
+            onPress={toggleFullscreen}
+          >
+            <MaterialIcons name="close" size={24} color="#ffffff" />
+          </TouchableOpacity>
+        </View>
+      )}
     </ThemedView>
   );
 }
@@ -150,67 +278,138 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000",
   },
-  video: {
-    flex: 1,
-  },
-  closeButton: {
-    position: "absolute",
-    left: 20,
-    width: 40,
-    height: 40,
-    borderRadius: 25,
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
-    justifyContent: "center",
+  header: {
+    flexDirection: "row",
     alignItems: "center",
-    zIndex: 10,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#333",
   },
-  closeText: {
-    color: "#ffffff",
-    fontSize: 20,
+  backButton: {
+    padding: 8,
+  },
+  headerTitle: {
+    fontSize: 18,
     fontWeight: "600",
-    fontFamily: "Roboto-Bold",
+    color: "#ffffff",
+    flex: 1,
     textAlign: "center",
-    textAlignVertical: "center",
-    includeFontPadding: false,
   },
-  shareButton: {
-    position: "absolute",
-    left: 20,
-    right: 20,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#007AFF",
+  headerSpacer: {
+    width: 40,
+  },
+  content: {
+    flex: 1,
+    paddingBottom: 20,
+  },
+  videoSection: {
+    padding: 16,
+  },
+  videoThumbnail: {
+    width: "100%",
+    height: 200,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#333",
+    position: "relative",
+  },
+  thumbnailVideo: {
+    width: "100%",
+    height: "100%",
+  },
+  staticThumbnail: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#333",
     justifyContent: "center",
     alignItems: "center",
-    zIndex: 10,
-    shadowColor: "#007AFF",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.1)",
   },
-  buttonContent: {
+  playOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  inputSection: {
+    paddingHorizontal: 16,
+    marginBottom: 24,
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#ffffff",
+    marginBottom: 8,
+  },
+  titleInput: {
+    backgroundColor: "#1a1a1a",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#333",
+    minHeight: 50,
+  },
+  uploadLinkInput: {
+    backgroundColor: "#1a1a1a",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#333",
+    minHeight: 50,
+  },
+  actionButtons: {
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+    gap: 12,
+  },
+  saveButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    height: 50,
+    backgroundColor: "#333",
+    borderRadius: 8,
+    gap: 8,
   },
-  buttonIcon: {
-    marginRight: 8,
+  uploadButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 50,
+    backgroundColor: "#ff0000",
+    borderRadius: 8,
+    gap: 8,
+  },
+  uploadButtonDisabled: {
+    backgroundColor: "#666",
+  },
+  separator: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 16,
+  },
+  separatorLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#333",
+  },
+  separatorText: {
+    color: "#666",
+    fontSize: 14,
+    marginHorizontal: 16,
   },
   buttonText: {
     color: "#ffffff",
-    fontSize: 17,
-    fontWeight: "700",
-    fontFamily: "Roboto-Bold",
-    letterSpacing: 0.5,
-    textShadowColor: "rgba(0, 0, 0, 0.3)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    fontSize: 16,
+    fontWeight: "600",
   },
   loadingContainer: {
     flex: 1,
@@ -222,5 +421,35 @@ const styles = StyleSheet.create({
     marginTop: 20,
     fontSize: 16,
     fontFamily: "Roboto-Regular",
+  },
+  fullscreenOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "#000",
+    zIndex: 1000,
+  },
+  fullscreenVideo: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullscreenVideoPlayer: {
+    width: "100%",
+    height: "100%",
+  },
+  fullscreenCloseButton: {
+    position: "absolute",
+    top: 50,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1001,
   },
 });
