@@ -2,7 +2,7 @@ import { RecordingSegment } from "@/components/RecordingProgressBar";
 import { fileStore } from "@/utils/fileStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { generateVideoThumbnail } from "./videoThumbnails";
-import { v4 as uuidv4 } from "uuid";
+import * as Crypto from "expo-crypto";
 
 export type DraftMode = "camera" | "upload";
 
@@ -35,7 +35,7 @@ export class DraftStorage {
       const existingDrafts = await this.getAllDrafts();
 
       // Determine target id up-front to keep thumbs in the same folder
-      const targetId = customId || uuidv4();
+      const targetId = customId || Crypto.randomUUID();
       let thumbnailUri: string | undefined;
       // Reuse existing thumbnail if present (e.g., redo recreate)
       const existingThumb = await fileStore.getExistingThumbnailUri(targetId);

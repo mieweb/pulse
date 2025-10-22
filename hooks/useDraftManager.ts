@@ -3,7 +3,7 @@ import { DraftMode, DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useRef, useState } from "react";
-import { v4 as uuidv4 } from "uuid";
+import * as Crypto from "expo-crypto";
 
 const REDO_STACK_KEY = "redo_stack";
 
@@ -461,8 +461,8 @@ export function useDraftManager(
     try {
       // Determine target draft id for file import and metadata save
       const targetDraftId = forceNewNext
-        ? uuidv4()
-        : currentDraftId ?? draftId ?? uuidv4();
+        ? Crypto.randomUUID()
+        : currentDraftId ?? draftId ?? Crypto.randomUUID();
 
       console.log(
         `[DraftManager] Recording segment - Target draft ID: ${targetDraftId}`

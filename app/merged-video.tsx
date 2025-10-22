@@ -23,6 +23,9 @@ export default function MergedVideoScreen() {
   }>();
   const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadLink, setUploadLink] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const player = useVideoPlayer(videoUri, (player) => {
@@ -112,6 +115,21 @@ export default function MergedVideoScreen() {
     }
   };
 
+  const uploadVideo = async () => {
+    if (!videoUri) return;
+
+    if (!uploadLink) {
+      Alert.alert("Upload Link Required", "Please enter an upload link first.");
+      return;
+    }
+
+    // TODO: Implement upload logic using uploadLink
+    console.log("Upload to:", uploadLink);
+    Alert.alert(
+      "Upload Logic",
+      "Upload functionality will be implemented here."
+    );
+  };
 
   if (isLoading) {
     return (
@@ -121,7 +139,7 @@ export default function MergedVideoScreen() {
           <TouchableOpacity style={styles.backButton} onPress={handleBack}>
             <MaterialIcons name="arrow-back" size={24} color="#ffffff" />
           </TouchableOpacity>
-          <ThemedText style={styles.headerTitle}>Video Preview</ThemedText>
+          <ThemedText style={styles.headerTitle}>Upload Video</ThemedText>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -142,7 +160,7 @@ export default function MergedVideoScreen() {
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
           <MaterialIcons name="arrow-back" size={24} color="#ffffff" />
         </TouchableOpacity>
-        <ThemedText style={styles.headerTitle}>Video Preview</ThemedText>
+        <ThemedText style={styles.headerTitle}>Upload Video</ThemedText>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -169,8 +187,53 @@ export default function MergedVideoScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Upload Link Input */}
+        <View style={styles.inputSection}>
+          <ThemedText style={styles.inputLabel}>Upload Link</ThemedText>
+          <TextInput
+            style={styles.uploadLinkInput}
+            placeholder="Paste your organization's upload link here"
+            placeholderTextColor="#666"
+            value={uploadLink}
+            onChangeText={setUploadLink}
+            autoCapitalize="none"
+            keyboardType="url"
+            returnKeyType="done"
+            blurOnSubmit={true}
+            onSubmitEditing={() => {
+              // Dismiss keyboard when done is pressed
+            }}
+          />
+        </View>
+
         {/* Action Buttons */}
         <View style={styles.actionButtons}>
+          <TouchableOpacity
+            style={[
+              styles.uploadButton,
+              isUploading && styles.uploadButtonDisabled,
+            ]}
+            onPress={uploadVideo}
+            activeOpacity={0.8}
+            disabled={isUploading}
+          >
+            {isUploading ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <MaterialIcons name="cloud-upload" size={20} color="#ffffff" />
+            )}
+            <ThemedText style={styles.buttonText}>
+              {isUploading ? "Uploading..." : "Upload to Cloud"}
+            </ThemedText>
+          </TouchableOpacity>
+
+          {/* Separator */}
+          <View style={styles.separator}>
+            <View style={styles.separatorLine} />
+            <ThemedText style={styles.separatorText}>or</ThemedText>
+            <View style={styles.separatorLine} />
+          </View>
+
           <TouchableOpacity
             style={styles.saveButton}
             onPress={shareVideo}
@@ -292,7 +355,7 @@ const styles = StyleSheet.create({
     borderColor: "#333",
     minHeight: 50,
   },
-  descriptionInput: {
+  uploadLinkInput: {
     backgroundColor: "#1a1a1a",
     borderRadius: 8,
     padding: 12,
@@ -300,8 +363,7 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     borderWidth: 1,
     borderColor: "#333",
-    minHeight: 100,
-    textAlignVertical: "top",
+    minHeight: 50,
   },
   actionButtons: {
     paddingHorizontal: 16,
@@ -316,6 +378,33 @@ const styles = StyleSheet.create({
     backgroundColor: "#333",
     borderRadius: 8,
     gap: 8,
+  },
+  uploadButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 50,
+    backgroundColor: "#ff0000",
+    borderRadius: 8,
+    gap: 8,
+  },
+  uploadButtonDisabled: {
+    backgroundColor: "#666",
+  },
+  separator: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 16,
+  },
+  separatorLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#333",
+  },
+  separatorText: {
+    color: "#666",
+    fontSize: 14,
+    marginHorizontal: 16,
   },
   buttonText: {
     color: "#ffffff",
