@@ -23,8 +23,6 @@ export default function MergedVideoScreen() {
   }>();
   const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const player = useVideoPlayer(videoUri, (player) => {
@@ -114,76 +112,6 @@ export default function MergedVideoScreen() {
     }
   };
 
-  const uploadVideo = async () => {
-    if (!videoUri) return;
-
-    try {
-      setIsUploading(true);
-      setUploadProgress(0);
-
-      // Get file info
-      const fileInfo = await FileSystem.getInfoAsync(videoUri);
-      if (!fileInfo.exists) {
-        throw new Error("Video file not found");
-      }
-
-      // Use draftId as filename
-      const filename = `${draftId}.mp4`;
-
-      // Get presigned URL from server
-      const serverUrl = "http://10.3.226.63:3000"; // Use your computer's IP address
-      const response = await fetch(`${serverUrl}/upload-url`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          filename: filename,
-          contentType: "video/mp4",
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to get upload URL");
-      }
-
-      const { presignedUrl, fileId } = await response.json();
-      console.log("📤 Got presigned URL for file:", fileId);
-
-      // Upload file to S3
-      const uploadResponse = await FileSystem.uploadAsync(
-        presignedUrl,
-        videoUri,
-        {
-          httpMethod: "PUT",
-          headers: {
-            "Content-Type": "video/mp4",
-          },
-          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        }
-      );
-
-      if (uploadResponse.status === 200) {
-        setUploadProgress(100);
-        Alert.alert(
-          "Upload Successful!",
-          `Video uploaded successfully with ID: ${fileId}`,
-          [{ text: "OK" }]
-        );
-      } else {
-        throw new Error(`Upload failed with status: ${uploadResponse.status}`);
-      }
-    } catch (error) {
-      console.error("❌ Upload failed:", error);
-      Alert.alert(
-        "Upload Failed",
-        "Could not upload the video. Please try again."
-      );
-    } finally {
-      setIsUploading(false);
-      setUploadProgress(0);
-    }
-  };
 
   if (isLoading) {
     return (
@@ -193,7 +121,7 @@ export default function MergedVideoScreen() {
           <TouchableOpacity style={styles.backButton} onPress={handleBack}>
             <MaterialIcons name="arrow-back" size={24} color="#ffffff" />
           </TouchableOpacity>
-          <ThemedText style={styles.headerTitle}>Upload Video</ThemedText>
+          <ThemedText style={styles.headerTitle}>Video Preview</ThemedText>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -214,7 +142,7 @@ export default function MergedVideoScreen() {
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
           <MaterialIcons name="arrow-back" size={24} color="#ffffff" />
         </TouchableOpacity>
-        <ThemedText style={styles.headerTitle}>Upload Video</ThemedText>
+        <ThemedText style={styles.headerTitle}>Video Preview</ThemedText>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -243,32 +171,6 @@ export default function MergedVideoScreen() {
 
         {/* Action Buttons */}
         <View style={styles.actionButtons}>
-          <TouchableOpacity
-            style={[
-              styles.uploadButton,
-              isUploading && styles.uploadButtonDisabled,
-            ]}
-            onPress={uploadVideo}
-            activeOpacity={0.8}
-            disabled={isUploading}
-          >
-            {isUploading ? (
-              <ActivityIndicator size="small" color="#ffffff" />
-            ) : (
-              <MaterialIcons name="cloud-upload" size={20} color="#ffffff" />
-            )}
-            <ThemedText style={styles.buttonText}>
-              {isUploading ? "Uploading..." : "Upload to Cloud"}
-            </ThemedText>
-          </TouchableOpacity>
-
-          {/* Separator */}
-          <View style={styles.separator}>
-            <View style={styles.separatorLine} />
-            <ThemedText style={styles.separatorText}>or</ThemedText>
-            <View style={styles.separatorLine} />
-          </View>
-
           <TouchableOpacity
             style={styles.saveButton}
             onPress={shareVideo}
@@ -414,33 +316,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#333",
     borderRadius: 8,
     gap: 8,
-  },
-  uploadButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    height: 50,
-    backgroundColor: "#ff0000",
-    borderRadius: 8,
-    gap: 8,
-  },
-  uploadButtonDisabled: {
-    backgroundColor: "#666",
-  },
-  separator: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 16,
-  },
-  separatorLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#333",
-  },
-  separatorText: {
-    color: "#666",
-    fontSize: 14,
-    marginHorizontal: 16,
   },
   buttonText: {
     color: "#ffffff",
