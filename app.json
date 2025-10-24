@@ -49,15 +49,15 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to select videos.",
-          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to record videos."
+          "photosPermission": "$(PRODUCT_NAME) needs access to your photos so you can select and share Pulse videos you've already recorded. You stay in control — we only access the videos you choose.",
+          "cameraPermission": "$(PRODUCT_NAME) needs access to your camera so you can record new Pulse videos to share with your team. You decide what to capture and when to share it."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera",
-          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone",
+          "cameraPermission": "$(PRODUCT_NAME) needs camera access so you can create Pulse videos that share your knowledge and experiences with others. You control what's recorded and shared.",
+          "microphonePermission": "$(PRODUCT_NAME) needs microphone access to include your voice when recording a Pulse video. Audio is only captured as part of the videos you choose to record.",
           "recordAudioAndroid": true
         }
       ],
