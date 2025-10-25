@@ -49,15 +49,15 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "$(PRODUCT_NAME) needs access to your photos so you can select and share Pulse videos you've already recorded. You stay in control — we only access the videos you choose.",
-          "cameraPermission": "$(PRODUCT_NAME) needs access to your camera so you can record new Pulse videos to share with your team. You decide what to capture and when to share it."
+          "photosPermission": "$(PRODUCT_NAME) needs access to your photos to let you select previously recorded videos from your camera roll. For example, you can choose an existing video to add to your Pulse project or share it with your team. We only access the specific videos you select.",
+          "cameraPermission": "$(PRODUCT_NAME) needs camera access to record instructional videos for knowledge sharing. For example, you can record step-by-step tutorials, document procedures, or capture training materials that you can then edit and share with your organization."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "$(PRODUCT_NAME) needs camera access so you can create Pulse videos that share your knowledge and experiences with others. You control what's recorded and shared.",
-          "microphonePermission": "$(PRODUCT_NAME) needs microphone access to include your voice when recording a Pulse video. Audio is only captured as part of the videos you choose to record.",
+          "cameraPermission": "$(PRODUCT_NAME) needs camera access to record instructional videos for knowledge sharing. For example, you can record step-by-step tutorials, document procedures, or capture training materials that you can then edit and share with your organization.",
+          "microphonePermission": "$(PRODUCT_NAME) needs microphone access to record audio narration with your instructional videos. For example, when you record a tutorial showing how to use software, your voice explanation is captured alongside the visual demonstration to create complete training materials.",
           "recordAudioAndroid": true
         }
       ],
