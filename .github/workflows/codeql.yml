@@ -147,7 +147,7 @@ jobs:
             -scheme pulse \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64' \
+            -destination 'platform=iOS Simulator,name=iPhone SE (3rd generation),OS=18.2' \
             build
         elif [ "${{ matrix.language }}" = "java-kotlin" ]; then
           echo "Building Android project for CodeQL analysis..."
@@ -172,7 +172,7 @@ jobs:
             -scheme pulse \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64' \
+            -destination 'platform=iOS Simulator,name=iPhone SE (3rd generation),OS=18.2' \
             build-for-testing
 
     - name: Perform CodeQL Analysis
