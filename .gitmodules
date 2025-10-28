@@ -5,3 +5,4 @@
 [submodule "pulse-desktop"]
 	path = pulse-desktop
 	url = https://github.com/mieweb/pulse-desktop
+	branch = main
