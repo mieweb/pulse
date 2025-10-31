@@ -2,7 +2,13 @@ import { ThemedText } from "@/components/ThemedText";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
 import { MaterialIcons } from "@expo/vector-icons";
 import React, { useState, useCallback, useEffect } from "react";
-import { StyleSheet, View, TouchableOpacity, Image } from "react-native";
+import {
+  StyleSheet,
+  View,
+  TouchableOpacity,
+  Image,
+  ScrollView,
+} from "react-native";
 import Sortable from "react-native-sortables";
 
 const THUMBNAIL_SIZE = 60;
@@ -152,7 +158,11 @@ export default function SegmentReorderListVertical({
       </View>
 
       {/* Sortable List */}
-      <View style={styles.sortableContainer}>
+      <ScrollView
+        style={styles.sortableContainer}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         <Sortable.Grid
           data={reorderedSegments}
           renderItem={({ item, index }) => (
@@ -164,7 +174,7 @@ export default function SegmentReorderListVertical({
             handleOrderChange(data);
           }}
         />
-      </View>
+      </ScrollView>
 
       {/* Save Button */}
       <View style={styles.saveButtonContainer}>
@@ -253,8 +263,11 @@ const styles = StyleSheet.create({
   },
   sortableContainer: {
     flex: 1,
-    padding: 20,
     width: "100%",
+  },
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 0,
   },
   segmentItem: {
     flexDirection: "row",
