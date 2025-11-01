@@ -1,6 +1,7 @@
 import { ThemedText } from "@/components/ThemedText";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
 import { MaterialIcons } from "@expo/vector-icons";
+import Entypo from "@expo/vector-icons/Entypo";
 import React, { useState, useCallback, useEffect } from "react";
 import {
   StyleSheet,
@@ -17,6 +18,8 @@ interface Segment {
   id: string;
   uri: string;
   duration: number;
+  inMs?: number;
+  outMs?: number;
 }
 
 interface SegmentReorderListVerticalProps {
@@ -24,14 +27,17 @@ interface SegmentReorderListVerticalProps {
   onSegmentsReorder: (reorderedSegments: Segment[]) => void;
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
+  onEditSegment?: (segment: Segment) => void;
+  totalDuration: number;
 }
 
 interface SegmentItemProps {
   item: Segment;
   index: number;
+  onEdit?: (segment: Segment) => void;
 }
 
-function SegmentItem({ item: segment, index }: SegmentItemProps) {
+function SegmentItem({ item: segment, index, onEdit }: SegmentItemProps) {
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -61,6 +67,18 @@ function SegmentItem({ item: segment, index }: SegmentItemProps) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const getDisplayDuration = () => {
+    if (segment.inMs !== undefined || segment.outMs !== undefined) {
+      const start = segment.inMs || 0;
+      const end = segment.outMs || segment.duration * 1000;
+      const trimmedSeconds = (end - start) / 1000;
+      return formatDuration(trimmedSeconds);
+    }
+    return formatDuration(segment.duration);
+  };
+
+  const hasTrim = segment.inMs !== undefined || segment.outMs !== undefined;
+
   return (
     <View style={styles.segmentItem}>
       {/* Thumbnail */}
@@ -80,13 +98,31 @@ function SegmentItem({ item: segment, index }: SegmentItemProps) {
 
       {/* Segment info */}
       <View style={styles.segmentInfo}>
-        <ThemedText style={styles.segmentNumber}>
-          Segment {index + 1}
-        </ThemedText>
+        <View style={styles.segmentHeader}>
+          <ThemedText style={styles.segmentNumber}>
+            Segment {index + 1}
+          </ThemedText>
+          {hasTrim && (
+            <View style={styles.trimBadge}>
+              <MaterialIcons name="content-cut" size={12} color="#ff0000" />
+            </View>
+          )}
+        </View>
         <ThemedText style={styles.segmentDuration}>
-          {formatDuration(segment.duration)}
+          {getDisplayDuration()}
         </ThemedText>
       </View>
+
+      {/* Edit button */}
+      {onEdit && (
+        <TouchableOpacity
+          style={styles.editButton}
+          onPress={() => onEdit(segment)}
+          activeOpacity={0.7}
+        >
+          <Entypo name="scissors" size={20} color="#ff0000" />
+        </TouchableOpacity>
+      )}
 
       {/* Reorder indicator */}
       <View style={styles.reorderIndicator}>
@@ -101,6 +137,8 @@ export default function SegmentReorderListVertical({
   onSegmentsReorder,
   onSave,
   onCancel,
+  onEditSegment,
+  totalDuration,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
@@ -122,11 +160,6 @@ export default function SegmentReorderListVertical({
     }
   }, [hasChanges, reorderedSegments, onSave]);
 
-  const totalDuration = reorderedSegments.reduce(
-    (total, segment) => total + segment.duration,
-    0
-  );
-
   const formatTotalDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -142,14 +175,16 @@ export default function SegmentReorderListVertical({
         </TouchableOpacity>
 
         <View style={styles.headerInfo}>
-          <ThemedText style={styles.headerTitle}>Reorder Segments</ThemedText>
+          <ThemedText style={styles.headerTitle}>Edit Segments</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
             {reorderedSegments.length} segments •{" "}
             {formatTotalDuration(totalDuration)}
           </ThemedText>
           <View style={styles.infoTag}>
             <MaterialIcons name="info" size={14} color="#ff0000" />
-            <ThemedText style={styles.infoTagText}>Hold to drag</ThemedText>
+            <ThemedText style={styles.infoTagText}>
+              Hold to drag • Tap edit to trim
+            </ThemedText>
           </View>
         </View>
 
@@ -166,7 +201,7 @@ export default function SegmentReorderListVertical({
         <Sortable.Grid
           data={reorderedSegments}
           renderItem={({ item, index }) => (
-            <SegmentItem item={item} index={index} />
+            <SegmentItem item={item} index={index} onEdit={onEditSegment} />
           )}
           columns={1}
           rowGap={8}
@@ -308,6 +343,11 @@ const styles = StyleSheet.create({
   segmentInfo: {
     flex: 1,
   },
+  segmentHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   segmentNumber: {
     color: "#fff",
     fontSize: 16,
@@ -319,6 +359,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Roboto-Regular",
     marginTop: 2,
+  },
+  trimBadge: {
+    backgroundColor: "rgba(255, 0, 0, 0.2)",
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  editButton: {
+    marginRight: 8,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: "rgba(255, 0, 0, 0.1)",
   },
   reorderIndicator: {
     marginLeft: 12,

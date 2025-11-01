@@ -216,8 +216,8 @@ export default function UploadScreen() {
     }
   };
 
-  const handleReorderSegments = () => {
-    if (currentDraftId && recordingSegments.length > 1) {
+  const handleEditSegments = () => {
+    if (currentDraftId) {
       router.push({
         pathname: "/reordersegments",
         params: { draftId: currentDraftId },
@@ -413,8 +413,8 @@ export default function UploadScreen() {
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
-              onReorderSegments={
-                recordingSegments.length > 1 ? handleReorderSegments : undefined
+              onEditSegments={
+                recordingSegments.length > 0 ? handleEditSegments : undefined
               }
             />
           )}

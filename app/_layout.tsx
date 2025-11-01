@@ -74,6 +74,14 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="splittrim"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "none",
+            }}
+          />
+          <Stack.Screen
             name="upload"
             options={{
               headerShown: false,

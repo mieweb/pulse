@@ -216,7 +216,7 @@ export default function ShortsScreen() {
     }
   };
 
-  const handleReorderSegments = () => {
+  const handleEditSegments = () => {
     if (currentDraftId) {
       router.push({
         pathname: "/reordersegments",
@@ -439,8 +439,8 @@ export default function ShortsScreen() {
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
-              onReorderSegments={
-                recordingSegments.length > 1 ? handleReorderSegments : undefined
+              onEditSegments={
+                recordingSegments.length > 0 ? handleEditSegments : undefined
               }
             />
           )}
