@@ -110,7 +110,7 @@ export default function UploadScreen() {
     if (loadedDuration !== null && loadedDuration !== selectedDuration) {
       setSelectedDuration(loadedDuration);
     }
-  }, [loadedDuration]);
+  }, [loadedDuration, selectedDuration]);
 
   const handleRecordingStart = (
     mode: "tap" | "hold",
@@ -216,8 +216,8 @@ export default function UploadScreen() {
     }
   };
 
-  const handleReorderSegments = () => {
-    if (currentDraftId && recordingSegments.length > 1) {
+  const handleEditSegments = () => {
+    if (currentDraftId) {
       router.push({
         pathname: "/reordersegments",
         params: { draftId: currentDraftId },
@@ -325,15 +325,6 @@ export default function UploadScreen() {
             asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
         }
 
-        // Generate thumbnail
-        const thumbnailUri = await VideoThumbnails.getThumbnailAsync(
-          asset.uri,
-          {
-            time: 1000, // 1 second into the video
-            quality: 0.8,
-          }
-        ).catch(() => null);
-
         // Create a recording segment from the selected video
         const segment: RecordingSegment = {
           id: Date.now().toString(),
@@ -413,8 +404,8 @@ export default function UploadScreen() {
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
-              onReorderSegments={
-                recordingSegments.length > 1 ? handleReorderSegments : undefined
+              onEditSegments={
+                recordingSegments.length > 0 ? handleEditSegments : undefined
               }
             />
           )}
