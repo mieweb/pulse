@@ -152,7 +152,7 @@ export default function ShortsScreen() {
     if (loadedDuration !== null && loadedDuration !== selectedDuration) {
       setSelectedDuration(loadedDuration);
     }
-  }, [loadedDuration]);
+  }, [loadedDuration, selectedDuration]);
 
   const handleTimeSelect = (timeInSeconds: number) => {
     // Check if current segments exceed the new duration limit
@@ -329,15 +329,6 @@ export default function ShortsScreen() {
           actualDuration =
             asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
         }
-
-        // Generate thumbnail
-        const thumbnailUri = await VideoThumbnails.getThumbnailAsync(
-          asset.uri,
-          {
-            time: 1000, // 1 second into the video
-            quality: 0.8,
-          }
-        ).catch(() => null);
 
         // Check if adding this video would exceed the total duration limit
         const currentTotalDuration = recordingSegments.reduce(
