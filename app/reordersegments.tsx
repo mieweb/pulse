@@ -59,6 +59,23 @@ export default function ReorderSegmentsScreen() {
     setSegments(reorderedSegments);
   }, []);
 
+  const handleDeleteSegment = useCallback(
+    async (segmentId: string) => {
+      // Find the segment being deleted to get its URI
+      const segmentToDelete = segments.find((seg) => seg.id === segmentId);
+      if (segmentToDelete) {
+        try {
+          // Delete the video file
+          await fileStore.deleteUris([segmentToDelete.uri]);
+          console.log(`Deleted segment file: ${segmentId}`);
+        } catch (error) {
+          console.error("Failed to delete segment file:", error);
+        }
+      }
+    },
+    [segments]
+  );
+
   const handleSave = useCallback(
     async (reorderedSegments: Segment[]) => {
       if (!draftId || !draft) return;
@@ -124,6 +141,7 @@ export default function ReorderSegmentsScreen() {
           onSegmentsReorder={handleSegmentsReorder}
           onSave={handleSave}
           onCancel={handleCancel}
+          onDeleteSegment={handleDeleteSegment}
         />
       </View>
     </View>
