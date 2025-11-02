@@ -24,14 +24,16 @@ interface SegmentReorderListVerticalProps {
   onSegmentsReorder: (reorderedSegments: Segment[]) => void;
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
+  onDeleteSegment?: (segmentId: string) => void;
 }
 
 interface SegmentItemProps {
   item: Segment;
   index: number;
+  onDelete: (segmentId: string) => void;
 }
 
-function SegmentItem({ item: segment, index }: SegmentItemProps) {
+function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -88,6 +90,15 @@ function SegmentItem({ item: segment, index }: SegmentItemProps) {
         </ThemedText>
       </View>
 
+      {/* Delete button */}
+      <TouchableOpacity
+        style={styles.deleteButton}
+        onPress={() => onDelete(segment.id)}
+        activeOpacity={0.7}
+      >
+        <MaterialIcons name="delete" size={20} color="#ff0000" />
+      </TouchableOpacity>
+
       {/* Reorder indicator */}
       <View style={styles.reorderIndicator}>
         <MaterialIcons name="reorder" size={20} color="#999" />
@@ -101,6 +112,7 @@ export default function SegmentReorderListVertical({
   onSegmentsReorder,
   onSave,
   onCancel,
+  onDeleteSegment,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
@@ -113,6 +125,21 @@ export default function SegmentReorderListVertical({
       onSegmentsReorder(newOrder);
     },
     [onSegmentsReorder]
+  );
+
+  const handleDeleteSegment = useCallback(
+    (segmentId: string) => {
+      const updatedSegments = reorderedSegments.filter(
+        (segment) => segment.id !== segmentId
+      );
+      setReorderedSegments(updatedSegments);
+      setHasChanges(true);
+      onSegmentsReorder(updatedSegments);
+      if (onDeleteSegment) {
+        onDeleteSegment(segmentId);
+      }
+    },
+    [reorderedSegments, onSegmentsReorder, onDeleteSegment]
   );
 
   const handleSave = useCallback(() => {
@@ -166,7 +193,7 @@ export default function SegmentReorderListVertical({
         <Sortable.Grid
           data={reorderedSegments}
           renderItem={({ item, index }) => (
-            <SegmentItem item={item} index={index} />
+            <SegmentItem item={item} index={index} onDelete={handleDeleteSegment} />
           )}
           columns={1}
           rowGap={8}
@@ -322,6 +349,10 @@ const styles = StyleSheet.create({
   },
   reorderIndicator: {
     marginLeft: 12,
+    padding: 4,
+  },
+  deleteButton: {
+    marginLeft: 8,
     padding: 4,
   },
   saveButtonContainer: {
