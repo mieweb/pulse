@@ -63,11 +63,14 @@ export default function ReorderSegmentsScreen() {
     async (segmentId: string) => {
       // Find the segment being deleted to get its URI
       const segmentToDelete = segments.find((seg) => seg.id === segmentId);
-      if (segmentToDelete) {
-        // Delete the video file - throw error if it fails
-        await fileStore.deleteUris([segmentToDelete.uri]);
-        console.log(`Deleted segment file: ${segmentId}`);
+      if (!segmentToDelete) {
+        console.warn(`Segment not found for deletion: ${segmentId}`);
+        return;
       }
+      
+      // Delete the video file - throw error if it fails
+      await fileStore.deleteUris([segmentToDelete.uri]);
+      console.log(`Deleted segment file: ${segmentId}`);
     },
     [segments]
   );
