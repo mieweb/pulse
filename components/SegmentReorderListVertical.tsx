@@ -12,6 +12,7 @@ import {
 import Sortable from "react-native-sortables";
 
 const THUMBNAIL_SIZE = 60;
+const ACCENT_COLOR = "#ff0000";
 
 interface Segment {
   id: string;
@@ -95,8 +96,11 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
         style={styles.deleteButton}
         onPress={() => onDelete(segment.id)}
         activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`Delete segment ${index + 1}`}
+        accessibilityHint="Removes this segment from the video"
       >
-        <MaterialIcons name="delete" size={20} color="#ff0000" />
+        <MaterialIcons name="delete" size={20} color={ACCENT_COLOR} />
       </TouchableOpacity>
 
       {/* Reorder indicator */}
@@ -135,7 +139,7 @@ export default function SegmentReorderListVertical({
         try {
           await onDeleteSegment(segmentId);
         } catch (error) {
-          console.error("Failed to delete segment file:", error);
+          console.error(`Failed to delete segment file for ${segmentId}:`, error);
           // Don't proceed with UI update if file deletion failed
           return;
         }
@@ -185,7 +189,7 @@ export default function SegmentReorderListVertical({
             {formatTotalDuration(totalDuration)}
           </ThemedText>
           <View style={styles.infoTag}>
-            <MaterialIcons name="info" size={14} color="#ff0000" />
+            <MaterialIcons name="info" size={14} color={ACCENT_COLOR} />
             <ThemedText style={styles.infoTagText}>Hold to drag</ThemedText>
           </View>
         </View>
@@ -293,7 +297,7 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
   infoTagText: {
-    color: "#ff0000",
+    color: ACCENT_COLOR,
     fontSize: 12,
     fontFamily: "Roboto-Regular",
     marginLeft: 4,
@@ -375,7 +379,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ff0000",
+    backgroundColor: ACCENT_COLOR,
     paddingVertical: 16,
     paddingHorizontal: 24,
     borderRadius: 12,
