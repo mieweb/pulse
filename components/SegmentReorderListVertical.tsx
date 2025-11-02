@@ -24,7 +24,7 @@ interface SegmentReorderListVerticalProps {
   onSegmentsReorder: (reorderedSegments: Segment[]) => void;
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
-  onDeleteSegment?: (segmentId: string) => void;
+  onDeleteSegment?: (segmentId: string) => Promise<void>;
 }
 
 interface SegmentItemProps {
@@ -128,16 +128,26 @@ export default function SegmentReorderListVertical({
   );
 
   const handleDeleteSegment = useCallback(
-    (segmentId: string) => {
+    async (segmentId: string) => {
+      // Call the onDeleteSegment callback first (if provided) to delete the file
+      // If it fails, we don't remove from UI
+      if (onDeleteSegment) {
+        try {
+          await onDeleteSegment(segmentId);
+        } catch (error) {
+          console.error("Failed to delete segment file:", error);
+          // Don't proceed with UI update if file deletion failed
+          return;
+        }
+      }
+      
+      // Only update UI after successful file deletion (or if no callback provided)
       const updatedSegments = reorderedSegments.filter(
         (segment) => segment.id !== segmentId
       );
       setReorderedSegments(updatedSegments);
       setHasChanges(true);
       onSegmentsReorder(updatedSegments);
-      if (onDeleteSegment) {
-        onDeleteSegment(segmentId);
-      }
     },
     [reorderedSegments, onSegmentsReorder, onDeleteSegment]
   );
