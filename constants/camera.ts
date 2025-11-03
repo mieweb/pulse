@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 
+export const DRAFT_NAME_LENGTH = 20;
+
 /**
  * Cross-platform video stabilization mode enum.
  * Simple on/off control for both iOS and Android.

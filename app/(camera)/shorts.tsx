@@ -66,6 +66,7 @@ export default function ShortsScreen() {
     isContinuingLastDraft,
     showContinuingIndicator,
     loadedDuration,
+    currentDraftName,
     handleStartOver,
     handleStartNew,
     handleSaveAsDraft,
@@ -507,20 +508,31 @@ export default function ShortsScreen() {
             currentRecordingDuration={currentRecordingDuration}
           />
 
-          {isRecording && (
-            <View style={styles.recordingTimeContainer}>
-              <ThemedText style={styles.recordingTimeText}>
-                {(() => {
-                  const totalSeconds = Math.floor(
-                    totalUsedDuration + currentRecordingDuration
-                  );
-                  const minutes = Math.floor(totalSeconds / 60);
-                  const seconds = totalSeconds % 60;
-                  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-                })()}
-              </ThemedText>
-            </View>
-          )}
+          <View style={styles.recordingTimeContainer}>
+            {currentDraftName && (
+              <>
+                <ThemedText
+                  style={styles.draftNameText}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  accessibilityLabel={`Draft name: ${currentDraftName}`}
+                >
+                  {currentDraftName}
+                </ThemedText>
+                <ThemedText style={styles.separatorText}>•</ThemedText>
+              </>
+            )}
+            <ThemedText style={styles.recordingTimeText}>
+              {(() => {
+                const totalSeconds = Math.floor(
+                  totalUsedDuration + currentRecordingDuration
+                );
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+              })()}
+            </ThemedText>
+          </View>
 
           {!isRecording && (
             <CloseButton
@@ -611,11 +623,32 @@ const styles = StyleSheet.create({
   },
   recordingTimeContainer: {
     position: "absolute",
-    top: 78,
+    top: 90,
     left: 0,
     right: 0,
     alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
     zIndex: 10,
+  },
+  draftNameText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontFamily: "Roboto-Regular",
+    textShadowColor: "rgba(0, 0, 0, 0.7)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    marginRight: 8,
+  },
+  separatorText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontFamily: "Roboto-Regular",
+    textShadowColor: "rgba(0, 0, 0, 0.7)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    marginRight: 8,
+    opacity: 0.7,
   },
   recordingTimeText: {
     color: "#ffffff",
