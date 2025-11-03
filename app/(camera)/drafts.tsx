@@ -10,6 +10,7 @@ import {
   Image,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -19,6 +20,8 @@ export default function DraftsScreen() {
   const insets = useSafeAreaInsets();
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [draftNameInput, setDraftNameInput] = useState("");
 
   useEffect(() => {
     loadDrafts();
@@ -86,9 +89,16 @@ export default function DraftsScreen() {
                     await fileStore.deleteUris(absoluteUris);
                     await AsyncStorage.removeItem(REDO_STACK_KEY);
                   }
-                } catch {}
+                } catch (error) {
+                  console.warn(
+                    "Failed to cleanup redo stack on delete:",
+                    error
+                  );
+                }
               }
-            } catch {}
+            } catch (error) {
+              console.warn("Failed to read redo stack on delete:", error);
+            }
 
             await DraftStorage.deleteDraft(draftId);
             loadDrafts();
@@ -98,6 +108,36 @@ export default function DraftsScreen() {
         },
       },
     ]);
+  };
+
+  const handleLongPress = (draft: Draft) => {
+    setDraftNameInput(draft.name || "");
+    setEditingDraftId(draft.id);
+  };
+
+  const handleSaveName = async (draftId: string) => {
+    const trimmedName = draftNameInput.trim();
+    if (trimmedName === "" && draftNameInput === "") {
+      setEditingDraftId(null);
+      setDraftNameInput("");
+      return;
+    }
+
+    try {
+      await DraftStorage.updateDraftName(draftId, trimmedName || undefined);
+      await loadDrafts();
+      setEditingDraftId(null);
+      setDraftNameInput("");
+    } catch (error) {
+      console.error("Error updating draft name:", error);
+      Alert.alert("Error", "Failed to update draft name");
+    }
+  };
+
+  const handleBlur = (draftId: string) => {
+    handleSaveName(draftId).catch((error) => {
+      console.error("Error saving draft name on blur:", error);
+    });
   };
 
   const formatDuration = (totalSeconds: number) => {
@@ -144,6 +184,8 @@ export default function DraftsScreen() {
       <TouchableOpacity
         style={styles.draftItem}
         onPress={() => handleDraftPress(item)}
+        onLongPress={() => handleLongPress(item)}
+        activeOpacity={0.5}
       >
         <View style={styles.draftContent}>
           {item.thumbnail && (
@@ -153,6 +195,23 @@ export default function DraftsScreen() {
             />
           )}
           <View style={styles.draftInfo}>
+            {editingDraftId === item.id ? (
+              <TextInput
+                style={styles.draftNameInput}
+                value={draftNameInput}
+                onChangeText={setDraftNameInput}
+                placeholder="Name this draft"
+                placeholderTextColor="#888"
+                autoFocus={true}
+                maxLength={50}
+                onSubmitEditing={() => handleSaveName(item.id)}
+                onBlur={() => handleBlur(item.id)}
+                returnKeyType="done"
+                blurOnSubmit={true}
+              />
+            ) : item.name ? (
+              <Text style={styles.draftName}>{item.name}</Text>
+            ) : null}
             <Text style={styles.draftTitle}>
               {item.segments.length} segment
               {item.segments.length !== 1 ? "s" : ""} • Rec:{" "}
@@ -307,15 +366,29 @@ const styles = StyleSheet.create({
   draftInfo: {
     flex: 1,
   },
+  draftName: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#ffffff",
+    marginBottom: 4,
+  },
+  draftNameInput: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#ffffff",
+    backgroundColor: "#2a2a2a",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: "#444",
+    minHeight: 24,
+    marginBottom: 4,
+  },
   draftTitle: {
     fontSize: 14,
     fontWeight: "600",
     color: "#ffffff",
-    marginBottom: 2,
-  },
-  draftDetails: {
-    fontSize: 14,
-    color: "#888888",
     marginBottom: 2,
   },
   draftDate: {

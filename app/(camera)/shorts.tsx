@@ -479,20 +479,18 @@ export default function ShortsScreen() {
             currentRecordingDuration={currentRecordingDuration}
           />
 
-          {isRecording && (
-            <View style={styles.recordingTimeContainer}>
-              <ThemedText style={styles.recordingTimeText}>
-                {(() => {
-                  const totalSeconds = Math.floor(
-                    totalUsedDuration + currentRecordingDuration
-                  );
-                  const minutes = Math.floor(totalSeconds / 60);
-                  const seconds = totalSeconds % 60;
-                  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-                })()}
-              </ThemedText>
-            </View>
-          )}
+          <View style={styles.recordingTimeContainer}>
+            <ThemedText style={styles.recordingTimeText}>
+              {(() => {
+                const totalSeconds = Math.floor(
+                  totalUsedDuration + currentRecordingDuration
+                );
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+              })()}
+            </ThemedText>
+          </View>
 
           {!isRecording && (
             <CloseButton
@@ -587,6 +585,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
     zIndex: 10,
   },
   recordingTimeText: {

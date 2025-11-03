@@ -14,6 +14,7 @@ export interface Draft {
   createdAt: Date;
   lastModified: Date;
   thumbnail?: string;
+  name?: string;
 }
 
 const DRAFTS_STORAGE_KEY = "recording_drafts";
@@ -69,14 +70,21 @@ export class DraftStorage {
 
       const now = new Date();
       const newDraftId = targetId;
+
+      // Check if a draft with this ID already exists to preserve metadata
+      const existingDraft = existingDrafts.find(
+        (draft) => draft.id === targetId
+      );
+
       const newDraft: Draft = {
         id: newDraftId,
         mode,
         segments,
         totalDuration,
-        createdAt: now,
+        createdAt: existingDraft?.createdAt || now,
         lastModified: now,
         thumbnail: thumbnailUri,
+        name: existingDraft?.name, // Preserve existing name if present
       };
 
       // Replace existing draft with same ID or append new one
@@ -114,7 +122,7 @@ export class DraftStorage {
               segments,
               totalDuration,
               lastModified: new Date(),
-              // Keep existing thumbnail - don't regenerate
+              // Keep existing thumbnail and name - don't regenerate
             }
           : draft
       );
@@ -189,6 +197,7 @@ export class DraftStorage {
         createdAt: new Date(draft.createdAt),
         lastModified: new Date(draft.lastModified || draft.createdAt), // Handle existing drafts
         mode: draft.mode || "camera", // Default to camera for older drafts
+        name: draft.name || undefined, // Preserve name if it exists
       }));
 
       // Filter by mode if specified
@@ -290,6 +299,36 @@ export class DraftStorage {
       );
     } catch (error) {
       console.error("Error deleting draft:", error);
+      throw error;
+    }
+  }
+
+  static async updateDraftName(
+    id: string,
+    name: string | undefined
+  ): Promise<void> {
+    try {
+      const existingDrafts = await this.getAllDrafts();
+
+      const updatedDrafts = existingDrafts.map((draft) =>
+        draft.id === id
+          ? {
+              ...draft,
+              name: name?.trim() || undefined,
+              lastModified: new Date(),
+            }
+          : draft
+      );
+
+      await AsyncStorage.setItem(
+        DRAFTS_STORAGE_KEY,
+        JSON.stringify(updatedDrafts)
+      );
+      console.log(
+        `[DraftStorage] Updated draft name: ${id} -> ${name || "(unnamed)"}`
+      );
+    } catch (error) {
+      console.error("Error updating draft name:", error);
       throw error;
     }
   }
