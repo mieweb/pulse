@@ -198,7 +198,7 @@ export default function DraftsScreen() {
                 placeholder="Name this draft"
                 placeholderTextColor="#888"
                 autoFocus={true}
-                maxLength={50}
+                maxLength={20}
                 onSubmitEditing={() => handleSaveName(item.id)}
                 onBlur={() => handleBlur(item.id)}
                 returnKeyType="done"

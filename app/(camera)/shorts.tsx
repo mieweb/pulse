@@ -535,8 +535,14 @@ export default function ShortsScreen() {
           <View style={styles.recordingTimeContainer}>
             {draftName && (
               <>
-                <ThemedText style={styles.draftNameText}>
-                  {draftName}
+                <ThemedText
+                  style={styles.draftNameText}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {draftName.length > 15
+                    ? `${draftName.substring(0, 15)}...`
+                    : draftName}
                 </ThemedText>
                 <ThemedText style={styles.separatorText}>•</ThemedText>
               </>
