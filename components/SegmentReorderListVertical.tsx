@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Image,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import Sortable from "react-native-sortables";
 
@@ -25,6 +26,7 @@ interface SegmentReorderListVerticalProps {
   onSegmentsReorder: (reorderedSegments: Segment[]) => void;
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
 interface SegmentItemProps {
@@ -115,6 +117,7 @@ export default function SegmentReorderListVertical({
   onSegmentsReorder,
   onSave,
   onCancel,
+  isSaving = false,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
@@ -209,23 +212,34 @@ export default function SegmentReorderListVertical({
       {/* Save Button */}
       <View style={styles.saveButtonContainer}>
         <TouchableOpacity
-          style={[styles.saveButton, !hasChanges && styles.disabledSaveButton]}
+          style={[
+            styles.saveButton,
+            (!hasChanges || isSaving) && styles.disabledSaveButton,
+          ]}
           onPress={handleSave}
-          disabled={!hasChanges}
+          disabled={!hasChanges || isSaving}
           activeOpacity={0.8}
         >
-          <MaterialIcons
-            name="save"
-            size={20}
-            color={hasChanges ? "#fff" : "#666"}
-          />
+          {isSaving ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <MaterialIcons
+              name="save"
+              size={20}
+              color={hasChanges ? "#fff" : "#666"}
+            />
+          )}
           <ThemedText
             style={[
               styles.saveButtonText,
-              !hasChanges && styles.disabledSaveButtonText,
+              (!hasChanges || isSaving) && styles.disabledSaveButtonText,
             ]}
           >
-            {hasChanges ? "Save New Order" : "No Changes"}
+            {isSaving
+              ? "Saving..."
+              : hasChanges
+              ? "Save New Order"
+              : "No Changes"}
           </ThemedText>
         </TouchableOpacity>
       </View>

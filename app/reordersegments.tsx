@@ -4,7 +4,7 @@ import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, ActivityIndicator } from "react-native";
+import { StyleSheet, View, ActivityIndicator, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface Segment {
@@ -19,6 +19,7 @@ export default function ReorderSegmentsScreen() {
 
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [draft, setDraft] = useState<any>(null);
 
   useEffect(() => {
@@ -65,6 +66,7 @@ export default function ReorderSegmentsScreen() {
     async (reorderedSegments: Segment[]) => {
       if (!draftId || !draft) return;
 
+      setIsSaving(true);
       try {
         const deletedSegments = originalSegments.filter(
           (originalSegment) =>
@@ -90,8 +92,18 @@ export default function ReorderSegmentsScreen() {
         const totalDuration = draft.totalDuration;
 
         await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
+        
+        // Navigate back after successful save
+        router.back();
       } catch (error) {
         console.error("Failed to save reordered segments:", error);
+        Alert.alert(
+          "Save Failed",
+          "Failed to save changes. Some files may not have been deleted properly. Please try again.",
+          [{ text: "OK" }]
+        );
+      } finally {
+        setIsSaving(false);
       }
     },
     [draftId, draft, originalSegments]
@@ -129,6 +141,7 @@ export default function ReorderSegmentsScreen() {
           onSegmentsReorder={handleSegmentsReorder}
           onSave={handleSave}
           onCancel={handleCancel}
+          isSaving={isSaving}
         />
       </View>
     </View>
