@@ -25,7 +25,6 @@ interface SegmentReorderListVerticalProps {
   onSegmentsReorder: (reorderedSegments: Segment[]) => void;
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
-  onDeleteSegment?: (segmentId: string) => Promise<void>;
 }
 
 interface SegmentItemProps {
@@ -116,7 +115,6 @@ export default function SegmentReorderListVertical({
   onSegmentsReorder,
   onSave,
   onCancel,
-  onDeleteSegment,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
@@ -132,20 +130,7 @@ export default function SegmentReorderListVertical({
   );
 
   const handleDeleteSegment = useCallback(
-    async (segmentId: string) => {
-      // Call the onDeleteSegment callback first (if provided) to delete the file
-      // If it fails, we don't remove from UI
-      if (onDeleteSegment) {
-        try {
-          await onDeleteSegment(segmentId);
-        } catch (error) {
-          console.error(`Failed to delete segment file for ${segmentId}:`, error);
-          // Don't proceed with UI update if file deletion failed
-          return;
-        }
-      }
-      
-      // Only update UI after successful file deletion (or if no callback provided)
+    (segmentId: string) => {
       const updatedSegments = reorderedSegments.filter(
         (segment) => segment.id !== segmentId
       );
@@ -153,7 +138,7 @@ export default function SegmentReorderListVertical({
       setHasChanges(true);
       onSegmentsReorder(updatedSegments);
     },
-    [reorderedSegments, onSegmentsReorder, onDeleteSegment]
+    [reorderedSegments, onSegmentsReorder]
   );
 
   const handleSave = useCallback(() => {
@@ -207,7 +192,11 @@ export default function SegmentReorderListVertical({
         <Sortable.Grid
           data={reorderedSegments}
           renderItem={({ item, index }) => (
-            <SegmentItem item={item} index={index} onDelete={handleDeleteSegment} />
+            <SegmentItem
+              item={item}
+              index={index}
+              onDelete={handleDeleteSegment}
+            />
           )}
           columns={1}
           rowGap={8}

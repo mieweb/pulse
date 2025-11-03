@@ -32,7 +32,6 @@ export default function ReorderSegmentsScreen() {
         const draft = await DraftStorage.getDraftById(draftId);
         if (draft && draft.segments.length > 0) {
           setDraft(draft);
-          // Convert segments to the format expected by the reorder component
           const formattedSegments: Segment[] = draft.segments.map(
             (segment: any) => ({
               id: segment.id,
@@ -41,6 +40,7 @@ export default function ReorderSegmentsScreen() {
             })
           );
           setSegments(formattedSegments);
+          setOriginalSegments([...formattedSegments]);
         } else {
           router.back();
         }
@@ -55,57 +55,46 @@ export default function ReorderSegmentsScreen() {
     loadDraft();
   }, [draftId]);
 
+  const [originalSegments, setOriginalSegments] = useState<Segment[]>([]);
+
   const handleSegmentsReorder = useCallback((reorderedSegments: Segment[]) => {
     setSegments(reorderedSegments);
   }, []);
-
-  const handleDeleteSegment = useCallback(
-    async (segmentId: string) => {
-      // Find the segment being deleted to get its URI
-      const segmentToDelete = segments.find((seg) => seg.id === segmentId);
-      if (!segmentToDelete) {
-        console.warn(`Segment not found for deletion: ${segmentId}`);
-        return;
-      }
-      
-      // Delete the video file - throw error if it fails
-      await fileStore.deleteUris([segmentToDelete.uri]);
-      console.log(`Deleted segment file: ${segmentId}`);
-    },
-    [segments]
-  );
 
   const handleSave = useCallback(
     async (reorderedSegments: Segment[]) => {
       if (!draftId || !draft) return;
 
       try {
-        // Convert back to the draft format
+        const deletedSegments = originalSegments.filter(
+          (originalSegment) =>
+            !reorderedSegments.some(
+              (segment) => segment.id === originalSegment.id
+            )
+        );
+
+        if (deletedSegments.length > 0) {
+          const urisToDelete = deletedSegments.map((seg) => seg.uri);
+          await fileStore.deleteUris(urisToDelete);
+          console.log(
+            `Deleted ${deletedSegments.length} segment file(s) after save`
+          );
+        }
+
         const updatedSegments = reorderedSegments.map((segment) => ({
           id: segment.id,
-          uri: fileStore.toRelativePath(segment.uri), // Convert back to relative path
+          uri: fileStore.toRelativePath(segment.uri),
           duration: segment.duration,
         }));
 
-        // Update the draft with reordered segments
-        const updatedDraft = {
-          ...draft,
-          segments: updatedSegments,
-        };
-
-        // Use the original draft's totalDuration (selected duration limit)
         const totalDuration = draft.totalDuration;
 
-        // Save the updated draft
         await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
-
-        // Navigate back to camera screen
-        router.back();
       } catch (error) {
         console.error("Failed to save reordered segments:", error);
       }
     },
-    [draftId, draft]
+    [draftId, draft, originalSegments]
   );
 
   const handleCancel = useCallback(() => {
@@ -140,7 +129,6 @@ export default function ReorderSegmentsScreen() {
           onSegmentsReorder={handleSegmentsReorder}
           onSave={handleSave}
           onCancel={handleCancel}
-          onDeleteSegment={handleDeleteSegment}
         />
       </View>
     </View>
