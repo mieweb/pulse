@@ -117,11 +117,6 @@ export default function DraftsScreen() {
 
   const handleSaveName = async (draftId: string) => {
     const trimmedName = draftNameInput.trim();
-    if (trimmedName === "" && draftNameInput === "") {
-      setEditingDraftId(null);
-      setDraftNameInput("");
-      return;
-    }
 
     try {
       await DraftStorage.updateDraftName(draftId, trimmedName || undefined);

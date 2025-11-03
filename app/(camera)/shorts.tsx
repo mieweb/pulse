@@ -89,6 +89,10 @@ export default function ShortsScreen() {
   // Recording state
   const [isRecording, setIsRecording] = React.useState(false);
 
+  const [draftName, setDraftName] = React.useState<string | undefined>(
+    undefined
+  );
+
   // Screen-level touch state for continuous hold recording
   const [screenTouchActive, setScreenTouchActive] = React.useState(false);
   const [_buttonPressActive, setButtonPressActive] = React.useState(false); // eslint-disable-line @typescript-eslint/no-unused-vars
@@ -158,6 +162,24 @@ export default function ShortsScreen() {
     }
   }, [loadedDuration]);
 
+  React.useEffect(() => {
+    const loadDraftName = async () => {
+      const draftToLoad = currentDraftId || draftId;
+      if (draftToLoad) {
+        try {
+          const draft = await DraftStorage.getDraftById(draftToLoad, "camera");
+          setDraftName(draft?.name);
+        } catch (error) {
+          console.error("Failed to load draft name:", error);
+          setDraftName(undefined);
+        }
+      } else {
+        setDraftName(undefined);
+      }
+    };
+    loadDraftName();
+  }, [currentDraftId, draftId]);
+
   useFocusEffect(
     React.useCallback(() => {
       const reloadDraft = async () => {
@@ -168,10 +190,13 @@ export default function ShortsScreen() {
               draftToReload,
               "camera"
             );
-            if (draft && draft.segments) {
-              const segmentsWithAbsolutePaths =
-                fileStore.convertSegmentsToAbsolute(draft.segments);
-              setRecordingSegments(segmentsWithAbsolutePaths);
+            if (draft) {
+              if (draft.segments) {
+                const segmentsWithAbsolutePaths =
+                  fileStore.convertSegmentsToAbsolute(draft.segments);
+                setRecordingSegments(segmentsWithAbsolutePaths);
+              }
+              setDraftName(draft.name);
             }
           } catch (error) {
             console.error("Failed to reload draft on focus:", error);
@@ -508,6 +533,14 @@ export default function ShortsScreen() {
           />
 
           <View style={styles.recordingTimeContainer}>
+            {draftName && (
+              <>
+                <ThemedText style={styles.draftNameText}>
+                  {draftName}
+                </ThemedText>
+                <ThemedText style={styles.separatorText}>•</ThemedText>
+              </>
+            )}
             <ThemedText style={styles.recordingTimeText}>
               {(() => {
                 const totalSeconds = Math.floor(
@@ -609,13 +642,32 @@ const styles = StyleSheet.create({
   },
   recordingTimeContainer: {
     position: "absolute",
-    top: 78,
+    top: 90,
     left: 0,
     right: 0,
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "center",
     zIndex: 10,
+  },
+  draftNameText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontFamily: "Roboto-Regular",
+    textShadowColor: "rgba(0, 0, 0, 0.7)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    marginRight: 8,
+  },
+  separatorText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontFamily: "Roboto-Regular",
+    textShadowColor: "rgba(0, 0, 0, 0.7)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    marginRight: 8,
+    opacity: 0.7,
   },
   recordingTimeText: {
     color: "#ffffff",
