@@ -133,6 +133,7 @@ export default function DraftsScreen() {
   const handleBlur = (draftId: string) => {
     handleSaveName(draftId).catch((error) => {
       console.error("Error saving draft name on blur:", error);
+      Alert.alert("Error", "Failed to update draft name");
     });
   };
 

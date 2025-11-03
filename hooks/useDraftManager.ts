@@ -2,7 +2,7 @@ import { RecordingSegment } from "@/components/RecordingProgressBar";
 import { DraftMode, DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as Crypto from "expo-crypto";
 
 const REDO_STACK_KEY = "redo_stack";
@@ -253,6 +253,11 @@ export function useDraftManager(
     loadDraftName();
   }, [currentDraftId]);
 
+  const effectiveDraftIdForRedo = useMemo(
+    () => currentDraftId ?? originalDraftId,
+    [currentDraftId, originalDraftId]
+  );
+
   useEffect(() => {
     const saveRedoStack = async () => {
       try {
@@ -263,11 +268,11 @@ export function useDraftManager(
         }));
 
         let draftName: string | undefined = currentDraftName;
-        if (!draftName && !currentDraftId) {
+        if (!draftName) {
           draftName = await getDraftNameFromRedoStack();
         }
 
-        const effectiveDraftId = currentDraftId ?? originalDraftId ?? null;
+        const effectiveDraftId = effectiveDraftIdForRedo ?? null;
 
         const redoData = {
           draftId: effectiveDraftId,
@@ -281,14 +286,7 @@ export function useDraftManager(
     };
 
     saveRedoStack();
-    // Conditionally depend on originalDraftId only when currentDraftId is null/undefined
-    // to avoid unnecessary re-runs when originalDraftId changes but currentDraftId exists
-  }, [
-    redoStack,
-    currentDraftId,
-    currentDraftName,
-    currentDraftId ? null : originalDraftId,
-  ]);
+  }, [redoStack, currentDraftId, currentDraftName, effectiveDraftIdForRedo]);
 
   const handleStartOver = () => {
     console.log("[DraftManager] Starting over - clearing all segments");
@@ -387,10 +385,22 @@ export function useDraftManager(
               const absoluteUris = segmentsToDelete.map((s: any) =>
                 fileStore.toAbsolutePath(s.uri)
               );
-              await fileStore.deleteUris(absoluteUris);
+              try {
+                await fileStore.deleteUris(absoluteUris);
+              } catch (error) {
+                console.warn(
+                  "Failed to delete some redo files. URIs attempted:",
+                  segmentsToDelete.map((s: any) => s.uri),
+                  "Error:",
+                  error
+                );
+              }
             }
           } catch (error) {
-            console.warn("Failed to delete some redo files:", error);
+            console.warn(
+              "Failed to parse redo stack data during cleanup:",
+              error
+            );
           }
         }
 
@@ -424,7 +434,7 @@ export function useDraftManager(
             // Metadata-only delete so redo can recreate the draft; keep files on disk
             await DraftStorage.deleteDraft(currentDraftId, { keepFiles: true });
             setCurrentDraftId(null);
-            setCurrentDraftName(draftName);
+            setCurrentDraftName(undefined);
             setHasStartedOver(false);
 
             // Store the draft name in the redo stack data
