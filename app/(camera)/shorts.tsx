@@ -66,6 +66,7 @@ export default function ShortsScreen() {
     isContinuingLastDraft,
     showContinuingIndicator,
     loadedDuration,
+    currentDraftName,
     handleStartOver,
     handleStartNew,
     handleSaveAsDraft,
@@ -88,10 +89,6 @@ export default function ShortsScreen() {
 
   // Recording state
   const [isRecording, setIsRecording] = React.useState(false);
-
-  const [draftName, setDraftName] = React.useState<string | undefined>(
-    undefined
-  );
 
   // Screen-level touch state for continuous hold recording
   const [screenTouchActive, setScreenTouchActive] = React.useState(false);
@@ -162,24 +159,6 @@ export default function ShortsScreen() {
     }
   }, [loadedDuration]);
 
-  React.useEffect(() => {
-    const loadDraftName = async () => {
-      const draftToLoad = currentDraftId || draftId;
-      if (draftToLoad) {
-        try {
-          const draft = await DraftStorage.getDraftById(draftToLoad, "camera");
-          setDraftName(draft?.name);
-        } catch (error) {
-          console.error("Failed to load draft name:", error);
-          setDraftName(undefined);
-        }
-      } else {
-        setDraftName(undefined);
-      }
-    };
-    loadDraftName();
-  }, [currentDraftId, draftId]);
-
   useFocusEffect(
     React.useCallback(() => {
       const reloadDraft = async () => {
@@ -190,13 +169,10 @@ export default function ShortsScreen() {
               draftToReload,
               "camera"
             );
-            if (draft) {
-              if (draft.segments) {
-                const segmentsWithAbsolutePaths =
-                  fileStore.convertSegmentsToAbsolute(draft.segments);
-                setRecordingSegments(segmentsWithAbsolutePaths);
-              }
-              setDraftName(draft.name);
+            if (draft && draft.segments) {
+              const segmentsWithAbsolutePaths =
+                fileStore.convertSegmentsToAbsolute(draft.segments);
+              setRecordingSegments(segmentsWithAbsolutePaths);
             }
           } catch (error) {
             console.error("Failed to reload draft on focus:", error);
@@ -533,14 +509,15 @@ export default function ShortsScreen() {
           />
 
           <View style={styles.recordingTimeContainer}>
-            {draftName && (
+            {currentDraftName && (
               <>
                 <ThemedText
                   style={styles.draftNameText}
                   numberOfLines={1}
                   ellipsizeMode="tail"
+                  accessibilityLabel={`Draft name: ${currentDraftName}`}
                 >
-                  {draftName}
+                  {currentDraftName}
                 </ThemedText>
                 <ThemedText style={styles.separatorText}>•</ThemedText>
               </>

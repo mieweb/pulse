@@ -31,6 +31,7 @@ interface DraftManagerState {
   isContinuingLastDraft: boolean;
   showContinuingIndicator: boolean;
   loadedDuration: number | null;
+  currentDraftName: string | undefined;
 }
 
 interface DraftManagerActions {
@@ -280,6 +281,8 @@ export function useDraftManager(
     };
 
     saveRedoStack();
+    // Conditionally depend on originalDraftId only when currentDraftId is null/undefined
+    // to avoid unnecessary re-runs when originalDraftId changes but currentDraftId exists
   }, [
     redoStack,
     currentDraftId,
@@ -699,6 +702,7 @@ export function useDraftManager(
     isContinuingLastDraft,
     showContinuingIndicator,
     loadedDuration,
+    currentDraftName,
     // Actions
     setRecordingSegments,
     setRedoStack,
