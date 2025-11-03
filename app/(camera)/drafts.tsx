@@ -1,5 +1,6 @@
 import { Draft, DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
+import { DRAFT_NAME_LENGTH } from "@/constants/camera";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router } from "expo-router";
@@ -198,7 +199,7 @@ export default function DraftsScreen() {
                 placeholder="Name this draft"
                 placeholderTextColor="#888"
                 autoFocus={true}
-                maxLength={20}
+                maxLength={DRAFT_NAME_LENGTH}
                 onSubmitEditing={() => handleSaveName(item.id)}
                 onBlur={() => handleBlur(item.id)}
                 returnKeyType="done"

@@ -540,9 +540,7 @@ export default function ShortsScreen() {
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
-                  {draftName.length > 15
-                    ? `${draftName.substring(0, 15)}...`
-                    : draftName}
+                  {draftName}
                 </ThemedText>
                 <ThemedText style={styles.separatorText}>•</ThemedText>
               </>
