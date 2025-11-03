@@ -92,7 +92,6 @@ export default function ReorderSegmentsScreen() {
         const totalDuration = draft.totalDuration;
 
         await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
-        
         // Navigate back after successful save
         router.back();
       } catch (error) {
@@ -118,17 +117,6 @@ export default function ReorderSegmentsScreen() {
       <View style={[styles.container, styles.loadingContainer]}>
         <ActivityIndicator size="large" color="#ff0000" />
         <ThemedText style={styles.loadingText}>Loading segments...</ThemedText>
-      </View>
-    );
-  }
-
-  if (segments.length === 0) {
-    return (
-      <View style={[styles.container, styles.errorContainer]}>
-        <ThemedText style={styles.errorText}>No segments found</ThemedText>
-        <ThemedText style={styles.errorSubtext}>
-          Please record some segments first
-        </ThemedText>
       </View>
     );
   }
@@ -166,23 +154,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Roboto-Regular",
     marginTop: 16,
-  },
-  errorContainer: {
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 40,
-  },
-  errorText: {
-    color: "#fff",
-    fontSize: 18,
-    fontFamily: "Roboto-Bold",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  errorSubtext: {
-    color: "#ccc",
-    fontSize: 14,
-    fontFamily: "Roboto-Regular",
-    textAlign: "center",
   },
 });
