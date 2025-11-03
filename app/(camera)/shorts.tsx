@@ -27,6 +27,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import { DraftStorage } from "@/utils/draftStorage";
+import { fileStore } from "@/utils/fileStore";
 import {
   PanGestureHandler,
   PinchGestureHandler,
@@ -71,6 +74,7 @@ export default function ShortsScreen() {
     handleRedoSegment,
     updateSegmentsAfterRecording,
     updateDraftDuration,
+    setRecordingSegments,
   } = useDraftManager(draftId, selectedDuration);
 
   // Camera control states
@@ -153,6 +157,30 @@ export default function ShortsScreen() {
       setSelectedDuration(loadedDuration);
     }
   }, [loadedDuration]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const reloadDraft = async () => {
+        const draftToReload = draftId || currentDraftId;
+        if (draftToReload) {
+          try {
+            const draft = await DraftStorage.getDraftById(
+              draftToReload,
+              "camera"
+            );
+            if (draft && draft.segments) {
+              const segmentsWithAbsolutePaths =
+                fileStore.convertSegmentsToAbsolute(draft.segments);
+              setRecordingSegments(segmentsWithAbsolutePaths);
+            }
+          } catch (error) {
+            console.error("Failed to reload draft on focus:", error);
+          }
+        }
+      };
+      reloadDraft();
+    }, [draftId, currentDraftId, setRecordingSegments])
+  );
 
   const handleTimeSelect = (timeInSeconds: number) => {
     // Check if current segments exceed the new duration limit

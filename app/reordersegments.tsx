@@ -4,7 +4,7 @@ import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, ActivityIndicator } from "react-native";
+import { StyleSheet, View, ActivityIndicator, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface Segment {
@@ -19,6 +19,7 @@ export default function ReorderSegmentsScreen() {
 
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [draft, setDraft] = useState<any>(null);
 
   useEffect(() => {
@@ -32,7 +33,6 @@ export default function ReorderSegmentsScreen() {
         const draft = await DraftStorage.getDraftById(draftId);
         if (draft && draft.segments.length > 0) {
           setDraft(draft);
-          // Convert segments to the format expected by the reorder component
           const formattedSegments: Segment[] = draft.segments.map(
             (segment: any) => ({
               id: segment.id,
@@ -41,6 +41,7 @@ export default function ReorderSegmentsScreen() {
             })
           );
           setSegments(formattedSegments);
+          setOriginalSegments([...formattedSegments]);
         } else {
           router.back();
         }
@@ -55,6 +56,8 @@ export default function ReorderSegmentsScreen() {
     loadDraft();
   }, [draftId]);
 
+  const [originalSegments, setOriginalSegments] = useState<Segment[]>([]);
+
   const handleSegmentsReorder = useCallback((reorderedSegments: Segment[]) => {
     setSegments(reorderedSegments);
   }, []);
@@ -63,33 +66,47 @@ export default function ReorderSegmentsScreen() {
     async (reorderedSegments: Segment[]) => {
       if (!draftId || !draft) return;
 
+      setIsSaving(true);
       try {
-        // Convert back to the draft format
+        const deletedSegments = originalSegments.filter(
+          (originalSegment) =>
+            !reorderedSegments.some(
+              (segment) => segment.id === originalSegment.id
+            )
+        );
+
+        if (deletedSegments.length > 0) {
+          const urisToDelete = deletedSegments.map((seg) => seg.uri);
+          await fileStore.deleteUris(urisToDelete);
+          console.log(
+            `Deleted ${deletedSegments.length} segment file(s) after save`
+          );
+        }
+
         const updatedSegments = reorderedSegments.map((segment) => ({
           id: segment.id,
-          uri: fileStore.toRelativePath(segment.uri), // Convert back to relative path
+          uri: fileStore.toRelativePath(segment.uri),
           duration: segment.duration,
         }));
 
-        // Update the draft with reordered segments
-        const updatedDraft = {
-          ...draft,
-          segments: updatedSegments,
-        };
-
-        // Use the original draft's totalDuration (selected duration limit)
         const totalDuration = draft.totalDuration;
 
-        // Save the updated draft
         await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
-
-        // Navigate back to camera screen
+        
+        // Navigate back after successful save
         router.back();
       } catch (error) {
         console.error("Failed to save reordered segments:", error);
+        Alert.alert(
+          "Save Failed",
+          "Failed to save changes. Some files may not have been deleted properly. Please try again.",
+          [{ text: "OK" }]
+        );
+      } finally {
+        setIsSaving(false);
       }
     },
-    [draftId, draft]
+    [draftId, draft, originalSegments]
   );
 
   const handleCancel = useCallback(() => {
@@ -124,6 +141,7 @@ export default function ReorderSegmentsScreen() {
           onSegmentsReorder={handleSegmentsReorder}
           onSave={handleSave}
           onCancel={handleCancel}
+          isSaving={isSaving}
         />
       </View>
     </View>
