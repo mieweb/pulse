@@ -413,6 +413,41 @@ export default function PreviewScreen() {
         </TouchableOpacity>
       )}
 
+      {videoUris.length === 1 && (
+        <TouchableOpacity
+          style={[styles.concatenateButton, { bottom: insets.bottom + 20 }]}
+          onPress={() => {
+            try {
+              if (player1 && typeof player1.pause === "function") {
+                player1.pause();
+              }
+            } catch (error) {}
+
+            try {
+              if (player2 && typeof player2.pause === "function") {
+                player2.pause();
+              }
+            } catch (error) {}
+
+            router.push({
+              pathname: "/merged-video",
+              params: { videoUri: videoUris[0], draftId: draftId || "" },
+            });
+          }}
+          activeOpacity={0.8}
+        >
+          <View style={styles.buttonContent}>
+            <MaterialIcons
+              name="cloud-upload"
+              size={20}
+              color="#ffffff"
+              style={styles.buttonIcon}
+            />
+            <ThemedText style={styles.buttonText}>Upload Video</ThemedText>
+          </View>
+        </TouchableOpacity>
+      )}
+
       {/* Loading overlay */}
       {isConcatenating && (
         <View style={styles.loadingOverlay}>
