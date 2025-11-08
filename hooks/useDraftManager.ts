@@ -116,10 +116,26 @@ export function useDraftManager(
             draftToLoad = null;
             setIsContinuingLastDraft(false);
           } else {
-            draftToLoad =
-              mode === "camera"
-                ? await DraftStorage.getLastModifiedDraft(mode)
-                : null;
+            if (!mode || mode === "camera") {
+              const cameraDraft = await DraftStorage.getLastModifiedDraft(
+                "camera"
+              );
+              const uploadDraft = await DraftStorage.getLastModifiedDraft(
+                "upload"
+              );
+
+              if (cameraDraft && uploadDraft) {
+                draftToLoad =
+                  cameraDraft.lastModified.getTime() >
+                  uploadDraft.lastModified.getTime()
+                    ? cameraDraft
+                    : uploadDraft;
+              } else {
+                draftToLoad = cameraDraft || uploadDraft;
+              }
+            } else {
+              draftToLoad = await DraftStorage.getLastModifiedDraft(mode);
+            }
             setIsContinuingLastDraft(!!draftToLoad);
           }
         }
@@ -171,7 +187,7 @@ export function useDraftManager(
     };
 
     loadDraft();
-  }, [draftId]);
+  }, [draftId, mode]);
 
   useEffect(() => {
     if (isContinuingLastDraft && recordingSegments.length > 0) {

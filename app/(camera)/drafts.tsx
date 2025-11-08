@@ -45,17 +45,13 @@ export default function DraftsScreen() {
   };
 
   const handleDraftPress = (draft: Draft) => {
-    if (draft.mode === "upload") {
-      router.push({
-        pathname: "/upload",
-        params: { draftId: draft.id },
-      });
-    } else {
-      router.push({
-        pathname: "/(camera)/shorts",
-        params: { draftId: draft.id },
-      });
-    }
+    router.push({
+      pathname: "/(camera)/shorts",
+      params: {
+        draftId: draft.id,
+        mode: draft.mode,
+      },
+    });
   };
 
   const handleDeleteDraft = async (draftId: string) => {

@@ -1,5 +1,6 @@
 import CameraControls from "@/components/CameraControls";
 import CloseButton from "@/components/CloseButton";
+import UploadCloseButton from "@/components/UploadCloseButton";
 import RecordButton from "@/components/RecordButton";
 import RecordingProgressBar, {
   RecordingSegment,
@@ -53,7 +54,13 @@ import Animated, {
  * - Time selector for recording duration
  */
 export default function ShortsScreen() {
-  const { draftId } = useLocalSearchParams<{ draftId?: string }>();
+  const { draftId, mode } = useLocalSearchParams<{
+    draftId?: string;
+    mode?: string;
+  }>();
+  const draftMode = (mode === "upload" ? "upload" : "camera") as
+    | "camera"
+    | "upload";
   const cameraRef = React.useRef<CameraView>(null);
   const [selectedDuration, setSelectedDuration] = React.useState(60);
   const [currentRecordingDuration, setCurrentRecordingDuration] =
@@ -78,7 +85,7 @@ export default function ShortsScreen() {
     updateSegmentsAfterRecording,
     updateDraftDuration,
     setRecordingSegments,
-  } = useDraftManager(draftId, selectedDuration);
+  } = useDraftManager(draftId, selectedDuration, draftMode);
 
   // Camera control states
   const { cameraFacing, updateCameraFacing } = useCameraFacing();
@@ -539,17 +546,25 @@ export default function ShortsScreen() {
             </ThemedText>
           </View>
 
-          {!isRecording && (
-            <CloseButton
-              segments={recordingSegments}
-              onStartOver={handleStartOver}
-              onStartNew={handleStartNew}
-              onSaveAsDraft={handleSaveAsDraftWrapper}
-              hasStartedOver={hasStartedOver}
-              onClose={handleCloseWrapper}
-              isContinuingLastDraft={isContinuingLastDraft}
-            />
-          )}
+          {!isRecording &&
+            (draftMode === "upload" ? (
+              <UploadCloseButton
+                segments={recordingSegments}
+                onStartOver={handleStartOver}
+                hasStartedOver={hasStartedOver}
+                onClose={handleCloseWrapper}
+              />
+            ) : (
+              <CloseButton
+                segments={recordingSegments}
+                onStartOver={handleStartOver}
+                onStartNew={handleStartNew}
+                onSaveAsDraft={handleSaveAsDraftWrapper}
+                hasStartedOver={hasStartedOver}
+                onClose={handleCloseWrapper}
+                isContinuingLastDraft={isContinuingLastDraft}
+              />
+            ))}
 
           <RecordButton
             cameraRef={cameraRef}
