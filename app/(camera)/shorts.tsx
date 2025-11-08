@@ -12,6 +12,8 @@ import UndoSegmentButton from "@/components/UndoSegmentButton";
 import * as ImagePicker from "expo-image-picker";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { useDraftManager } from "@/hooks/useDraftManager";
+import { useVideoStabilization } from "@/hooks/useVideoStabilization";
+import { useCameraFacing } from "@/hooks/useCameraFacing";
 import {
   VideoStabilization,
   mapToNativeVideoStabilization,
@@ -79,13 +81,12 @@ export default function ShortsScreen() {
   } = useDraftManager(draftId, selectedDuration);
 
   // Camera control states
-  const [cameraFacing, setCameraFacing] = React.useState<CameraType>("back");
+  const { cameraFacing, updateCameraFacing } = useCameraFacing();
   const [torchEnabled, setTorchEnabled] = React.useState(false);
   const [isCameraSwitching, setIsCameraSwitching] = React.useState(false);
-  const [previousCameraFacing, setPreviousCameraFacing] =
-    React.useState<CameraType>("back");
-  const [videoStabilizationMode, setVideoStabilizationMode] =
-    React.useState<VideoStabilization>(VideoStabilization.off);
+  const previousCameraFacingRef = React.useRef<CameraType>(cameraFacing);
+  const { videoStabilizationMode, updateVideoStabilizationMode } =
+    useVideoStabilization();
 
   // Recording state
   const [isRecording, setIsRecording] = React.useState(false);
@@ -159,6 +160,11 @@ export default function ShortsScreen() {
     }
   }, [loadedDuration]);
 
+  // Sync previousCameraFacing ref when cameraFacing changes
+  React.useEffect(() => {
+    previousCameraFacingRef.current = cameraFacing;
+  }, [cameraFacing]);
+
   useFocusEffect(
     React.useCallback(() => {
       const reloadDraft = async () => {
@@ -213,19 +219,16 @@ export default function ShortsScreen() {
     savedZoom.value = 0;
     currentZoom.value = 0;
 
-    setCameraFacing((current) => {
-      setPreviousCameraFacing(current);
-      const newFacing = current === "back" ? "front" : "back";
-      if (newFacing === "front") {
-        setTorchEnabled(false);
-      }
+    const newFacing = cameraFacing === "back" ? "front" : "back";
+    if (newFacing === "front") {
+      setTorchEnabled(false);
+    }
 
-      setTimeout(() => {
-        setIsCameraSwitching(false);
-      }, 300);
+    updateCameraFacing(newFacing);
 
-      return newFacing;
-    });
+    setTimeout(() => {
+      setIsCameraSwitching(false);
+    }, 300);
   };
 
   const handleTorchToggle = () => {
@@ -233,7 +236,7 @@ export default function ShortsScreen() {
   };
 
   const handleVideoStabilizationChange = (mode: VideoStabilization) => {
-    setVideoStabilizationMode(mode);
+    updateVideoStabilizationMode(mode);
   };
 
   const handlePreview = () => {
@@ -464,7 +467,9 @@ export default function ShortsScreen() {
               onFlashToggle={handleTorchToggle}
               torchEnabled={torchEnabled}
               cameraFacing={
-                isCameraSwitching ? previousCameraFacing : cameraFacing
+                isCameraSwitching
+                  ? previousCameraFacingRef.current
+                  : cameraFacing
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
