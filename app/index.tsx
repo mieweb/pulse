@@ -19,10 +19,14 @@ export default function Index() {
   // Handle upload mode with UUID validation
   if (params.mode === "upload") {
     if (params.draftId && isUUIDv4(params.draftId)) {
-      return <Redirect href={`/upload?draftId=${params.draftId}`} />;
+      return (
+        <Redirect
+          href={`/(camera)/shorts?draftId=${params.draftId}&mode=upload`}
+        />
+      );
     } else {
-      // Could redirect to upload screen without draftId for new recording
-      // return <Redirect href="/upload" />;
+      // Could redirect to shorts screen without draftId for new recording
+      // return <Redirect href="/(camera)/shorts?mode=upload" />;
     }
   }
 
