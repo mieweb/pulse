@@ -1,5 +1,6 @@
 import CameraControls from "@/components/CameraControls";
 import CloseButton from "@/components/CloseButton";
+import UploadCloseButton from "@/components/UploadCloseButton";
 import RecordButton from "@/components/RecordButton";
 import RecordingProgressBar, {
   RecordingSegment,
@@ -12,6 +13,8 @@ import UndoSegmentButton from "@/components/UndoSegmentButton";
 import * as ImagePicker from "expo-image-picker";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { useDraftManager } from "@/hooks/useDraftManager";
+import { useVideoStabilization } from "@/hooks/useVideoStabilization";
+import { useCameraFacing } from "@/hooks/useCameraFacing";
 import {
   VideoStabilization,
   mapToNativeVideoStabilization,
@@ -27,6 +30,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import { DraftStorage } from "@/utils/draftStorage";
+import { fileStore } from "@/utils/fileStore";
 import {
   PanGestureHandler,
   PinchGestureHandler,
@@ -48,7 +54,13 @@ import Animated, {
  * - Time selector for recording duration
  */
 export default function ShortsScreen() {
-  const { draftId } = useLocalSearchParams<{ draftId?: string }>();
+  const { draftId, mode } = useLocalSearchParams<{
+    draftId?: string;
+    mode?: string;
+  }>();
+  const draftMode = (mode === "upload" ? "upload" : "camera") as
+    | "camera"
+    | "upload";
   const cameraRef = React.useRef<CameraView>(null);
   const [selectedDuration, setSelectedDuration] = React.useState(60);
   const [currentRecordingDuration, setCurrentRecordingDuration] =
@@ -63,6 +75,7 @@ export default function ShortsScreen() {
     isContinuingLastDraft,
     showContinuingIndicator,
     loadedDuration,
+    currentDraftName,
     handleStartOver,
     handleStartNew,
     handleSaveAsDraft,
@@ -71,16 +84,16 @@ export default function ShortsScreen() {
     handleRedoSegment,
     updateSegmentsAfterRecording,
     updateDraftDuration,
-  } = useDraftManager(draftId, selectedDuration);
+    setRecordingSegments,
+  } = useDraftManager(draftId, selectedDuration, draftMode);
 
   // Camera control states
-  const [cameraFacing, setCameraFacing] = React.useState<CameraType>("back");
+  const { cameraFacing, updateCameraFacing } = useCameraFacing();
   const [torchEnabled, setTorchEnabled] = React.useState(false);
   const [isCameraSwitching, setIsCameraSwitching] = React.useState(false);
-  const [previousCameraFacing, setPreviousCameraFacing] =
-    React.useState<CameraType>("back");
-  const [videoStabilizationMode, setVideoStabilizationMode] =
-    React.useState<VideoStabilization>(VideoStabilization.off);
+  const previousCameraFacingRef = React.useRef<CameraType>(cameraFacing);
+  const { videoStabilizationMode, updateVideoStabilizationMode } =
+    useVideoStabilization();
 
   // Recording state
   const [isRecording, setIsRecording] = React.useState(false);
@@ -154,6 +167,35 @@ export default function ShortsScreen() {
     }
   }, [loadedDuration, selectedDuration]);
 
+  // Sync previousCameraFacing ref when cameraFacing changes
+  React.useEffect(() => {
+    previousCameraFacingRef.current = cameraFacing;
+  }, [cameraFacing]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const reloadDraft = async () => {
+        const draftToReload = draftId || currentDraftId;
+        if (draftToReload) {
+          try {
+            const draft = await DraftStorage.getDraftById(
+              draftToReload,
+              "camera"
+            );
+            if (draft && draft.segments) {
+              const segmentsWithAbsolutePaths =
+                fileStore.convertSegmentsToAbsolute(draft.segments);
+              setRecordingSegments(segmentsWithAbsolutePaths);
+            }
+          } catch (error) {
+            console.error("Failed to reload draft on focus:", error);
+          }
+        }
+      };
+      reloadDraft();
+    }, [draftId, currentDraftId, setRecordingSegments])
+  );
+
   const handleTimeSelect = (timeInSeconds: number) => {
     // Check if current segments exceed the new duration limit
     const currentTotalDuration = recordingSegments.reduce(
@@ -184,19 +226,16 @@ export default function ShortsScreen() {
     savedZoom.value = 0;
     currentZoom.value = 0;
 
-    setCameraFacing((current) => {
-      setPreviousCameraFacing(current);
-      const newFacing = current === "back" ? "front" : "back";
-      if (newFacing === "front") {
-        setTorchEnabled(false);
-      }
+    const newFacing = cameraFacing === "back" ? "front" : "back";
+    if (newFacing === "front") {
+      setTorchEnabled(false);
+    }
 
-      setTimeout(() => {
-        setIsCameraSwitching(false);
-      }, 300);
+    updateCameraFacing(newFacing);
 
-      return newFacing;
-    });
+    setTimeout(() => {
+      setIsCameraSwitching(false);
+    }, 300);
   };
 
   const handleTorchToggle = () => {
@@ -204,7 +243,7 @@ export default function ShortsScreen() {
   };
 
   const handleVideoStabilizationChange = (mode: VideoStabilization) => {
-    setVideoStabilizationMode(mode);
+    updateVideoStabilizationMode(mode);
   };
 
   const handlePreview = () => {
@@ -426,7 +465,9 @@ export default function ShortsScreen() {
               onFlashToggle={handleTorchToggle}
               torchEnabled={torchEnabled}
               cameraFacing={
-                isCameraSwitching ? previousCameraFacing : cameraFacing
+                isCameraSwitching
+                  ? previousCameraFacingRef.current
+                  : cameraFacing
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
@@ -470,32 +511,51 @@ export default function ShortsScreen() {
             currentRecordingDuration={currentRecordingDuration}
           />
 
-          {isRecording && (
-            <View style={styles.recordingTimeContainer}>
-              <ThemedText style={styles.recordingTimeText}>
-                {(() => {
-                  const totalSeconds = Math.floor(
-                    totalUsedDuration + currentRecordingDuration
-                  );
-                  const minutes = Math.floor(totalSeconds / 60);
-                  const seconds = totalSeconds % 60;
-                  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-                })()}
-              </ThemedText>
-            </View>
-          )}
+          <View style={styles.recordingTimeContainer}>
+            {currentDraftName && (
+              <>
+                <ThemedText
+                  style={styles.draftNameText}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  accessibilityLabel={`Draft name: ${currentDraftName}`}
+                >
+                  {currentDraftName}
+                </ThemedText>
+                <ThemedText style={styles.separatorText}>•</ThemedText>
+              </>
+            )}
+            <ThemedText style={styles.recordingTimeText}>
+              {(() => {
+                const totalSeconds = Math.floor(
+                  totalUsedDuration + currentRecordingDuration
+                );
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+              })()}
+            </ThemedText>
+          </View>
 
-          {!isRecording && (
-            <CloseButton
-              segments={recordingSegments}
-              onStartOver={handleStartOver}
-              onStartNew={handleStartNew}
-              onSaveAsDraft={handleSaveAsDraftWrapper}
-              hasStartedOver={hasStartedOver}
-              onClose={handleCloseWrapper}
-              isContinuingLastDraft={isContinuingLastDraft}
-            />
-          )}
+          {!isRecording &&
+            (draftMode === "upload" ? (
+              <UploadCloseButton
+                segments={recordingSegments}
+                onStartOver={handleStartOver}
+                hasStartedOver={hasStartedOver}
+                onClose={handleCloseWrapper}
+              />
+            ) : (
+              <CloseButton
+                segments={recordingSegments}
+                onStartOver={handleStartOver}
+                onStartNew={handleStartNew}
+                onSaveAsDraft={handleSaveAsDraftWrapper}
+                hasStartedOver={hasStartedOver}
+                onClose={handleCloseWrapper}
+                isContinuingLastDraft={isContinuingLastDraft}
+              />
+            ))}
 
           <RecordButton
             cameraRef={cameraRef}
@@ -574,11 +634,32 @@ const styles = StyleSheet.create({
   },
   recordingTimeContainer: {
     position: "absolute",
-    top: 78,
+    top: 90,
     left: 0,
     right: 0,
     alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
     zIndex: 10,
+  },
+  draftNameText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontFamily: "Roboto-Regular",
+    textShadowColor: "rgba(0, 0, 0, 0.7)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    marginRight: 8,
+  },
+  separatorText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontFamily: "Roboto-Regular",
+    textShadowColor: "rgba(0, 0, 0, 0.7)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    marginRight: 8,
+    opacity: 0.7,
   },
   recordingTimeText: {
     color: "#ffffff",

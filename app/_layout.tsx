@@ -82,14 +82,6 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
-            name="upload"
-            options={{
-              headerShown: false,
-              presentation: "fullScreenModal",
-              animation: "fade",
-            }}
-          />
-          <Stack.Screen
             name="merged-video"
             options={{
               headerShown: false,

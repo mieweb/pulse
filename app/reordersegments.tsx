@@ -4,7 +4,7 @@ import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, ActivityIndicator } from "react-native";
+import { StyleSheet, View, ActivityIndicator, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 
@@ -22,6 +22,7 @@ export default function ReorderSegmentsScreen() {
 
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [draft, setDraft] = useState<any>(null);
 
   const formatSegments = useCallback((draftSegments: any[]): Segment[] => {
@@ -34,6 +35,8 @@ export default function ReorderSegmentsScreen() {
     }));
   }, []);
 
+  const [originalSegments, setOriginalSegments] = useState<Segment[]>([]);
+
   const loadDraft = useCallback(async () => {
     if (!draftId) {
       router.back();
@@ -44,7 +47,9 @@ export default function ReorderSegmentsScreen() {
       const loadedDraft = await DraftStorage.getDraftById(draftId);
       if (loadedDraft && loadedDraft.segments.length > 0) {
         setDraft(loadedDraft);
-        setSegments(formatSegments(loadedDraft.segments));
+        const formattedSegments = formatSegments(loadedDraft.segments);
+        setSegments(formattedSegments);
+        setOriginalSegments([...formattedSegments]);
       } else {
         router.back();
       }
@@ -87,7 +92,23 @@ export default function ReorderSegmentsScreen() {
     async (reorderedSegments: Segment[]) => {
       if (!draftId || !draft) return;
 
+      setIsSaving(true);
       try {
+        const deletedSegments = originalSegments.filter(
+          (originalSegment) =>
+            !reorderedSegments.some(
+              (segment) => segment.id === originalSegment.id
+            )
+        );
+
+        if (deletedSegments.length > 0) {
+          const urisToDelete = deletedSegments.map((seg) => seg.uri);
+          await fileStore.deleteUris(urisToDelete);
+          console.log(
+            `Deleted ${deletedSegments.length} segment file(s) after save`
+          );
+        }
+
         const updatedSegments = reorderedSegments.map((segment) => ({
           id: segment.id,
           uri: fileStore.toRelativePath(segment.uri),
@@ -98,13 +119,20 @@ export default function ReorderSegmentsScreen() {
 
         const totalDuration = calculateTotalDuration(reorderedSegments);
         await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
-
+        // Navigate back after successful save
         router.back();
       } catch (error) {
         console.error("Failed to save reordered segments:", error);
+        Alert.alert(
+          "Save Failed",
+          "Failed to save changes. Some files may not have been deleted properly. Please try again.",
+          [{ text: "OK" }]
+        );
+      } finally {
+        setIsSaving(false);
       }
     },
-    [draftId, draft, calculateTotalDuration]
+    [draftId, draft, originalSegments, calculateTotalDuration]
   );
 
   const totalDuration = calculateTotalDuration(segments);
@@ -122,17 +150,6 @@ export default function ReorderSegmentsScreen() {
     );
   }
 
-  if (segments.length === 0) {
-    return (
-      <View style={[styles.container, styles.errorContainer]}>
-        <ThemedText style={styles.errorText}>No segments found</ThemedText>
-        <ThemedText style={styles.errorSubtext}>
-          Please record some segments first
-        </ThemedText>
-      </View>
-    );
-  }
-
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.contentContainer}>
@@ -142,6 +159,7 @@ export default function ReorderSegmentsScreen() {
           onSave={handleSave}
           onCancel={handleCancel}
           totalDuration={totalDuration}
+          isSaving={isSaving}
           onEditSegment={(segment) => {
             router.push({
               pathname: "/splittrim",
@@ -172,23 +190,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Roboto-Regular",
     marginTop: 16,
-  },
-  errorContainer: {
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 40,
-  },
-  errorText: {
-    color: "#fff",
-    fontSize: 18,
-    fontFamily: "Roboto-Bold",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  errorSubtext: {
-    color: "#ccc",
-    fontSize: 14,
-    fontFamily: "Roboto-Regular",
-    textAlign: "center",
   },
 });

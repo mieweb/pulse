@@ -9,10 +9,12 @@ import {
   TouchableOpacity,
   Image,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import Sortable from "react-native-sortables";
 
 const THUMBNAIL_SIZE = 60;
+const ACCENT_COLOR = "#ff0000";
 
 interface Segment {
   id: string;
@@ -29,15 +31,22 @@ interface SegmentReorderListVerticalProps {
   onCancel: () => void;
   onEditSegment?: (segment: Segment) => void;
   totalDuration: number;
+  isSaving?: boolean;
 }
 
 interface SegmentItemProps {
   item: Segment;
   index: number;
   onEdit?: (segment: Segment) => void;
+  onDelete: (segmentId: string) => void;
 }
 
-function SegmentItem({ item: segment, index, onEdit }: SegmentItemProps) {
+function SegmentItem({
+  item: segment,
+  index,
+  onEdit,
+  onDelete,
+}: SegmentItemProps) {
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -113,16 +122,33 @@ function SegmentItem({ item: segment, index, onEdit }: SegmentItemProps) {
         </ThemedText>
       </View>
 
-      {/* Edit button */}
-      {onEdit && (
+      {/* Action buttons */}
+      <View style={styles.actionButtons}>
+        {/* Edit button */}
+        {onEdit && (
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => onEdit(segment)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit segment ${index + 1}`}
+            accessibilityHint="Opens split and trim editor for this segment"
+          >
+            <Entypo name="scissors" size={20} color="#ff0000" />
+          </TouchableOpacity>
+        )}
+        {/* Delete button */}
         <TouchableOpacity
-          style={styles.editButton}
-          onPress={() => onEdit(segment)}
+          style={styles.deleteButton}
+          onPress={() => onDelete(segment.id)}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete segment ${index + 1}`}
+          accessibilityHint="Removes this segment from the video"
         >
-          <Entypo name="scissors" size={20} color="#ff0000" />
+          <MaterialIcons name="delete" size={20} color={ACCENT_COLOR} />
         </TouchableOpacity>
-      )}
+      </View>
 
       {/* Reorder indicator */}
       <View style={styles.reorderIndicator}>
@@ -139,6 +165,7 @@ export default function SegmentReorderListVertical({
   onCancel,
   onEditSegment,
   totalDuration,
+  isSaving = false,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
@@ -151,6 +178,18 @@ export default function SegmentReorderListVertical({
       onSegmentsReorder(newOrder);
     },
     [onSegmentsReorder]
+  );
+
+  const handleDeleteSegment = useCallback(
+    (segmentId: string) => {
+      const updatedSegments = reorderedSegments.filter(
+        (segment) => segment.id !== segmentId
+      );
+      setReorderedSegments(updatedSegments);
+      setHasChanges(true);
+      onSegmentsReorder(updatedSegments);
+    },
+    [reorderedSegments, onSegmentsReorder]
   );
 
   const handleSave = useCallback(() => {
@@ -181,7 +220,7 @@ export default function SegmentReorderListVertical({
             {formatTotalDuration(totalDuration)}
           </ThemedText>
           <View style={styles.infoTag}>
-            <MaterialIcons name="info" size={14} color="#ff0000" />
+            <MaterialIcons name="info" size={14} color={ACCENT_COLOR} />
             <ThemedText style={styles.infoTagText}>
               Hold to drag • Tap edit to trim
             </ThemedText>
@@ -201,7 +240,12 @@ export default function SegmentReorderListVertical({
         <Sortable.Grid
           data={reorderedSegments}
           renderItem={({ item, index }) => (
-            <SegmentItem item={item} index={index} onEdit={onEditSegment} />
+            <SegmentItem
+              item={item}
+              index={index}
+              onEdit={onEditSegment}
+              onDelete={handleDeleteSegment}
+            />
           )}
           columns={1}
           rowGap={8}
@@ -214,23 +258,34 @@ export default function SegmentReorderListVertical({
       {/* Save Button */}
       <View style={styles.saveButtonContainer}>
         <TouchableOpacity
-          style={[styles.saveButton, !hasChanges && styles.disabledSaveButton]}
+          style={[
+            styles.saveButton,
+            (!hasChanges || isSaving) && styles.disabledSaveButton,
+          ]}
           onPress={handleSave}
-          disabled={!hasChanges}
+          disabled={!hasChanges || isSaving}
           activeOpacity={0.8}
         >
-          <MaterialIcons
-            name="save"
-            size={20}
-            color={hasChanges ? "#fff" : "#666"}
-          />
+          {isSaving ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <MaterialIcons
+              name="save"
+              size={20}
+              color={hasChanges ? "#fff" : "#666"}
+            />
+          )}
           <ThemedText
             style={[
               styles.saveButtonText,
-              !hasChanges && styles.disabledSaveButtonText,
+              (!hasChanges || isSaving) && styles.disabledSaveButtonText,
             ]}
           >
-            {hasChanges ? "Save New Order" : "No Changes"}
+            {isSaving
+              ? "Saving..."
+              : hasChanges
+              ? "Save New Order"
+              : "No Changes"}
           </ThemedText>
         </TouchableOpacity>
       </View>
@@ -291,7 +346,7 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
   infoTagText: {
-    color: "#ff0000",
+    color: ACCENT_COLOR,
     fontSize: 12,
     fontFamily: "Roboto-Regular",
     marginLeft: 4,
@@ -366,11 +421,18 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
   },
+  actionButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   editButton: {
-    marginRight: 8,
     padding: 8,
     borderRadius: 8,
     backgroundColor: "rgba(255, 0, 0, 0.1)",
+  },
+  deleteButton: {
+    padding: 4,
   },
   reorderIndicator: {
     marginLeft: 12,
@@ -386,7 +448,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#ff0000",
+    backgroundColor: ACCENT_COLOR,
     paddingVertical: 16,
     paddingHorizontal: 24,
     borderRadius: 12,
