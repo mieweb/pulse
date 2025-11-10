@@ -165,7 +165,7 @@ export default function ShortsScreen() {
     if (loadedDuration !== null && loadedDuration !== selectedDuration) {
       setSelectedDuration(loadedDuration);
     }
-  }, [loadedDuration]);
+  }, [loadedDuration, selectedDuration]);
 
   // Sync previousCameraFacing ref when cameraFacing changes
   React.useEffect(() => {
@@ -255,7 +255,7 @@ export default function ShortsScreen() {
     }
   };
 
-  const handleReorderSegments = () => {
+  const handleEditSegments = () => {
     if (currentDraftId) {
       router.push({
         pathname: "/reordersegments",
@@ -369,15 +369,6 @@ export default function ShortsScreen() {
             asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
         }
 
-        // Generate thumbnail
-        const thumbnailUri = await VideoThumbnails.getThumbnailAsync(
-          asset.uri,
-          {
-            time: 1000, // 1 second into the video
-            quality: 0.8,
-          }
-        ).catch(() => null);
-
         // Check if adding this video would exceed the total duration limit
         const currentTotalDuration = recordingSegments.reduce(
           (total, seg) => total + seg.duration,
@@ -480,8 +471,8 @@ export default function ShortsScreen() {
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
-              onReorderSegments={
-                recordingSegments.length > 1 ? handleReorderSegments : undefined
+              onEditSegments={
+                recordingSegments.length > 0 ? handleEditSegments : undefined
               }
             />
           )}
