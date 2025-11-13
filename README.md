@@ -49,6 +49,7 @@ Pulse addresses the critical need for modern institutional knowledge management 
 - **Local-First Storage** - All content remains secure on your device until explicitly shared
 - **Deep Linking** - Custom `pulsecam://` URL scheme for direct app access and institutional integration
 - **Draft Management** - Auto-save your work and continue later with intelligent draft system
+- **Draft Transfer** - Export and import drafts between devices via AirDrop, Files app, or device transfer
 - **Cross-Platform** - React Native with Expo for iOS and Android ensuring organization-wide compatibility
 - **Real-Time Progress** - Live progress tracking and auto-save functionality for uninterrupted workflow
 
@@ -58,6 +59,17 @@ Pulse addresses the critical need for modern institutional knowledge management 
 - **Video Library Integration** - Import existing videos from your gallery and mix with new recordings
 - **Smart Duration Management** - Set recording limits and prevent content from exceeding institutional guidelines
 - **Hardware Acceleration** - Native video processing for optimal performance on all devices
+
+## 📱 Draft Transfer & Backup
+
+Pulse supports multiple methods for transferring drafts between devices:
+
+- **Automatic Transfer**: Drafts transfer automatically when migrating to a new iPhone using Apple's device transfer
+- **Manual Export/Import**: Export individual drafts or all drafts as backup files
+- **AirDrop Sharing**: Quickly share drafts with nearby devices or collaborators
+- **Files App Integration**: Save drafts to iCloud Drive or local storage for backup
+
+For detailed instructions, see [DRAFT_TRANSFER.md](./DRAFT_TRANSFER.md).
 
 ## 📚 Research Context
 
