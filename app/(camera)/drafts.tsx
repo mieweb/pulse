@@ -1,5 +1,6 @@
 import { Draft, DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
+import { DraftTransfer } from "@/utils/draftTransfer";
 import { DRAFT_NAME_LENGTH } from "@/constants/camera";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
@@ -7,6 +8,7 @@ import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   Alert,
+  ActivityIndicator,
   FlatList,
   Image,
   StyleSheet,
@@ -16,6 +18,9 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 
 export default function DraftsScreen() {
   const insets = useSafeAreaInsets();
@@ -23,6 +28,8 @@ export default function DraftsScreen() {
   const [loading, setLoading] = useState(true);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [draftNameInput, setDraftNameInput] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     loadDrafts();
@@ -133,6 +140,99 @@ export default function DraftsScreen() {
     });
   };
 
+  const handleExportDraft = async (draftId: string) => {
+    setExporting(true);
+    try {
+      await DraftTransfer.shareDraft(draftId);
+      Alert.alert("Success", "Draft exported successfully!");
+    } catch (error) {
+      console.error("Error exporting draft:", error);
+      Alert.alert("Export Failed", "Failed to export draft. Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleExportAllDrafts = async () => {
+    if (drafts.length === 0) {
+      Alert.alert("No Drafts", "There are no drafts to export.");
+      return;
+    }
+
+    Alert.alert(
+      "Export All Drafts",
+      `Export all ${drafts.length} draft${drafts.length > 1 ? "s" : ""} as a backup file?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Export",
+          onPress: async () => {
+            setExporting(true);
+            try {
+              const backupUri = await DraftTransfer.exportAllDrafts();
+              const isAvailable = await Sharing.isAvailableAsync();
+              if (isAvailable) {
+                await Sharing.shareAsync(backupUri, {
+                  mimeType: 'application/json',
+                  dialogTitle: 'Share Pulse Backup',
+                  UTI: 'public.json',
+                });
+              }
+              Alert.alert("Success", "All drafts exported successfully!");
+            } catch (error) {
+              console.error("Error exporting all drafts:", error);
+              Alert.alert("Export Failed", "Failed to export drafts. Please try again.");
+            } finally {
+              setExporting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleImportDraft = async () => {
+    setImporting(true);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/json', 'public.json'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) {
+        setImporting(false);
+        return;
+      }
+
+      const uri = result.assets[0].uri;
+      console.log('[DraftsScreen] Importing from:', uri);
+
+      // Check if it's a backup (all drafts) or single draft
+      const content = await FileSystem.readAsStringAsync(uri);
+      const parsed = JSON.parse(content);
+
+      if (parsed.version) {
+        // Single draft import
+        await DraftTransfer.importDraft(uri);
+        Alert.alert("Success", "Draft imported successfully!");
+      } else {
+        // Backup import (all drafts)
+        const importedIds = await DraftTransfer.importAllDrafts(uri);
+        Alert.alert(
+          "Success",
+          `Imported ${importedIds.length} draft${importedIds.length > 1 ? 's' : ''} successfully!`
+        );
+      }
+
+      await loadDrafts();
+    } catch (error) {
+      console.error("Error importing draft:", error);
+      Alert.alert("Import Failed", "Failed to import draft. Please check the file and try again.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const formatDuration = (totalSeconds: number) => {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
@@ -225,6 +325,12 @@ export default function DraftsScreen() {
               </View>
             )}
             <TouchableOpacity
+              style={styles.shareButton}
+              onPress={() => handleExportDraft(item.id)}
+            >
+              <MaterialIcons name="share" size={18} color="#ffffff" />
+            </TouchableOpacity>
+            <TouchableOpacity
               style={styles.deleteButton}
               onPress={() => handleDeleteDraft(item.id)}
             >
@@ -286,6 +392,39 @@ export default function DraftsScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
         <Text style={styles.headerTitle}>Drafts</Text>
         <Text style={styles.headerSubtitle}>Tap to continue recording</Text>
+        
+        {/* Import/Export Controls */}
+        <View style={styles.controlsContainer}>
+          <TouchableOpacity
+            style={styles.controlButton}
+            onPress={handleImportDraft}
+            disabled={importing || exporting}
+          >
+            {importing ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <>
+                <MaterialIcons name="file-download" size={20} color="#ffffff" />
+                <Text style={styles.controlButtonText}>Import</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={styles.controlButton}
+            onPress={handleExportAllDrafts}
+            disabled={importing || exporting || drafts.length === 0}
+          >
+            {exporting ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <>
+                <MaterialIcons name="file-upload" size={20} color="#ffffff" />
+                <Text style={styles.controlButtonText}>Export All</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       <FlatList
@@ -313,6 +452,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  shareButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0, 122, 255, 0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 8,
+  },
   container: {
     flex: 1,
     backgroundColor: "#000000",
@@ -329,6 +477,30 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 16,
     color: "#888888",
+    marginBottom: 12,
+  },
+  controlsContainer: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 8,
+  },
+  controlButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1a1a1a",
+    borderWidth: 1,
+    borderColor: "#333",
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  controlButtonText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
   },
   list: {
     flex: 1,
