@@ -10,5 +10,5 @@ export default {
     return Promise.reject(new Error("VideoPostprocess is not supported on web"));
   },
   addListener: emitter.addListener.bind(emitter),
-  removeListeners: emitter.removeListeners.bind(emitter),
+  removeAllListeners: emitter.removeAllListeners.bind(emitter),
 };
