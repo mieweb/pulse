@@ -1,8 +1,8 @@
-[submodule "video-consumer"]
-	path = video-consumer
-	url = https://github.com/morepriyam/pulse-video-consumer.git
-	branch = main
 [submodule "pulse-desktop"]
 	path = pulse-desktop
 	url = https://github.com/mieweb/pulse-desktop
+	branch = main
+[submodule "pulse-vault"]
+	path = pulse-vault
+	url = https://github.com/mieweb/PulseVault.git
 	branch = main
