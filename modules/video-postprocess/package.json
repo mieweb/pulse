@@ -1,0 +1,14 @@
+{
+  "name": "@pulse/video-postprocess",
+  "version": "0.0.1",
+  "description": "Native module for post-processing video clips with silence removal and pitch-preserving speed adjustment",
+  "main": "index.ts",
+  "scripts": {},
+  "keywords": [
+    "expo",
+    "video",
+    "postprocess",
+    "silence-removal",
+    "speed-adjustment"
+  ]
+}
