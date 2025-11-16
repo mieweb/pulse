@@ -1,6 +1,5 @@
 import ExpoModulesCore
 import AVFoundation
-import Accelerate
 
 /// Options for post-processing video clips
 struct PostprocessOptions: Record {
