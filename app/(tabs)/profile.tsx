@@ -19,7 +19,7 @@ export default function ProfileScreen() {
   const [lastRecordingPath, setLastRecordingPath] = useState<string | null>(null);
   const [videoSource, setVideoSource] = useState<string | null>(null);
   
-  const player = useVideoPlayer(videoSource || undefined, (player) => {
+  const player = useVideoPlayer(videoSource, (player) => {
     player.loop = true;
   });
 
