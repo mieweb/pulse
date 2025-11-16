@@ -486,31 +486,11 @@ export default function ShortsScreen() {
             />
           )}
 
-          {/* Video Library Button */}
-          {!isRecording && (
-            <TouchableOpacity
-              style={styles.videoLibraryButton}
-              onPress={handleAddVideoFromLibrary}
-              activeOpacity={0.7}
-            >
-              <MaterialIcons name="add" size={26} color="black" />
-            </TouchableOpacity>
-          )}
-
           {showContinuingIndicator && (
             <View style={styles.continuingDraftIndicator}>
               <ThemedText style={styles.continuingDraftText}>
                 Continuing last draft
               </ThemedText>
-            </View>
-          )}
-
-          {!isRecording && (
-            <View style={styles.timeSelectorContainer}>
-              <TimeSelectorButton
-                onTimeSelect={handleTimeSelect}
-                selectedTime={selectedDuration}
-              />
             </View>
           )}
 
@@ -546,26 +526,6 @@ export default function ShortsScreen() {
             </ThemedText>
           </View>
 
-          {!isRecording &&
-            (draftMode === "upload" ? (
-              <UploadCloseButton
-                segments={recordingSegments}
-                onStartOver={handleStartOver}
-                hasStartedOver={hasStartedOver}
-                onClose={handleCloseWrapper}
-              />
-            ) : (
-              <CloseButton
-                segments={recordingSegments}
-                onStartOver={handleStartOver}
-                onStartNew={handleStartNew}
-                onSaveAsDraft={handleSaveAsDraftWrapper}
-                hasStartedOver={hasStartedOver}
-                onClose={handleCloseWrapper}
-                isContinuingLastDraft={isContinuingLastDraft}
-              />
-            ))}
-
           <RecordButton
             cameraRef={cameraRef}
             maxDuration={180}
@@ -579,25 +539,66 @@ export default function ShortsScreen() {
             onButtonTouchEnd={handleButtonTouchEnd}
             screenTouchActive={screenTouchActive}
           />
-
-          {recordingSegments.length > 0 && !isRecording && (
-            <UndoSegmentButton onUndoSegment={handleUndoSegmentWrapper} />
-          )}
-
-          {redoStack.length > 0 && !isRecording && (
-            <RedoSegmentButton onRedoSegment={handleRedoSegmentWrapper} />
-          )}
-
-          {recordingSegments.length > 0 && currentDraftId && !isRecording && (
-            <TouchableOpacity
-              style={styles.previewButton}
-              onPress={handlePreview}
-            >
-              <MaterialIcons name="done" size={26} color="black" />
-            </TouchableOpacity>
-          )}
         </Animated.View>
       </PanGestureHandler>
+
+      {/* UI controls outside gesture handler to prevent touch event conflicts */}
+      {!isRecording && (
+        <View style={styles.timeSelectorContainer}>
+          <TimeSelectorButton
+            onTimeSelect={handleTimeSelect}
+            selectedTime={selectedDuration}
+          />
+        </View>
+      )}
+
+      {/* Video Library Button */}
+      {!isRecording && (
+        <TouchableOpacity
+          style={styles.videoLibraryButton}
+          onPress={handleAddVideoFromLibrary}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name="add" size={26} color="black" />
+        </TouchableOpacity>
+      )}
+
+      {!isRecording &&
+        (draftMode === "upload" ? (
+          <UploadCloseButton
+            segments={recordingSegments}
+            onStartOver={handleStartOver}
+            hasStartedOver={hasStartedOver}
+            onClose={handleCloseWrapper}
+          />
+        ) : (
+          <CloseButton
+            segments={recordingSegments}
+            onStartOver={handleStartOver}
+            onStartNew={handleStartNew}
+            onSaveAsDraft={handleSaveAsDraftWrapper}
+            hasStartedOver={hasStartedOver}
+            onClose={handleCloseWrapper}
+            isContinuingLastDraft={isContinuingLastDraft}
+          />
+        ))}
+
+      {recordingSegments.length > 0 && !isRecording && (
+        <UndoSegmentButton onUndoSegment={handleUndoSegmentWrapper} />
+      )}
+
+      {redoStack.length > 0 && !isRecording && (
+        <RedoSegmentButton onRedoSegment={handleRedoSegmentWrapper} />
+      )}
+
+      {recordingSegments.length > 0 && currentDraftId && !isRecording && (
+        <TouchableOpacity
+          style={styles.previewButton}
+          onPress={handlePreview}
+        >
+          <MaterialIcons name="done" size={26} color="black" />
+        </TouchableOpacity>
+      )}
     </ThemedView>
   );
 }
