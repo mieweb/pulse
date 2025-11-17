@@ -20,7 +20,11 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function PreviewScreen() {
-  const { draftId } = useLocalSearchParams<{ draftId: string }>();
+  const { draftId, server, token } = useLocalSearchParams<{ 
+    draftId: string;
+    server?: string;
+    token?: string;
+  }>();
   const insets = useSafeAreaInsets();
 
   const [videoUris, setVideoUris] = useState<string[]>([]);
@@ -344,9 +348,19 @@ export default function PreviewScreen() {
       }
 
       // Navigate to merged video screen
+      const params: Record<string, string> = { 
+        videoUri: outputUri, 
+        draftId: draftId 
+      };
+      if (server) {
+        params.server = server;
+      }
+      if (token) {
+        params.token = token;
+      }
       router.push({
         pathname: "/merged-video",
-        params: { videoUri: outputUri, draftId: draftId },
+        params,
       });
     } catch (error) {
       console.error("❌ Concatenation failed:", error);
@@ -429,9 +443,19 @@ export default function PreviewScreen() {
               }
             } catch (error) {}
 
+            const params: Record<string, string> = { 
+              videoUri: videoUris[0], 
+              draftId: draftId || "" 
+            };
+            if (server) {
+              params.server = server;
+            }
+            if (token) {
+              params.token = token;
+            }
             router.push({
               pathname: "/merged-video",
-              params: { videoUri: videoUris[0], draftId: draftId || "" },
+              params,
             });
           }}
           activeOpacity={0.8}

@@ -39,3 +39,8 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# Test output
+scripts/test-output/
+test-output/
+*.qr-code.png

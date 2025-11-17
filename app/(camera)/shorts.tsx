@@ -54,9 +54,11 @@ import Animated, {
  * - Time selector for recording duration
  */
 export default function ShortsScreen() {
-  const { draftId, mode } = useLocalSearchParams<{
+  const { draftId, mode, server, token } = useLocalSearchParams<{
     draftId?: string;
     mode?: string;
+    server?: string;
+    token?: string; // Secure upload token
   }>();
   const draftMode = (mode === "upload" ? "upload" : "camera") as
     | "camera"
@@ -248,9 +250,16 @@ export default function ShortsScreen() {
 
   const handlePreview = () => {
     if (currentDraftId && recordingSegments.length > 0) {
+      const params: Record<string, string> = { draftId: currentDraftId };
+      if (server) {
+        params.server = server;
+      }
+      if (token) {
+        params.token = token;
+      }
       router.push({
         pathname: "/preview",
-        params: { draftId: currentDraftId },
+        params,
       });
     }
   };

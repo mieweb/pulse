@@ -11,6 +11,8 @@ export default function Index() {
   const params = useLocalSearchParams<{
     mode?: string;
     draftId?: string;
+    server?: string;
+    token?: string; // Secure upload token
   }>();
 
   // Debug logging for deeplink parameters
@@ -18,16 +20,25 @@ export default function Index() {
 
   // Handle upload mode with UUID validation
   if (params.mode === "upload") {
+    // Build query params for redirect
+    const queryParams = new URLSearchParams();
     if (params.draftId && isUUIDv4(params.draftId)) {
-      return (
-        <Redirect
-          href={`/(camera)/shorts?draftId=${params.draftId}&mode=upload`}
-        />
-      );
-    } else {
-      // Could redirect to shorts screen without draftId for new recording
-      // return <Redirect href="/(camera)/shorts?mode=upload" />;
+      queryParams.set("draftId", params.draftId);
     }
+    queryParams.set("mode", "upload");
+    if (params.server) {
+      queryParams.set("server", params.server);
+    }
+    // Include secure token if present
+    if (params.token) {
+      queryParams.set("token", params.token);
+    }
+
+    return (
+      <Redirect
+        href={`/(camera)/shorts?${queryParams.toString()}`}
+      />
+    );
   }
 
   // Default to tabs

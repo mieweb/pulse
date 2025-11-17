@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -15,18 +16,27 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import * as FileSystem from "expo-file-system";
+import { uploadVideo } from "@/utils/tusUpload";
+import QRCodeScanner from "@/components/QRCodeScanner";
 
 export default function MergedVideoScreen() {
-  const { videoUri, draftId } = useLocalSearchParams<{
+  const { videoUri, draftId, server, token } = useLocalSearchParams<{
     videoUri: string;
     draftId: string;
+    server?: string;
+    token?: string; // Secure upload token
   }>();
   const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadLink, setUploadLink] = useState("");
+  const [uploadLink, setUploadLink] = useState(server || "");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showQRScanner, setShowQRScanner] = useState(false);
+  const [scannedToken, setScannedToken] = useState<string | null>(null);
+  
+  // Use token from params or from QR scan
+  const effectiveToken = token || scannedToken;
 
   const player = useVideoPlayer(videoUri, (player) => {
     if (player) {
@@ -115,20 +125,168 @@ export default function MergedVideoScreen() {
     }
   };
 
-  const uploadVideo = async () => {
+  // Initialize upload link from server param if available
+  useEffect(() => {
+    if (server && !uploadLink) {
+      // Normalize server URL - ensure it has protocol
+      let normalizedServer = server;
+      if (!normalizedServer.includes("://")) {
+        normalizedServer = `http://${normalizedServer}`;
+      }
+      // Extract just protocol + host (remove any paths)
+      try {
+        const parsed = new URL(normalizedServer);
+        normalizedServer = `${parsed.protocol}//${parsed.host}`;
+      } catch (e) {
+        // If parsing fails, use as-is (shouldn't happen if we added protocol)
+      }
+      setUploadLink(normalizedServer);
+    }
+  }, [server]);
+
+  // Verify token if present
+  useEffect(() => {
+    const verifyToken = async () => {
+      if (effectiveToken && server) {
+        try {
+          const response = await fetch(`${server}/qr/verify`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ token: effectiveToken }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.valid) {
+              console.log("✅ Token verified:", data.payload);
+              // Token is valid, can proceed with upload
+              // Optionally extract userId/organizationId from payload
+            } else {
+              Alert.alert("Invalid Token", data.reason || "Token verification failed");
+            }
+          } else {
+            console.warn("Token verification failed:", response.statusText);
+          }
+        } catch (error) {
+          console.error("Token verification error:", error);
+          // Don't block upload if verification fails (network issues, etc.)
+        }
+      }
+    };
+
+    verifyToken();
+  }, [effectiveToken, server]);
+
+  const handleUpload = async () => {
     if (!videoUri) return;
 
     if (!uploadLink) {
       Alert.alert("Upload Link Required", "Please enter an upload link first.");
       return;
     }
+    
+    // Require token for secure uploads (QR code scan)
+    if (!effectiveToken) {
+      Alert.alert(
+        "Authentication Required",
+        "Uploads require a secure token.\n\n" +
+        "Please scan a QR code from your organization to upload videos.\n\n" +
+        "Manual server URLs are not allowed for security reasons.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
 
-    // TODO: Implement upload logic using uploadLink
-    console.log("Upload to:", uploadLink);
-    Alert.alert(
-      "Upload Logic",
-      "Upload functionality will be implemented here."
-    );
+    // Validate and normalize server URL format
+    let serverUrl = uploadLink.trim();
+    
+    // Handle URLs that include /uploads path - strip it since TUS uses /uploads endpoint
+    serverUrl = serverUrl.replace(/\/uploads\/?$/, "");
+    
+    // Replace localhost with your computer's IP for mobile devices
+    // This is needed because localhost on phone refers to the phone, not your computer
+    if (serverUrl.includes("localhost") || serverUrl.includes("127.0.0.1")) {
+      // Try to detect if we're on a mobile device
+      const isMobile = Platform.OS === "ios" || Platform.OS === "android";
+      if (isMobile) {
+        Alert.alert(
+          "Localhost Detected",
+          "You're using 'localhost' which won't work from your phone.\n\n" +
+          "Please use your computer's IP address instead:\n" +
+          "192.168.8.179:3000\n\n" +
+          "Or scan a new QR code generated with your IP address.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+    }
+    
+    // Add protocol if missing
+    if (!serverUrl.startsWith("http://") && !serverUrl.startsWith("https://")) {
+      serverUrl = `http://${serverUrl}`;
+    }
+    
+    // Remove trailing slash and any path components (keep only base URL)
+    try {
+      const url = new URL(serverUrl);
+      serverUrl = `${url.protocol}//${url.host}`;
+    } catch (error) {
+      // If URL parsing fails, just remove trailing slash
+      serverUrl = serverUrl.replace(/\/$/, "");
+    }
+
+    try {
+      setIsUploading(true);
+      setUploadProgress(0);
+
+      // Get filename from video URI or use default
+      const filename = `video-${draftId || Date.now()}.mp4`;
+
+      // Upload using TUS protocol
+      // Note: Token validation happens server-side during finalize
+      const result = await uploadVideo({
+        serverUrl,
+        fileUri: videoUri,
+        filename,
+        uploadToken: effectiveToken, // Pass token for server-side validation
+        onProgress: (progress) => {
+          setUploadProgress(progress);
+        },
+        onError: (error) => {
+          console.error("Upload error:", error);
+          Alert.alert("Upload Failed", error.message || "Failed to upload video");
+        },
+      });
+
+      console.log("✅ Upload successful:", result);
+
+      // Show success message
+      Alert.alert(
+        "Upload Successful",
+        result.videoId
+          ? `Video uploaded successfully!\nVideo ID: ${result.videoId}`
+          : "Video uploaded successfully!",
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              // Navigate back or to a success screen
+              router.back();
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error("❌ Upload failed:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to upload video";
+      Alert.alert("Upload Failed", errorMessage);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
   };
 
   if (isLoading) {
@@ -189,21 +347,59 @@ export default function MergedVideoScreen() {
 
         {/* Upload Link Input */}
         <View style={styles.inputSection}>
-          <ThemedText style={styles.inputLabel}>Upload Link</ThemedText>
-          <TextInput
-            style={styles.uploadLinkInput}
-            placeholder="Paste your organization's upload link here"
-            placeholderTextColor="#666"
-            value={uploadLink}
-            onChangeText={setUploadLink}
-            autoCapitalize="none"
-            keyboardType="url"
-            returnKeyType="done"
-            blurOnSubmit={true}
-            onSubmitEditing={() => {
-              // Dismiss keyboard when done is pressed
-            }}
-          />
+          <View style={styles.inputLabelRow}>
+            <ThemedText style={styles.inputLabel}>
+              Server URL {effectiveToken && "🔒"}
+            </ThemedText>
+            <TouchableOpacity
+              style={styles.qrButton}
+              onPress={() => setShowQRScanner(true)}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons name="qr-code-scanner" size={20} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.uploadLinkInput}
+              placeholder="http://your-server.com:3000"
+              placeholderTextColor="#666"
+              value={uploadLink}
+              onChangeText={setUploadLink}
+              autoCapitalize="none"
+              keyboardType="url"
+              returnKeyType="done"
+              blurOnSubmit={true}
+              onSubmitEditing={() => {
+                // Dismiss keyboard when done is pressed
+              }}
+            />
+          </View>
+          <ThemedText style={styles.helperText}>
+            {effectiveToken 
+              ? "🔒 Secure upload enabled (token from QR code)"
+              : "⚠️ Scan QR code to enable uploads (authentication required)"}
+          </ThemedText>
+          {effectiveToken && (
+            <View style={styles.tokenContainer}>
+              <ThemedText style={styles.tokenLabel}>Upload Token:</ThemedText>
+              <ThemedText style={styles.tokenValue} selectable>
+                {effectiveToken.length > 40 
+                  ? `${effectiveToken.substring(0, 20)}...${effectiveToken.substring(effectiveToken.length - 20)}`
+                  : effectiveToken}
+              </ThemedText>
+            </View>
+          )}
+          {!effectiveToken && uploadLink && (
+            <ThemedText style={styles.warningText}>
+              ⚠️ Uploads require authentication. Please scan a QR code.
+            </ThemedText>
+          )}
+          {uploadLink && !uploadLink.includes("://") && (
+            <ThemedText style={styles.warningText}>
+              ⚠️ Include http:// or https://
+            </ThemedText>
+          )}
         </View>
 
         {/* Action Buttons */}
@@ -213,19 +409,33 @@ export default function MergedVideoScreen() {
               styles.uploadButton,
               isUploading && styles.uploadButtonDisabled,
             ]}
-            onPress={uploadVideo}
+            onPress={handleUpload}
             activeOpacity={0.8}
-            disabled={isUploading}
+            disabled={isUploading || !uploadLink.trim() || !effectiveToken}
           >
             {isUploading ? (
-              <ActivityIndicator size="small" color="#ffffff" />
+              <>
+                <ActivityIndicator size="small" color="#ffffff" />
+                <ThemedText style={styles.buttonText}>
+                  Uploading... {Math.round(uploadProgress * 100)}%
+                </ThemedText>
+              </>
             ) : (
-              <MaterialIcons name="cloud-upload" size={20} color="#ffffff" />
+              <>
+                <MaterialIcons name="cloud-upload" size={20} color="#ffffff" />
+                <ThemedText style={styles.buttonText}>
+                  Upload to Cloud
+                </ThemedText>
+              </>
             )}
-            <ThemedText style={styles.buttonText}>
-              {isUploading ? "Uploading..." : "Upload to Cloud"}
-            </ThemedText>
           </TouchableOpacity>
+          
+          {/* Progress bar */}
+          {isUploading && (
+            <View style={styles.progressBarContainer}>
+              <View style={[styles.progressBar, { width: `${uploadProgress * 100}%` }]} />
+            </View>
+          )}
 
           {/* Separator */}
           <View style={styles.separator}>
@@ -268,6 +478,86 @@ export default function MergedVideoScreen() {
             <MaterialIcons name="close" size={24} color="#ffffff" />
           </TouchableOpacity>
         </View>
+      )}
+
+      {/* QR Code Scanner Modal */}
+      {showQRScanner && (
+        <QRCodeScanner
+          onScan={(data) => {
+            console.log("📷 Scanned QR code:", data);
+            setShowQRScanner(false);
+            
+            // Parse deeplink or use as server URL
+            if (data.startsWith("pulsecam://")) {
+              // Parse deeplink
+              try {
+                const url = new URL(data);
+                const serverParam = url.searchParams.get("server");
+                const tokenParam = url.searchParams.get("token");
+                
+                // Extract token if present
+                if (tokenParam) {
+                  // Token is already URL-encoded in the deeplink, decode it
+                  const decodedToken = decodeURIComponent(tokenParam);
+                  console.log("✅ Token extracted from QR:", decodedToken.substring(0, 20) + "...");
+                  // Store token in state for use during upload
+                  setScannedToken(decodedToken);
+                }
+                
+                if (serverParam) {
+                  // Extract just the base server URL (remove any paths)
+                  let serverUrl = decodeURIComponent(serverParam);
+                  // Remove /uploads if present
+                  serverUrl = serverUrl.replace(/\/uploads\/?$/, "");
+                  
+                  // Normalize URL - ensure it has protocol
+                  if (!serverUrl.includes("://")) {
+                    serverUrl = `http://${serverUrl}`;
+                  }
+                  
+                  // Extract base URL (protocol + host)
+                  try {
+                    const parsed = new URL(serverUrl);
+                    serverUrl = `${parsed.protocol}//${parsed.host}`;
+                  } catch (e) {
+                    // If URL parsing fails, try to add protocol if still missing
+                    if (!serverUrl.includes("://")) {
+                      serverUrl = `http://${serverUrl}`;
+                    }
+                  }
+                  setUploadLink(serverUrl);
+                }
+              } catch (error) {
+                console.error("Failed to parse deeplink:", error);
+                // Fallback: use the scanned data as-is
+                setUploadLink(data);
+              }
+            } else {
+              // Use scanned data as server URL, normalize it
+              let serverUrl = data;
+              // Remove /uploads if present
+              serverUrl = serverUrl.replace(/\/uploads\/?$/, "");
+              
+              // Normalize URL - ensure it has protocol
+              if (!serverUrl.includes("://")) {
+                serverUrl = `http://${serverUrl}`;
+              }
+              
+              // Extract base URL (protocol + host)
+              try {
+                const parsed = new URL(serverUrl);
+                serverUrl = `${parsed.protocol}//${parsed.host}`;
+              } catch (e) {
+                // If URL parsing fails, ensure protocol is present
+                if (!serverUrl.includes("://")) {
+                  serverUrl = `http://${serverUrl}`;
+                }
+              }
+              setUploadLink(serverUrl);
+            }
+          }}
+          onClose={() => setShowQRScanner(false)}
+        />
       )}
     </ThemedView>
   );
@@ -339,11 +629,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 24,
   },
+  inputLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
   inputLabel: {
     fontSize: 16,
     fontWeight: "600",
     color: "#ffffff",
-    marginBottom: 8,
+  },
+  qrButton: {
+    padding: 8,
+    backgroundColor: "#333",
+    borderRadius: 8,
+  },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   titleInput: {
     backgroundColor: "#1a1a1a",
@@ -364,6 +668,51 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#333",
     minHeight: 50,
+    flex: 1,
+  },
+  helperText: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 6,
+    marginLeft: 4,
+  },
+  warningText: {
+    fontSize: 12,
+    color: "#ff9900",
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  tokenContainer: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: "#1a1a1a",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#333",
+  },
+  tokenLabel: {
+    fontSize: 11,
+    color: "#999",
+    marginBottom: 4,
+    fontWeight: "600",
+  },
+  tokenValue: {
+    fontSize: 10,
+    color: "#4CAF50",
+    fontFamily: "monospace",
+    letterSpacing: 0.5,
+  },
+  progressBarContainer: {
+    height: 4,
+    backgroundColor: "#333",
+    borderRadius: 2,
+    overflow: "hidden",
+    marginTop: 8,
+  },
+  progressBar: {
+    height: "100%",
+    backgroundColor: "#ff0000",
+    borderRadius: 2,
   },
   actionButtons: {
     paddingHorizontal: 16,
