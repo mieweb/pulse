@@ -8,13 +8,11 @@ import {
   ActivityIndicator,
   Alert,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import * as FileSystem from "expo-file-system";
 import { uploadVideo } from "@/utils/tusUpload";
 import { getUploadConfig } from "@/utils/uploadConfig";
 import { DraftStorage } from "@/utils/draftStorage";
@@ -28,7 +26,6 @@ export default function MergedVideoScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadLink, setUploadLink] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hasUploadConfig, setHasUploadConfig] = useState(false);
   const [isUploadModeDraft, setIsUploadModeDraft] = useState(false);
@@ -66,9 +63,6 @@ export default function MergedVideoScreen() {
     const checkUploadConfig = async () => {
       const config = await getUploadConfig();
       setHasUploadConfig(!!config);
-      if (config) {
-        setUploadLink(config.server); // Pre-fill with server URL
-      }
 
       // Check if the draft was created in upload mode
       if (draftId) {
@@ -107,7 +101,7 @@ export default function MergedVideoScreen() {
         if (player && typeof player.pause === "function") {
           player.pause();
         }
-      } catch (error) {
+      } catch {
         // Silently ignore - player is already destroyed
       }
     };
@@ -304,7 +298,7 @@ export default function MergedVideoScreen() {
               Upload Server Configured
             </ThemedText>
             <ThemedText style={styles.uploadInfoText}>
-              Ready to upload to your organization's server
+              Ready to upload to your organization&apos;s server
             </ThemedText>
           </View>
         )}

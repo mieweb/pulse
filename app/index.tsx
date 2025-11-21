@@ -15,8 +15,8 @@ export default function Index() {
     draftId?: string;
     server?: string;
     token?: string;
-  }>();  const router = useRouter();
-  const [isStoring, setIsStoring] = useState(false);
+  }>();
+  const router = useRouter();
   const [hasRedirected, setHasRedirected] = useState(false);
 
   // Debug logging for deeplink parameters
@@ -28,14 +28,11 @@ export default function Index() {
       if (params.mode === "upload") {
         // Store server and token if provided
         if (params.server && params.token) {
-          setIsStoring(true);
           try {
             await storeUploadConfig(params.server, params.token);
             console.log("✅ Stored upload config from deeplink");
           } catch (error) {
             console.error("❌ Failed to store upload config:", error);
-          } finally {
-            setIsStoring(false);
           }
         }
 
