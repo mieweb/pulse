@@ -15,6 +15,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import * as FileSystem from "expo-file-system";
+import { uploadVideo } from "@/utils/tusUpload";
+import { getUploadConfig } from "@/utils/uploadConfig";
+import { DraftStorage } from "@/utils/draftStorage";
 
 export default function MergedVideoScreen() {
   const { videoUri, draftId } = useLocalSearchParams<{
@@ -27,6 +30,8 @@ export default function MergedVideoScreen() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadLink, setUploadLink] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [hasUploadConfig, setHasUploadConfig] = useState(false);
+  const [isUploadModeDraft, setIsUploadModeDraft] = useState(false);
 
   const player = useVideoPlayer(videoUri, (player) => {
     if (player) {
@@ -55,6 +60,38 @@ export default function MergedVideoScreen() {
 
     setupPlayer();
   }, [videoUri, player]);
+
+  // Check if upload config is available and if draft is in upload mode
+  useEffect(() => {
+    const checkUploadConfig = async () => {
+      const config = await getUploadConfig();
+      setHasUploadConfig(!!config);
+      if (config) {
+        setUploadLink(config.server); // Pre-fill with server URL
+      }
+
+      // Check if the draft was created in upload mode
+      if (draftId) {
+        try {
+          // Try both modes to find the draft
+          const draft = await DraftStorage.getDraftById(draftId, "upload") ||
+                       await DraftStorage.getDraftById(draftId, "camera");
+          
+          if (draft) {
+            setIsUploadModeDraft(draft.mode === "upload");
+            console.log(`[MergedVideo] Draft mode: ${draft.mode}, upload allowed: ${draft.mode === "upload"}`);
+          }
+        } catch (error) {
+          console.error("[MergedVideo] Failed to check draft mode:", error);
+          setIsUploadModeDraft(false);
+        }
+      } else {
+        // No draft ID means it's a new recording, not from upload mode
+        setIsUploadModeDraft(false);
+      }
+    };
+    checkUploadConfig();
+  }, [draftId]);
 
   // Pause video when not in fullscreen
   useEffect(() => {
@@ -115,20 +152,93 @@ export default function MergedVideoScreen() {
     }
   };
 
-  const uploadVideo = async () => {
+  const handleUpload = async () => {
     if (!videoUri) return;
 
-    if (!uploadLink) {
-      Alert.alert("Upload Link Required", "Please enter an upload link first.");
+    // Check if this is an upload mode draft
+    if (!isUploadModeDraft) {
+      Alert.alert(
+        "Upload Not Available",
+        "This recording was created in camera mode. Upload is only available for recordings created via QR code.",
+        [{ text: "OK" }]
+      );
       return;
     }
 
-    // TODO: Implement upload logic using uploadLink
-    console.log("Upload to:", uploadLink);
-    Alert.alert(
-      "Upload Logic",
-      "Upload functionality will be implemented here."
-    );
+    // Check if upload config exists
+    const config = await getUploadConfig();
+    if (!config) {
+      Alert.alert(
+        "Upload Not Configured",
+        "Please scan a QR code to configure upload settings first.",
+        [
+          {
+            text: "OK",
+            onPress: () => router.back(),
+          },
+        ]
+      );
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      setUploadProgress(0);
+
+      // Generate filename from draft ID or timestamp
+      const filename = draftId
+        ? `draft-${draftId}.mp4`
+        : `video-${Date.now()}.mp4`;
+
+      console.log(`[Upload] Starting upload: ${filename}`);
+
+      const result = await uploadVideo(
+        videoUri,
+        filename,
+        (progress) => {
+          setUploadProgress(progress.percentage);
+        }
+      );
+
+      console.log(`[Upload] Upload successful: ${result.videoId}`);
+
+      Alert.alert(
+        "Upload Successful",
+        `Video uploaded successfully!\n\nVideo ID: ${result.videoId}\nSize: ${(result.size / 1024 / 1024).toFixed(2)} MB`,
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              // Navigate back or to success screen
+              router.back();
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error("[Upload] Upload failed:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to upload video. Please try again.";
+      
+      // Check if it's a localhost error and provide helpful solution
+      const isLocalhostError = errorMessage.includes("localhost") || errorMessage.includes("127.0.0.1");
+      
+      Alert.alert(
+        "Upload Failed",
+        isLocalhostError
+          ? `${errorMessage}\n\n💡 Solution: Regenerate QR code with your computer's IP address:\n\n1. Find your IP: ifconfig | grep "inet "\n2. Run: PULSEVAULT_URL="http://YOUR_IP:3000" ./test-deeplink.sh\n3. Scan the new QR code`
+          : errorMessage,
+        [
+          {
+            text: "OK",
+            style: "default",
+          },
+        ]
+      );
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
   };
 
   if (isLoading) {
@@ -187,35 +297,67 @@ export default function MergedVideoScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Upload Link Input */}
-        <View style={styles.inputSection}>
-          <ThemedText style={styles.inputLabel}>Upload Link</ThemedText>
-          <TextInput
-            style={styles.uploadLinkInput}
-            placeholder="Paste your organization's upload link here"
-            placeholderTextColor="#666"
-            value={uploadLink}
-            onChangeText={setUploadLink}
-            autoCapitalize="none"
-            keyboardType="url"
-            returnKeyType="done"
-            blurOnSubmit={true}
-            onSubmitEditing={() => {
-              // Dismiss keyboard when done is pressed
-            }}
-          />
-        </View>
+        {/* Upload Info */}
+        {isUploadModeDraft && hasUploadConfig && (
+          <View style={styles.inputSection}>
+            <ThemedText style={styles.inputLabel}>
+              Upload Server Configured
+            </ThemedText>
+            <ThemedText style={styles.uploadInfoText}>
+              Ready to upload to your organization's server
+            </ThemedText>
+          </View>
+        )}
+
+        {isUploadModeDraft && !hasUploadConfig && (
+          <View style={styles.inputSection}>
+            <ThemedText style={styles.inputLabel}>
+              Upload Not Configured
+            </ThemedText>
+            <ThemedText style={styles.uploadInfoText}>
+              Scan a QR code to configure upload settings
+            </ThemedText>
+          </View>
+        )}
+
+        {!isUploadModeDraft && (
+          <View style={styles.inputSection}>
+            <ThemedText style={styles.inputLabel}>
+              Camera Mode Recording
+            </ThemedText>
+            <ThemedText style={styles.uploadInfoText}>
+              This recording was created in camera mode. Upload is only available for recordings created via QR code.
+            </ThemedText>
+          </View>
+        )}
+
+        {/* Upload Progress Bar */}
+        {isUploading && (
+          <View style={styles.progressSection}>
+            <View style={styles.progressBarContainer}>
+              <View
+                style={[
+                  styles.progressBar,
+                  { width: `${uploadProgress}%` },
+                ]}
+              />
+            </View>
+            <ThemedText style={styles.progressText}>
+              {Math.round(uploadProgress)}% uploaded
+            </ThemedText>
+          </View>
+        )}
 
         {/* Action Buttons */}
         <View style={styles.actionButtons}>
           <TouchableOpacity
             style={[
               styles.uploadButton,
-              isUploading && styles.uploadButtonDisabled,
+              (!hasUploadConfig || isUploading) && styles.uploadButtonDisabled,
             ]}
-            onPress={uploadVideo}
+            onPress={handleUpload}
             activeOpacity={0.8}
-            disabled={isUploading}
+            disabled={!isUploadModeDraft || !hasUploadConfig || isUploading}
           >
             {isUploading ? (
               <ActivityIndicator size="small" color="#ffffff" />
@@ -223,7 +365,9 @@ export default function MergedVideoScreen() {
               <MaterialIcons name="cloud-upload" size={20} color="#ffffff" />
             )}
             <ThemedText style={styles.buttonText}>
-              {isUploading ? "Uploading..." : "Upload to Cloud"}
+              {isUploading
+                ? `Uploading... ${Math.round(uploadProgress)}%`
+                : "Upload to Cloud"}
             </ThemedText>
           </TouchableOpacity>
 
@@ -390,6 +534,33 @@ const styles = StyleSheet.create({
   },
   uploadButtonDisabled: {
     backgroundColor: "#666",
+    opacity: 0.5,
+  },
+  uploadInfoText: {
+    fontSize: 14,
+    color: "#999",
+    marginTop: 4,
+  },
+  progressSection: {
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  progressBarContainer: {
+    height: 4,
+    backgroundColor: "#333",
+    borderRadius: 2,
+    overflow: "hidden",
+    marginBottom: 8,
+  },
+  progressBar: {
+    height: "100%",
+    backgroundColor: "#ff0000",
+    borderRadius: 2,
+  },
+  progressText: {
+    fontSize: 12,
+    color: "#999",
+    textAlign: "center",
   },
   separator: {
     flexDirection: "row",
