@@ -1,5 +1,5 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   StyleSheet,
   View,
@@ -12,12 +12,16 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
+import { formatTimeMs } from "@/utils/timeFormat";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const THUMBNAIL_WIDTH = 60;
 const THUMBNAIL_HEIGHT = 80;
 const HANDLE_WIDTH = 40;
 const TIMELINE_PADDING = 20;
+const MIN_TRIM_GAP_MS = 100; // Minimum gap between trim handles
+const MIN_THUMBNAILS = 8;
+const THUMBNAIL_INTERVAL_SECONDS = 2;
 
 interface VideoTrimScrubberProps {
   videoUri: string;
@@ -52,7 +56,10 @@ export default function VideoTrimScrubber({
   const [timelineWidth, setTimelineWidth] = useState(0);
 
   // Calculate number of thumbnails needed
-  const thumbnailCount = Math.max(8, Math.ceil(videoDuration / 2)); // One thumbnail every 2 seconds, minimum 8
+  const thumbnailCount = Math.max(
+    MIN_THUMBNAILS,
+    Math.ceil(videoDuration / THUMBNAIL_INTERVAL_SECONDS)
+  ); // One thumbnail every 2 seconds, minimum 8
 
   // Generate thumbnails on mount
   useEffect(() => {
@@ -105,61 +112,55 @@ export default function VideoTrimScrubber({
   );
 
   // Format time for display
-  const formatTime = (ms: number) => {
-    const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const milliseconds = Math.floor((ms % 1000) / 10);
-    return `${minutes}:${seconds.toString().padStart(2, "0")}.${milliseconds
-      .toString()
-      .padStart(2, "0")}`;
-  };
+  const formatTime = formatTimeMs;
 
   // Handle in point drag
-  const inHandlePanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: (_, gestureState) => {
-        const currentInPosition = msToPosition(inMs);
-        const newPosition = currentInPosition + gestureState.dx;
-        const newInMs = positionToMs(newPosition);
+  const inHandlePanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderMove: (_, gestureState) => {
+          const currentInPosition = msToPosition(inMs);
+          const newPosition = currentInPosition + gestureState.dx;
+          const newInMs = positionToMs(newPosition);
 
-        // Ensure in point doesn't exceed out point
-        if (newInMs < outMs - 100) {
-          // Minimum 100ms between handles
-          setInMs(newInMs);
-          onSeek?.(newInMs);
-        }
-      },
-      onPanResponderRelease: () => {
-        onTrimChange?.(inMs, outMs);
-      },
-    })
-  ).current;
+          // Ensure in point doesn't exceed out point
+          if (newInMs < outMs - MIN_TRIM_GAP_MS) {
+            setInMs(newInMs);
+            onSeek?.(newInMs);
+          }
+        },
+        onPanResponderRelease: () => {
+          onTrimChange?.(inMs, outMs);
+        },
+      }),
+    [inMs, outMs, msToPosition, positionToMs, onSeek, onTrimChange]
+  );
 
   // Handle out point drag
-  const outHandlePanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: (_, gestureState) => {
-        const currentOutPosition = msToPosition(outMs);
-        const newPosition = currentOutPosition + gestureState.dx;
-        const newOutMs = positionToMs(newPosition);
+  const outHandlePanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderMove: (_, gestureState) => {
+          const currentOutPosition = msToPosition(outMs);
+          const newPosition = currentOutPosition + gestureState.dx;
+          const newOutMs = positionToMs(newPosition);
 
-        // Ensure out point doesn't go before in point
-        if (newOutMs > inMs + 100) {
-          // Minimum 100ms between handles
-          setOutMs(newOutMs);
-          onSeek?.(newOutMs);
-        }
-      },
-      onPanResponderRelease: () => {
-        onTrimChange?.(inMs, outMs);
-      },
-    })
-  ).current;
+          // Ensure out point doesn't go before in point
+          if (newOutMs > inMs + MIN_TRIM_GAP_MS) {
+            setOutMs(newOutMs);
+            onSeek?.(newOutMs);
+          }
+        },
+        onPanResponderRelease: () => {
+          onTrimChange?.(inMs, outMs);
+        },
+      }),
+    [inMs, outMs, msToPosition, positionToMs, onSeek, onTrimChange]
+  );
 
   // Handle timeline tap for split
   const handleTimelineTap = (event: any) => {

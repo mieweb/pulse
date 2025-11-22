@@ -2,6 +2,7 @@ import { ThemedText } from "@/components/ThemedText";
 import VideoTrimScrubber from "@/components/VideoTrimScrubber";
 import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
+import { formatTimeMs } from "@/utils/timeFormat";
 import { router, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -146,7 +147,7 @@ export default function SplitTrimScreen() {
 
       Alert.alert(
         "Split Segment",
-        `Split this segment at ${(splitMs / 1000).toFixed(2)}s?`,
+        `Split this segment at ${formatTimeMs(splitMs)}?`,
         [
           { text: "Cancel", style: "cancel" },
           {
