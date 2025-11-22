@@ -26,6 +26,7 @@ interface VideoTrimScrubberProps {
   initialOutMs?: number;
   onTrimChange?: (inMs: number, outMs: number) => void;
   onSplit?: (splitMs: number) => void;
+  onSeek?: (timeMs: number) => void;
 }
 
 export default function VideoTrimScrubber({
@@ -35,6 +36,7 @@ export default function VideoTrimScrubber({
   initialOutMs,
   onTrimChange,
   onSplit,
+  onSeek,
 }: VideoTrimScrubberProps) {
   const videoDurationMs = videoDuration * 1000;
   const effectiveOutMs = initialOutMs ?? videoDurationMs;
@@ -127,6 +129,7 @@ export default function VideoTrimScrubber({
         if (newInMs < outMs - 100) {
           // Minimum 100ms between handles
           setInMs(newInMs);
+          onSeek?.(newInMs);
         }
       },
       onPanResponderRelease: () => {
@@ -149,6 +152,7 @@ export default function VideoTrimScrubber({
         if (newOutMs > inMs + 100) {
           // Minimum 100ms between handles
           setOutMs(newOutMs);
+          onSeek?.(newOutMs);
         }
       },
       onPanResponderRelease: () => {

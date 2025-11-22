@@ -127,6 +127,19 @@ export default function SplitTrimScreen() {
     setCurrentOutMs(outMs);
   }, []);
 
+  const handleSeek = useCallback(
+    (timeMs: number) => {
+      if (player && !isLoading) {
+        try {
+          player.currentTime = timeMs / 1000; // Convert ms to seconds
+        } catch (error) {
+          console.error("Failed to seek player:", error);
+        }
+      }
+    },
+    [player, isLoading]
+  );
+
   const handleSplit = useCallback(
     async (splitMs: number) => {
       if (!draftId || !segment) return;
@@ -318,6 +331,7 @@ export default function SplitTrimScreen() {
           initialOutMs={currentOutMs}
           onTrimChange={handleTrimChange}
           onSplit={handleSplit}
+          onSeek={handleSeek}
         />
       </View>
     </View>
