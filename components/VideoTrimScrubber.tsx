@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   PanResponder,
   ActivityIndicator,
+  GestureResponderEvent,
 } from "react-native";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
 import { formatTimeMs } from "@/utils/timeFormat";
@@ -55,11 +56,11 @@ export default function VideoTrimScrubber({
   const scrollViewRef = useRef<ScrollView>(null);
   const [timelineWidth, setTimelineWidth] = useState(0);
 
-  // Calculate number of thumbnails needed
+  // Calculate number of thumbnails based on video duration
   const thumbnailCount = Math.max(
     MIN_THUMBNAILS,
     Math.ceil(videoDuration / THUMBNAIL_INTERVAL_SECONDS)
-  ); // One thumbnail every 2 seconds, minimum 8
+  );
 
   // Generate thumbnails on mount
   useEffect(() => {
@@ -160,7 +161,7 @@ export default function VideoTrimScrubber({
   );
 
   // Handle timeline tap for split
-  const handleTimelineTap = (event: any) => {
+  const handleTimelineTap = (event: GestureResponderEvent) => {
     if (!splitMode) return;
 
     const { locationX } = event.nativeEvent;

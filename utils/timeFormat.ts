@@ -1,13 +1,13 @@
 /**
  * Formats milliseconds into a human-readable time string with centiseconds
  * @param ms - Time in milliseconds
- * @returns Formatted string in format "M:SS.cs" where cs is centiseconds (hundredths of a second)
+ * @returns Formatted string in format "M:SS.cs" where cs represents 10ms units (hundredths of a second)
  */
 export function formatTimeMs(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  const centiseconds = Math.floor((ms % 1000) / 10);
+  const centiseconds = Math.floor((ms % 1000) / 10); // Divide by 10 to get 10ms units
   return `${minutes}:${seconds.toString().padStart(2, "0")}.${centiseconds
     .toString()
     .padStart(2, "0")}`;
