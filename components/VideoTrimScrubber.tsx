@@ -111,9 +111,6 @@ export default function VideoTrimScrubber({
     [videoDurationMs, timelineWidth]
   );
 
-  // Format time for display
-  const formatTime = formatTimeMs;
-
   // Handle in point drag
   const inHandlePanResponder = useMemo(
     () =>
@@ -196,15 +193,15 @@ export default function VideoTrimScrubber({
       <View style={styles.timeDisplay}>
         <View style={styles.timeItem}>
           <Text style={styles.timeLabel}>In</Text>
-          <Text style={styles.timeValue}>{formatTime(inMs)}</Text>
+          <Text style={styles.timeValue}>{formatTimeMs(inMs)}</Text>
         </View>
         <View style={styles.timeItem}>
           <Text style={styles.timeLabel}>Duration</Text>
-          <Text style={styles.timeValue}>{formatTime(trimmedDuration)}</Text>
+          <Text style={styles.timeValue}>{formatTimeMs(trimmedDuration)}</Text>
         </View>
         <View style={styles.timeItem}>
           <Text style={styles.timeLabel}>Out</Text>
-          <Text style={styles.timeValue}>{formatTime(outMs)}</Text>
+          <Text style={styles.timeValue}>{formatTimeMs(outMs)}</Text>
         </View>
       </View>
 
@@ -364,7 +361,7 @@ export default function VideoTrimScrubber({
 
             <Text style={styles.splitHint}>
               {splitMs !== null
-                ? `Split at ${formatTime(splitMs)}`
+                ? `Split at ${formatTimeMs(splitMs)}`
                 : "Tap timeline to set split point"}
             </Text>
 

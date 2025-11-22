@@ -2,7 +2,7 @@ import { ThemedText } from "@/components/ThemedText";
 import VideoTrimScrubber from "@/components/VideoTrimScrubber";
 import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
-import { formatTimeMs } from "@/utils/timeFormat";
+import { formatTimeMs, calculateSegmentsDuration } from "@/utils/timeFormat";
 import { router, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -191,17 +191,7 @@ export default function SplitTrimScreen() {
                 ];
 
                 // Calculate new total duration
-                const totalDuration = newSegments.reduce(
-                  (total: number, seg: any) => {
-                    if (seg.inMs !== undefined || seg.outMs !== undefined) {
-                      const start = seg.inMs || 0;
-                      const end = seg.outMs || seg.duration * 1000;
-                      return total + (end - start) / 1000;
-                    }
-                    return total + seg.duration;
-                  },
-                  0
-                );
+                const totalDuration = calculateSegmentsDuration(newSegments);
 
                 await DraftStorage.updateDraft(
                   draftId,
@@ -247,17 +237,7 @@ export default function SplitTrimScreen() {
       });
 
       // Calculate new total duration
-      const totalDuration = updatedSegments.reduce(
-        (total: number, seg: any) => {
-          if (seg.inMs !== undefined || seg.outMs !== undefined) {
-            const start = seg.inMs || 0;
-            const end = seg.outMs || seg.duration * 1000;
-            return total + (end - start) / 1000;
-          }
-          return total + seg.duration;
-        },
-        0
-      );
+      const totalDuration = calculateSegmentsDuration(updatedSegments);
 
       await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
 

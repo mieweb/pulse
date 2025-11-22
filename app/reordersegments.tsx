@@ -2,6 +2,7 @@ import { ThemedText } from "@/components/ThemedText";
 import SegmentReorderListVertical from "@/components/SegmentReorderListVertical";
 import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
+import { calculateSegmentsDuration } from "@/utils/timeFormat";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, ActivityIndicator, Alert } from "react-native";
@@ -72,17 +73,7 @@ export default function ReorderSegmentsScreen() {
     }, [loadDraft, isLoading])
   );
 
-  const calculateTotalDuration = useCallback((segments: Segment[]): number => {
-    return segments.reduce((total, segment) => {
-      if (segment.inMs !== undefined || segment.outMs !== undefined) {
-        const start = segment.inMs || 0;
-        const end = segment.outMs || segment.duration * 1000;
-        const trimmedDuration = (end - start) / 1000;
-        return total + trimmedDuration;
-      }
-      return total + segment.duration;
-    }, 0);
-  }, []);
+  const calculateTotalDuration = calculateSegmentsDuration;
 
   const handleSegmentsReorder = useCallback((reorderedSegments: Segment[]) => {
     setSegments(reorderedSegments);
