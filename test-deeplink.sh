@@ -3,18 +3,25 @@
 # Simple Deeplink Test Script
 # Tests deeplink generation and provides easy way to test in app
 
-set -e
+# Don't exit on error - we want to provide helpful feedback
+set +e
 
 # Configuration
 # Try to detect local network IP for physical device testing
 LOCAL_IP=$(ifconfig 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1 || echo "")
 if [ -z "$LOCAL_IP" ]; then
-  LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "")
+  LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "")
 fi
 
 # Use provided URL, or try local IP, or fallback to localhost
 if [ -n "$PULSEVAULT_URL" ]; then
   SERVER_URL="$PULSEVAULT_URL"
+  echo "📡 Using provided PULSEVAULT_URL: $SERVER_URL"
+  if [ -n "$LOCAL_IP" ]; then
+    echo "   💡 Your current network IP: $LOCAL_IP"
+    echo "   💡 If server is on this network, try: http://${LOCAL_IP}:3000"
+  fi
+  echo ""
 elif [ -n "$LOCAL_IP" ]; then
   SERVER_URL="http://${LOCAL_IP}:3000"
   echo "📡 Detected local IP: $LOCAL_IP"
@@ -34,14 +41,55 @@ echo "======================"
 echo ""
 
 # Check if server is running
-echo "1️⃣  Checking server..."
-if ! curl -s "$SERVER_URL/health" > /dev/null 2>&1 && ! curl -s "$SERVER_URL/" > /dev/null 2>&1; then
-  echo "   ⚠️  Server not responding at $SERVER_URL"
-  echo "   Make sure PulseVault is running: cd pulse-vault && docker-compose up -d"
-  exit 1
+echo "1️⃣  Checking server connectivity..."
+SERVER_REACHABLE=false
+if curl -s --connect-timeout 3 --max-time 5 "$SERVER_URL/health" > /dev/null 2>&1; then
+  SERVER_REACHABLE=true
+elif curl -s --connect-timeout 3 --max-time 5 "$SERVER_URL/" > /dev/null 2>&1; then
+  SERVER_REACHABLE=true
 fi
-echo "   ✅ Server is running"
-echo ""
+
+if [ "$SERVER_REACHABLE" = false ]; then
+  echo "   ❌ Server not reachable at $SERVER_URL"
+  echo ""
+  echo "   Possible issues:"
+  echo "   - Server is not running"
+  echo "   - You're on a different network than the server"
+  echo "   - Firewall blocking the connection"
+  echo "   - Wrong IP address or port"
+  echo ""
+  if [ -n "$LOCAL_IP" ]; then
+    echo "   💡 Your current network IP: $LOCAL_IP"
+    echo "   💡 Try: PULSEVAULT_URL=http://${LOCAL_IP}:3000 ./test-deeplink.sh $*"
+    echo ""
+  fi
+  echo "   Troubleshooting:"
+  echo "   1. Check if PulseVault is running:"
+  echo "      cd pulse-vault && docker-compose ps"
+  echo ""
+  echo "   2. If server is on a different network, you may need to:"
+  echo "      - Use a VPN to connect to the server's network"
+  echo "      - Use a public URL if the server is exposed"
+  echo "      - Update PULSEVAULT_URL to the correct address"
+  echo "      - Find the server's IP on its network and use that"
+  echo ""
+  echo "   3. To start the server:"
+  echo "      cd pulse-vault && docker-compose up -d"
+  echo ""
+  echo "   4. To find the server's IP (run on the server machine):"
+  echo "      ifconfig | grep 'inet ' | grep -v 127.0.0.1"
+  echo ""
+  echo "   ⚠️  Continuing anyway - deeplink generation will fail but you can test with existing deeplinks"
+  echo ""
+  read -p "   Continue anyway? (y/N) " -n 1 -r
+  echo ""
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    exit 1
+  fi
+else
+  echo "   ✅ Server is reachable"
+  echo ""
+fi
 
 # Generate deeplink without draft ID
 echo "2️⃣  Generating deeplink (new recording)..."
