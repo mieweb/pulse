@@ -35,6 +35,7 @@ export default function PreviewScreen() {
   // Refs to store timeout IDs for proper cleanup
   const appStateResumeTimeoutRef = useRef<number | null>(null);
   const appStateResetTimeoutRef = useRef<number | null>(null);
+  const isSeekingRef = useRef(false);
 
   const player1 = useVideoPlayer(null, (player) => {
     if (player) {
@@ -57,54 +58,84 @@ export default function PreviewScreen() {
   const _currentPlayer = useSecondPlayer ? player2 : player1; // eslint-disable-line @typescript-eslint/no-unused-vars
   const nextPlayer = useSecondPlayer ? player1 : player2;
 
-  useEventListener(player1, "playToEnd", () => {
-    // Handle segment cycling - check if we've reached the outMs point
-    const currentSegment = segments[currentVideoIndex];
-    if (currentSegment?.outMs) {
-      // If we have an outMs, we should have already advanced via monitoring
-      // But if we reach the natural end, advance to next segment
-      if (videoUris.length > 1) {
-        setUseSecondPlayer(true);
-        advanceToNextVideo();
-        player2.play();
-      }
-    } else if (videoUris.length > 1) {
-      // No trim points, use normal cycling
-      setUseSecondPlayer(true);
-      advanceToNextVideo();
-      player2.play();
-    }
-  });
+  // Helper function to advance to next video with trim point handling
+  const advanceToNextSegment = useCallback(() => {
+    if (videoUris.length <= 1 || isSeekingRef.current) return;
 
-  useEventListener(player2, "playToEnd", () => {
-    // Handle segment cycling - check if we've reached the outMs point
-    const currentSegment = segments[currentVideoIndex];
-    if (currentSegment?.outMs) {
-      // If we have an outMs, we should have already advanced via monitoring
-      // But if we reach the natural end, advance to next segment
-      if (videoUris.length > 1) {
-        setUseSecondPlayer(false);
-        advanceToNextVideo();
-        player1.play();
-      }
-    } else if (videoUris.length > 1) {
-      // No trim points, use normal cycling
-      setUseSecondPlayer(false);
-      advanceToNextVideo();
-      player1.play();
-    }
-  });
+    try {
+      isSeekingRef.current = true;
+      const nextIndex =
+        currentVideoIndex < videoUris.length - 1 ? currentVideoIndex + 1 : 0;
+      const nextSegment = segments[nextIndex];
+      const currentPlayer = useSecondPlayer ? player2 : player1;
+      const nextPlayer = useSecondPlayer ? player1 : player2;
 
-  // Monitor playback to respect trim points (inMs/outMs)
+      if (nextSegment) {
+        const nextInSeconds = nextSegment.inMs ? nextSegment.inMs / 1000 : 0;
+        nextPlayer.currentTime = nextInSeconds;
+        currentPlayer.pause();
+        setCurrentVideoIndex(nextIndex);
+        setUseSecondPlayer(!useSecondPlayer);
+        nextPlayer.play();
+      }
+      isSeekingRef.current = false;
+    } catch (error) {
+      isSeekingRef.current = false;
+      console.error("Error advancing to next segment:", error);
+    }
+  }, [
+    videoUris.length,
+    currentVideoIndex,
+    segments,
+    useSecondPlayer,
+    player1,
+    player2,
+  ]);
+
+  // Unified playToEnd handler
+  const handlePlayToEnd = useCallback(
+    (playerNumber: 1 | 2) => {
+      const currentSegment = segments[currentVideoIndex];
+      const hasMultipleSegments = videoUris.length > 1;
+
+      // If segment has trim points, advance was already handled by monitoring
+      // Otherwise, advance normally
+      if (!currentSegment?.outMs && hasMultipleSegments) {
+        if (playerNumber === 1) {
+          setUseSecondPlayer(true);
+          advanceToNextSegment();
+        } else {
+          setUseSecondPlayer(false);
+          advanceToNextSegment();
+        }
+      }
+    },
+    [segments, currentVideoIndex, videoUris.length, advanceToNextSegment]
+  );
+
+  useEventListener(player1, "playToEnd", () => handlePlayToEnd(1));
+  useEventListener(player2, "playToEnd", () => handlePlayToEnd(2));
+
+  // Monitor playback to respect trim points (inMs/outMs) using requestAnimationFrame
   useEffect(() => {
     if (!player1 || !player2 || segments.length === 0) return;
 
+    let animationFrameId: number | null = null;
+
     const checkPlayback = () => {
       try {
+        if (isSeekingRef.current) {
+          animationFrameId = requestAnimationFrame(checkPlayback);
+          return;
+        }
+
         const currentPlayer = useSecondPlayer ? player2 : player1;
         const currentSegment = segments[currentVideoIndex];
-        
-        if (!currentSegment || !currentPlayer.playing) return;
+
+        if (!currentSegment || !currentPlayer.playing) {
+          animationFrameId = requestAnimationFrame(checkPlayback);
+          return;
+        }
 
         const currentTime = currentPlayer.currentTime * 1000; // Convert to ms
         const videoDurationMs = currentSegment.duration * 1000;
@@ -112,62 +143,49 @@ export default function PreviewScreen() {
         const outMs = currentSegment.outMs ?? videoDurationMs;
 
         // If we've reached or passed the out point, advance to next segment
-        if (currentTime >= outMs) {
+        if (currentTime >= outMs - 50) {
+          // 50ms tolerance for smoother transitions
           if (videoUris.length > 1) {
-            // Switch players and advance
-            const nextIndex = currentVideoIndex < videoUris.length - 1 ? currentVideoIndex + 1 : 0;
-            const nextSegment = segments[nextIndex];
-            const nextPlayer = useSecondPlayer ? player1 : player2;
-            
-            if (nextSegment) {
-              const nextInSeconds = nextSegment.inMs ? nextSegment.inMs / 1000 : 0;
-              nextPlayer.currentTime = nextInSeconds;
-              currentPlayer.pause();
-              setCurrentVideoIndex(nextIndex);
-              setUseSecondPlayer(!useSecondPlayer);
-              nextPlayer.play();
-            }
+            advanceToNextSegment();
           } else {
             // Single segment - loop back to in point
+            isSeekingRef.current = true;
             const inSeconds = inMs / 1000;
             currentPlayer.currentTime = inSeconds;
+            isSeekingRef.current = false;
           }
         }
         // If we're before the in point, jump to in point
         else if (currentTime < inMs) {
+          isSeekingRef.current = true;
           const inSeconds = inMs / 1000;
           currentPlayer.currentTime = inSeconds;
+          isSeekingRef.current = false;
         }
+
+        animationFrameId = requestAnimationFrame(checkPlayback);
       } catch (error) {
         // Player might be disposed, ignore
+        animationFrameId = requestAnimationFrame(checkPlayback);
       }
     };
 
-    // Check every 100ms
-    const interval = setInterval(checkPlayback, 100);
+    animationFrameId = requestAnimationFrame(checkPlayback);
 
-    return () => clearInterval(interval);
-  }, [player1, player2, segments, currentVideoIndex, useSecondPlayer, videoUris.length]);
-
-  const advanceToNextVideo = useCallback(() => {
-    setCurrentVideoIndex((prev) => {
-      const nextIndex = prev < videoUris.length - 1 ? prev + 1 : 0;
-      const nextSegment = segments[nextIndex];
-      const nextPlayer = useSecondPlayer ? player1 : player2;
-      
-      // Ensure next player is at the inMs point
-      if (nextSegment && nextPlayer) {
-        try {
-          const inSeconds = nextSegment.inMs ? nextSegment.inMs / 1000 : 0;
-          nextPlayer.currentTime = inSeconds;
-        } catch (error) {
-          // Ignore errors
-        }
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
       }
-      
-      return nextIndex;
-    });
-  }, [videoUris.length, segments, useSecondPlayer, player1, player2]);
+    };
+  }, [
+    player1,
+    player2,
+    segments,
+    currentVideoIndex,
+    useSecondPlayer,
+    videoUris.length,
+    advanceToNextSegment,
+  ]);
 
   // Function to reset both players to clean state
   const resetPlayers = async () => {
