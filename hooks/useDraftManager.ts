@@ -1,5 +1,6 @@
 import { RecordingSegment } from "@/components/RecordingProgressBar";
 import { DraftMode, DraftStorage } from "@/utils/draftStorage";
+import { getExactFullDuration } from "@/utils/durationUtils";
 import { fileStore } from "@/utils/fileStore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -616,10 +617,25 @@ export function useDraftManager(
       // Clear redo stack in state (new recording invalidates redo)
       setRedoStack([]);
 
-      // Append the imported segment with managed URI
+      // Get exact duration from AVFoundation for frame-accurate editing
+      let exactDuration = newSegment.duration;
+      try {
+        exactDuration = await getExactFullDuration(managedUri);
+        console.log(
+          `[DraftManager] Exact duration from AVFoundation: ${exactDuration}s (approx: ${newSegment.duration}s)`
+        );
+      } catch (error) {
+        console.warn(
+          "[DraftManager] Failed to get exact duration, using approximate:",
+          error
+        );
+      }
+
+      // Append the imported segment with managed URI and exact duration
       const importedSegment: RecordingSegment = {
         ...newSegment,
         uri: managedUri,
+        duration: exactDuration,
       };
       const updatedSegments = [...recordingSegments, importedSegment];
       setRecordingSegments(updatedSegments);

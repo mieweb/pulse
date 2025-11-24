@@ -11,7 +11,6 @@ import { ThemedView } from "@/components/ThemedView";
 import TimeSelectorButton from "@/components/TimeSelectorButton";
 import UndoSegmentButton from "@/components/UndoSegmentButton";
 import * as ImagePicker from "expo-image-picker";
-import * as VideoThumbnails from "expo-video-thumbnails";
 import { useDraftManager } from "@/hooks/useDraftManager";
 import { useVideoStabilization } from "@/hooks/useVideoStabilization";
 import { useCameraFacing } from "@/hooks/useCameraFacing";
@@ -19,6 +18,7 @@ import {
   VideoStabilization,
   mapToNativeVideoStabilization,
 } from "@/constants/camera";
+import { getExactFullDuration } from "@/utils/durationUtils";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { CameraType, CameraView } from "expo-camera";
 import { router, useLocalSearchParams } from "expo-router";
@@ -370,12 +370,23 @@ export default function ShortsScreen() {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
 
-        // Get the actual video duration in seconds
+        // Get exact duration from AVFoundation instead of approximate metadata duration
         let actualDuration = 0;
-        if (asset.duration) {
-          // Convert from milliseconds to seconds if needed
-          actualDuration =
-            asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+        try {
+          actualDuration = await getExactFullDuration(asset.uri);
+          console.log(
+            `[Library Import] Exact duration from AVFoundation: ${actualDuration}s`
+          );
+        } catch (error) {
+          console.warn(
+            "[Library Import] Failed to get exact duration, using metadata:",
+            error
+          );
+          // Fallback to metadata duration if AVFoundation fails
+          if (asset.duration) {
+            actualDuration =
+              asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+          }
         }
 
         // Check if adding this video would exceed the total duration limit
@@ -403,7 +414,7 @@ export default function ShortsScreen() {
           return;
         }
 
-        // Create a recording segment from the selected video
+        // Create a recording segment from the selected video with exact duration
         const segment: RecordingSegment = {
           id: Date.now().toString(),
           uri: asset.uri,

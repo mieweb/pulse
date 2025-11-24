@@ -1,10 +1,12 @@
 import { ThemedText } from "@/components/ThemedText";
 import VideoTrimScrubber from "@/components/VideoTrimScrubber";
 import { DraftStorage } from "@/utils/draftStorage";
+import { getExactSegmentDuration } from "@/utils/durationUtils";
 import { fileStore } from "@/utils/fileStore";
 import { formatTimeMs } from "@/utils/timeFormat";
 import { router, useLocalSearchParams } from "expo-router";
-import { useVideoPlayer, VideoView, useEventListener } from "expo-video";
+import { useEventListener } from "expo";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { MaterialIcons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState, useRef } from "react";
 import {
@@ -273,14 +275,8 @@ export default function SplitTrimScreen() {
               try {
                 // Double-check seeking state hasn't been cancelled
                 if (player && isSeekingRef.current) {
-                  player
-                    .play()
-                    .then(() => {
-                      isSeekingRef.current = false;
-                    })
-                    .catch(() => {
-                      isSeekingRef.current = false;
-                    });
+                  player.play();
+                  isSeekingRef.current = false;
                 }
               } catch (error) {
                 isSeekingRef.current = false;
@@ -303,7 +299,7 @@ export default function SplitTrimScreen() {
 
   const handleSplit = useCallback(
     async (splitMs: number) => {
-      if (!draftId || !segment) return;
+      if (!draftId || !segment || !videoUri) return;
 
       Alert.alert(
         "Split Segment",
@@ -327,19 +323,55 @@ export default function SplitTrimScreen() {
 
                 // Create two new segments from the split
                 const originalSegment = draft.segments[segmentIndex];
-                const segment1 = {
+
+                // Get exact trimmed durations from AVFoundation for each split segment
+                const segment1TrimPoints = {
                   id: `${originalSegment.id}_split1_${Date.now()}`,
                   uri: originalSegment.uri,
                   duration: originalSegment.duration,
                   inMs: currentInMs,
                   outMs: splitMs,
                 };
-                const segment2 = {
+                const segment2TrimPoints = {
                   id: `${originalSegment.id}_split2_${Date.now()}`,
                   uri: originalSegment.uri,
                   duration: originalSegment.duration,
                   inMs: splitMs,
                   outMs: currentOutMs ?? originalSegment.duration * 1000,
+                };
+
+                // Get exact durations from AVFoundation to ensure accuracy
+                let segment1Duration = originalSegment.duration;
+                let segment2Duration = originalSegment.duration;
+                try {
+                  const absoluteUri = fileStore.toAbsolutePath(
+                    originalSegment.uri
+                  );
+                  segment1Duration = await getExactSegmentDuration({
+                    ...segment1TrimPoints,
+                    uri: absoluteUri,
+                  });
+                  segment2Duration = await getExactSegmentDuration({
+                    ...segment2TrimPoints,
+                    uri: absoluteUri,
+                  });
+                  console.log(
+                    `[SplitTrim] Exact durations: segment1=${segment1Duration}s, segment2=${segment2Duration}s`
+                  );
+                } catch (error) {
+                  console.warn(
+                    "[SplitTrim] Failed to get exact durations, using original:",
+                    error
+                  );
+                }
+
+                const segment1 = {
+                  ...segment1TrimPoints,
+                  duration: segment1Duration,
+                };
+                const segment2 = {
+                  ...segment2TrimPoints,
+                  duration: segment2Duration,
                 };
 
                 // Replace the original segment with the two new ones
@@ -373,24 +405,48 @@ export default function SplitTrimScreen() {
         ]
       );
     },
-    [draftId, segment, segmentId, currentInMs, currentOutMs]
+    [draftId, segment, segmentId, currentInMs, currentOutMs, videoUri]
   );
 
   const handleSave = useCallback(async () => {
-    if (!draftId || !segment) return;
+    if (!draftId || !segment || !videoUri) return;
 
     try {
       setIsSaving(true);
       const draft = await DraftStorage.getDraftById(draftId);
       if (!draft) return;
 
-      // Update the segment with new trim points
+      // Get exact trimmed duration from AVFoundation
+      let exactTrimmedDuration = segment.duration;
+      try {
+        exactTrimmedDuration = await getExactSegmentDuration({
+          ...segment,
+          uri: videoUri,
+          inMs: currentInMs,
+          outMs: currentOutMs,
+        });
+        console.log(
+          `[SplitTrim] Exact trimmed duration from AVFoundation: ${exactTrimmedDuration}s`
+        );
+      } catch (error) {
+        console.warn(
+          "[SplitTrim] Failed to get exact duration, using calculated:",
+          error
+        );
+        // Fallback to calculated duration
+        const start = currentInMs;
+        const end = currentOutMs ?? segment.duration * 1000;
+        exactTrimmedDuration = (end - start) / 1000;
+      }
+
+      // Update the segment with new trim points and exact duration
       const updatedSegments = draft.segments.map((s: any) => {
         if (s.id === segmentId) {
           return {
             ...s,
             inMs: currentInMs,
             outMs: currentOutMs,
+            duration: exactTrimmedDuration,
           };
         }
         return s;
@@ -398,7 +454,11 @@ export default function SplitTrimScreen() {
 
       // Preserve the original totalDuration (selected duration limit, e.g., 3 min)
       // Don't recalculate it based on segments - it represents the limit, not actual duration
-      await DraftStorage.updateDraft(draftId, updatedSegments, draft.totalDuration);
+      await DraftStorage.updateDraft(
+        draftId,
+        updatedSegments,
+        draft.totalDuration
+      );
 
       // Navigate back to edit segments screen
       router.push({
@@ -410,7 +470,7 @@ export default function SplitTrimScreen() {
       Alert.alert("Error", "Failed to save trim points");
       setIsSaving(false);
     }
-  }, [draftId, segment, segmentId, currentInMs, currentOutMs]);
+  }, [draftId, segment, segmentId, currentInMs, currentOutMs, videoUri]);
 
   if (isLoading || !videoUri) {
     return (
