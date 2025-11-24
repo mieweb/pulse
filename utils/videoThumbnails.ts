@@ -36,8 +36,9 @@ export async function generateVideoThumbnail(
     }
     
     // Generate new thumbnail
+    // Ensure time is an integer (Int64) as required by the native API
     const { uri } = await getThumbnailAsync(videoUri, {
-      time,
+      time: Math.round(time),
       quality,
     });
     

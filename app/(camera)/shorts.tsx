@@ -113,10 +113,15 @@ export default function ShortsScreen() {
   const isHoldRecording = useSharedValue(false);
   const recordingModeShared = useSharedValue("");
 
-  const totalUsedDuration = recordingSegments.reduce(
-    (total, segment) => total + segment.duration,
-    0
-  );
+  // Calculate total duration accounting for trimmed segments
+  const totalUsedDuration = recordingSegments.reduce((total, segment) => {
+    if (segment.inMs !== undefined || segment.outMs !== undefined) {
+      const start = segment.inMs || 0;
+      const end = segment.outMs || segment.duration * 1000;
+      return total + (end - start) / 1000; // Convert ms to seconds
+    }
+    return total + segment.duration;
+  }, 0);
 
   const handleRecordingStart = (
     mode: "tap" | "hold",
@@ -198,10 +203,14 @@ export default function ShortsScreen() {
 
   const handleTimeSelect = (timeInSeconds: number) => {
     // Check if current segments exceed the new duration limit
-    const currentTotalDuration = recordingSegments.reduce(
-      (total, seg) => total + seg.duration,
-      0
-    );
+    const currentTotalDuration = recordingSegments.reduce((total, seg) => {
+      if (seg.inMs !== undefined || seg.outMs !== undefined) {
+        const start = seg.inMs || 0;
+        const end = seg.outMs || seg.duration * 1000;
+        return total + (end - start) / 1000; // Convert ms to seconds
+      }
+      return total + seg.duration;
+    }, 0);
 
     if (currentTotalDuration > timeInSeconds) {
       Alert.alert(
@@ -370,10 +379,14 @@ export default function ShortsScreen() {
         }
 
         // Check if adding this video would exceed the total duration limit
-        const currentTotalDuration = recordingSegments.reduce(
-          (total, seg) => total + seg.duration,
-          0
-        );
+        const currentTotalDuration = recordingSegments.reduce((total, seg) => {
+          if (seg.inMs !== undefined || seg.outMs !== undefined) {
+            const start = seg.inMs || 0;
+            const end = seg.outMs || seg.duration * 1000;
+            return total + (end - start) / 1000; // Convert ms to seconds
+          }
+          return total + seg.duration;
+        }, 0);
         const newTotalDuration = currentTotalDuration + actualDuration;
 
         if (newTotalDuration > selectedDuration) {
