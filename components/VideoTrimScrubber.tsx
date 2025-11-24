@@ -127,15 +127,18 @@ export default function VideoTrimScrubber({
   const throttledSeek = useCallback(
     (timeMs: number) => {
       const now = Date.now();
-      if (now - lastSeekTimeRef.current >= SEEK_THROTTLE_MS) {
-        if (seekAnimationFrameRef.current) {
-          cancelAnimationFrame(seekAnimationFrameRef.current);
-        }
-        seekAnimationFrameRef.current = requestAnimationFrame(() => {
+      // Always schedule the seek, but throttle execution
+      if (seekAnimationFrameRef.current) {
+        cancelAnimationFrame(seekAnimationFrameRef.current);
+      }
+      
+      seekAnimationFrameRef.current = requestAnimationFrame(() => {
+        if (now - lastSeekTimeRef.current >= SEEK_THROTTLE_MS) {
           onSeek?.(timeMs);
           lastSeekTimeRef.current = now;
-        });
-      }
+        }
+        // If throttled, the state update ensures the final position is correct
+      });
     },
     [onSeek]
   );

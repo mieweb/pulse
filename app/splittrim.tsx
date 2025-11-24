@@ -135,11 +135,15 @@ export default function SplitTrimScreen() {
     const outSeconds = effectiveOutMs / 1000;
 
     let animationFrameId: number | null = null;
+    let isActive = true;
 
     const checkPlaybackPosition = () => {
+      if (!isActive) return;
+
       try {
+        // Only check if player is actually playing
         if (!player.playing || isSeekingRef.current) {
-          animationFrameId = requestAnimationFrame(checkPlaybackPosition);
+          // Pause the animation loop when not playing to save CPU
           return;
         }
 
@@ -160,13 +164,31 @@ export default function SplitTrimScreen() {
 
         animationFrameId = requestAnimationFrame(checkPlaybackPosition);
       } catch (error) {
-        // Player might be disposed, ignore
+        // Player might be disposed, stop the animation loop
+        console.error("Error in playback position check:", error);
+        isActive = false;
       }
     };
 
-    animationFrameId = requestAnimationFrame(checkPlaybackPosition);
+    // Start the animation loop only when player is playing
+    const startMonitoring = () => {
+      if (player.playing && isActive) {
+        animationFrameId = requestAnimationFrame(checkPlaybackPosition);
+      }
+    };
+
+    // Listen for play/pause events to control animation loop
+    const playInterval = setInterval(() => {
+      if (player.playing && !animationFrameId && isActive) {
+        startMonitoring();
+      }
+    }, 200); // Check every 200ms if we need to start monitoring
+
+    startMonitoring();
 
     return () => {
+      isActive = false;
+      clearInterval(playInterval);
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
@@ -244,18 +266,32 @@ export default function SplitTrimScreen() {
           const timeSeconds = timeMs / 1000.0;
           player.currentTime = timeSeconds;
 
-          // Resume playback after a brief delay to allow frame to load
+          // Resume playback after seek completes
           if (wasPlaying) {
-            setTimeout(() => {
-              if (player && !isSeekingRef.current) {
-                player.play().catch(() => {
-                  // Ignore play errors
-                });
+            // Use a small delay to ensure seek completes
+            const seekTimeout = setTimeout(() => {
+              try {
+                // Double-check seeking state hasn't been cancelled
+                if (player && isSeekingRef.current) {
+                  player
+                    .play()
+                    .then(() => {
+                      isSeekingRef.current = false;
+                    })
+                    .catch(() => {
+                      isSeekingRef.current = false;
+                    });
+                }
+              } catch (error) {
+                isSeekingRef.current = false;
               }
             }, 50);
-          }
 
-          isSeekingRef.current = false;
+            // Store timeout for cleanup
+            return () => clearTimeout(seekTimeout);
+          } else {
+            isSeekingRef.current = false;
+          }
         } catch (error) {
           isSeekingRef.current = false;
           console.error("Failed to seek player:", error);

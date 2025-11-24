@@ -121,19 +121,27 @@ export default function PreviewScreen() {
     if (!player1 || !player2 || segments.length === 0) return;
 
     let animationFrameId: number | null = null;
+    let isActive = true;
+    let errorCount = 0;
+    const MAX_ERRORS = 5;
 
     const checkPlayback = () => {
+      if (!isActive) return;
+
       try {
         if (isSeekingRef.current) {
-          animationFrameId = requestAnimationFrame(checkPlayback);
+          if (isActive) {
+            animationFrameId = requestAnimationFrame(checkPlayback);
+          }
           return;
         }
 
         const currentPlayer = useSecondPlayer ? player2 : player1;
         const currentSegment = segments[currentVideoIndex];
 
+        // Only check if player is actually playing to save CPU
         if (!currentSegment || !currentPlayer.playing) {
-          animationFrameId = requestAnimationFrame(checkPlayback);
+          // Don't schedule next frame when not playing
           return;
         }
 
@@ -163,16 +171,50 @@ export default function PreviewScreen() {
           isSeekingRef.current = false;
         }
 
-        animationFrameId = requestAnimationFrame(checkPlayback);
+        // Reset error count on successful check
+        errorCount = 0;
+        if (isActive) {
+          animationFrameId = requestAnimationFrame(checkPlayback);
+        }
       } catch (error) {
-        // Player might be disposed, ignore
+        errorCount++;
+        console.error("Error in playback check:", error);
+        
+        // Stop the animation loop after too many errors (player likely disposed)
+        if (errorCount >= MAX_ERRORS) {
+          console.error("Too many playback errors, stopping monitoring");
+          isActive = false;
+        } else if (isActive) {
+          // Exponential backoff on errors
+          setTimeout(() => {
+            if (isActive) {
+              animationFrameId = requestAnimationFrame(checkPlayback);
+            }
+          }, 100 * errorCount);
+        }
+      }
+    };
+
+    // Start monitoring only when player is playing
+    const startMonitoring = () => {
+      const currentPlayer = useSecondPlayer ? player2 : player1;
+      if (currentPlayer.playing && isActive && !animationFrameId) {
         animationFrameId = requestAnimationFrame(checkPlayback);
       }
     };
 
-    animationFrameId = requestAnimationFrame(checkPlayback);
+    // Check periodically if we need to start monitoring
+    const playInterval = setInterval(() => {
+      if (isActive) {
+        startMonitoring();
+      }
+    }, 200);
+
+    startMonitoring();
 
     return () => {
+      isActive = false;
+      clearInterval(playInterval);
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
