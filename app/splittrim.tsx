@@ -4,9 +4,9 @@ import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import { formatTimeMs } from "@/utils/timeFormat";
 import { router, useLocalSearchParams } from "expo-router";
-import { useVideoPlayer, VideoView } from "expo-video";
+import { useVideoPlayer, VideoView, useEventListener } from "expo-video";
 import { MaterialIcons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -32,6 +32,8 @@ export default function SplitTrimScreen() {
   const [currentOutMs, setCurrentOutMs] = useState<number | undefined>(
     undefined
   );
+  const isSeekingRef = useRef(false);
+  const playbackCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const player = useVideoPlayer(null, (player) => {
     if (player) {
@@ -84,7 +86,7 @@ export default function SplitTrimScreen() {
 
   useEffect(() => {
     const setupPlayer = async () => {
-      if (videoUri && player && !isLoading) {
+      if (videoUri && player && !isLoading && segment) {
         try {
           await player.replaceAsync(videoUri);
           // Seek to the in point when video loads
@@ -93,13 +95,37 @@ export default function SplitTrimScreen() {
           player.play();
         } catch (error) {
           console.error("Failed to setup player:", error);
+          Alert.alert("Error", "Failed to load video");
         }
       }
     };
 
     setupPlayer();
-  }, [videoUri, player, isLoading]);
+  }, [videoUri, player, isLoading, segment, currentInMs]);
 
+  // Use video player events instead of interval-based checking for better performance
+  useEventListener(player, "playToEnd", () => {
+    if (!segment || isSeekingRef.current) return;
+
+    try {
+      const videoDurationMs = segment.duration * 1000;
+      const effectiveOutMs = currentOutMs ?? videoDurationMs;
+      const inSeconds = currentInMs / 1000;
+      const outSeconds = effectiveOutMs / 1000;
+      const currentTime = player.currentTime;
+
+      // If video naturally ended at the out point, loop back to in point
+      if (currentTime >= outSeconds - 0.1) {
+        // 100ms tolerance
+        player.currentTime = inSeconds;
+        player.play();
+      }
+    } catch (error) {
+      console.error("Error in playToEnd handler:", error);
+    }
+  });
+
+  // Monitor playback position with requestAnimationFrame for smooth checking
   useEffect(() => {
     if (!player || !segment) return;
 
@@ -108,27 +134,43 @@ export default function SplitTrimScreen() {
     const inSeconds = currentInMs / 1000;
     const outSeconds = effectiveOutMs / 1000;
 
-    const checkTime = () => {
+    let animationFrameId: number | null = null;
+
+    const checkPlaybackPosition = () => {
       try {
+        if (!player.playing || isSeekingRef.current) {
+          animationFrameId = requestAnimationFrame(checkPlaybackPosition);
+          return;
+        }
+
         const currentTime = player.currentTime;
-        
+
         // If we've reached or passed the out point, loop back to in point
         if (currentTime >= outSeconds) {
+          isSeekingRef.current = true;
           player.currentTime = inSeconds;
+          isSeekingRef.current = false;
         }
         // If we're before the in point, jump to in point
         else if (currentTime < inSeconds) {
+          isSeekingRef.current = true;
           player.currentTime = inSeconds;
+          isSeekingRef.current = false;
         }
+
+        animationFrameId = requestAnimationFrame(checkPlaybackPosition);
       } catch (error) {
         // Player might be disposed, ignore
       }
     };
 
-    // Check every 100ms
-    const interval = setInterval(checkTime, 100);
+    animationFrameId = requestAnimationFrame(checkPlaybackPosition);
 
-    return () => clearInterval(interval);
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
   }, [player, segment, currentInMs, currentOutMs]);
 
   useFocusEffect(
@@ -146,10 +188,15 @@ export default function SplitTrimScreen() {
   useEffect(() => {
     return () => {
       try {
+        // Cleanup: cancel any pending seeks
+        isSeekingRef.current = false;
+
         if (player && typeof player.pause === "function") {
           player.pause();
         }
-      } catch (error) {}
+      } catch (error) {
+        // Ignore cleanup errors
+      }
     };
   }, [player]);
 
@@ -160,22 +207,23 @@ export default function SplitTrimScreen() {
   const handleTrimChange = useCallback((inMs: number, outMs: number) => {
     setCurrentInMs(inMs);
     setCurrentOutMs(outMs);
-    
+
     // Adjust player position if it's outside the new trim bounds
     if (player && segment) {
       try {
         const currentTimeMs = player.currentTime * 1000;
         const videoDurationMs = segment.duration * 1000;
         const effectiveOutMs = outMs ?? videoDurationMs;
-        
+
         // If current position is outside new bounds, adjust it
-        if (currentTimeMs < inMs) {
-          player.currentTime = inMs / 1000;
-        } else if (currentTimeMs > effectiveOutMs) {
-          player.currentTime = effectiveOutMs / 1000;
+        if (currentTimeMs < inMs || currentTimeMs > effectiveOutMs) {
+          isSeekingRef.current = true;
+          const targetTime = currentTimeMs < inMs ? inMs : effectiveOutMs;
+          player.currentTime = targetTime / 1000;
+          isSeekingRef.current = false;
         }
       } catch (error) {
-        // Ignore errors
+        console.error("Error adjusting player position:", error);
       }
     }
   }, [player, segment]);
@@ -184,17 +232,32 @@ export default function SplitTrimScreen() {
     (timeMs: number) => {
       if (player && !isLoading && segment) {
         try {
-          // Pause the player when seeking during trim handle drag
-          // This ensures the frame stays visible at the trim point
-          if (player.playing) {
+          isSeekingRef.current = true;
+
+          // Pause briefly during seek for better frame accuracy
+          const wasPlaying = player.playing;
+          if (wasPlaying) {
             player.pause();
           }
-          
-          // Seek to the exact position with high precision
-          // Convert ms to seconds with full precision (no rounding)
+
+          // Seek to the exact position
           const timeSeconds = timeMs / 1000.0;
           player.currentTime = timeSeconds;
+
+          // Resume playback after a brief delay to allow frame to load
+          if (wasPlaying) {
+            setTimeout(() => {
+              if (player && !isSeekingRef.current) {
+                player.play().catch(() => {
+                  // Ignore play errors
+                });
+              }
+            }, 50);
+          }
+
+          isSeekingRef.current = false;
         } catch (error) {
+          isSeekingRef.current = false;
           console.error("Failed to seek player:", error);
         }
       }

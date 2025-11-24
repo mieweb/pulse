@@ -26,6 +26,9 @@ const TIMELINE_PADDING = 20;
 const MIN_TRIM_GAP_MS = 100; // Minimum gap between trim handles
 const MIN_THUMBNAILS = 8;
 const THUMBNAIL_INTERVAL_SECONDS = 2;
+const SEEK_THROTTLE_MS = 50; // Throttle seeks to every 50ms for smooth but not excessive updates
+const GESTURE_STATE_BEGAN = 2;
+const GESTURE_STATE_END = 5;
 
 interface VideoTrimScrubberProps {
   videoUri: string;
@@ -62,6 +65,7 @@ export default function VideoTrimScrubber({
   const initialOutPositionRef = useRef<number>(0);
   const lastSeekTimeRef = useRef<number>(0);
   const isDraggingRef = useRef<boolean>(false);
+  const seekAnimationFrameRef = useRef<number | null>(null);
 
   // Calculate number of thumbnails based on video duration
   const thumbnailCount = Math.max(
@@ -119,79 +123,111 @@ export default function VideoTrimScrubber({
     [videoDurationMs, timelineWidth]
   );
 
-  // Handle in point drag
-  const handleInGesture = (event: any) => {
-    const { translationX } = event.nativeEvent;
-    const newPosition = initialInPositionRef.current + translationX;
-    const newInMs = positionToMs(newPosition);
-
-    // Ensure in point doesn't exceed out point
-    if (newInMs < outMs - 100) {
-      // Minimum 100ms between handles
-      setInMs(newInMs);
-      
-      // Throttle seeks to every 8ms (~120fps) for very responsive, precise updates
+  // Throttled seek function using requestAnimationFrame for smooth updates
+  const throttledSeek = useCallback(
+    (timeMs: number) => {
       const now = Date.now();
-      if (now - lastSeekTimeRef.current >= 8) {
-        onSeek?.(newInMs);
-        lastSeekTimeRef.current = now;
+      if (now - lastSeekTimeRef.current >= SEEK_THROTTLE_MS) {
+        if (seekAnimationFrameRef.current) {
+          cancelAnimationFrame(seekAnimationFrameRef.current);
+        }
+        seekAnimationFrameRef.current = requestAnimationFrame(() => {
+          onSeek?.(timeMs);
+          lastSeekTimeRef.current = now;
+        });
       }
-    }
-  };
+    },
+    [onSeek]
+  );
 
-  const handleInGestureStateChange = (event: any) => {
-    const { state } = event.nativeEvent;
-    
-    if (state === 2) { // BEGAN state - gesture started
-      isDraggingRef.current = true;
-      initialInPositionRef.current = msToPosition(inMs);
-      lastSeekTimeRef.current = Date.now();
-      // Seek to the in point when dragging starts
-      onSeek?.(inMs);
-    } else if (state === 5) { // END state - gesture ended
-      isDraggingRef.current = false;
-      // Final seek to ensure exact position
-      onSeek?.(inMs);
-      onTrimChange?.(inMs, outMs);
-    }
-  };
+  // Cleanup animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (seekAnimationFrameRef.current) {
+        cancelAnimationFrame(seekAnimationFrameRef.current);
+      }
+    };
+  }, []);
+
+  // Handle in point drag
+  const handleInGesture = useCallback(
+    (event: any) => {
+      const { translationX } = event.nativeEvent;
+      const newPosition = initialInPositionRef.current + translationX;
+      const newInMs = positionToMs(newPosition);
+
+      // Ensure in point doesn't exceed out point
+      if (newInMs < outMs - MIN_TRIM_GAP_MS) {
+        setInMs(newInMs);
+        throttledSeek(newInMs);
+      }
+    },
+    [positionToMs, outMs, throttledSeek]
+  );
+
+  const handleInGestureStateChange = useCallback(
+    (event: any) => {
+      const { state } = event.nativeEvent;
+
+      if (state === GESTURE_STATE_BEGAN) {
+        isDraggingRef.current = true;
+        initialInPositionRef.current = msToPosition(inMs);
+        lastSeekTimeRef.current = 0; // Reset to allow immediate seek
+        onSeek?.(inMs); // Seek to in point when dragging starts
+      } else if (state === GESTURE_STATE_END) {
+        isDraggingRef.current = false;
+        // Cancel any pending animation frame
+        if (seekAnimationFrameRef.current) {
+          cancelAnimationFrame(seekAnimationFrameRef.current);
+          seekAnimationFrameRef.current = null;
+        }
+        // Final seek to ensure exact position
+        onSeek?.(inMs);
+        onTrimChange?.(inMs, outMs);
+      }
+    },
+    [inMs, outMs, msToPosition, onSeek, onTrimChange]
+  );
 
   // Handle out point drag
-  const handleOutGesture = (event: any) => {
-    const { translationX } = event.nativeEvent;
-    const newPosition = initialOutPositionRef.current + translationX;
-    const newOutMs = positionToMs(newPosition);
+  const handleOutGesture = useCallback(
+    (event: any) => {
+      const { translationX } = event.nativeEvent;
+      const newPosition = initialOutPositionRef.current + translationX;
+      const newOutMs = positionToMs(newPosition);
 
-    // Ensure out point doesn't go before in point
-    if (newOutMs > inMs + 100) {
-      // Minimum 100ms between handles
-      setOutMs(newOutMs);
-      
-      // Throttle seeks to every 8ms (~120fps) for very responsive, precise updates
-      const now = Date.now();
-      if (now - lastSeekTimeRef.current >= 8) {
-        onSeek?.(newOutMs);
-        lastSeekTimeRef.current = now;
+      // Ensure out point doesn't go before in point
+      if (newOutMs > inMs + MIN_TRIM_GAP_MS) {
+        setOutMs(newOutMs);
+        throttledSeek(newOutMs);
       }
-    }
-  };
+    },
+    [positionToMs, inMs, throttledSeek]
+  );
 
-  const handleOutGestureStateChange = (event: any) => {
-    const { state } = event.nativeEvent;
-    
-    if (state === 2) { // BEGAN state - gesture started
-      isDraggingRef.current = true;
-      initialOutPositionRef.current = msToPosition(outMs);
-      lastSeekTimeRef.current = Date.now();
-      // Seek to the out point when dragging starts
-      onSeek?.(outMs);
-    } else if (state === 5) { // END state - gesture ended
-      isDraggingRef.current = false;
-      // Final seek to ensure exact position
-      onSeek?.(outMs);
-      onTrimChange?.(inMs, outMs);
-    }
-  };
+  const handleOutGestureStateChange = useCallback(
+    (event: any) => {
+      const { state } = event.nativeEvent;
+
+      if (state === GESTURE_STATE_BEGAN) {
+        isDraggingRef.current = true;
+        initialOutPositionRef.current = msToPosition(outMs);
+        lastSeekTimeRef.current = 0; // Reset to allow immediate seek
+        onSeek?.(outMs); // Seek to out point when dragging starts
+      } else if (state === GESTURE_STATE_END) {
+        isDraggingRef.current = false;
+        // Cancel any pending animation frame
+        if (seekAnimationFrameRef.current) {
+          cancelAnimationFrame(seekAnimationFrameRef.current);
+          seekAnimationFrameRef.current = null;
+        }
+        // Final seek to ensure exact position
+        onSeek?.(outMs);
+        onTrimChange?.(inMs, outMs);
+      }
+    },
+    [inMs, outMs, msToPosition, onSeek, onTrimChange]
+  );
 
   // Handle timeline tap for split
   const handleTimelineTap = (event: GestureResponderEvent) => {
