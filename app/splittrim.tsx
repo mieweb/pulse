@@ -17,6 +17,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 
+const PLAYBACK_END_TOLERANCE_SECONDS = 0.1; // 100ms tolerance for detecting video end
+
 export default function SplitTrimScreen() {
   const { draftId, segmentId } = useLocalSearchParams<{
     draftId: string;
@@ -33,7 +35,6 @@ export default function SplitTrimScreen() {
     undefined
   );
   const isSeekingRef = useRef(false);
-  const playbackCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const player = useVideoPlayer(null, (player) => {
     if (player) {
@@ -115,8 +116,7 @@ export default function SplitTrimScreen() {
       const currentTime = player.currentTime;
 
       // If video naturally ended at the out point, loop back to in point
-      if (currentTime >= outSeconds - 0.1) {
-        // 100ms tolerance
+      if (currentTime >= outSeconds - PLAYBACK_END_TOLERANCE_SECONDS) {
         player.currentTime = inSeconds;
         player.play();
       }

@@ -19,6 +19,10 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+const TRANSITION_TOLERANCE_MS = 50; // 50ms tolerance for smoother segment transitions
+const ERROR_BACKOFF_BASE_MS = 100; // Base delay for exponential backoff on errors
+const MAX_PLAYBACK_ERRORS = 5; // Maximum consecutive errors before stopping monitoring
+
 export default function PreviewScreen() {
   const { draftId } = useLocalSearchParams<{ draftId: string }>();
   const insets = useSafeAreaInsets();
@@ -123,7 +127,6 @@ export default function PreviewScreen() {
     let animationFrameId: number | null = null;
     let isActive = true;
     let errorCount = 0;
-    const MAX_ERRORS = 5;
 
     const checkPlayback = () => {
       if (!isActive) return;
@@ -151,8 +154,7 @@ export default function PreviewScreen() {
         const outMs = currentSegment.outMs ?? videoDurationMs;
 
         // If we've reached or passed the out point, advance to next segment
-        if (currentTime >= outMs - 50) {
-          // 50ms tolerance for smoother transitions
+        if (currentTime >= outMs - TRANSITION_TOLERANCE_MS) {
           if (videoUris.length > 1) {
             advanceToNextSegment();
           } else {
@@ -179,9 +181,9 @@ export default function PreviewScreen() {
       } catch (error) {
         errorCount++;
         console.error("Error in playback check:", error);
-        
+
         // Stop the animation loop after too many errors (player likely disposed)
-        if (errorCount >= MAX_ERRORS) {
+        if (errorCount >= MAX_PLAYBACK_ERRORS) {
           console.error("Too many playback errors, stopping monitoring");
           isActive = false;
         } else if (isActive) {
@@ -190,7 +192,7 @@ export default function PreviewScreen() {
             if (isActive) {
               animationFrameId = requestAnimationFrame(checkPlayback);
             }
-          }, 100 * errorCount);
+          }, ERROR_BACKOFF_BASE_MS * errorCount);
         }
       }
     };
