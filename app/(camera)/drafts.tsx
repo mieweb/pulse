@@ -4,7 +4,8 @@ import { DRAFT_NAME_LENGTH } from "@/constants/camera";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   Alert,
   FlatList,
@@ -27,6 +28,13 @@ export default function DraftsScreen() {
   useEffect(() => {
     loadDrafts();
   }, []);
+
+  // Reload drafts when screen comes into focus (e.g., after trimming)
+  useFocusEffect(
+    useCallback(() => {
+      loadDrafts();
+    }, [])
+  );
 
   const loadDrafts = async () => {
     try {
@@ -168,10 +176,15 @@ export default function DraftsScreen() {
   };
 
   const renderDraftItem = ({ item }: { item: Draft }) => {
-    const totalRecordedDuration = item.segments.reduce(
-      (total, segment) => total + segment.duration,
-      0
-    );
+    // Calculate total duration accounting for trimmed segments
+    const totalRecordedDuration = item.segments.reduce((total, segment) => {
+      if (segment.inMs !== undefined || segment.outMs !== undefined) {
+        const start = segment.inMs || 0;
+        const end = segment.outMs || segment.duration * 1000;
+        return total + (end - start) / 1000; // Convert ms to seconds
+      }
+      return total + segment.duration;
+    }, 0);
 
     return (
       <TouchableOpacity
@@ -208,7 +221,7 @@ export default function DraftsScreen() {
             <Text style={styles.draftTitle}>
               {item.segments.length} segment
               {item.segments.length !== 1 ? "s" : ""} • Rec:{" "}
-              {formatDuration(Math.round(totalRecordedDuration))}/
+              {formatDuration(Math.floor(totalRecordedDuration))}/
               {formatDuration(item.totalDuration)}
             </Text>
             <Text style={styles.draftDate}>

@@ -108,8 +108,9 @@ export default function ReorderSegmentsScreen() {
           outMs: segment.outMs,
         }));
 
-        const totalDuration = calculateTotalDuration(reorderedSegments);
-        await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
+        // Preserve the original totalDuration (selected duration limit, e.g., 3 min)
+        // Don't recalculate it based on segments - it represents the limit, not actual duration
+        await DraftStorage.updateDraft(draftId, updatedSegments, draft.totalDuration);
         // Navigate back after successful save
         router.back();
       } catch (error) {

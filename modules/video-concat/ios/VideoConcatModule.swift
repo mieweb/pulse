@@ -6,9 +6,9 @@ struct RecordingSegment: Record {
     @Field
     var uri: String
     @Field
-    var inMs: Int? = nil
+    var inMs: Double? = nil
     @Field
-    var outMs: Int? = nil
+    var outMs: Double? = nil
 }
 
 /// Native module for concatenating multiple video segments into a single video file.
@@ -57,9 +57,13 @@ public class VideoConcatModule: Module {
                 let preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
                 let fullTimeRange = try await sourceVideoTrack.load(.timeRange)
                 
+                // Also load asset duration to ensure we have the correct reference
+                let assetDuration = try await asset.load(.duration)
+                
                 // Calculate the time range based on in/out points
                 let timeRange = calculateTimeRange(
                     fullRange: fullTimeRange,
+                    assetDuration: assetDuration,
                     inMs: segment.inMs,
                     outMs: segment.outMs
                 )
@@ -139,42 +143,91 @@ public class VideoConcatModule: Module {
     /// Calculates the time range for a segment based on in/out points
     /// - Parameters:
     ///   - fullRange: The full time range of the video track
-    ///   - inMs: Optional start time in milliseconds
-    ///   - outMs: Optional end time in milliseconds
-    /// - Returns: The calculated time range for trimming
+    ///   - assetDuration: The duration of the asset (for reference)
+    ///   - inMs: Optional start time in milliseconds (Double for precision) - relative to video start (0ms)
+    ///   - outMs: Optional end time in milliseconds (Double for precision) - relative to video start (0ms)
+    /// - Returns: The calculated time range for trimming (relative to track's own timeline)
     private func calculateTimeRange(
         fullRange: CMTimeRange,
-        inMs: Int?,
-        outMs: Int?
+        assetDuration: CMTime,
+        inMs: Double?,
+        outMs: Double?
     ) -> CMTimeRange {
-        let trackTimescale = fullRange.start.timescale
-        let fullDuration = fullRange.duration
+        // The track's timeRange tells us where the track is in the asset
+        // fullRange.start = where track starts in asset timeline (usually 0)
+        // fullRange.duration = length of track (usually equals asset duration)
+        // For insertTimeRange, we need offsets relative to the track's own timeline
         
-        // Convert milliseconds to CMTime
-        let startTime: CMTime
+        let trackStartInAsset = fullRange.start
+        let trackDuration = fullRange.duration
+        let trackTimescale = trackStartInAsset.timescale
+        
+        // Use high precision timescale (1000 = millisecond precision) for conversion
+        // Then convert to track's timescale to avoid precision loss
+        let precisionTimescale: Int32 = 1000
+        
+        // Convert milliseconds to CMTime with high precision, then convert to track's timescale
+        // inMs/outMs are relative to video start (0ms)
+        // For insertTimeRange, we need offsets relative to the track's own timeline (starts at 0)
+        // The track's timeRange.start tells us where the track starts in the asset timeline
+        // If track starts at T in asset, and we want content at time X (relative to video start),
+        // the offset in the track's timeline is X - T (but typically T = 0, so offset = X)
+        
+        let trimStart: CMTime
         if let inMs = inMs {
-            let startValue = Int64(Double(inMs) * Double(trackTimescale) / 1000.0)
-            startTime = CMTime(value: startValue, timescale: trackTimescale)
+            // Convert milliseconds to CMTime with high precision
+            // First use millisecond precision timescale
+            let preciseValue = Int64(inMs * Double(precisionTimescale) / 1000.0)
+            let preciseTime = CMTime(value: preciseValue, timescale: precisionTimescale)
+            // Convert to track's timescale for accurate insertion
+            let timeInTrackTimescale = CMTimeConvertScale(preciseTime, timescale: trackTimescale, method: .roundHalfAwayFromZero)
+            
+            // Calculate offset from track start
+            // If trackStartInAsset is 0 (typical), offset is just timeInTrackTimescale
+            // Otherwise, we need to subtract the track start
+            if trackStartInAsset.value == 0 {
+                trimStart = timeInTrackTimescale
+            } else {
+                // Ensure both are in same timescale before subtracting
+                let trackStartScaled = CMTimeConvertScale(trackStartInAsset, timescale: trackTimescale, method: .roundHalfAwayFromZero)
+                trimStart = timeInTrackTimescale - trackStartScaled
+            }
         } else {
-            startTime = fullRange.start
+            trimStart = CMTime.zero
         }
         
-        let endTime: CMTime
+        let trimEnd: CMTime
         if let outMs = outMs {
-            let endValue = Int64(Double(outMs) * Double(trackTimescale) / 1000.0)
-            endTime = CMTime(value: endValue, timescale: trackTimescale)
+            // Same logic as trimStart
+            let preciseValue = Int64(outMs * Double(precisionTimescale) / 1000.0)
+            let preciseTime = CMTime(value: preciseValue, timescale: precisionTimescale)
+            let timeInTrackTimescale = CMTimeConvertScale(preciseTime, timescale: trackTimescale, method: .roundHalfAwayFromZero)
+            
+            if trackStartInAsset.value == 0 {
+                trimEnd = timeInTrackTimescale
+            } else {
+                let trackStartScaled = CMTimeConvertScale(trackStartInAsset, timescale: trackTimescale, method: .roundHalfAwayFromZero)
+                trimEnd = timeInTrackTimescale - trackStartScaled
+            }
         } else {
-            endTime = fullRange.start + fullDuration
+            // Use track duration (not asset duration) as it's what we're actually working with
+            trimEnd = trackDuration
         }
         
-        // Clamp values to valid range
-        let clampedStart = max(startTime, fullRange.start)
-        let clampedEnd = min(endTime, fullRange.start + fullDuration)
+        // Clamp to valid range (0 to trackDuration)
+        // These offsets are relative to the track's start (which is 0 in the track's own timeline)
+        let clampedStart = max(trimStart, CMTime.zero)
+        let clampedEnd = min(trimEnd, trackDuration)
         
         // Ensure start is before end
         let finalStart = min(clampedStart, clampedEnd)
         let finalEnd = max(clampedStart, clampedEnd)
         
-        return CMTimeRange(start: finalStart, duration: finalEnd - finalStart)
+        // Calculate duration
+        let duration = finalEnd - finalStart
+        
+        // Return time range relative to track's own timeline
+        // insertTimeRange expects: start = offset from track start, duration = length to insert
+        return CMTimeRange(start: finalStart, duration: duration)
     }
 }

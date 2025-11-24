@@ -15,13 +15,23 @@ interface RecordingProgressBarProps {
   currentRecordingDuration?: number;
 }
 
+
+function getActualSegmentDuration(segment: RecordingSegment): number {
+  if (segment.inMs !== undefined || segment.outMs !== undefined) {
+    const start = segment.inMs || 0;
+    const end = segment.outMs || segment.duration * 1000;
+    return (end - start) / 1000; // Convert ms to seconds
+  }
+  return segment.duration;
+}
+
 export default function RecordingProgressBar({
   segments,
   totalDuration,
   currentRecordingDuration = 0,
 }: RecordingProgressBarProps) {
   const completedDuration = segments.reduce(
-    (total, segment) => total + segment.duration,
+    (total, segment) => total + getActualSegmentDuration(segment),
     0
   );
 
@@ -43,7 +53,7 @@ export default function RecordingProgressBar({
           const segmentEndPercentage = Math.min(
             (segments
               .slice(0, index + 1)
-              .reduce((total, seg) => total + seg.duration, 0) /
+              .reduce((total, seg) => total + getActualSegmentDuration(seg), 0) /
               totalDuration) *
               100,
             100

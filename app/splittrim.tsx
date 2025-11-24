@@ -2,7 +2,7 @@ import { ThemedText } from "@/components/ThemedText";
 import VideoTrimScrubber from "@/components/VideoTrimScrubber";
 import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
-import { formatTimeMs, calculateSegmentsDuration } from "@/utils/timeFormat";
+import { formatTimeMs } from "@/utils/timeFormat";
 import { router, useLocalSearchParams } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -87,6 +87,9 @@ export default function SplitTrimScreen() {
       if (videoUri && player && !isLoading) {
         try {
           await player.replaceAsync(videoUri);
+          // Seek to the in point when video loads
+          const inSeconds = currentInMs / 1000;
+          player.currentTime = inSeconds;
           player.play();
         } catch (error) {
           console.error("Failed to setup player:", error);
@@ -96,6 +99,37 @@ export default function SplitTrimScreen() {
 
     setupPlayer();
   }, [videoUri, player, isLoading]);
+
+  useEffect(() => {
+    if (!player || !segment) return;
+
+    const videoDurationMs = segment.duration * 1000;
+    const effectiveOutMs = currentOutMs ?? videoDurationMs;
+    const inSeconds = currentInMs / 1000;
+    const outSeconds = effectiveOutMs / 1000;
+
+    const checkTime = () => {
+      try {
+        const currentTime = player.currentTime;
+        
+        // If we've reached or passed the out point, loop back to in point
+        if (currentTime >= outSeconds) {
+          player.currentTime = inSeconds;
+        }
+        // If we're before the in point, jump to in point
+        else if (currentTime < inSeconds) {
+          player.currentTime = inSeconds;
+        }
+      } catch (error) {
+        // Player might be disposed, ignore
+      }
+    };
+
+    // Check every 100ms
+    const interval = setInterval(checkTime, 100);
+
+    return () => clearInterval(interval);
+  }, [player, segment, currentInMs, currentOutMs]);
 
   useFocusEffect(
     useCallback(() => {
@@ -126,19 +160,46 @@ export default function SplitTrimScreen() {
   const handleTrimChange = useCallback((inMs: number, outMs: number) => {
     setCurrentInMs(inMs);
     setCurrentOutMs(outMs);
-  }, []);
+    
+    // Adjust player position if it's outside the new trim bounds
+    if (player && segment) {
+      try {
+        const currentTimeMs = player.currentTime * 1000;
+        const videoDurationMs = segment.duration * 1000;
+        const effectiveOutMs = outMs ?? videoDurationMs;
+        
+        // If current position is outside new bounds, adjust it
+        if (currentTimeMs < inMs) {
+          player.currentTime = inMs / 1000;
+        } else if (currentTimeMs > effectiveOutMs) {
+          player.currentTime = effectiveOutMs / 1000;
+        }
+      } catch (error) {
+        // Ignore errors
+      }
+    }
+  }, [player, segment]);
 
   const handleSeek = useCallback(
     (timeMs: number) => {
-      if (player && !isLoading) {
+      if (player && !isLoading && segment) {
         try {
-          player.currentTime = timeMs / 1000; // Convert ms to seconds
+          // Pause the player when seeking during trim handle drag
+          // This ensures the frame stays visible at the trim point
+          if (player.playing) {
+            player.pause();
+          }
+          
+          // Seek to the exact position with high precision
+          // Convert ms to seconds with full precision (no rounding)
+          const timeSeconds = timeMs / 1000.0;
+          player.currentTime = timeSeconds;
         } catch (error) {
           console.error("Failed to seek player:", error);
         }
       }
     },
-    [player, isLoading]
+    [player, isLoading, segment]
   );
 
   const handleSplit = useCallback(
@@ -190,22 +251,22 @@ export default function SplitTrimScreen() {
                   ...draft.segments.slice(segmentIndex + 1),
                 ];
 
-                // Calculate new total duration
-                const totalDuration = calculateSegmentsDuration(newSegments);
-
+                // Preserve the original totalDuration (selected duration limit, e.g., 3 min)
+                // Don't recalculate it based on segments - it represents the limit, not actual duration
                 await DraftStorage.updateDraft(
                   draftId,
                   newSegments,
-                  totalDuration
+                  draft.totalDuration
                 );
 
-                Alert.alert("Success", "Segment split successfully", [
-                  { text: "OK", onPress: () => router.back() },
-                ]);
+                // Navigate back to edit segments screen
+                router.push({
+                  pathname: "/reordersegments",
+                  params: { draftId },
+                });
               } catch (error) {
                 console.error("Failed to split segment:", error);
                 Alert.alert("Error", "Failed to split segment");
-              } finally {
                 setIsSaving(false);
               }
             },
@@ -236,18 +297,18 @@ export default function SplitTrimScreen() {
         return s;
       });
 
-      // Calculate new total duration
-      const totalDuration = calculateSegmentsDuration(updatedSegments);
+      // Preserve the original totalDuration (selected duration limit, e.g., 3 min)
+      // Don't recalculate it based on segments - it represents the limit, not actual duration
+      await DraftStorage.updateDraft(draftId, updatedSegments, draft.totalDuration);
 
-      await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
-
-      Alert.alert("Success", "Trim points saved successfully", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      // Navigate back to edit segments screen
+      router.push({
+        pathname: "/reordersegments",
+        params: { draftId },
+      });
     } catch (error) {
       console.error("Failed to save trim points:", error);
       Alert.alert("Error", "Failed to save trim points");
-    } finally {
       setIsSaving(false);
     }
   }, [draftId, segment, segmentId, currentInMs, currentOutMs]);
@@ -259,7 +320,7 @@ export default function SplitTrimScreen() {
           <TouchableOpacity style={styles.closeButton} onPress={handleCancel}>
             <MaterialIcons name="close" size={24} color="#fff" />
           </TouchableOpacity>
-          <View style={styles.headerSpacer} />
+          <View />
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#ff0000" />

@@ -4,14 +4,17 @@ import {
   StyleSheet,
   View,
   Text,
-  ScrollView,
   Dimensions,
   Image,
   TouchableOpacity,
-  PanResponder,
   ActivityIndicator,
   GestureResponderEvent,
 } from "react-native";
+import { 
+  PanGestureHandler, 
+  GestureHandlerRootView,
+  ScrollView,
+} from "react-native-gesture-handler";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
 import { formatTimeMs } from "@/utils/timeFormat";
 
@@ -55,6 +58,10 @@ export default function VideoTrimScrubber({
 
   const scrollViewRef = useRef<ScrollView>(null);
   const [timelineWidth, setTimelineWidth] = useState(0);
+  const initialInPositionRef = useRef<number>(0);
+  const initialOutPositionRef = useRef<number>(0);
+  const lastSeekTimeRef = useRef<number>(0);
+  const isDraggingRef = useRef<boolean>(false);
 
   // Calculate number of thumbnails based on video duration
   const thumbnailCount = Math.max(
@@ -72,7 +79,7 @@ export default function VideoTrimScrubber({
         const timeMs = (videoDurationMs / thumbnailCount) * i;
         try {
           const uri = await generateVideoThumbnail(videoUri, {
-            time: timeMs,
+            time: Math.round(timeMs),
             quality: 0.7,
           });
           thumbs.push(uri);
@@ -113,52 +120,78 @@ export default function VideoTrimScrubber({
   );
 
   // Handle in point drag
-  const inHandlePanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderMove: (_, gestureState) => {
-          const currentInPosition = msToPosition(inMs);
-          const newPosition = currentInPosition + gestureState.dx;
-          const newInMs = positionToMs(newPosition);
+  const handleInGesture = (event: any) => {
+    const { translationX } = event.nativeEvent;
+    const newPosition = initialInPositionRef.current + translationX;
+    const newInMs = positionToMs(newPosition);
 
-          // Ensure in point doesn't exceed out point
-          if (newInMs < outMs - MIN_TRIM_GAP_MS) {
-            setInMs(newInMs);
-            onSeek?.(newInMs);
-          }
-        },
-        onPanResponderRelease: () => {
-          onTrimChange?.(inMs, outMs);
-        },
-      }),
-    [inMs, outMs, msToPosition, positionToMs, onSeek, onTrimChange]
-  );
+    // Ensure in point doesn't exceed out point
+    if (newInMs < outMs - 100) {
+      // Minimum 100ms between handles
+      setInMs(newInMs);
+      
+      // Throttle seeks to every 8ms (~120fps) for very responsive, precise updates
+      const now = Date.now();
+      if (now - lastSeekTimeRef.current >= 8) {
+        onSeek?.(newInMs);
+        lastSeekTimeRef.current = now;
+      }
+    }
+  };
+
+  const handleInGestureStateChange = (event: any) => {
+    const { state } = event.nativeEvent;
+    
+    if (state === 2) { // BEGAN state - gesture started
+      isDraggingRef.current = true;
+      initialInPositionRef.current = msToPosition(inMs);
+      lastSeekTimeRef.current = Date.now();
+      // Seek to the in point when dragging starts
+      onSeek?.(inMs);
+    } else if (state === 5) { // END state - gesture ended
+      isDraggingRef.current = false;
+      // Final seek to ensure exact position
+      onSeek?.(inMs);
+      onTrimChange?.(inMs, outMs);
+    }
+  };
 
   // Handle out point drag
-  const outHandlePanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderMove: (_, gestureState) => {
-          const currentOutPosition = msToPosition(outMs);
-          const newPosition = currentOutPosition + gestureState.dx;
-          const newOutMs = positionToMs(newPosition);
+  const handleOutGesture = (event: any) => {
+    const { translationX } = event.nativeEvent;
+    const newPosition = initialOutPositionRef.current + translationX;
+    const newOutMs = positionToMs(newPosition);
 
-          // Ensure out point doesn't go before in point
-          if (newOutMs > inMs + MIN_TRIM_GAP_MS) {
-            setOutMs(newOutMs);
-            onSeek?.(newOutMs);
-          }
-        },
-        onPanResponderRelease: () => {
-          onTrimChange?.(inMs, outMs);
-        },
-      }),
-    [inMs, outMs, msToPosition, positionToMs, onSeek, onTrimChange]
-  );
+    // Ensure out point doesn't go before in point
+    if (newOutMs > inMs + 100) {
+      // Minimum 100ms between handles
+      setOutMs(newOutMs);
+      
+      // Throttle seeks to every 8ms (~120fps) for very responsive, precise updates
+      const now = Date.now();
+      if (now - lastSeekTimeRef.current >= 8) {
+        onSeek?.(newOutMs);
+        lastSeekTimeRef.current = now;
+      }
+    }
+  };
+
+  const handleOutGestureStateChange = (event: any) => {
+    const { state } = event.nativeEvent;
+    
+    if (state === 2) { // BEGAN state - gesture started
+      isDraggingRef.current = true;
+      initialOutPositionRef.current = msToPosition(outMs);
+      lastSeekTimeRef.current = Date.now();
+      // Seek to the out point when dragging starts
+      onSeek?.(outMs);
+    } else if (state === 5) { // END state - gesture ended
+      isDraggingRef.current = false;
+      // Final seek to ensure exact position
+      onSeek?.(outMs);
+      onTrimChange?.(inMs, outMs);
+    }
+  };
 
   // Handle timeline tap for split
   const handleTimelineTap = (event: GestureResponderEvent) => {
@@ -189,7 +222,7 @@ export default function VideoTrimScrubber({
   const trimmedDuration = outMs - inMs;
 
   return (
-    <View style={styles.container}>
+    <GestureHandlerRootView style={styles.container}>
       {/* Duration and time display */}
       <View style={styles.timeDisplay}>
         <View style={styles.timeItem}>
@@ -282,30 +315,42 @@ export default function VideoTrimScrubber({
               />
 
               {/* In handle */}
-              <View
-                {...inHandlePanResponder.panHandlers}
-                style={[
-                  styles.handle,
-                  styles.handleLeft,
-                  { left: msToPosition(inMs) - HANDLE_WIDTH / 2 },
-                ]}
+              <PanGestureHandler
+                onGestureEvent={handleInGesture}
+                onHandlerStateChange={handleInGestureStateChange}
+                activeOffsetX={[-10, 10]}
+                failOffsetY={[-5, 5]}
               >
-                <View style={styles.handleBar} />
-                <MaterialIcons name="arrow-right" size={24} color="#fff" />
-              </View>
+                <View
+                  style={[
+                    styles.handle,
+                    styles.handleLeft,
+                    { left: msToPosition(inMs) - HANDLE_WIDTH / 2 },
+                  ]}
+                >
+                  <View style={styles.handleBar} />
+                  <MaterialIcons name="arrow-right" size={24} color="#fff" />
+                </View>
+              </PanGestureHandler>
 
               {/* Out handle */}
-              <View
-                {...outHandlePanResponder.panHandlers}
-                style={[
-                  styles.handle,
-                  styles.handleRight,
-                  { left: msToPosition(outMs) - HANDLE_WIDTH / 2 },
-                ]}
+              <PanGestureHandler
+                onGestureEvent={handleOutGesture}
+                onHandlerStateChange={handleOutGestureStateChange}
+                activeOffsetX={[-10, 10]}
+                failOffsetY={[-5, 5]}
               >
-                <MaterialIcons name="arrow-left" size={24} color="#fff" />
-                <View style={styles.handleBar} />
-              </View>
+                <View
+                  style={[
+                    styles.handle,
+                    styles.handleRight,
+                    { left: msToPosition(outMs) - HANDLE_WIDTH / 2 },
+                  ]}
+                >
+                  <MaterialIcons name="arrow-left" size={24} color="#fff" />
+                  <View style={styles.handleBar} />
+                </View>
+              </PanGestureHandler>
 
               {/* Split indicator */}
               {splitMode && splitMs !== null && (
@@ -381,7 +426,7 @@ export default function VideoTrimScrubber({
           </>
         )}
       </View>
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
