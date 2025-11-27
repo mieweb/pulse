@@ -6,9 +6,9 @@ struct RecordingSegment: Record {
     @Field
     var uri: String
     @Field
-    var inMs: Int? = nil
+    var inMs: Double? = nil
     @Field
-    var outMs: Int? = nil
+    var outMs: Double? = nil
 }
 
 /// Native module for concatenating multiple video segments into a single video file.
@@ -150,13 +150,13 @@ public class VideoConcatModule: Module {
     /// Calculates the time range for a segment based on in/out points
     /// - Parameters:
     ///   - fullRange: The full time range of the video track
-    ///   - inMs: Optional start time in milliseconds
-    ///   - outMs: Optional end time in milliseconds
+    ///   - inMs: Optional start time in milliseconds (Double for precision)
+    ///   - outMs: Optional end time in milliseconds (Double for precision)
     /// - Returns: The calculated time range for trimming
     private func calculateTimeRange(
         fullRange: CMTimeRange,
-        inMs: Int?,
-        outMs: Int?
+        inMs: Double?,
+        outMs: Double?
     ) -> CMTimeRange {
         let trackTimescale = fullRange.start.timescale
         let fullDuration = fullRange.duration
