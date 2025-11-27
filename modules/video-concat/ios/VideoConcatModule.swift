@@ -68,9 +68,20 @@ public class VideoConcatModule: Module {
                 try videoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: currentTime)
                 
                 // Insert audio track if available
+                // Use the audio track's own timeRange to avoid AAC stream corruption
                 let audioTracks = try await asset.loadTracks(withMediaType: .audio)
                 if let sourceAudioTrack = audioTracks.first {
-                    try audioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: currentTime)
+                    // Get the audio track's actual time range (may have different timescale than video)
+                    let audioFullTimeRange = try await sourceAudioTrack.load(.timeRange)
+                    
+                    // Calculate the audio trim range using the same in/out points but with audio's timescale
+                    let audioTrimRange = calculateTimeRange(
+                        fullRange: audioFullTimeRange,
+                        inMs: segment.inMs,
+                        outMs: segment.outMs
+                    )
+                    
+                    try audioTrack.insertTimeRange(audioTrimRange, of: sourceAudioTrack, at: currentTime)
                 }
                 
                 // Move to the next time position for the next segment

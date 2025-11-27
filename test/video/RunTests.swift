@@ -84,9 +84,12 @@ class VideoConcatTests {
                 try videoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: currentTime)
                 
                 // Insert audio if available - exactly like the native module
+                // Use the audio track's own timeRange to avoid AAC stream corruption
                 let audioTracks = try await asset.loadTracks(withMediaType: .audio)
                 if let sourceAudioTrack = audioTracks.first {
-                    try audioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: currentTime)
+                    // Get the audio track's actual time range (may have different timescale than video)
+                    let audioTimeRange = try await sourceAudioTrack.load(.timeRange)
+                    try audioTrack.insertTimeRange(audioTimeRange, of: sourceAudioTrack, at: currentTime)
                     print("   🔊 Audio track added")
                 } else {
                     print("   🔇 No audio track found")
