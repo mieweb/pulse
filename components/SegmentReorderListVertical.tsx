@@ -1,6 +1,7 @@
 import { ThemedText } from "@/components/ThemedText";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
 import { MaterialIcons } from "@expo/vector-icons";
+import Entypo from "@expo/vector-icons/Entypo";
 import React, { useState, useCallback, useEffect } from "react";
 import {
   StyleSheet,
@@ -19,6 +20,8 @@ interface Segment {
   id: string;
   uri: string;
   duration: number;
+  inMs?: number;
+  outMs?: number;
 }
 
 interface SegmentReorderListVerticalProps {
@@ -26,16 +29,24 @@ interface SegmentReorderListVerticalProps {
   onSegmentsReorder: (reorderedSegments: Segment[]) => void;
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
+  onEditSegment?: (segment: Segment) => void;
+  totalDuration: number;
   isSaving?: boolean;
 }
 
 interface SegmentItemProps {
   item: Segment;
   index: number;
+  onEdit?: (segment: Segment) => void;
   onDelete: (segmentId: string) => void;
 }
 
-function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
+function SegmentItem({
+  item: segment,
+  index,
+  onEdit,
+  onDelete,
+}: SegmentItemProps) {
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -65,6 +76,18 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const getDisplayDuration = () => {
+    if (segment.inMs !== undefined || segment.outMs !== undefined) {
+      const start = segment.inMs || 0;
+      const end = segment.outMs || segment.duration * 1000;
+      const trimmedSeconds = (end - start) / 1000;
+      return formatDuration(trimmedSeconds);
+    }
+    return formatDuration(segment.duration);
+  };
+
+  const hasTrim = segment.inMs !== undefined || segment.outMs !== undefined;
+
   return (
     <View style={styles.segmentItem}>
       {/* Thumbnail */}
@@ -84,25 +107,48 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
 
       {/* Segment info */}
       <View style={styles.segmentInfo}>
-        <ThemedText style={styles.segmentNumber}>
-          Segment {index + 1}
-        </ThemedText>
+        <View style={styles.segmentHeader}>
+          <ThemedText style={styles.segmentNumber}>
+            Segment {index + 1}
+          </ThemedText>
+          {hasTrim && (
+            <View style={styles.trimBadge}>
+              <MaterialIcons name="content-cut" size={12} color="#ff0000" />
+            </View>
+          )}
+        </View>
         <ThemedText style={styles.segmentDuration}>
-          {formatDuration(segment.duration)}
+          {getDisplayDuration()}
         </ThemedText>
       </View>
 
-      {/* Delete button */}
-      <TouchableOpacity
-        style={styles.deleteButton}
-        onPress={() => onDelete(segment.id)}
-        activeOpacity={0.7}
-        accessibilityRole="button"
-        accessibilityLabel={`Delete segment ${index + 1}`}
-        accessibilityHint="Removes this segment from the video"
-      >
-        <MaterialIcons name="delete" size={20} color={ACCENT_COLOR} />
-      </TouchableOpacity>
+      {/* Action buttons */}
+      <View style={styles.actionButtons}>
+        {/* Edit button */}
+        {onEdit && (
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => onEdit(segment)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit segment ${index + 1}`}
+            accessibilityHint="Opens split and trim editor for this segment"
+          >
+            <Entypo name="scissors" size={20} color="#ff0000" />
+          </TouchableOpacity>
+        )}
+        {/* Delete button */}
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={() => onDelete(segment.id)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete segment ${index + 1}`}
+          accessibilityHint="Removes this segment from the video"
+        >
+          <MaterialIcons name="delete" size={20} color={ACCENT_COLOR} />
+        </TouchableOpacity>
+      </View>
 
       {/* Reorder indicator */}
       <View style={styles.reorderIndicator}>
@@ -117,6 +163,8 @@ export default function SegmentReorderListVertical({
   onSegmentsReorder,
   onSave,
   onCancel,
+  onEditSegment,
+  totalDuration,
   isSaving = false,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
@@ -151,11 +199,6 @@ export default function SegmentReorderListVertical({
     }
   }, [hasChanges, reorderedSegments, onSave]);
 
-  const totalDuration = reorderedSegments.reduce(
-    (total, segment) => total + segment.duration,
-    0
-  );
-
   const formatTotalDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -171,14 +214,16 @@ export default function SegmentReorderListVertical({
         </TouchableOpacity>
 
         <View style={styles.headerInfo}>
-          <ThemedText style={styles.headerTitle}>Reorder Segments</ThemedText>
+          <ThemedText style={styles.headerTitle}>Edit Segments</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
             {reorderedSegments.length} segments •{" "}
             {formatTotalDuration(totalDuration)}
           </ThemedText>
           <View style={styles.infoTag}>
             <MaterialIcons name="info" size={14} color={ACCENT_COLOR} />
-            <ThemedText style={styles.infoTagText}>Hold to drag</ThemedText>
+            <ThemedText style={styles.infoTagText}>
+              Hold to drag • Tap edit to trim
+            </ThemedText>
           </View>
         </View>
 
@@ -198,6 +243,7 @@ export default function SegmentReorderListVertical({
             <SegmentItem
               item={item}
               index={index}
+              onEdit={onEditSegment}
               onDelete={handleDeleteSegment}
             />
           )}
@@ -352,6 +398,11 @@ const styles = StyleSheet.create({
   segmentInfo: {
     flex: 1,
   },
+  segmentHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   segmentNumber: {
     color: "#fff",
     fontSize: 16,
@@ -364,12 +415,27 @@ const styles = StyleSheet.create({
     fontFamily: "Roboto-Regular",
     marginTop: 2,
   },
-  reorderIndicator: {
-    marginLeft: 12,
-    padding: 4,
+  trimBadge: {
+    backgroundColor: "rgba(255, 0, 0, 0.2)",
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  actionButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  editButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: "rgba(255, 0, 0, 0.1)",
   },
   deleteButton: {
-    marginLeft: 8,
+    padding: 4,
+  },
+  reorderIndicator: {
+    marginLeft: 12,
     padding: 4,
   },
   saveButtonContainer: {

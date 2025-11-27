@@ -2,15 +2,19 @@ import { ThemedText } from "@/components/ThemedText";
 import SegmentReorderListVertical from "@/components/SegmentReorderListVertical";
 import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
+import { calculateSegmentsDuration } from "@/utils/timeFormat";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, ActivityIndicator, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 
 interface Segment {
   id: string;
   uri: string;
   duration: number;
+  inMs?: number;
+  outMs?: number;
 }
 
 export default function ReorderSegmentsScreen() {
@@ -22,41 +26,54 @@ export default function ReorderSegmentsScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [draft, setDraft] = useState<any>(null);
 
-  useEffect(() => {
-    const loadDraft = async () => {
-      if (!draftId) {
-        router.back();
-        return;
-      }
-
-      try {
-        const draft = await DraftStorage.getDraftById(draftId);
-        if (draft && draft.segments.length > 0) {
-          setDraft(draft);
-          const formattedSegments: Segment[] = draft.segments.map(
-            (segment: any) => ({
-              id: segment.id,
-              uri: fileStore.toAbsolutePath(segment.uri),
-              duration: segment.duration,
-            })
-          );
-          setSegments(formattedSegments);
-          setOriginalSegments([...formattedSegments]);
-        } else {
-          router.back();
-        }
-      } catch (error) {
-        console.error("Draft load failed:", error);
-        router.back();
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadDraft();
-  }, [draftId]);
+  const formatSegments = useCallback((draftSegments: any[]): Segment[] => {
+    return draftSegments.map((segment: any) => ({
+      id: segment.id,
+      uri: fileStore.toAbsolutePath(segment.uri),
+      duration: segment.duration,
+      inMs: segment.inMs,
+      outMs: segment.outMs,
+    }));
+  }, []);
 
   const [originalSegments, setOriginalSegments] = useState<Segment[]>([]);
+
+  const loadDraft = useCallback(async () => {
+    if (!draftId) {
+      router.back();
+      return;
+    }
+
+    try {
+      const loadedDraft = await DraftStorage.getDraftById(draftId);
+      if (loadedDraft && loadedDraft.segments.length > 0) {
+        setDraft(loadedDraft);
+        const formattedSegments = formatSegments(loadedDraft.segments);
+        setSegments(formattedSegments);
+        setOriginalSegments([...formattedSegments]);
+      } else {
+        router.back();
+      }
+    } catch (error) {
+      console.error("Draft load failed:", error);
+      router.back();
+    } finally {
+      setIsLoading(false);
+    }
+  }, [draftId, formatSegments]);
+
+  useEffect(() => {
+    loadDraft();
+  }, [loadDraft]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isLoading) return;
+      loadDraft();
+    }, [loadDraft, isLoading])
+  );
+
+  const calculateTotalDuration = calculateSegmentsDuration;
 
   const handleSegmentsReorder = useCallback((reorderedSegments: Segment[]) => {
     setSegments(reorderedSegments);
@@ -87,11 +104,13 @@ export default function ReorderSegmentsScreen() {
           id: segment.id,
           uri: fileStore.toRelativePath(segment.uri),
           duration: segment.duration,
+          inMs: segment.inMs,
+          outMs: segment.outMs,
         }));
 
-        const totalDuration = draft.totalDuration;
-
-        await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
+        // Preserve the original totalDuration (selected duration limit, e.g., 3 min)
+        // Don't recalculate it based on segments - it represents the limit, not actual duration
+        await DraftStorage.updateDraft(draftId, updatedSegments, draft.totalDuration);
         // Navigate back after successful save
         router.back();
       } catch (error) {
@@ -105,8 +124,10 @@ export default function ReorderSegmentsScreen() {
         setIsSaving(false);
       }
     },
-    [draftId, draft, originalSegments]
+    [draftId, draft, originalSegments, calculateTotalDuration]
   );
+
+  const totalDuration = calculateTotalDuration(segments);
 
   const handleCancel = useCallback(() => {
     router.back();
@@ -129,7 +150,14 @@ export default function ReorderSegmentsScreen() {
           onSegmentsReorder={handleSegmentsReorder}
           onSave={handleSave}
           onCancel={handleCancel}
+          totalDuration={totalDuration}
           isSaving={isSaving}
+          onEditSegment={(segment) => {
+            router.push({
+              pathname: "/splittrim",
+              params: { draftId: draftId, segmentId: segment.id },
+            });
+          }}
         />
       </View>
     </View>

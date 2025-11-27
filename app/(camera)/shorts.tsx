@@ -11,7 +11,6 @@ import { ThemedView } from "@/components/ThemedView";
 import TimeSelectorButton from "@/components/TimeSelectorButton";
 import UndoSegmentButton from "@/components/UndoSegmentButton";
 import * as ImagePicker from "expo-image-picker";
-import * as VideoThumbnails from "expo-video-thumbnails";
 import { useDraftManager } from "@/hooks/useDraftManager";
 import { useVideoStabilization } from "@/hooks/useVideoStabilization";
 import { useCameraFacing } from "@/hooks/useCameraFacing";
@@ -19,6 +18,7 @@ import {
   VideoStabilization,
   mapToNativeVideoStabilization,
 } from "@/constants/camera";
+import { getExactFullDuration } from "@/utils/durationUtils";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { CameraType, CameraView } from "expo-camera";
 import { router, useLocalSearchParams } from "expo-router";
@@ -113,10 +113,15 @@ export default function ShortsScreen() {
   const isHoldRecording = useSharedValue(false);
   const recordingModeShared = useSharedValue("");
 
-  const totalUsedDuration = recordingSegments.reduce(
-    (total, segment) => total + segment.duration,
-    0
-  );
+  // Calculate total duration accounting for trimmed segments
+  const totalUsedDuration = recordingSegments.reduce((total, segment) => {
+    if (segment.inMs !== undefined || segment.outMs !== undefined) {
+      const start = segment.inMs || 0;
+      const end = segment.outMs || segment.duration * 1000;
+      return total + (end - start) / 1000; // Convert ms to seconds
+    }
+    return total + segment.duration;
+  }, 0);
 
   const handleRecordingStart = (
     mode: "tap" | "hold",
@@ -165,7 +170,7 @@ export default function ShortsScreen() {
     if (loadedDuration !== null && loadedDuration !== selectedDuration) {
       setSelectedDuration(loadedDuration);
     }
-  }, [loadedDuration]);
+  }, [loadedDuration, selectedDuration]);
 
   // Sync previousCameraFacing ref when cameraFacing changes
   React.useEffect(() => {
@@ -198,10 +203,14 @@ export default function ShortsScreen() {
 
   const handleTimeSelect = (timeInSeconds: number) => {
     // Check if current segments exceed the new duration limit
-    const currentTotalDuration = recordingSegments.reduce(
-      (total, seg) => total + seg.duration,
-      0
-    );
+    const currentTotalDuration = recordingSegments.reduce((total, seg) => {
+      if (seg.inMs !== undefined || seg.outMs !== undefined) {
+        const start = seg.inMs || 0;
+        const end = seg.outMs || seg.duration * 1000;
+        return total + (end - start) / 1000; // Convert ms to seconds
+      }
+      return total + seg.duration;
+    }, 0);
 
     if (currentTotalDuration > timeInSeconds) {
       Alert.alert(
@@ -255,7 +264,7 @@ export default function ShortsScreen() {
     }
   };
 
-  const handleReorderSegments = () => {
+  const handleEditSegments = () => {
     if (currentDraftId) {
       router.push({
         pathname: "/reordersegments",
@@ -361,28 +370,34 @@ export default function ShortsScreen() {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
 
-        // Get the actual video duration in seconds
+        // Get exact duration from AVFoundation instead of approximate metadata duration
         let actualDuration = 0;
-        if (asset.duration) {
-          // Convert from milliseconds to seconds if needed
-          actualDuration =
-            asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+        try {
+          actualDuration = await getExactFullDuration(asset.uri);
+          console.log(
+            `[Library Import] Exact duration from AVFoundation: ${actualDuration}s`
+          );
+        } catch (error) {
+          console.warn(
+            "[Library Import] Failed to get exact duration, using metadata:",
+            error
+          );
+          // Fallback to metadata duration if AVFoundation fails
+          if (asset.duration) {
+            actualDuration =
+              asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+          }
         }
 
-        // Generate thumbnail
-        const thumbnailUri = await VideoThumbnails.getThumbnailAsync(
-          asset.uri,
-          {
-            time: 1000, // 1 second into the video
-            quality: 0.8,
-          }
-        ).catch(() => null);
-
         // Check if adding this video would exceed the total duration limit
-        const currentTotalDuration = recordingSegments.reduce(
-          (total, seg) => total + seg.duration,
-          0
-        );
+        const currentTotalDuration = recordingSegments.reduce((total, seg) => {
+          if (seg.inMs !== undefined || seg.outMs !== undefined) {
+            const start = seg.inMs || 0;
+            const end = seg.outMs || seg.duration * 1000;
+            return total + (end - start) / 1000; // Convert ms to seconds
+          }
+          return total + seg.duration;
+        }, 0);
         const newTotalDuration = currentTotalDuration + actualDuration;
 
         if (newTotalDuration > selectedDuration) {
@@ -399,7 +414,7 @@ export default function ShortsScreen() {
           return;
         }
 
-        // Create a recording segment from the selected video
+        // Create a recording segment from the selected video with exact duration
         const segment: RecordingSegment = {
           id: Date.now().toString(),
           uri: asset.uri,
@@ -480,8 +495,8 @@ export default function ShortsScreen() {
               }
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
-              onReorderSegments={
-                recordingSegments.length > 1 ? handleReorderSegments : undefined
+              onEditSegments={
+                recordingSegments.length > 0 ? handleEditSegments : undefined
               }
             />
           )}

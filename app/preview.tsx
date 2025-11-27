@@ -19,11 +19,16 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+const TRANSITION_TOLERANCE_MS = 50; // 50ms tolerance for smoother segment transitions
+const ERROR_BACKOFF_BASE_MS = 100; // Base delay for exponential backoff on errors
+const MAX_PLAYBACK_ERRORS = 5; // Maximum consecutive errors before stopping monitoring
+
 export default function PreviewScreen() {
   const { draftId } = useLocalSearchParams<{ draftId: string }>();
   const insets = useSafeAreaInsets();
 
   const [videoUris, setVideoUris] = useState<string[]>([]);
+  const [segments, setSegments] = useState<any[]>([]);
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [useSecondPlayer, setUseSecondPlayer] = useState(false);
@@ -34,6 +39,7 @@ export default function PreviewScreen() {
   // Refs to store timeout IDs for proper cleanup
   const appStateResumeTimeoutRef = useRef<number | null>(null);
   const appStateResetTimeoutRef = useRef<number | null>(null);
+  const isSeekingRef = useRef(false);
 
   const player1 = useVideoPlayer(null, (player) => {
     if (player) {
@@ -56,34 +62,174 @@ export default function PreviewScreen() {
   const _currentPlayer = useSecondPlayer ? player2 : player1; // eslint-disable-line @typescript-eslint/no-unused-vars
   const nextPlayer = useSecondPlayer ? player1 : player2;
 
-  useEventListener(player1, "playToEnd", () => {
-    // Handle segment cycling
-    if (videoUris.length > 1) {
-      // Switch to player2 and advance to next video
-      setUseSecondPlayer(true);
-      advanceToNextVideo();
-      player2.play();
+  // Helper function to advance to next video with trim point handling
+  const advanceToNextSegment = useCallback(() => {
+    if (videoUris.length <= 1 || isSeekingRef.current) return;
+
+    try {
+      isSeekingRef.current = true;
+      const nextIndex =
+        currentVideoIndex < videoUris.length - 1 ? currentVideoIndex + 1 : 0;
+      const nextSegment = segments[nextIndex];
+      const currentPlayer = useSecondPlayer ? player2 : player1;
+      const nextPlayer = useSecondPlayer ? player1 : player2;
+
+      if (nextSegment) {
+        const nextInSeconds = nextSegment.inMs ? nextSegment.inMs / 1000 : 0;
+        nextPlayer.currentTime = nextInSeconds;
+        currentPlayer.pause();
+        setCurrentVideoIndex(nextIndex);
+        setUseSecondPlayer(!useSecondPlayer);
+        nextPlayer.play();
+      }
+      isSeekingRef.current = false;
+    } catch (error) {
+      isSeekingRef.current = false;
+      console.error("Error advancing to next segment:", error);
     }
-  });
+  }, [
+    videoUris.length,
+    currentVideoIndex,
+    segments,
+    useSecondPlayer,
+    player1,
+    player2,
+  ]);
 
-  useEventListener(player2, "playToEnd", () => {
-    // Handle segment cycling
-    if (videoUris.length > 1) {
-      // Switch to player1 and advance to next video
-      setUseSecondPlayer(false);
-      advanceToNextVideo();
-      player1.play();
-    }
-  });
+  // Unified playToEnd handler
+  const handlePlayToEnd = useCallback(
+    (playerNumber: 1 | 2) => {
+      const currentSegment = segments[currentVideoIndex];
+      const hasMultipleSegments = videoUris.length > 1;
 
-  // Player state monitoring removed for cleaner experience
+      // If segment has trim points, advance was already handled by monitoring
+      // Otherwise, advance normally
+      if (!currentSegment?.outMs && hasMultipleSegments) {
+        if (playerNumber === 1) {
+          setUseSecondPlayer(true);
+          advanceToNextSegment();
+        } else {
+          setUseSecondPlayer(false);
+          advanceToNextSegment();
+        }
+      }
+    },
+    [segments, currentVideoIndex, videoUris.length, advanceToNextSegment]
+  );
 
-  const advanceToNextVideo = () => {
-    setCurrentVideoIndex((prev) => {
-      const nextIndex = prev < videoUris.length - 1 ? prev + 1 : 0;
-      return nextIndex;
-    });
-  };
+  useEventListener(player1, "playToEnd", () => handlePlayToEnd(1));
+  useEventListener(player2, "playToEnd", () => handlePlayToEnd(2));
+
+  // Monitor playback to respect trim points (inMs/outMs) using requestAnimationFrame
+  useEffect(() => {
+    if (!player1 || !player2 || segments.length === 0) return;
+
+    let animationFrameId: number | null = null;
+    let isActive = true;
+    let errorCount = 0;
+
+    const checkPlayback = () => {
+      if (!isActive) return;
+
+      try {
+        if (isSeekingRef.current) {
+          if (isActive) {
+            animationFrameId = requestAnimationFrame(checkPlayback);
+          }
+          return;
+        }
+
+        const currentPlayer = useSecondPlayer ? player2 : player1;
+        const currentSegment = segments[currentVideoIndex];
+
+        // Only check if player is actually playing to save CPU
+        if (!currentSegment || !currentPlayer.playing) {
+          // Don't schedule next frame when not playing
+          return;
+        }
+
+        const currentTime = currentPlayer.currentTime * 1000; // Convert to ms
+        const videoDurationMs = currentSegment.duration * 1000;
+        const inMs = currentSegment.inMs || 0;
+        const outMs = currentSegment.outMs ?? videoDurationMs;
+
+        // If we've reached or passed the out point, advance to next segment
+        if (currentTime >= outMs - TRANSITION_TOLERANCE_MS) {
+          if (videoUris.length > 1) {
+            advanceToNextSegment();
+          } else {
+            // Single segment - loop back to in point
+            isSeekingRef.current = true;
+            const inSeconds = inMs / 1000;
+            currentPlayer.currentTime = inSeconds;
+            isSeekingRef.current = false;
+          }
+        }
+        // If we're before the in point, jump to in point
+        else if (currentTime < inMs) {
+          isSeekingRef.current = true;
+          const inSeconds = inMs / 1000;
+          currentPlayer.currentTime = inSeconds;
+          isSeekingRef.current = false;
+        }
+
+        // Reset error count on successful check
+        errorCount = 0;
+        if (isActive) {
+          animationFrameId = requestAnimationFrame(checkPlayback);
+        }
+      } catch (error) {
+        errorCount++;
+        console.error("Error in playback check:", error);
+
+        // Stop the animation loop after too many errors (player likely disposed)
+        if (errorCount >= MAX_PLAYBACK_ERRORS) {
+          console.error("Too many playback errors, stopping monitoring");
+          isActive = false;
+        } else if (isActive) {
+          // Exponential backoff on errors
+          setTimeout(() => {
+            if (isActive) {
+              animationFrameId = requestAnimationFrame(checkPlayback);
+            }
+          }, ERROR_BACKOFF_BASE_MS * errorCount);
+        }
+      }
+    };
+
+    // Start monitoring only when player is playing
+    const startMonitoring = () => {
+      const currentPlayer = useSecondPlayer ? player2 : player1;
+      if (currentPlayer.playing && isActive && !animationFrameId) {
+        animationFrameId = requestAnimationFrame(checkPlayback);
+      }
+    };
+
+    // Check periodically if we need to start monitoring
+    const playInterval = setInterval(() => {
+      if (isActive) {
+        startMonitoring();
+      }
+    }, 200);
+
+    startMonitoring();
+
+    return () => {
+      isActive = false;
+      clearInterval(playInterval);
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [
+    player1,
+    player2,
+    segments,
+    currentVideoIndex,
+    useSecondPlayer,
+    videoUris.length,
+    advanceToNextSegment,
+  ]);
 
   // Function to reset both players to clean state
   const resetPlayers = async () => {
@@ -135,6 +281,11 @@ export default function PreviewScreen() {
             fileStore.toAbsolutePath(segment.uri)
           );
           setVideoUris(uris);
+          // Store segments with trim points for playback control
+          setSegments(draft.segments.map((segment) => ({
+            ...segment,
+            uri: fileStore.toAbsolutePath(segment.uri),
+          })));
         } else {
           router.back();
         }
@@ -220,13 +371,18 @@ export default function PreviewScreen() {
 
   useEffect(() => {
     const setupPlayers = async () => {
-      if (videoUris.length > 0 && !isLoading) {
+      if (videoUris.length > 0 && segments.length > 0 && !isLoading) {
         try {
           // Reset players before setting up new videos
           await resetPlayers();
 
-          // Load first video into player1 and start playing
-          await player1.replaceAsync(videoUris[0]);
+          // Load first video into player1
+          const firstSegment = segments[0];
+          await player1.replaceAsync(firstSegment.uri);
+          
+          // Seek to inMs if it exists, otherwise start from beginning
+          const inSeconds = firstSegment.inMs ? firstSegment.inMs / 1000 : 0;
+          player1.currentTime = inSeconds;
           player1.play();
 
           // Reset video index to start from beginning
@@ -234,7 +390,10 @@ export default function PreviewScreen() {
 
           // If there are multiple videos, preload the second one into player2
           if (videoUris.length > 1) {
-            await player2.replaceAsync(videoUris[1]);
+            const secondSegment = segments[1];
+            await player2.replaceAsync(secondSegment.uri);
+            const secondInSeconds = secondSegment.inMs ? secondSegment.inMs / 1000 : 0;
+            player2.currentTime = secondInSeconds;
           }
         } catch (error) {
           console.error("Player setup failed:", error);
@@ -243,30 +402,34 @@ export default function PreviewScreen() {
     };
 
     setupPlayers();
-  }, [videoUris, isLoading, player1, player2]);
+  }, [videoUris, segments, isLoading, player1, player2]);
 
   useEffect(() => {
     const preloadNext = async () => {
-      if (videoUris.length <= 1) return;
+      if (videoUris.length <= 1 || segments.length <= 1) return;
 
       try {
         // Calculate the next video index
         const nextIndex =
           currentVideoIndex < videoUris.length - 1 ? currentVideoIndex + 1 : 0;
-        const nextVideoUri = videoUris[nextIndex];
+        const nextSegment = segments[nextIndex];
 
         // Load the next video into the inactive player
         const inactivePlayer = useSecondPlayer ? player1 : player2;
-        await inactivePlayer.replaceAsync(nextVideoUri);
+        await inactivePlayer.replaceAsync(nextSegment.uri);
+        
+        // Seek to inMs if it exists
+        const inSeconds = nextSegment.inMs ? nextSegment.inMs / 1000 : 0;
+        inactivePlayer.currentTime = inSeconds;
       } catch (error) {
         console.error("Preload failed:", error);
       }
     };
 
-    if (videoUris.length > 0) {
+    if (videoUris.length > 0 && segments.length > 0) {
       preloadNext();
     }
-  }, [currentVideoIndex, videoUris, useSecondPlayer, player1, player2]);
+  }, [currentVideoIndex, videoUris, segments, useSecondPlayer, player1, player2]);
 
   const handleClose = useCallback(async () => {
     // Dismiss the screen
@@ -312,6 +475,7 @@ export default function PreviewScreen() {
       );
 
       // Convert relative paths to absolute paths for native module
+      // inMs and outMs are kept as floats for precision
       const segmentsWithAbsolutePaths = draft.segments.map((segment) => ({
         ...segment,
         uri: fileStore.toAbsolutePath(segment.uri),
