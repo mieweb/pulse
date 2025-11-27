@@ -20,6 +20,38 @@ public class VideoConcatModule: Module {
         
         Events("onProgress")
         
+        /// Gets the exact duration of a video from AVFoundation
+        /// Returns full duration if no trim points, or trimmed duration if trim points are provided
+        AsyncFunction("getVideoDuration") { (uri: String, inMs: Double?, outMs: Double?) -> Double in
+            guard let url = URL(string: uri) else {
+                throw NSError(domain: "VideoDuration", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+            }
+            
+            let asset = AVURLAsset(url: url)
+            let videoTracks = try await asset.loadTracks(withMediaType: .video)
+            
+            guard let videoTrack = videoTracks.first else {
+                throw NSError(domain: "VideoDuration", code: 2, userInfo: [NSLocalizedDescriptionKey: "No video track found"])
+            }
+            
+            let fullTimeRange = try await videoTrack.load(.timeRange)
+            let assetDuration = try await asset.load(.duration)
+            
+            // If trim points exist, calculate trimmed duration using calculateTimeRange
+            if inMs != nil || outMs != nil {
+                let timeRange = self.calculateTimeRange(
+                    fullRange: fullTimeRange,
+                    assetDuration: assetDuration,
+                    inMs: inMs,
+                    outMs: outMs
+                )
+                return CMTimeGetSeconds(timeRange.duration)
+            } else {
+                // Return full duration from AVFoundation
+                return CMTimeGetSeconds(fullTimeRange.duration)
+            }
+        }
+        
         AsyncFunction("export") { (segments: [RecordingSegment], draftId: String) -> String in
             
             // Create a mutable composition to hold the concatenated video
