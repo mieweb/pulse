@@ -84,9 +84,21 @@ class VideoConcatTests {
                 try videoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: currentTime)
                 
                 // Insert audio if available - exactly like the native module
+                // Use the audio track's own timeRange to avoid AAC stream corruption
                 let audioTracks = try await asset.loadTracks(withMediaType: .audio)
                 if let sourceAudioTrack = audioTracks.first {
-                    try audioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: currentTime)
+                    // Get the audio track's actual time range (may have different timescale than video)
+                    let audioFullTimeRange = try await sourceAudioTrack.load(.timeRange)
+                    
+                    // Calculate the audio trim range using the same in/out points but with audio's timescale
+                    // Note: This test uses nil for inMs/outMs (no trimming) but uses the same logic as production
+                    let audioTrimRange = calculateTimeRange(
+                        fullRange: audioFullTimeRange,
+                        inMs: nil,
+                        outMs: nil
+                    )
+                    
+                    try audioTrack.insertTimeRange(audioTrimRange, of: sourceAudioTrack, at: currentTime)
                     print("   🔊 Audio track added")
                 } else {
                     print("   🔇 No audio track found")
@@ -176,6 +188,48 @@ class VideoConcatTests {
             print("   ❌ Test failed: \(error.localizedDescription)")
             return false
         }
+    }
+    
+    /// Calculates the time range for a segment based on in/out points
+    /// - Parameters:
+    ///   - fullRange: The full time range of the track
+    ///   - inMs: Optional start time in milliseconds
+    ///   - outMs: Optional end time in milliseconds
+    /// - Returns: The calculated time range for trimming
+    private func calculateTimeRange(
+        fullRange: CMTimeRange,
+        inMs: Double?,
+        outMs: Double?
+    ) -> CMTimeRange {
+        let trackTimescale = fullRange.start.timescale
+        let fullDuration = fullRange.duration
+        
+        // Convert milliseconds to CMTime
+        let startTime: CMTime
+        if let inMs = inMs {
+            let startValue = Int64(Double(inMs) * Double(trackTimescale) / 1000.0)
+            startTime = CMTime(value: startValue, timescale: trackTimescale)
+        } else {
+            startTime = fullRange.start
+        }
+        
+        let endTime: CMTime
+        if let outMs = outMs {
+            let endValue = Int64(Double(outMs) * Double(trackTimescale) / 1000.0)
+            endTime = CMTime(value: endValue, timescale: trackTimescale)
+        } else {
+            endTime = fullRange.start + fullDuration
+        }
+        
+        // Clamp values to valid range
+        let clampedStart = max(startTime, fullRange.start)
+        let clampedEnd = min(endTime, fullRange.start + fullDuration)
+        
+        // Ensure start is before end
+        let finalStart = min(clampedStart, clampedEnd)
+        let finalEnd = max(clampedStart, clampedEnd)
+        
+        return CMTimeRange(start: finalStart, duration: finalEnd - finalStart)
     }
     
     // Helper function to determine video orientation from transform
