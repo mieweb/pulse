@@ -6,9 +6,9 @@ struct RecordingSegment: Record {
     @Field
     var uri: String
     @Field
-    var inMs: Int? = nil
+    var inMs: Double? = nil
     @Field
-    var outMs: Int? = nil
+    var outMs: Double? = nil
 }
 
 /// Native module for concatenating multiple video segments into a single video file.
@@ -68,9 +68,20 @@ public class VideoConcatModule: Module {
                 try videoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: currentTime)
                 
                 // Insert audio track if available
+                // Use the audio track's own timeRange to avoid AAC stream corruption
                 let audioTracks = try await asset.loadTracks(withMediaType: .audio)
                 if let sourceAudioTrack = audioTracks.first {
-                    try audioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: currentTime)
+                    // Get the audio track's actual time range (may have different timescale than video)
+                    let audioFullTimeRange = try await sourceAudioTrack.load(.timeRange)
+                    
+                    // Calculate the audio trim range using the same in/out points but with audio's timescale
+                    let audioTrimRange = calculateTimeRange(
+                        fullRange: audioFullTimeRange,
+                        inMs: segment.inMs,
+                        outMs: segment.outMs
+                    )
+                    
+                    try audioTrack.insertTimeRange(audioTrimRange, of: sourceAudioTrack, at: currentTime)
                 }
                 
                 // Move to the next time position for the next segment
@@ -139,13 +150,13 @@ public class VideoConcatModule: Module {
     /// Calculates the time range for a segment based on in/out points
     /// - Parameters:
     ///   - fullRange: The full time range of the video track
-    ///   - inMs: Optional start time in milliseconds
-    ///   - outMs: Optional end time in milliseconds
+    ///   - inMs: Optional start time in milliseconds (Double for precision)
+    ///   - outMs: Optional end time in milliseconds (Double for precision)
     /// - Returns: The calculated time range for trimming
     private func calculateTimeRange(
         fullRange: CMTimeRange,
-        inMs: Int?,
-        outMs: Int?
+        inMs: Double?,
+        outMs: Double?
     ) -> CMTimeRange {
         let trackTimescale = fullRange.start.timescale
         let fullDuration = fullRange.duration
