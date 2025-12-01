@@ -30,7 +30,11 @@ export class DraftStorage {
     segments: RecordingSegment[],
     totalDuration: number,
     mode: DraftMode = "camera",
-    customId?: string
+    customId?: string,
+    options?: {
+      createdAt?: Date;
+      lastModified?: Date;
+    }
   ): Promise<string> {
     try {
       const existingDrafts = await this.getAllDrafts();
@@ -81,8 +85,8 @@ export class DraftStorage {
         mode,
         segments,
         totalDuration,
-        createdAt: existingDraft?.createdAt || now,
-        lastModified: now,
+        createdAt: options?.createdAt || existingDraft?.createdAt || now,
+        lastModified: options?.lastModified || now,
         thumbnail: thumbnailUri,
         name: existingDraft?.name, // Preserve existing name if present
       };
