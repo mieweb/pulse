@@ -134,15 +134,12 @@ export class DraftTransfer {
         );
       }
 
-      // Generate new draft ID to avoid conflicts
-      const newDraftId = Crypto.randomUUID();
-      console.log(`[DraftTransfer] Importing as new draft: ${newDraftId}`);
+      const { draft, files } = draftPackage;
+      const newDraftId = draft.id;
+      console.log(`[DraftTransfer] Importing draft: ${newDraftId}`);
 
       // Ensure draft directories exist
       await fileStore.ensureDraftDirs(newDraftId);
-
-      // Import all files
-      const { draft, files } = draftPackage;
       const importedSegments = [];
 
       for (const segment of draft.segments) {
@@ -203,12 +200,17 @@ export class DraftTransfer {
         console.log(`[DraftTransfer] Imported thumbnail: ${relativePath}`);
       }
 
-      // Save draft metadata
+      const originalCreatedAt = draft.createdAt ? new Date(draft.createdAt) : undefined;
+      const originalLastModified = draft.lastModified ? new Date(draft.lastModified) : undefined;
       await DraftStorage.saveDraft(
         importedSegments,
         draft.totalDuration,
         draft.mode,
-        newDraftId
+        newDraftId,
+        {
+          createdAt: originalCreatedAt,
+          lastModified: originalLastModified,
+        }
       );
 
       // Update draft name if present
@@ -368,14 +370,11 @@ export class DraftTransfer {
 
       for (const [originalDraftId, draftPackage] of Object.entries(allPackages)) {
         try {
-          // Generate new draft ID
-          const newDraftId = Crypto.randomUUID();
+          const { draft, files } = draftPackage;
+          const newDraftId = draft.id;
           
           // Ensure draft directories exist
           await fileStore.ensureDraftDirs(newDraftId);
-
-          // Import files
-          const { draft, files } = draftPackage;
           const importedSegments = [];
 
           for (const segment of draft.segments) {
@@ -423,12 +422,17 @@ export class DraftTransfer {
             });
           }
 
-          // Save draft
+          const originalCreatedAt = draft.createdAt ? new Date(draft.createdAt) : undefined;
+          const originalLastModified = draft.lastModified ? new Date(draft.lastModified) : undefined;
           await DraftStorage.saveDraft(
             importedSegments,
             draft.totalDuration,
             draft.mode,
-            newDraftId
+            newDraftId,
+            {
+              createdAt: originalCreatedAt,
+              lastModified: originalLastModified,
+            }
           );
 
           if (draft.name) {

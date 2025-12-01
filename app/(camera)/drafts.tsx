@@ -307,15 +307,12 @@ export default function DraftsScreen() {
             ) : null}
             <Text style={styles.draftTitle}>
               {item.segments.length} segment
-              {item.segments.length !== 1 ? "s" : ""} • Rec:{" "}
+              {item.segments.length !== 1 ? "s" : ""} • {" "}
               {formatDuration(Math.round(totalRecordedDuration))}/
               {formatDuration(item.totalDuration)}
             </Text>
             <Text style={styles.draftDate}>
               Created: {formatDate(item.createdAt)}
-            </Text>
-            <Text style={styles.draftDate}>
-              Modified: {formatDate(item.lastModified)}
             </Text>
           </View>
           <View style={styles.actionsContainer}>
@@ -361,13 +358,34 @@ export default function DraftsScreen() {
   if (drafts.length === 0) {
     return (
       <View style={styles.container}>
-        {/* Close Button */}
         <TouchableOpacity
           style={[styles.closeButton, { top: insets.top + 20 }]}
           onPress={() => router.push("/(tabs)")}
         >
           <Text style={styles.closeText}>×</Text>
         </TouchableOpacity>
+
+        <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
+          <Text style={styles.headerTitle}>Drafts</Text>
+          <Text style={styles.headerSubtitle}>Tap to continue recording</Text>
+          
+          <View style={styles.controlsContainer}>
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={handleImportDraft}
+              disabled={importing || exporting}
+            >
+              {importing ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <MaterialIcons name="file-download" size={20} color="#ffffff" />
+                  <Text style={styles.controlButtonText}>Import</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
 
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle}>No Drafts</Text>
