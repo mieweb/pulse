@@ -30,6 +30,8 @@ export default function DraftsScreen() {
   const [draftNameInput, setDraftNameInput] = useState("");
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
 
   useEffect(() => {
     loadDrafts();
@@ -52,13 +54,17 @@ export default function DraftsScreen() {
   };
 
   const handleDraftPress = (draft: Draft) => {
-    router.push({
-      pathname: "/(camera)/shorts",
-      params: {
-        draftId: draft.id,
-        mode: draft.mode,
-      },
-    });
+    if (isSelectionMode) {
+      handleToggleSelection(draft.id);
+    } else {
+      router.push({
+        pathname: "/(camera)/shorts",
+        params: {
+          draftId: draft.id,
+          mode: draft.mode,
+        },
+      });
+    }
   };
 
   const handleDeleteDraft = async (draftId: string) => {
@@ -115,8 +121,12 @@ export default function DraftsScreen() {
   };
 
   const handleLongPress = (draft: Draft) => {
-    setDraftNameInput(draft.name || "");
-    setEditingDraftId(draft.id);
+    if (isSelectionMode) {
+      handleToggleSelection(draft.id);
+    } else {
+      setDraftNameInput(draft.name || "");
+      setEditingDraftId(draft.id);
+    }
   };
 
   const handleSaveName = async (draftId: string) => {
@@ -140,55 +150,51 @@ export default function DraftsScreen() {
     });
   };
 
-  const handleExportDraft = async (draftId: string) => {
-    setExporting(true);
-    try {
-      await DraftTransfer.shareDraft(draftId);
-      Alert.alert("Success", "Draft exported successfully!");
-    } catch (error) {
-      console.error("Error exporting draft:", error);
-      Alert.alert("Export Failed", "Failed to export draft. Please try again.");
-    } finally {
-      setExporting(false);
+  const handleToggleSelection = (draftId: string) => {
+    const newSelected = new Set(selectedDraftIds);
+    if (newSelected.has(draftId)) {
+      newSelected.delete(draftId);
+    } else {
+      newSelected.add(draftId);
+    }
+    setSelectedDraftIds(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedDraftIds.size === drafts.length) {
+      setSelectedDraftIds(new Set());
+    } else {
+      setSelectedDraftIds(new Set(drafts.map(d => d.id)));
     }
   };
 
-  const handleExportAllDrafts = async () => {
-    if (drafts.length === 0) {
-      Alert.alert("No Drafts", "There are no drafts to export.");
+  const handleExportSelected = async () => {
+    if (selectedDraftIds.size === 0) {
+      Alert.alert("No Selection", "Please select at least one draft to export.");
       return;
     }
 
-    Alert.alert(
-      "Export All Drafts",
-      `Export all ${drafts.length} draft${drafts.length > 1 ? "s" : ""} as a backup file?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Export",
-          onPress: async () => {
-            setExporting(true);
-            try {
-              const backupUri = await DraftTransfer.exportAllDrafts();
-              const isAvailable = await Sharing.isAvailableAsync();
-              if (isAvailable) {
-                await Sharing.shareAsync(backupUri, {
-                  mimeType: 'application/json',
-                  dialogTitle: 'Share Pulse Backup',
-                  UTI: 'public.json',
-                });
-              }
-              Alert.alert("Success", "All drafts exported successfully!");
-            } catch (error) {
-              console.error("Error exporting all drafts:", error);
-              Alert.alert("Export Failed", "Failed to export drafts. Please try again.");
-            } finally {
-              setExporting(false);
-            }
-          },
-        },
-      ]
-    );
+    setExporting(true);
+    try {
+      const draftIds = Array.from(selectedDraftIds);
+      const backupUri = await DraftTransfer.exportSelectedDrafts(draftIds);
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        await Sharing.shareAsync(backupUri, {
+          mimeType: 'application/json',
+          dialogTitle: 'Share Pulse Drafts',
+          UTI: 'public.json',
+        });
+      }
+      Alert.alert("Success", `${draftIds.length} draft${draftIds.length > 1 ? 's' : ''} exported successfully!`);
+      setSelectedDraftIds(new Set());
+      setIsSelectionMode(false);
+    } catch (error) {
+      console.error("Error exporting drafts:", error);
+      Alert.alert("Export Failed", "Failed to export drafts. Please try again.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleImportDraft = async () => {
@@ -273,9 +279,14 @@ export default function DraftsScreen() {
       0
     );
 
+    const isSelected = selectedDraftIds.has(item.id);
+    
     return (
       <TouchableOpacity
-        style={styles.draftItem}
+        style={[
+          styles.draftItem,
+          isSelected && styles.draftItemSelected
+        ]}
         onPress={() => handleDraftPress(item)}
         onLongPress={() => handleLongPress(item)}
         activeOpacity={0.5}
@@ -316,23 +327,32 @@ export default function DraftsScreen() {
             </Text>
           </View>
           <View style={styles.actionsContainer}>
-            {item.mode === "upload" && (
-              <View style={styles.modeTag}>
-                <MaterialIcons name="link" size={14} color="#888888" />
-              </View>
+            {isSelectionMode ? (
+              <TouchableOpacity
+                style={styles.checkbox}
+                onPress={() => handleToggleSelection(item.id)}
+              >
+                <MaterialIcons
+                  name={selectedDraftIds.has(item.id) ? "check-box" : "check-box-outline-blank"}
+                  size={24}
+                  color={selectedDraftIds.has(item.id) ? "#007AFF" : "#888888"}
+                />
+              </TouchableOpacity>
+            ) : (
+              <>
+                {item.mode === "upload" && (
+                  <View style={styles.modeTag}>
+                    <MaterialIcons name="link" size={14} color="#888888" />
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => handleDeleteDraft(item.id)}
+                >
+                  <Text style={styles.deleteText}>×</Text>
+                </TouchableOpacity>
+              </>
             )}
-            <TouchableOpacity
-              style={styles.shareButton}
-              onPress={() => handleExportDraft(item.id)}
-            >
-              <MaterialIcons name="share" size={18} color="#ffffff" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => handleDeleteDraft(item.id)}
-            >
-              <Text style={styles.deleteText}>×</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </TouchableOpacity>
@@ -407,43 +427,79 @@ export default function DraftsScreen() {
         <Text style={styles.closeText}>×</Text>
       </TouchableOpacity>
 
-      <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.headerTitle}>Drafts</Text>
-        <Text style={styles.headerSubtitle}>Tap to continue recording</Text>
-        
-        {/* Import/Export Controls */}
-        <View style={styles.controlsContainer}>
-          <TouchableOpacity
-            style={styles.controlButton}
-            onPress={handleImportDraft}
-            disabled={importing || exporting}
-          >
-            {importing ? (
-              <ActivityIndicator size="small" color="#ffffff" />
-            ) : (
-              <>
-                <MaterialIcons name="file-download" size={20} color="#ffffff" />
-                <Text style={styles.controlButtonText}>Import</Text>
-              </>
-            )}
-          </TouchableOpacity>
+        <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
+          <View>
+            <Text style={styles.headerTitle}>Drafts</Text>
+            <Text style={styles.headerSubtitle}>Tap to continue recording</Text>
+          </View>
           
-          <TouchableOpacity
-            style={styles.controlButton}
-            onPress={handleExportAllDrafts}
-            disabled={importing || exporting || drafts.length === 0}
-          >
-            {exporting ? (
-              <ActivityIndicator size="small" color="#ffffff" />
-            ) : (
+          <View style={styles.controlsContainer}>
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={handleImportDraft}
+              disabled={importing || exporting}
+            >
+              {importing ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <MaterialIcons name="file-download" size={20} color="#ffffff" />
+                  <Text style={styles.controlButtonText}>Import</Text>
+                </>
+              )}
+            </TouchableOpacity>
+            
+            {isSelectionMode ? (
               <>
-                <MaterialIcons name="file-upload" size={20} color="#ffffff" />
-                <Text style={styles.controlButtonText}>Export All</Text>
+                <TouchableOpacity
+                  style={[styles.controlButton, selectedDraftIds.size === 0 && styles.controlButtonDisabled]}
+                  onPress={handleExportSelected}
+                  disabled={importing || exporting || selectedDraftIds.size === 0}
+                >
+                  {exporting ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="file-upload" size={20} color="#ffffff" />
+                      <Text style={styles.controlButtonText}>
+                        Export {selectedDraftIds.size > 0 ? `(${selectedDraftIds.size})` : ''}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.controlButton}
+                  onPress={() => {
+                    setIsSelectionMode(false);
+                    setSelectedDraftIds(new Set());
+                  }}
+                >
+                  <Text style={styles.controlButtonText}>Cancel</Text>
+                </TouchableOpacity>
               </>
+            ) : (
+              <TouchableOpacity
+                style={styles.controlButton}
+                onPress={() => setIsSelectionMode(true)}
+                disabled={importing || exporting || drafts.length === 0}
+              >
+                <MaterialIcons name="file-upload" size={20} color="#ffffff" />
+                <Text style={styles.controlButtonText}>Export</Text>
+              </TouchableOpacity>
             )}
-          </TouchableOpacity>
+          </View>
+          
+          {isSelectionMode && (
+            <TouchableOpacity
+              style={styles.selectAllButton}
+              onPress={handleSelectAll}
+            >
+              <Text style={styles.selectAllText}>
+                {selectedDraftIds.size === drafts.length ? "Deselect All" : "Select All"}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
-      </View>
 
       <FlatList
         data={drafts}
@@ -470,15 +526,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  shareButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(0, 122, 255, 0.2)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 8,
-  },
   container: {
     flex: 1,
     backgroundColor: "#000000",
@@ -495,7 +542,17 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 16,
     color: "#888888",
-    marginBottom: 12,
+  },
+  selectAllButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginTop: 4,
+    alignSelf: "flex-start",
+  },
+  selectAllText: {
+    color: "#007AFF",
+    fontSize: 16,
+    fontWeight: "600",
   },
   controlsContainer: {
     flexDirection: "row",
@@ -520,6 +577,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+  controlButtonDisabled: {
+    opacity: 0.5,
+  },
+  checkbox: {
+    padding: 4,
+  },
   list: {
     flex: 1,
   },
@@ -533,6 +596,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: "#333",
+  },
+  draftItemSelected: {
+    borderColor: "#007AFF",
+    borderWidth: 2,
+    backgroundColor: "#1a1a2a",
   },
   draftContent: {
     flexDirection: "row",
@@ -575,9 +643,10 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   draftDate: {
-    fontSize: 11,
+    fontSize: 13,
     color: "#666666",
-    lineHeight: 14,
+    lineHeight: 16,
+    marginTop: 4,
   },
   deleteButton: {
     width: 32,
@@ -598,6 +667,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 40,
+    marginTop: -60,
   },
   emptyTitle: {
     fontSize: 24,

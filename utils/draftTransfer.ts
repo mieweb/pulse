@@ -1,8 +1,6 @@
 import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import { Draft, DraftStorage } from './draftStorage';
 import { fileStore } from './fileStore';
-import * as Crypto from 'expo-crypto';
 
 interface DraftPackage {
   version: string;
@@ -24,92 +22,6 @@ const EXPORT_DIR = `${FileSystem.cacheDirectory}exports/`;
  * - Sharing via AirDrop, Files app, etc.
  */
 export class DraftTransfer {
-  /**
-   * Export a draft to a shareable package file.
-   * Creates a JSON file containing draft metadata and all associated video files.
-   * 
-   * @param draftId - The ID of the draft to export
-   * @returns The URI of the exported package file
-   */
-  static async exportDraft(draftId: string): Promise<string> {
-    try {
-      console.log(`[DraftTransfer] Starting export for draft: ${draftId}`);
-      
-      // Get draft metadata
-      const draft = await DraftStorage.getDraftById(draftId);
-      if (!draft) {
-        throw new Error(`Draft ${draftId} not found`);
-      }
-
-      // Ensure export directory exists
-      const exportDirInfo = await FileSystem.getInfoAsync(EXPORT_DIR);
-      if (!exportDirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(EXPORT_DIR, { intermediates: true });
-      }
-
-      // Collect all files associated with this draft
-      const files: { [key: string]: string } = {};
-      
-      // Export segment files
-      for (const segment of draft.segments) {
-        const absolutePath = fileStore.toAbsolutePath(segment.uri);
-        const fileInfo = await FileSystem.getInfoAsync(absolutePath);
-        if (fileInfo.exists) {
-          // Read file as base64
-          const base64Content = await FileSystem.readAsStringAsync(absolutePath, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          files[segment.uri] = base64Content;
-          console.log(`[DraftTransfer] Exported segment: ${segment.uri}`);
-        } else {
-          console.warn(`[DraftTransfer] Segment file not found: ${absolutePath}`);
-        }
-      }
-
-      // Export thumbnail if present
-      if (draft.thumbnail) {
-        const absolutePath = fileStore.toAbsolutePath(draft.thumbnail);
-        const fileInfo = await FileSystem.getInfoAsync(absolutePath);
-        if (fileInfo.exists) {
-          const base64Content = await FileSystem.readAsStringAsync(absolutePath, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          files[draft.thumbnail] = base64Content;
-          console.log(`[DraftTransfer] Exported thumbnail: ${draft.thumbnail}`);
-        }
-      }
-
-      // Create package
-      const draftPackage: DraftPackage = {
-        version: DRAFT_PACKAGE_VERSION,
-        draft: {
-          ...draft,
-          // Store dates as ISO strings for JSON compatibility
-          createdAt: draft.createdAt,
-          lastModified: draft.lastModified,
-        },
-        files,
-      };
-
-      // Write package to file
-      const exportFileName = `pulse-draft-${draft.name || draftId}-${Date.now()}.pulse`;
-      const exportPath = `${EXPORT_DIR}${exportFileName}`;
-      await FileSystem.writeAsStringAsync(
-        exportPath,
-        JSON.stringify(draftPackage),
-        { encoding: FileSystem.EncodingType.UTF8 }
-      );
-
-      console.log(`[DraftTransfer] Export complete: ${exportPath}`);
-      console.log(`[DraftTransfer] Package size: ${Object.keys(files).length} files`);
-      
-      return exportPath;
-    } catch (error) {
-      console.error('[DraftTransfer] Export failed:', error);
-      throw error;
-    }
-  }
-
   /**
    * Import a draft from a package file.
    * Extracts metadata and files, creates a new draft.
@@ -229,65 +141,26 @@ export class DraftTransfer {
   }
 
   /**
-   * Export and share a draft via AirDrop, Files app, or other sharing options.
+   * Export selected drafts to a single package file.
    * 
-   * @param draftId - The ID of the draft to share
-   */
-  static async shareDraft(draftId: string): Promise<void> {
-    try {
-      // Check if sharing is available
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (!isAvailable) {
-        throw new Error('Sharing is not available on this device');
-      }
-
-      // Export draft to package file
-      const packageUri = await this.exportDraft(draftId);
-
-      // Share the package
-      await Sharing.shareAsync(packageUri, {
-        mimeType: 'application/json',
-        dialogTitle: 'Share Pulse Draft',
-        UTI: 'public.json', // iOS Universal Type Identifier
-      });
-
-      console.log(`[DraftTransfer] Draft shared successfully: ${draftId}`);
-    } catch (error) {
-      console.error('[DraftTransfer] Share failed:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Clean up exported package files to free up storage.
-   */
-  static async cleanupExports(): Promise<void> {
-    try {
-      const exportDirInfo = await FileSystem.getInfoAsync(EXPORT_DIR);
-      if (exportDirInfo.exists) {
-        await FileSystem.deleteAsync(EXPORT_DIR, { idempotent: true });
-        console.log('[DraftTransfer] Export directory cleaned up');
-      }
-    } catch (error) {
-      console.error('[DraftTransfer] Cleanup failed:', error);
-    }
-  }
-
-  /**
-   * Export all drafts to a single package file for backup purposes.
-   * 
+   * @param draftIds - Array of draft IDs to export
    * @returns The URI of the exported backup file
    */
-  static async exportAllDrafts(): Promise<string> {
+  static async exportSelectedDrafts(draftIds: string[]): Promise<string> {
     try {
-      console.log('[DraftTransfer] Starting full backup export');
+      console.log(`[DraftTransfer] Starting export for ${draftIds.length} drafts`);
       
-      const allDrafts = await DraftStorage.getAllDrafts();
-      if (allDrafts.length === 0) {
-        throw new Error('No drafts to export');
+      if (draftIds.length === 0) {
+        throw new Error('No drafts selected to export');
       }
 
-      // Ensure export directory exists
+      const allDrafts = await DraftStorage.getAllDrafts();
+      const selectedDrafts = allDrafts.filter(draft => draftIds.includes(draft.id));
+      
+      if (selectedDrafts.length === 0) {
+        throw new Error('No valid drafts found to export');
+      }
+
       const exportDirInfo = await FileSystem.getInfoAsync(EXPORT_DIR);
       if (!exportDirInfo.exists) {
         await FileSystem.makeDirectoryAsync(EXPORT_DIR, { intermediates: true });
@@ -295,8 +168,7 @@ export class DraftTransfer {
 
       const allPackages: { [draftId: string]: DraftPackage } = {};
 
-      for (const draft of allDrafts) {
-        // Collect files for this draft
+      for (const draft of selectedDrafts) {
         const files: { [key: string]: string } = {};
         
         for (const segment of draft.segments) {
@@ -332,8 +204,9 @@ export class DraftTransfer {
         };
       }
 
-      // Write backup file
-      const backupFileName = `pulse-backup-${Date.now()}.pulse`;
+      const backupFileName = selectedDrafts.length === 1 
+        ? `pulse-draft-${selectedDrafts[0].name || selectedDrafts[0].id}-${Date.now()}.pulse`
+        : `pulse-backup-${Date.now()}.pulse`;
       const backupPath = `${EXPORT_DIR}${backupFileName}`;
       await FileSystem.writeAsStringAsync(
         backupPath,
@@ -341,12 +214,12 @@ export class DraftTransfer {
         { encoding: FileSystem.EncodingType.UTF8 }
       );
 
-      console.log(`[DraftTransfer] Backup complete: ${backupPath}`);
-      console.log(`[DraftTransfer] Backed up ${allDrafts.length} drafts`);
+      console.log(`[DraftTransfer] Export complete: ${backupPath}`);
+      console.log(`[DraftTransfer] Exported ${selectedDrafts.length} drafts`);
 
       return backupPath;
     } catch (error) {
-      console.error('[DraftTransfer] Backup export failed:', error);
+      console.error('[DraftTransfer] Export failed:', error);
       throw error;
     }
   }
