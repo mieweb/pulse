@@ -195,7 +195,7 @@ export default function DraftsScreen() {
     setImporting(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/json', 'public.json'],
+        // Allow all file types so .pulse files can be selected
         copyToCacheDirectory: true,
       });
 
