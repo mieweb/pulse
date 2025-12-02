@@ -1,5 +1,6 @@
 import { Draft, DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
+import { DraftTransfer } from "@/utils/draftTransfer";
 import { DRAFT_NAME_LENGTH } from "@/constants/camera";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
@@ -7,6 +8,7 @@ import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   Alert,
+  ActivityIndicator,
   FlatList,
   Image,
   StyleSheet,
@@ -16,6 +18,9 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 
 export default function DraftsScreen() {
   const insets = useSafeAreaInsets();
@@ -23,6 +28,10 @@ export default function DraftsScreen() {
   const [loading, setLoading] = useState(true);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [draftNameInput, setDraftNameInput] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
 
   useEffect(() => {
     loadDrafts();
@@ -45,13 +54,17 @@ export default function DraftsScreen() {
   };
 
   const handleDraftPress = (draft: Draft) => {
-    router.push({
-      pathname: "/(camera)/shorts",
-      params: {
-        draftId: draft.id,
-        mode: draft.mode,
-      },
-    });
+    if (isSelectionMode) {
+      handleToggleSelection(draft.id);
+    } else {
+      router.push({
+        pathname: "/(camera)/shorts",
+        params: {
+          draftId: draft.id,
+          mode: draft.mode,
+        },
+      });
+    }
   };
 
   const handleDeleteDraft = async (draftId: string) => {
@@ -108,8 +121,12 @@ export default function DraftsScreen() {
   };
 
   const handleLongPress = (draft: Draft) => {
-    setDraftNameInput(draft.name || "");
-    setEditingDraftId(draft.id);
+    if (isSelectionMode) {
+      handleToggleSelection(draft.id);
+    } else {
+      setDraftNameInput(draft.name || "");
+      setEditingDraftId(draft.id);
+    }
   };
 
   const handleSaveName = async (draftId: string) => {
@@ -131,6 +148,95 @@ export default function DraftsScreen() {
       console.error("Error saving draft name on blur:", error);
       Alert.alert("Error", "Failed to update draft name");
     });
+  };
+
+  const handleToggleSelection = (draftId: string) => {
+    const newSelected = new Set(selectedDraftIds);
+    if (newSelected.has(draftId)) {
+      newSelected.delete(draftId);
+    } else {
+      newSelected.add(draftId);
+    }
+    setSelectedDraftIds(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedDraftIds.size === drafts.length) {
+      setSelectedDraftIds(new Set());
+    } else {
+      setSelectedDraftIds(new Set(drafts.map(d => d.id)));
+    }
+  };
+
+  const handleExportSelected = async () => {
+    if (selectedDraftIds.size === 0) {
+      Alert.alert("No Selection", "Please select at least one draft to export.");
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const draftIds = Array.from(selectedDraftIds);
+      const backupUri = await DraftTransfer.exportSelectedDrafts(draftIds);
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        await Sharing.shareAsync(backupUri, {
+          mimeType: 'application/json',
+          dialogTitle: 'Share Pulse Drafts',
+          UTI: 'public.json',
+        });
+      }
+      Alert.alert("Success", `${draftIds.length} draft${draftIds.length > 1 ? 's' : ''} exported successfully!`);
+      setSelectedDraftIds(new Set());
+      setIsSelectionMode(false);
+    } catch (error) {
+      console.error("Error exporting drafts:", error);
+      Alert.alert("Export Failed", "Failed to export drafts. Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportDraft = async () => {
+    setImporting(true);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        // Allow all file types so .pulse files can be selected
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) {
+        setImporting(false);
+        return;
+      }
+
+      const uri = result.assets[0].uri;
+      console.log('[DraftsScreen] Importing from:', uri);
+
+      // Check if it's a backup (all drafts) or single draft
+      const content = await FileSystem.readAsStringAsync(uri);
+      const parsed = JSON.parse(content);
+
+      if (parsed.version) {
+        // Single draft import
+        await DraftTransfer.importDraft(uri);
+        Alert.alert("Success", "Draft imported successfully!");
+      } else {
+        // Backup import (all drafts)
+        const importedIds = await DraftTransfer.importAllDrafts(uri);
+        Alert.alert(
+          "Success",
+          `Imported ${importedIds.length} draft${importedIds.length > 1 ? 's' : ''} successfully!`
+        );
+      }
+
+      await loadDrafts();
+    } catch (error) {
+      console.error("Error importing draft:", error);
+      Alert.alert("Import Failed", "Failed to import draft. Please check the file and try again.");
+    } finally {
+      setImporting(false);
+    }
   };
 
   const formatDuration = (totalSeconds: number) => {
@@ -173,9 +279,14 @@ export default function DraftsScreen() {
       0
     );
 
+    const isSelected = selectedDraftIds.has(item.id);
+    
     return (
       <TouchableOpacity
-        style={styles.draftItem}
+        style={[
+          styles.draftItem,
+          isSelected && styles.draftItemSelected
+        ]}
         onPress={() => handleDraftPress(item)}
         onLongPress={() => handleLongPress(item)}
         activeOpacity={0.5}
@@ -207,29 +318,41 @@ export default function DraftsScreen() {
             ) : null}
             <Text style={styles.draftTitle}>
               {item.segments.length} segment
-              {item.segments.length !== 1 ? "s" : ""} • Rec:{" "}
+              {item.segments.length !== 1 ? "s" : ""} • {" "}
               {formatDuration(Math.round(totalRecordedDuration))}/
               {formatDuration(item.totalDuration)}
             </Text>
             <Text style={styles.draftDate}>
               Created: {formatDate(item.createdAt)}
             </Text>
-            <Text style={styles.draftDate}>
-              Modified: {formatDate(item.lastModified)}
-            </Text>
           </View>
           <View style={styles.actionsContainer}>
-            {item.mode === "upload" && (
-              <View style={styles.modeTag}>
-                <MaterialIcons name="link" size={14} color="#888888" />
-              </View>
+            {isSelectionMode ? (
+              <TouchableOpacity
+                style={styles.checkbox}
+                onPress={() => handleToggleSelection(item.id)}
+              >
+                <MaterialIcons
+                  name={selectedDraftIds.has(item.id) ? "check-box" : "check-box-outline-blank"}
+                  size={24}
+                  color={selectedDraftIds.has(item.id) ? "#007AFF" : "#888888"}
+                />
+              </TouchableOpacity>
+            ) : (
+              <>
+                {item.mode === "upload" && (
+                  <View style={styles.modeTag}>
+                    <MaterialIcons name="link" size={14} color="#888888" />
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => handleDeleteDraft(item.id)}
+                >
+                  <Text style={styles.deleteText}>×</Text>
+                </TouchableOpacity>
+              </>
             )}
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => handleDeleteDraft(item.id)}
-            >
-              <Text style={styles.deleteText}>×</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </TouchableOpacity>
@@ -255,13 +378,34 @@ export default function DraftsScreen() {
   if (drafts.length === 0) {
     return (
       <View style={styles.container}>
-        {/* Close Button */}
         <TouchableOpacity
           style={[styles.closeButton, { top: insets.top + 20 }]}
           onPress={() => router.push("/(tabs)")}
         >
           <Text style={styles.closeText}>×</Text>
         </TouchableOpacity>
+
+        <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
+          <Text style={styles.headerTitle}>Drafts</Text>
+          <Text style={styles.headerSubtitle}>Tap to continue recording</Text>
+          
+          <View style={styles.controlsContainer}>
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={handleImportDraft}
+              disabled={importing || exporting}
+            >
+              {importing ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <MaterialIcons name="file-download" size={20} color="#ffffff" />
+                  <Text style={styles.controlButtonText}>Import</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
 
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle}>No Drafts</Text>
@@ -283,10 +427,79 @@ export default function DraftsScreen() {
         <Text style={styles.closeText}>×</Text>
       </TouchableOpacity>
 
-      <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.headerTitle}>Drafts</Text>
-        <Text style={styles.headerSubtitle}>Tap to continue recording</Text>
-      </View>
+        <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
+          <View>
+            <Text style={styles.headerTitle}>Drafts</Text>
+            <Text style={styles.headerSubtitle}>Tap to continue recording</Text>
+          </View>
+          
+          <View style={styles.controlsContainer}>
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={handleImportDraft}
+              disabled={importing || exporting}
+            >
+              {importing ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <MaterialIcons name="file-download" size={20} color="#ffffff" />
+                  <Text style={styles.controlButtonText}>Import</Text>
+                </>
+              )}
+            </TouchableOpacity>
+            
+            {isSelectionMode ? (
+              <>
+                <TouchableOpacity
+                  style={[styles.controlButton, selectedDraftIds.size === 0 && styles.controlButtonDisabled]}
+                  onPress={handleExportSelected}
+                  disabled={importing || exporting || selectedDraftIds.size === 0}
+                >
+                  {exporting ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="file-upload" size={20} color="#ffffff" />
+                      <Text style={styles.controlButtonText}>
+                        Export {selectedDraftIds.size > 0 ? `(${selectedDraftIds.size})` : ''}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.controlButton}
+                  onPress={() => {
+                    setIsSelectionMode(false);
+                    setSelectedDraftIds(new Set());
+                  }}
+                >
+                  <Text style={styles.controlButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <TouchableOpacity
+                style={styles.controlButton}
+                onPress={() => setIsSelectionMode(true)}
+                disabled={importing || exporting || drafts.length === 0}
+              >
+                <MaterialIcons name="file-upload" size={20} color="#ffffff" />
+                <Text style={styles.controlButtonText}>Export</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          
+          {isSelectionMode && (
+            <TouchableOpacity
+              style={styles.selectAllButton}
+              onPress={handleSelectAll}
+            >
+              <Text style={styles.selectAllText}>
+                {selectedDraftIds.size === drafts.length ? "Deselect All" : "Select All"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
       <FlatList
         data={drafts}
@@ -330,6 +543,46 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#888888",
   },
+  selectAllButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginTop: 4,
+    alignSelf: "flex-start",
+  },
+  selectAllText: {
+    color: "#007AFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  controlsContainer: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 8,
+  },
+  controlButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1a1a1a",
+    borderWidth: 1,
+    borderColor: "#333",
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  controlButtonText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  controlButtonDisabled: {
+    opacity: 0.5,
+  },
+  checkbox: {
+    padding: 4,
+  },
   list: {
     flex: 1,
   },
@@ -343,6 +596,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: "#333",
+  },
+  draftItemSelected: {
+    borderColor: "#007AFF",
+    borderWidth: 2,
+    backgroundColor: "#1a1a2a",
   },
   draftContent: {
     flexDirection: "row",
@@ -385,9 +643,10 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   draftDate: {
-    fontSize: 11,
+    fontSize: 13,
     color: "#666666",
-    lineHeight: 14,
+    lineHeight: 16,
+    marginTop: 4,
   },
   deleteButton: {
     width: 32,
@@ -408,6 +667,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 40,
+    marginTop: -60,
   },
   emptyTitle: {
     fontSize: 24,
