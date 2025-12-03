@@ -18,7 +18,7 @@ const ACCENT_COLOR = "#ff0000";
 interface Segment {
   id: string;
   uri: string;
-  duration: number;
+  recordedDurationSeconds: number;
 }
 
 interface SegmentReorderListVerticalProps {
@@ -88,7 +88,7 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
           Segment {index + 1}
         </ThemedText>
         <ThemedText style={styles.segmentDuration}>
-          {formatDuration(segment.duration)}
+          {formatDuration(segment.recordedDurationSeconds)}
         </ThemedText>
       </View>
 
@@ -151,8 +151,8 @@ export default function SegmentReorderListVertical({
     }
   }, [hasChanges, reorderedSegments, onSave]);
 
-  const totalDuration = reorderedSegments.reduce(
-    (total, segment) => total + segment.duration,
+  const totalRecordedDurationSeconds = reorderedSegments.reduce(
+    (total, segment) => total + segment.recordedDurationSeconds,
     0
   );
 
@@ -174,7 +174,7 @@ export default function SegmentReorderListVertical({
           <ThemedText style={styles.headerTitle}>Reorder Segments</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
             {reorderedSegments.length} segments •{" "}
-            {formatTotalDuration(totalDuration)}
+            {formatTotalDuration(totalRecordedDurationSeconds)}
           </ThemedText>
           <View style={styles.infoTag}>
             <MaterialIcons name="info" size={14} color={ACCENT_COLOR} />

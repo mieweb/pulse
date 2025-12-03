@@ -28,7 +28,7 @@ const DRAFTS_STORAGE_KEY = "recording_drafts";
 export class DraftStorage {
   static async saveDraft(
     segments: RecordingSegment[],
-    totalDuration: number,
+    maxDurationLimitSeconds: number,
     mode: DraftMode = "camera",
     customId?: string,
     options?: {
@@ -84,7 +84,7 @@ export class DraftStorage {
         id: newDraftId,
         mode,
         segments,
-        totalDuration,
+        totalDuration: maxDurationLimitSeconds, // Stored as totalDuration for backward compatibility
         createdAt: options?.createdAt || existingDraft?.createdAt || now,
         lastModified: options?.lastModified || now,
         thumbnail: thumbnailUri,
@@ -102,7 +102,7 @@ export class DraftStorage {
       );
 
       console.log(
-        `[DraftStorage] Saved draft: ${newDraft.id} (${segments.length} segments, ${totalDuration}s, mode: ${mode})`
+        `[DraftStorage] Saved draft: ${newDraft.id} (${segments.length} segments, ${maxDurationLimitSeconds}s, mode: ${mode})`
       );
       return newDraft.id;
     } catch (error) {
@@ -114,7 +114,7 @@ export class DraftStorage {
   static async updateDraft(
     id: string,
     segments: RecordingSegment[],
-    totalDuration: number
+    maxDurationLimitSeconds: number
   ): Promise<void> {
     try {
       const existingDrafts = await this.getAllDrafts();
@@ -124,7 +124,7 @@ export class DraftStorage {
           ? {
               ...draft,
               segments,
-              totalDuration,
+              totalDuration: maxDurationLimitSeconds, // Stored as totalDuration for backward compatibility
               lastModified: new Date(),
               // Keep existing thumbnail and name - don't regenerate
             }
@@ -136,7 +136,7 @@ export class DraftStorage {
         JSON.stringify(updatedDrafts)
       );
       console.log(
-        `[DraftStorage] Updated draft: ${id} (${segments.length} segments, ${totalDuration}s)`
+        `[DraftStorage] Updated draft: ${id} (${segments.length} segments, ${maxDurationLimitSeconds}s)`
       );
     } catch (error) {
       console.error("Error updating draft:", error);

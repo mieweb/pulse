@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 interface Segment {
   id: string;
   uri: string;
-  duration: number;
+  recordedDurationSeconds: number;
 }
 
 export default function ReorderSegmentsScreen() {
@@ -37,7 +37,7 @@ export default function ReorderSegmentsScreen() {
             (segment: any) => ({
               id: segment.id,
               uri: fileStore.toAbsolutePath(segment.uri),
-              duration: segment.duration,
+              recordedDurationSeconds: segment.recordedDurationSeconds,
             })
           );
           setSegments(formattedSegments);
@@ -86,12 +86,12 @@ export default function ReorderSegmentsScreen() {
         const updatedSegments = reorderedSegments.map((segment) => ({
           id: segment.id,
           uri: fileStore.toRelativePath(segment.uri),
-          duration: segment.duration,
+          recordedDurationSeconds: segment.recordedDurationSeconds,
         }));
 
-        const totalDuration = draft.totalDuration;
+        const maxDurationLimitSeconds = draft.totalDuration; // Draft interface still uses totalDuration for backward compatibility
 
-        await DraftStorage.updateDraft(draftId, updatedSegments, totalDuration);
+        await DraftStorage.updateDraft(draftId, updatedSegments, maxDurationLimitSeconds);
         // Navigate back after successful save
         router.back();
       } catch (error) {
