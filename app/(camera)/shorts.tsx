@@ -54,13 +54,31 @@ import Animated, {
  * - Time selector for recording duration
  */
 export default function ShortsScreen() {
-  const { draftId, mode } = useLocalSearchParams<{
+  const { draftId, mode, server, token } = useLocalSearchParams<{
     draftId?: string;
     mode?: string;
+    server?: string;
+    token?: string;
   }>();
   const draftMode = (mode === "upload" ? "upload" : "camera") as
     | "camera"
     | "upload";
+  
+  // Store server and token if provided (from deeplink)
+  React.useEffect(() => {
+    const storeConfig = async () => {
+      if (server && token) {
+        try {
+          const { storeUploadConfig } = await import("@/utils/uploadConfig");
+          await storeUploadConfig(server, token);
+          console.log("✅ Stored upload config in shorts screen");
+        } catch (error) {
+          console.error("❌ Failed to store upload config:", error);
+        }
+      }
+    };
+    storeConfig();
+  }, [server, token]);
   const cameraRef = React.useRef<CameraView>(null);
   const [selectedDuration, setSelectedDuration] = React.useState(60);
   const [currentRecordingDuration, setCurrentRecordingDuration] =
@@ -165,7 +183,7 @@ export default function ShortsScreen() {
     if (loadedDuration !== null && loadedDuration !== selectedDuration) {
       setSelectedDuration(loadedDuration);
     }
-  }, [loadedDuration]);
+  }, [loadedDuration, selectedDuration]);
 
   // Sync previousCameraFacing ref when cameraFacing changes
   React.useEffect(() => {
@@ -369,8 +387,8 @@ export default function ShortsScreen() {
             asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
         }
 
-        // Generate thumbnail
-        const thumbnailUri = await VideoThumbnails.getThumbnailAsync(
+        // Generate thumbnail (not currently used, but may be needed in future)
+        await VideoThumbnails.getThumbnailAsync(
           asset.uri,
           {
             time: 1000, // 1 second into the video
