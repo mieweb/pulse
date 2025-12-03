@@ -6,9 +6,9 @@ struct RecordingSegment: Record {
     @Field
     var uri: String
     @Field
-    var inMs: Double? = nil
+    var trimStartTimeMs: Double? = nil
     @Field
-    var outMs: Double? = nil
+    var trimEndTimeMs: Double? = nil
 }
 
 /// Native module for concatenating multiple video segments into a single video file.
@@ -60,8 +60,8 @@ public class VideoConcatModule: Module {
                 // Calculate the time range based on in/out points
                 let timeRange = calculateTimeRange(
                     fullRange: fullTimeRange,
-                    inMs: segment.inMs,
-                    outMs: segment.outMs
+                    inMs: segment.trimStartTimeMs,
+                    outMs: segment.trimEndTimeMs
                 )
                 
                 // Insert the video track into the composition at the current time
@@ -77,8 +77,8 @@ public class VideoConcatModule: Module {
                     // Calculate the audio trim range using the same in/out points but with audio's timescale
                     let audioTrimRange = calculateTimeRange(
                         fullRange: audioFullTimeRange,
-                        inMs: segment.inMs,
-                        outMs: segment.outMs
+                        inMs: segment.trimStartTimeMs,
+                        outMs: segment.trimEndTimeMs
                     )
                     
                     try audioTrack.insertTimeRange(audioTrimRange, of: sourceAudioTrack, at: currentTime)
