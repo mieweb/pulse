@@ -2,11 +2,19 @@
 
 # Simple Deeplink Test Script
 # Tests deeplink generation and provides easy way to test in app
+#
+# Configuration:
+#   - Default port: 8080 (for Proxmox LXC containers using non-privileged ports)
+#   - To use standard port 3000: export PULSEVAULT_PORT=3000
+#   - To set custom URL: export PULSEVAULT_URL=http://your-server:port
 
 # Don't exit on error - we want to provide helpful feedback
 set +e
 
 # Configuration
+# Default port: 8080 for Proxmox LXC (non-privileged), 3000 for standard setup
+DEFAULT_PORT="${PULSEVAULT_PORT:-8080}"
+
 # Try to detect local network IP for physical device testing
 LOCAL_IP=$(ifconfig 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1 || echo "")
 if [ -z "$LOCAL_IP" ]; then
@@ -19,18 +27,24 @@ if [ -n "$PULSEVAULT_URL" ]; then
   echo "📡 Using provided PULSEVAULT_URL: $SERVER_URL"
   if [ -n "$LOCAL_IP" ]; then
     echo "   💡 Your current network IP: $LOCAL_IP"
-    echo "   💡 If server is on this network, try: http://${LOCAL_IP}:3000"
+    echo "   💡 If server is on this network, try: http://${LOCAL_IP}:${DEFAULT_PORT}"
   fi
   echo ""
 elif [ -n "$LOCAL_IP" ]; then
-  SERVER_URL="http://${LOCAL_IP}:3000"
+  SERVER_URL="http://${LOCAL_IP}:${DEFAULT_PORT}"
   echo "📡 Detected local IP: $LOCAL_IP"
   echo "   Using: $SERVER_URL (works on physical devices)"
+  if [ "$DEFAULT_PORT" = "8080" ]; then
+    echo "   ℹ️  Using port 8080 (Proxmox LXC default)"
+  fi
   echo ""
 else
-  SERVER_URL="http://localhost:3000"
+  SERVER_URL="http://localhost:${DEFAULT_PORT}"
   echo "⚠️  Using localhost - this won't work on physical devices!"
-  echo "   Set PULSEVAULT_URL=http://YOUR_IP:3000 for device testing"
+  echo "   Set PULSEVAULT_URL=http://YOUR_IP:${DEFAULT_PORT} for device testing"
+  if [ "$DEFAULT_PORT" = "8080" ]; then
+    echo "   ℹ️  Using port 8080 (Proxmox LXC default)"
+  fi
   echo ""
 fi
 
@@ -60,12 +74,16 @@ if [ "$SERVER_REACHABLE" = false ]; then
   echo ""
   if [ -n "$LOCAL_IP" ]; then
     echo "   💡 Your current network IP: $LOCAL_IP"
-    echo "   💡 Try: PULSEVAULT_URL=http://${LOCAL_IP}:3000 ./test-deeplink.sh $*"
+    echo "   💡 Try: PULSEVAULT_URL=http://${LOCAL_IP}:${DEFAULT_PORT} ./test-deeplink.sh $*"
     echo ""
   fi
   echo "   Troubleshooting:"
   echo "   1. Check if PulseVault is running:"
-  echo "      cd pulse-vault && docker-compose ps"
+  if [ "$DEFAULT_PORT" = "8080" ]; then
+    echo "      cd pulse-vault && docker compose -f docker-compose.yml -f docker-compose.proxmox.yml ps"
+  else
+    echo "      cd pulse-vault && docker compose ps"
+  fi
   echo ""
   echo "   2. If server is on a different network, you may need to:"
   echo "      - Use a VPN to connect to the server's network"
@@ -74,10 +92,16 @@ if [ "$SERVER_REACHABLE" = false ]; then
   echo "      - Find the server's IP on its network and use that"
   echo ""
   echo "   3. To start the server:"
-  echo "      cd pulse-vault && docker-compose up -d"
+  if [ "$DEFAULT_PORT" = "8080" ]; then
+    echo "      cd pulse-vault && docker compose -f docker-compose.yml -f docker-compose.proxmox.yml up -d"
+    echo "      (Using Proxmox LXC configuration - ports 8080/8443)"
+  else
+    echo "      cd pulse-vault && docker compose up -d"
+  fi
   echo ""
   echo "   4. To find the server's IP (run on the server machine):"
   echo "      ifconfig | grep 'inet ' | grep -v 127.0.0.1"
+  echo "      # or: ip addr show | grep 'inet ' | grep -v 127.0.0.1"
   echo ""
   echo "   ⚠️  Continuing anyway - deeplink generation will fail but you can test with existing deeplinks"
   echo ""
@@ -180,6 +204,7 @@ echo ""
 echo "Option 3: Physical Device"
 echo "   1. Scan QR code: /tmp/pulse-qr.png"
 echo "   2. Or copy deeplink above and open in browser"
+echo "   3. Server URL: $SERVER_URL"
 echo ""
 echo "Option 4: Expo CLI"
 echo "   npx uri-scheme open \"$DEEPLINK\" --ios"
