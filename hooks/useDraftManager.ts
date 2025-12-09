@@ -142,7 +142,7 @@ export function useDraftManager(
 
         if (draftToLoad) {
           console.log(
-            `[DraftManager] Loaded draft: ${draftToLoad.id} (${draftToLoad.segments.length} segments, ${draftToLoad.totalDuration}s)`
+            `[DraftManager] Loaded draft: ${draftToLoad.id} (${draftToLoad.segments.length} segments, ${draftToLoad.maxDurationLimitSeconds}s)`
           );
           const segmentsWithAbsolutePaths = fileStore.convertSegmentsToAbsolute(
             draftToLoad.segments
@@ -150,8 +150,7 @@ export function useDraftManager(
           setRecordingSegments(segmentsWithAbsolutePaths);
           setCurrentDraftId(draftToLoad.id);
           setOriginalDraftId(draftToLoad.id);
-          // Draft interface uses totalDuration for backward compatibility, but it represents maxDurationLimitSeconds
-          setSavedDurationLimitSeconds(draftToLoad.totalDuration);
+          setSavedDurationLimitSeconds(draftToLoad.maxDurationLimitSeconds);
           setCurrentDraftName(draftToLoad.name);
           lastSegmentCount.current = draftToLoad.segments.length;
         } else {

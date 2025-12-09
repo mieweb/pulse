@@ -320,8 +320,7 @@ export default function DraftsScreen() {
               {item.segments.length} segment
               {item.segments.length !== 1 ? "s" : ""} • {" "}
               {formatDuration(Math.round(totalRecordedDurationSeconds))}/
-              {/* totalDuration represents maxDurationLimitSeconds */}
-              {formatDuration(item.totalDuration)}
+              {formatDuration(item.maxDurationLimitSeconds)}
             </Text>
             <Text style={styles.draftDate}>
               Created: {formatDate(item.createdAt)}

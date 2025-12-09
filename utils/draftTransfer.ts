@@ -116,7 +116,7 @@ export class DraftTransfer {
       const originalLastModified = draft.lastModified ? new Date(draft.lastModified) : undefined;
       await DraftStorage.saveDraft(
         importedSegments,
-        draft.totalDuration,
+        draft.maxDurationLimitSeconds ?? draft.totalDuration,
         draft.mode,
         newDraftId,
         {
@@ -299,7 +299,7 @@ export class DraftTransfer {
           const originalLastModified = draft.lastModified ? new Date(draft.lastModified) : undefined;
           await DraftStorage.saveDraft(
             importedSegments,
-            draft.totalDuration,
+            draft.maxDurationLimitSeconds ?? draft.totalDuration,
             draft.mode,
             newDraftId,
             {

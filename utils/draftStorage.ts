@@ -10,12 +10,7 @@ export interface Draft {
   id: string;
   mode: DraftMode;
   segments: RecordingSegment[];
-  /**
-   * Maximum duration limit for this draft in seconds.
-   * Note: Stored as `totalDuration` for backward compatibility with existing drafts.
-   * In code, this is typically referred to as `maxDurationLimitSeconds`.
-   */
-  totalDuration: number;
+  maxDurationLimitSeconds: number;
   createdAt: Date;
   lastModified: Date;
   thumbnail?: string;
@@ -89,7 +84,7 @@ export class DraftStorage {
         id: newDraftId,
         mode,
         segments,
-        totalDuration: maxDurationLimitSeconds, // Stored as totalDuration for backward compatibility
+        maxDurationLimitSeconds,
         createdAt: options?.createdAt || existingDraft?.createdAt || now,
         lastModified: options?.lastModified || now,
         thumbnail: thumbnailUri,
@@ -129,7 +124,7 @@ export class DraftStorage {
           ? {
               ...draft,
               segments,
-              totalDuration: maxDurationLimitSeconds, // Stored as totalDuration for backward compatibility
+              maxDurationLimitSeconds,
               lastModified: new Date(),
               // Keep existing thumbnail and name - don't regenerate
             }
@@ -203,12 +198,12 @@ export class DraftStorage {
       const drafts = JSON.parse(draftsJson);
       const parsedDrafts = drafts.map((draft: any) => {
         // Migrate segment duration field for backward compatibility
-        let migrationCount = 0;
+        let segmentMigrationCount = 0;
         const migratedSegments = (draft.segments || []).map((segment: any) => {
           // Check if migration is needed (has old field but not new field)
           const needsMigration = segment.duration !== undefined && segment.recordedDurationSeconds === undefined;
           if (needsMigration) {
-            migrationCount++;
+            segmentMigrationCount++;
           }
           return {
             ...segment,
@@ -216,10 +211,19 @@ export class DraftStorage {
           };
         });
 
-        // Log migration once per draft (not per segment) to reduce log noise
-        if (migrationCount > 0) {
+        // Migrate draft duration field for backward compatibility
+        const needsDraftDurationMigration = draft.totalDuration !== undefined && draft.maxDurationLimitSeconds === undefined;
+        const maxDurationLimitSeconds = draft.maxDurationLimitSeconds ?? draft.totalDuration;
+
+        // Log migrations once per draft (not per segment) to reduce log noise
+        if (segmentMigrationCount > 0) {
           console.log(
-            `[DraftStorage] Migrated ${migrationCount} segment(s) in draft ${draft.id}: duration → recordedDurationSeconds`
+            `[DraftStorage] Migrated ${segmentMigrationCount} segment(s) in draft ${draft.id}: duration → recordedDurationSeconds`
+          );
+        }
+        if (needsDraftDurationMigration) {
+          console.log(
+            `[DraftStorage] Migrated draft ${draft.id}: totalDuration → maxDurationLimitSeconds`
           );
         }
 
@@ -229,6 +233,7 @@ export class DraftStorage {
           lastModified: new Date(draft.lastModified || draft.createdAt), // Handle existing drafts
           mode: draft.mode || "camera", // Default to camera for older drafts
           name: draft.name || undefined, // Preserve name if it exists
+          maxDurationLimitSeconds,
           segments: migratedSegments,
         };
       });
@@ -290,7 +295,7 @@ export class DraftStorage {
               draft.segments.length - validSegments.length
             } missing)`
           );
-          await this.updateDraft(id, validSegments, draft.totalDuration);
+          await this.updateDraft(id, validSegments, draft.maxDurationLimitSeconds);
           draft.segments = validSegments;
         }
 
