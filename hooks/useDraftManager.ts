@@ -150,6 +150,7 @@ export function useDraftManager(
           setRecordingSegments(segmentsWithAbsolutePaths);
           setCurrentDraftId(draftToLoad.id);
           setOriginalDraftId(draftToLoad.id);
+          // Draft interface uses totalDuration for backward compatibility, but it represents maxDurationLimitSeconds
           setSavedDurationLimitSeconds(draftToLoad.totalDuration);
           setCurrentDraftName(draftToLoad.name);
           lastSegmentCount.current = draftToLoad.segments.length;

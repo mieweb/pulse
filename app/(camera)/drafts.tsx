@@ -320,6 +320,7 @@ export default function DraftsScreen() {
               {item.segments.length} segment
               {item.segments.length !== 1 ? "s" : ""} • {" "}
               {formatDuration(Math.round(totalRecordedDurationSeconds))}/
+              {/* totalDuration represents maxDurationLimitSeconds */}
               {formatDuration(item.totalDuration)}
             </Text>
             <Text style={styles.draftDate}>

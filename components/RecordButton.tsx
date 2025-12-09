@@ -9,7 +9,7 @@ interface RecordButtonProps {
   onRecordingComplete?: (
     videoUri: string | null,
     mode: "tap" | "hold",
-    duration: number
+    recordedDurationSeconds: number
   ) => void;
   onRecordingProgress?: (
     currentDuration: number,
@@ -152,7 +152,7 @@ export default function RecordButton({
         if (!manuallyStoppedRef.current && video?.uri) {
           console.log("Recording saved:", video.uri);
         }
-        onRecordingComplete?.(video?.uri || null, mode, recordingDuration);
+        onRecordingComplete?.(video?.uri || null, mode, recordingDuration); // recordedDurationSeconds
         return video;
       })
       .catch((error) => {
@@ -162,7 +162,7 @@ export default function RecordButton({
         if (!error.message?.includes("stopped")) {
           console.log("Recording failed");
         }
-        onRecordingComplete?.(null, mode, recordingDuration);
+        onRecordingComplete?.(null, mode, recordingDuration); // recordedDurationSeconds
         return null;
       })
       .finally(() => {

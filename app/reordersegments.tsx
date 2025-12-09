@@ -89,7 +89,8 @@ export default function ReorderSegmentsScreen() {
           recordedDurationSeconds: segment.recordedDurationSeconds,
         }));
 
-        const maxDurationLimitSeconds = draft.totalDuration; // Draft interface still uses totalDuration for backward compatibility
+        // Draft interface uses totalDuration for backward compatibility, but it represents maxDurationLimitSeconds
+        const maxDurationLimitSeconds = draft.totalDuration;
 
         await DraftStorage.updateDraft(draftId, updatedSegments, maxDurationLimitSeconds);
         // Navigate back after successful save

@@ -158,7 +158,7 @@ export default function ShortsScreen() {
   const handleRecordingComplete = async (
     videoUri: string | null,
     mode: "tap" | "hold",
-    duration: number
+    recordedDurationSeconds: number
   ) => {
     setActiveRecordingDurationSeconds(0);
     setIsRecording(false);
@@ -167,10 +167,10 @@ export default function ShortsScreen() {
     isHoldRecording.value = false;
     recordingModeShared.value = "";
 
-    if (videoUri && duration > 0) {
+    if (videoUri && recordedDurationSeconds > 0) {
       const newSegment: RecordingSegment = {
         id: Date.now().toString(),
-        recordedDurationSeconds: duration,
+        recordedDurationSeconds: recordedDurationSeconds,
         uri: videoUri,
       };
 

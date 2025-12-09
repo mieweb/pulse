@@ -10,6 +10,11 @@ export interface Draft {
   id: string;
   mode: DraftMode;
   segments: RecordingSegment[];
+  /**
+   * Maximum duration limit for this draft in seconds.
+   * Note: Stored as `totalDuration` for backward compatibility with existing drafts.
+   * In code, this is typically referred to as `maxDurationLimitSeconds`.
+   */
   totalDuration: number;
   createdAt: Date;
   lastModified: Date;
@@ -196,13 +201,37 @@ export class DraftStorage {
       if (!draftsJson) return [];
 
       const drafts = JSON.parse(draftsJson);
-      const parsedDrafts = drafts.map((draft: any) => ({
-        ...draft,
-        createdAt: new Date(draft.createdAt),
-        lastModified: new Date(draft.lastModified || draft.createdAt), // Handle existing drafts
-        mode: draft.mode || "camera", // Default to camera for older drafts
-        name: draft.name || undefined, // Preserve name if it exists
-      }));
+      const parsedDrafts = drafts.map((draft: any) => {
+        // Migrate segment duration field for backward compatibility
+        let migrationCount = 0;
+        const migratedSegments = (draft.segments || []).map((segment: any) => {
+          // Check if migration is needed (has old field but not new field)
+          const needsMigration = segment.duration !== undefined && segment.recordedDurationSeconds === undefined;
+          if (needsMigration) {
+            migrationCount++;
+          }
+          return {
+            ...segment,
+            recordedDurationSeconds: segment.recordedDurationSeconds ?? segment.duration,
+          };
+        });
+
+        // Log migration once per draft (not per segment) to reduce log noise
+        if (migrationCount > 0) {
+          console.log(
+            `[DraftStorage] Migrated ${migrationCount} segment(s) in draft ${draft.id}: duration → recordedDurationSeconds`
+          );
+        }
+
+        return {
+          ...draft,
+          createdAt: new Date(draft.createdAt),
+          lastModified: new Date(draft.lastModified || draft.createdAt), // Handle existing drafts
+          mode: draft.mode || "camera", // Default to camera for older drafts
+          name: draft.name || undefined, // Preserve name if it exists
+          segments: migratedSegments,
+        };
+      });
 
       // Filter by mode if specified
       return mode
