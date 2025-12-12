@@ -5,6 +5,7 @@ import RecordButton from "@/components/RecordButton";
 import RecordingProgressBar, {
   RecordingSegment,
 } from "@/components/RecordingProgressBar";
+import VideoConcatModule from "@/modules/video-concat";
 import RedoSegmentButton from "@/components/RedoSegmentButton";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -168,9 +169,25 @@ export default function ShortsScreen() {
     recordingModeShared.value = "";
 
     if (videoUri && recordedDurationSeconds > 0) {
+      let actualDuration = recordedDurationSeconds;
+      
+      try {
+        const startTime = Date.now();
+        actualDuration = await Promise.race([
+          VideoConcatModule.getDuration(videoUri),
+          new Promise<number>((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 500)
+          )
+        ]);
+        const elapsed = Date.now() - startTime;
+        console.log(`[Shorts] Native duration: ${actualDuration.toFixed(2)}s (${elapsed}ms), timestamp: ${recordedDurationSeconds.toFixed(2)}s`);
+      } catch (error) {
+        console.warn(`[Shorts] Native duration failed, using timestamp: ${recordedDurationSeconds.toFixed(2)}s`, error);
+      }
+
       const newSegment: RecordingSegment = {
         id: Date.now().toString(),
-        recordedDurationSeconds: recordedDurationSeconds,
+        recordedDurationSeconds: actualDuration,
         uri: videoUri,
       };
 
@@ -379,12 +396,26 @@ export default function ShortsScreen() {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
 
-        // Get the actual video duration in seconds
+        // Get the actual video duration from native module
         let videoFileDurationSeconds = 0;
         if (asset.duration) {
-          // Convert from milliseconds to seconds if needed
-          videoFileDurationSeconds =
-            asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+          videoFileDurationSeconds = asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+        }
+        
+        try {
+          const startTime = Date.now();
+          const nativeDuration = await Promise.race([
+            VideoConcatModule.getDuration(asset.uri),
+            new Promise<number>((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout')), 500)
+            )
+          ]);
+          const elapsed = Date.now() - startTime;
+          videoFileDurationSeconds = nativeDuration;
+          const pickerDuration = asset.duration ? (asset.duration > 1000 ? asset.duration / 1000 : asset.duration) : 0;
+          console.log(`[Shorts] Library video native duration: ${nativeDuration.toFixed(2)}s (${elapsed}ms), picker: ${pickerDuration.toFixed(2)}s`);
+        } catch (error) {
+          console.warn(`[Shorts] Native duration failed for library video, using picker value: ${videoFileDurationSeconds.toFixed(2)}s`, error);
         }
 
         // Generate thumbnail (not currently used, but may be needed in future)
