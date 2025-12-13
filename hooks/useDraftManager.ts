@@ -30,7 +30,7 @@ interface DraftManagerState {
   hasStartedOver: boolean;
   isContinuingLastDraft: boolean;
   showContinuingIndicator: boolean;
-  loadedDuration: number | null;
+  savedDurationLimitSeconds: number | null;
   currentDraftName: string | undefined;
 }
 
@@ -41,17 +41,17 @@ interface DraftManagerActions {
   handleStartNew: () => void;
   handleSaveAsDraft: (
     segments: RecordingSegment[],
-    selectedDuration: number,
+    maxDurationLimitSeconds: number,
     options?: { forceNew?: boolean }
   ) => Promise<void>;
   handleClose: () => Promise<void>;
-  handleUndoSegment: (selectedDuration: number) => Promise<void>;
-  handleRedoSegment: (selectedDuration: number) => Promise<void>;
+  handleUndoSegment: (maxDurationLimitSeconds: number) => Promise<void>;
+  handleRedoSegment: (maxDurationLimitSeconds: number) => Promise<void>;
   updateSegmentsAfterRecording: (
     newSegment: RecordingSegment,
-    selectedDuration: number
+    maxDurationLimitSeconds: number
   ) => Promise<void>;
-  updateDraftDuration: (newDuration: number) => Promise<void>;
+  updateDraftDuration: (newDurationLimitSeconds: number) => Promise<void>;
 }
 
 /**
@@ -64,11 +64,11 @@ interface DraftManagerActions {
  * - Draft lifecycle (save, delete, start over)
  *
  * @param draftId - Optional specific draft to load
- * @param selectedDuration - Total recording duration limit
+ * @param maxDurationLimitSeconds - Maximum recording duration limit in seconds
  */
 export function useDraftManager(
   draftId?: string,
-  selectedDuration: number = 60,
+  maxDurationLimitSeconds: number = 60,
   mode: DraftMode = "camera"
 ): DraftManagerState & DraftManagerActions {
   const [recordingSegments, setRecordingSegments] = useState<
@@ -81,7 +81,7 @@ export function useDraftManager(
   const [isContinuingLastDraft, setIsContinuingLastDraft] = useState(false);
   const [showContinuingIndicator, setShowContinuingIndicator] = useState(false);
   const [forceNewNext, setForceNewNext] = useState(false);
-  const [loadedDuration, setLoadedDuration] = useState<number | null>(null);
+  const [savedDurationLimitSeconds, setSavedDurationLimitSeconds] = useState<number | null>(null);
   const [currentDraftName, setCurrentDraftName] = useState<string | undefined>(
     undefined
   );
@@ -142,7 +142,7 @@ export function useDraftManager(
 
         if (draftToLoad) {
           console.log(
-            `[DraftManager] Loaded draft: ${draftToLoad.id} (${draftToLoad.segments.length} segments, ${draftToLoad.totalDuration}s)`
+            `[DraftManager] Loaded draft: ${draftToLoad.id} (${draftToLoad.segments.length} segments, ${draftToLoad.maxDurationLimitSeconds}s)`
           );
           const segmentsWithAbsolutePaths = fileStore.convertSegmentsToAbsolute(
             draftToLoad.segments
@@ -150,7 +150,7 @@ export function useDraftManager(
           setRecordingSegments(segmentsWithAbsolutePaths);
           setCurrentDraftId(draftToLoad.id);
           setOriginalDraftId(draftToLoad.id);
-          setLoadedDuration(draftToLoad.totalDuration);
+          setSavedDurationLimitSeconds(draftToLoad.maxDurationLimitSeconds);
           setCurrentDraftName(draftToLoad.name);
           lastSegmentCount.current = draftToLoad.segments.length;
         } else {
@@ -221,7 +221,7 @@ export function useDraftManager(
           await DraftStorage.updateDraft(
             currentDraftId,
             segmentsForStorage,
-            selectedDuration
+            maxDurationLimitSeconds
           );
           console.log(`[DraftManager] Auto-saved: ${currentDraftId}`);
         } else {
@@ -232,7 +232,7 @@ export function useDraftManager(
           }));
           const newDraftId = await DraftStorage.saveDraft(
             segmentsForStorage,
-            selectedDuration,
+            maxDurationLimitSeconds,
             mode,
             draftId
           );
@@ -250,7 +250,7 @@ export function useDraftManager(
 
     const timeoutId = setTimeout(autoSave, 1000);
     return () => clearTimeout(timeoutId);
-  }, [recordingSegments, selectedDuration, currentDraftId]);
+  }, [recordingSegments, maxDurationLimitSeconds, currentDraftId]);
 
   useEffect(() => {
     const loadDraftName = async () => {
@@ -327,7 +327,7 @@ export function useDraftManager(
 
   const handleSaveAsDraft = async (
     segments: RecordingSegment[],
-    duration: number,
+    maxDurationLimitSeconds: number,
     options?: { forceNew?: boolean }
   ) => {
     try {
@@ -341,7 +341,7 @@ export function useDraftManager(
         await DraftStorage.updateDraft(
           currentDraftId,
           segmentsForStorage,
-          duration
+          maxDurationLimitSeconds
         );
         console.log(`[DraftManager] Saved & reset: ${currentDraftId}`);
       } else {
@@ -350,7 +350,7 @@ export function useDraftManager(
           : originalDraftId || draftId || undefined;
         const newId = await DraftStorage.saveDraft(
           segmentsForStorage,
-          duration,
+          maxDurationLimitSeconds,
           mode,
           preferredId
         );
@@ -428,7 +428,7 @@ export function useDraftManager(
     }
   };
 
-  const handleUndoSegment = async (duration: number) => {
+  const handleUndoSegment = async (maxDurationLimitSeconds: number) => {
     if (recordingSegments.length > 0) {
       const lastSegment = recordingSegments[recordingSegments.length - 1];
       const updatedSegments = recordingSegments.slice(0, -1);
@@ -507,7 +507,7 @@ export function useDraftManager(
             await DraftStorage.updateDraft(
               currentDraftId,
               segmentsForStorage,
-              duration
+              maxDurationLimitSeconds
             );
             console.log(
               `[DraftManager] Undo - Updated draft: ${currentDraftId}`
@@ -524,7 +524,7 @@ export function useDraftManager(
     }
   };
 
-  const handleRedoSegment = async (duration: number) => {
+  const handleRedoSegment = async (maxDurationLimitSeconds: number) => {
     if (redoStack.length > 0) {
       const segmentToRestore = redoStack[redoStack.length - 1];
       const updatedRedoStack = redoStack.slice(0, -1);
@@ -550,7 +550,7 @@ export function useDraftManager(
           }));
           const newDraftId = await DraftStorage.saveDraft(
             segmentsForStorage,
-            duration,
+            maxDurationLimitSeconds,
             mode,
             preferredId || undefined
           );
@@ -575,7 +575,7 @@ export function useDraftManager(
           await DraftStorage.updateDraft(
             currentDraftId,
             segmentsForStorage,
-            duration
+            maxDurationLimitSeconds
           );
           console.log(`[DraftManager] Redo - Updated draft: ${currentDraftId}`);
         }
@@ -591,7 +591,7 @@ export function useDraftManager(
 
   const updateSegmentsAfterRecording = async (
     newSegment: RecordingSegment,
-    duration: number
+    maxDurationLimitSeconds: number
   ) => {
     const prevRedo = redoStack;
 
@@ -634,7 +634,7 @@ export function useDraftManager(
         await DraftStorage.updateDraft(
           currentDraftId,
           segmentsForStorage,
-          duration
+          maxDurationLimitSeconds
         );
         console.log(
           `[DraftManager] Recording segment - Updated existing draft: ${currentDraftId}`
@@ -650,7 +650,7 @@ export function useDraftManager(
         }));
         const newDraftId = await DraftStorage.saveDraft(
           segmentsForStorage,
-          duration,
+          maxDurationLimitSeconds,
           mode,
           preferredId
         );
@@ -680,7 +680,7 @@ export function useDraftManager(
     }
   };
 
-  const updateDraftDuration = async (newDuration: number) => {
+  const updateDraftDuration = async (newDurationLimitSeconds: number) => {
     try {
       if (currentDraftId) {
         // Convert segments to relative paths for storage
@@ -691,10 +691,10 @@ export function useDraftManager(
         await DraftStorage.updateDraft(
           currentDraftId,
           segmentsForStorage,
-          newDuration
+          newDurationLimitSeconds
         );
         console.log(
-          `[DraftManager] Updated draft duration: ${currentDraftId} -> ${newDuration}s`
+          `[DraftManager] Updated draft duration: ${currentDraftId} -> ${newDurationLimitSeconds}s`
         );
       } else if (recordingSegments.length > 0) {
         // Create a new draft with the selected duration if we have segments but no draft
@@ -704,13 +704,13 @@ export function useDraftManager(
         }));
         const newDraftId = await DraftStorage.saveDraft(
           segmentsForStorage,
-          newDuration,
+          newDurationLimitSeconds,
           mode,
           draftId
         );
         setCurrentDraftId(newDraftId);
         console.log(
-          `[DraftManager] Created draft with duration: ${newDraftId} -> ${newDuration}s`
+          `[DraftManager] Created draft with duration: ${newDraftId} -> ${newDurationLimitSeconds}s`
         );
       }
     } catch (error) {
@@ -727,7 +727,7 @@ export function useDraftManager(
     hasStartedOver,
     isContinuingLastDraft,
     showContinuingIndicator,
-    loadedDuration,
+    savedDurationLimitSeconds,
     currentDraftName,
     // Actions
     setRecordingSegments,

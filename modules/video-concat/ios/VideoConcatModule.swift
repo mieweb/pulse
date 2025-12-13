@@ -6,9 +6,9 @@ struct RecordingSegment: Record {
     @Field
     var uri: String
     @Field
-    var inMs: Double? = nil
+    var trimStartTimeMs: Double? = nil
     @Field
-    var outMs: Double? = nil
+    var trimEndTimeMs: Double? = nil
 }
 
 /// Native module for concatenating multiple video segments into a single video file.
@@ -19,6 +19,37 @@ public class VideoConcatModule: Module {
         Name("VideoConcat")
         
         Events("onProgress")
+        
+        AsyncFunction("getDuration") { (uri: String) -> Double in
+            print("[VideoConcat] getDuration called for: \(uri)")
+            
+            guard let url = URL(string: uri) else {
+                print("[VideoConcat] ❌ Invalid URI: \(uri)")
+                throw NSError(
+                    domain: "VideoConcat",
+                    code: 10,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid URI: \(uri)"]
+                )
+            }
+            
+            let startTime = Date()
+            let asset = AVURLAsset(url: url)
+            let duration = try await asset.load(.duration)
+            let durationSeconds = CMTimeGetSeconds(duration)
+            let elapsed = Date().timeIntervalSince(startTime) * 1000
+            
+            guard durationSeconds.isFinite && durationSeconds > 0 else {
+                print("[VideoConcat] ❌ Invalid duration: \(durationSeconds)")
+                throw NSError(
+                    domain: "VideoConcat",
+                    code: 11,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid duration: \(durationSeconds)"]
+                )
+            }
+            
+            print("[VideoConcat] ✅ Duration: \(String(format: "%.2f", durationSeconds))s (\(String(format: "%.0f", elapsed))ms)")
+            return durationSeconds
+        }
         
         AsyncFunction("export") { (segments: [RecordingSegment], draftId: String) -> String in
             
@@ -60,8 +91,8 @@ public class VideoConcatModule: Module {
                 // Calculate the time range based on in/out points
                 let timeRange = calculateTimeRange(
                     fullRange: fullTimeRange,
-                    inMs: segment.inMs,
-                    outMs: segment.outMs
+                    inMs: segment.trimStartTimeMs,
+                    outMs: segment.trimEndTimeMs
                 )
                 
                 // Insert the video track into the composition at the current time
@@ -77,8 +108,8 @@ public class VideoConcatModule: Module {
                     // Calculate the audio trim range using the same in/out points but with audio's timescale
                     let audioTrimRange = calculateTimeRange(
                         fullRange: audioFullTimeRange,
-                        inMs: segment.inMs,
-                        outMs: segment.outMs
+                        inMs: segment.trimStartTimeMs,
+                        outMs: segment.trimEndTimeMs
                     )
                     
                     try audioTrack.insertTimeRange(audioTrimRange, of: sourceAudioTrack, at: currentTime)

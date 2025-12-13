@@ -10,7 +10,7 @@ export interface Draft {
   id: string;
   mode: DraftMode;
   segments: RecordingSegment[];
-  totalDuration: number;
+  maxDurationLimitSeconds: number;
   createdAt: Date;
   lastModified: Date;
   thumbnail?: string;
@@ -28,7 +28,7 @@ const DRAFTS_STORAGE_KEY = "recording_drafts";
 export class DraftStorage {
   static async saveDraft(
     segments: RecordingSegment[],
-    totalDuration: number,
+    maxDurationLimitSeconds: number,
     mode: DraftMode = "camera",
     customId?: string,
     options?: {
@@ -84,7 +84,7 @@ export class DraftStorage {
         id: newDraftId,
         mode,
         segments,
-        totalDuration,
+        maxDurationLimitSeconds,
         createdAt: options?.createdAt || existingDraft?.createdAt || now,
         lastModified: options?.lastModified || now,
         thumbnail: thumbnailUri,
@@ -102,7 +102,7 @@ export class DraftStorage {
       );
 
       console.log(
-        `[DraftStorage] Saved draft: ${newDraft.id} (${segments.length} segments, ${totalDuration}s, mode: ${mode})`
+        `[DraftStorage] Saved draft: ${newDraft.id} (${segments.length} segments, ${maxDurationLimitSeconds}s, mode: ${mode})`
       );
       return newDraft.id;
     } catch (error) {
@@ -114,7 +114,7 @@ export class DraftStorage {
   static async updateDraft(
     id: string,
     segments: RecordingSegment[],
-    totalDuration: number
+    maxDurationLimitSeconds: number
   ): Promise<void> {
     try {
       const existingDrafts = await this.getAllDrafts();
@@ -124,7 +124,7 @@ export class DraftStorage {
           ? {
               ...draft,
               segments,
-              totalDuration,
+              maxDurationLimitSeconds,
               lastModified: new Date(),
               // Keep existing thumbnail and name - don't regenerate
             }
@@ -136,7 +136,7 @@ export class DraftStorage {
         JSON.stringify(updatedDrafts)
       );
       console.log(
-        `[DraftStorage] Updated draft: ${id} (${segments.length} segments, ${totalDuration}s)`
+        `[DraftStorage] Updated draft: ${id} (${segments.length} segments, ${maxDurationLimitSeconds}s)`
       );
     } catch (error) {
       console.error("Error updating draft:", error);
@@ -196,13 +196,47 @@ export class DraftStorage {
       if (!draftsJson) return [];
 
       const drafts = JSON.parse(draftsJson);
-      const parsedDrafts = drafts.map((draft: any) => ({
-        ...draft,
-        createdAt: new Date(draft.createdAt),
-        lastModified: new Date(draft.lastModified || draft.createdAt), // Handle existing drafts
-        mode: draft.mode || "camera", // Default to camera for older drafts
-        name: draft.name || undefined, // Preserve name if it exists
-      }));
+      const parsedDrafts = drafts.map((draft: any) => {
+        // Migrate segment duration field for backward compatibility
+        let segmentMigrationCount = 0;
+        const migratedSegments = (draft.segments || []).map((segment: any) => {
+          // Check if migration is needed (has old field but not new field)
+          const needsMigration = segment.duration !== undefined && segment.recordedDurationSeconds === undefined;
+          if (needsMigration) {
+            segmentMigrationCount++;
+          }
+          return {
+            ...segment,
+            recordedDurationSeconds: segment.recordedDurationSeconds ?? segment.duration,
+          };
+        });
+
+        // Migrate draft duration field for backward compatibility
+        const needsDraftDurationMigration = draft.totalDuration !== undefined && draft.maxDurationLimitSeconds === undefined;
+        const maxDurationLimitSeconds = draft.maxDurationLimitSeconds ?? draft.totalDuration;
+
+        // Log migrations once per draft (not per segment) to reduce log noise
+        if (segmentMigrationCount > 0) {
+          console.log(
+            `[DraftStorage] Migrated ${segmentMigrationCount} segment(s) in draft ${draft.id}: duration → recordedDurationSeconds`
+          );
+        }
+        if (needsDraftDurationMigration) {
+          console.log(
+            `[DraftStorage] Migrated draft ${draft.id}: totalDuration → maxDurationLimitSeconds`
+          );
+        }
+
+        return {
+          ...draft,
+          createdAt: new Date(draft.createdAt),
+          lastModified: new Date(draft.lastModified || draft.createdAt), // Handle existing drafts
+          mode: draft.mode || "camera", // Default to camera for older drafts
+          name: draft.name || undefined, // Preserve name if it exists
+          maxDurationLimitSeconds,
+          segments: migratedSegments,
+        };
+      });
 
       // Filter by mode if specified
       return mode
@@ -261,7 +295,7 @@ export class DraftStorage {
               draft.segments.length - validSegments.length
             } missing)`
           );
-          await this.updateDraft(id, validSegments, draft.totalDuration);
+          await this.updateDraft(id, validSegments, draft.maxDurationLimitSeconds);
           draft.segments = validSegments;
         }
 

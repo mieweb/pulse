@@ -3,31 +3,31 @@ import { StyleSheet, View } from "react-native";
 
 export interface RecordingSegment {
   id: string;
-  duration: number;
+  recordedDurationSeconds: number; // Duration of the recorded segment in seconds
   uri: string;
-  inMs?: number; // Optional start trim point in milliseconds
-  outMs?: number; // Optional end trim point in milliseconds
+  trimStartTimeMs?: number; // Optional start trim point in milliseconds
+  trimEndTimeMs?: number; // Optional end trim point in milliseconds
 }
 
 interface RecordingProgressBarProps {
   segments: RecordingSegment[];
-  totalDuration: number;
-  currentRecordingDuration?: number;
+  maxDurationLimitSeconds: number; // Maximum allowed duration limit in seconds
+  activeRecordingDurationSeconds?: number; // Currently recording segment duration in seconds
 }
 
 export default function RecordingProgressBar({
   segments,
-  totalDuration,
-  currentRecordingDuration = 0,
+  maxDurationLimitSeconds,
+  activeRecordingDurationSeconds = 0,
 }: RecordingProgressBarProps) {
-  const completedDuration = segments.reduce(
-    (total, segment) => total + segment.duration,
+  const totalRecordedDurationSeconds = segments.reduce(
+    (total, segment) => total + segment.recordedDurationSeconds,
     0
   );
 
-  const totalUsedDuration = completedDuration + currentRecordingDuration;
+  const totalUsedDurationSeconds = totalRecordedDurationSeconds + activeRecordingDurationSeconds;
   const progressPercentage = Math.min(
-    (totalUsedDuration / totalDuration) * 100,
+    (totalUsedDurationSeconds / maxDurationLimitSeconds) * 100,
     100
   );
 
@@ -43,8 +43,8 @@ export default function RecordingProgressBar({
           const segmentEndPercentage = Math.min(
             (segments
               .slice(0, index + 1)
-              .reduce((total, seg) => total + seg.duration, 0) /
-              totalDuration) *
+              .reduce((total, seg) => total + seg.recordedDurationSeconds, 0) /
+              maxDurationLimitSeconds) *
               100,
             100
           );

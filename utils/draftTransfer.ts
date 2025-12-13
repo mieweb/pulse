@@ -114,9 +114,11 @@ export class DraftTransfer {
 
       const originalCreatedAt = draft.createdAt ? new Date(draft.createdAt) : undefined;
       const originalLastModified = draft.lastModified ? new Date(draft.lastModified) : undefined;
+      // Handle backward compatibility: old drafts may have totalDuration instead of maxDurationLimitSeconds
+      const draftAny = draft as any;
       await DraftStorage.saveDraft(
         importedSegments,
-        draft.totalDuration,
+        draft.maxDurationLimitSeconds ?? draftAny.totalDuration,
         draft.mode,
         newDraftId,
         {
@@ -297,9 +299,11 @@ export class DraftTransfer {
 
           const originalCreatedAt = draft.createdAt ? new Date(draft.createdAt) : undefined;
           const originalLastModified = draft.lastModified ? new Date(draft.lastModified) : undefined;
+          // Handle backward compatibility: old drafts may have totalDuration instead of maxDurationLimitSeconds
+          const draftAny = draft as any;
           await DraftStorage.saveDraft(
             importedSegments,
-            draft.totalDuration,
+            draft.maxDurationLimitSeconds ?? draftAny.totalDuration,
             draft.mode,
             newDraftId,
             {

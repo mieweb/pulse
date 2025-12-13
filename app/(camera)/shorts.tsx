@@ -5,6 +5,7 @@ import RecordButton from "@/components/RecordButton";
 import RecordingProgressBar, {
   RecordingSegment,
 } from "@/components/RecordingProgressBar";
+import VideoConcatModule from "@/modules/video-concat";
 import RedoSegmentButton from "@/components/RedoSegmentButton";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
@@ -80,8 +81,8 @@ export default function ShortsScreen() {
     storeConfig();
   }, [server, token]);
   const cameraRef = React.useRef<CameraView>(null);
-  const [selectedDuration, setSelectedDuration] = React.useState(60);
-  const [currentRecordingDuration, setCurrentRecordingDuration] =
+  const [maxDurationLimitSeconds, setMaxDurationLimitSeconds] = React.useState(60);
+  const [activeRecordingDurationSeconds, setActiveRecordingDurationSeconds] =
     React.useState(0);
 
   // Use the draft manager hook
@@ -92,7 +93,7 @@ export default function ShortsScreen() {
     hasStartedOver,
     isContinuingLastDraft,
     showContinuingIndicator,
-    loadedDuration,
+    savedDurationLimitSeconds,
     currentDraftName,
     handleStartOver,
     handleStartNew,
@@ -103,7 +104,7 @@ export default function ShortsScreen() {
     updateSegmentsAfterRecording,
     updateDraftDuration,
     setRecordingSegments,
-  } = useDraftManager(draftId, selectedDuration, draftMode);
+  } = useDraftManager(draftId, maxDurationLimitSeconds, draftMode);
 
   // Camera control states
   const { cameraFacing, updateCameraFacing } = useCameraFacing();
@@ -131,8 +132,8 @@ export default function ShortsScreen() {
   const isHoldRecording = useSharedValue(false);
   const recordingModeShared = useSharedValue("");
 
-  const totalUsedDuration = recordingSegments.reduce(
-    (total, segment) => total + segment.duration,
+  const totalRecordedDurationSeconds = recordingSegments.reduce(
+    (total, segment) => total + segment.recordedDurationSeconds,
     0
   );
 
@@ -140,7 +141,7 @@ export default function ShortsScreen() {
     mode: "tap" | "hold",
     remainingTime: number
   ) => {
-    setCurrentRecordingDuration(0);
+    setActiveRecordingDurationSeconds(0);
     setIsRecording(true);
 
     // Update shared values for gesture handler
@@ -152,38 +153,54 @@ export default function ShortsScreen() {
     currentDuration: number,
     remainingTime: number
   ) => {
-    setCurrentRecordingDuration(currentDuration);
+    setActiveRecordingDurationSeconds(currentDuration);
   };
 
   const handleRecordingComplete = async (
     videoUri: string | null,
     mode: "tap" | "hold",
-    duration: number
+    recordedDurationSeconds: number
   ) => {
-    setCurrentRecordingDuration(0);
+    setActiveRecordingDurationSeconds(0);
     setIsRecording(false);
 
     // Reset shared values
     isHoldRecording.value = false;
     recordingModeShared.value = "";
 
-    if (videoUri && duration > 0) {
+    if (videoUri && recordedDurationSeconds > 0) {
+      let actualDuration = recordedDurationSeconds;
+      
+      try {
+        const startTime = Date.now();
+        actualDuration = await Promise.race([
+          VideoConcatModule.getDuration(videoUri),
+          new Promise<number>((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 500)
+          )
+        ]);
+        const elapsed = Date.now() - startTime;
+        console.log(`[Shorts] Native duration: ${actualDuration.toFixed(2)}s (${elapsed}ms), timestamp: ${recordedDurationSeconds.toFixed(2)}s`);
+      } catch (error) {
+        console.warn(`[Shorts] Native duration failed, using timestamp: ${recordedDurationSeconds.toFixed(2)}s`, error);
+      }
+
       const newSegment: RecordingSegment = {
         id: Date.now().toString(),
-        duration: duration,
+        recordedDurationSeconds: actualDuration,
         uri: videoUri,
       };
 
-      await updateSegmentsAfterRecording(newSegment, selectedDuration);
+      await updateSegmentsAfterRecording(newSegment, maxDurationLimitSeconds);
     }
   };
 
   // Restore loaded duration when draft is loaded
   React.useEffect(() => {
-    if (loadedDuration !== null && loadedDuration !== selectedDuration) {
-      setSelectedDuration(loadedDuration);
+    if (savedDurationLimitSeconds !== null && savedDurationLimitSeconds !== maxDurationLimitSeconds) {
+      setMaxDurationLimitSeconds(savedDurationLimitSeconds);
     }
-  }, [loadedDuration, selectedDuration]);
+  }, [savedDurationLimitSeconds, maxDurationLimitSeconds]);
 
   // Sync previousCameraFacing ref when cameraFacing changes
   React.useEffect(() => {
@@ -214,27 +231,27 @@ export default function ShortsScreen() {
     }, [draftId, currentDraftId, setRecordingSegments])
   );
 
-  const handleTimeSelect = (timeInSeconds: number) => {
+  const handleTimeSelect = (newDurationLimitSeconds: number) => {
     // Check if current segments exceed the new duration limit
-    const currentTotalDuration = recordingSegments.reduce(
-      (total, seg) => total + seg.duration,
+    const currentRecordedDurationSeconds = recordingSegments.reduce(
+      (total, seg) => total + seg.recordedDurationSeconds,
       0
     );
 
-    if (currentTotalDuration > timeInSeconds) {
+    if (currentRecordedDurationSeconds > newDurationLimitSeconds) {
       Alert.alert(
         "Duration Too Low",
         `Current segments (${Math.round(
-          currentTotalDuration
-        )}s) exceed ${timeInSeconds}s limit. Undo segments first.`,
+          currentRecordedDurationSeconds
+        )}s) exceed ${newDurationLimitSeconds}s limit. Undo segments first.`,
         [{ text: "OK", style: "default" }]
       );
       return;
     }
 
-    setSelectedDuration(timeInSeconds);
+    setMaxDurationLimitSeconds(newDurationLimitSeconds);
     // Immediately update the draft with the new duration
-    updateDraftDuration(timeInSeconds);
+    updateDraftDuration(newDurationLimitSeconds);
   };
 
   const handleFlipCamera = () => {
@@ -286,15 +303,15 @@ export default function ShortsScreen() {
     segments: RecordingSegment[],
     options?: { forceNew?: boolean }
   ) => {
-    await handleSaveAsDraft(segments, selectedDuration, options);
+    await handleSaveAsDraft(segments, maxDurationLimitSeconds, options);
   };
 
   const handleUndoSegmentWrapper = async () => {
-    await handleUndoSegment(selectedDuration);
+    await handleUndoSegment(maxDurationLimitSeconds);
   };
 
   const handleRedoSegmentWrapper = async () => {
-    await handleRedoSegment(selectedDuration);
+    await handleRedoSegment(maxDurationLimitSeconds);
   };
 
   // Button touch coordination handlers
@@ -379,12 +396,26 @@ export default function ShortsScreen() {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
 
-        // Get the actual video duration in seconds
-        let actualDuration = 0;
+        // Get the actual video duration from native module
+        let videoFileDurationSeconds = 0;
         if (asset.duration) {
-          // Convert from milliseconds to seconds if needed
-          actualDuration =
-            asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+          videoFileDurationSeconds = asset.duration > 1000 ? asset.duration / 1000 : asset.duration;
+        }
+        
+        try {
+          const startTime = Date.now();
+          const nativeDuration = await Promise.race([
+            VideoConcatModule.getDuration(asset.uri),
+            new Promise<number>((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout')), 500)
+            )
+          ]);
+          const elapsed = Date.now() - startTime;
+          videoFileDurationSeconds = nativeDuration;
+          const pickerDuration = asset.duration ? (asset.duration > 1000 ? asset.duration / 1000 : asset.duration) : 0;
+          console.log(`[Shorts] Library video native duration: ${nativeDuration.toFixed(2)}s (${elapsed}ms), picker: ${pickerDuration.toFixed(2)}s`);
+        } catch (error) {
+          console.warn(`[Shorts] Native duration failed for library video, using picker value: ${videoFileDurationSeconds.toFixed(2)}s`, error);
         }
 
         // Generate thumbnail (not currently used, but may be needed in future)
@@ -397,19 +428,19 @@ export default function ShortsScreen() {
         ).catch(() => null);
 
         // Check if adding this video would exceed the total duration limit
-        const currentTotalDuration = recordingSegments.reduce(
-          (total, seg) => total + seg.duration,
+        const currentRecordedDurationSeconds = recordingSegments.reduce(
+          (total, seg) => total + seg.recordedDurationSeconds,
           0
         );
-        const newTotalDuration = currentTotalDuration + actualDuration;
+        const projectedTotalDurationSeconds = currentRecordedDurationSeconds + videoFileDurationSeconds;
 
-        if (newTotalDuration > selectedDuration) {
-          const remainingTime = selectedDuration - currentTotalDuration;
+        if (projectedTotalDurationSeconds > maxDurationLimitSeconds) {
+          const remainingTime = maxDurationLimitSeconds - currentRecordedDurationSeconds;
           Alert.alert(
             "Video Too Long",
             `Video (${Math.round(
-              actualDuration
-            )}s) exceeds ${selectedDuration}s limit. Remaining: ${Math.round(
+              videoFileDurationSeconds
+            )}s) exceeds ${maxDurationLimitSeconds}s limit. Remaining: ${Math.round(
               remainingTime
             )}s`,
             [{ text: "OK" }]
@@ -421,11 +452,11 @@ export default function ShortsScreen() {
         const segment: RecordingSegment = {
           id: Date.now().toString(),
           uri: asset.uri,
-          duration: actualDuration,
+          recordedDurationSeconds: videoFileDurationSeconds,
         };
 
         // Add the segment to the current recording
-        await updateSegmentsAfterRecording(segment, selectedDuration);
+        await updateSegmentsAfterRecording(segment, maxDurationLimitSeconds);
 
         console.log("Video added from library:", asset.uri);
       }
@@ -514,8 +545,8 @@ export default function ShortsScreen() {
 
           <RecordingProgressBar
             segments={recordingSegments}
-            totalDuration={selectedDuration}
-            currentRecordingDuration={currentRecordingDuration}
+            maxDurationLimitSeconds={maxDurationLimitSeconds}
+            activeRecordingDurationSeconds={activeRecordingDurationSeconds}
           />
 
           <View style={styles.recordingTimeContainer}>
@@ -535,7 +566,7 @@ export default function ShortsScreen() {
             <ThemedText style={styles.recordingTimeText}>
               {(() => {
                 const totalSeconds = Math.floor(
-                  totalUsedDuration + currentRecordingDuration
+                  totalRecordedDurationSeconds + activeRecordingDurationSeconds
                 );
                 const minutes = Math.floor(totalSeconds / 60);
                 const seconds = totalSeconds % 60;
@@ -547,8 +578,8 @@ export default function ShortsScreen() {
           <RecordButton
             cameraRef={cameraRef}
             maxDuration={180}
-            totalDuration={selectedDuration}
-            usedDuration={totalUsedDuration}
+            totalDuration={maxDurationLimitSeconds}
+            usedDuration={totalRecordedDurationSeconds}
             holdDelay={300}
             onRecordingStart={handleRecordingStart}
             onRecordingProgress={handleRecordingProgress}
@@ -565,7 +596,7 @@ export default function ShortsScreen() {
         <View style={styles.timeSelectorContainer}>
           <TimeSelectorButton
             onTimeSelect={handleTimeSelect}
-            selectedTime={selectedDuration}
+            selectedTime={maxDurationLimitSeconds}
           />
         </View>
       )}

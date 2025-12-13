@@ -274,8 +274,8 @@ export default function DraftsScreen() {
   };
 
   const renderDraftItem = ({ item }: { item: Draft }) => {
-    const totalRecordedDuration = item.segments.reduce(
-      (total, segment) => total + segment.duration,
+    const totalRecordedDurationSeconds = item.segments.reduce(
+      (total, segment) => total + segment.recordedDurationSeconds,
       0
     );
 
@@ -319,8 +319,8 @@ export default function DraftsScreen() {
             <Text style={styles.draftTitle}>
               {item.segments.length} segment
               {item.segments.length !== 1 ? "s" : ""} • {" "}
-              {formatDuration(Math.round(totalRecordedDuration))}/
-              {formatDuration(item.totalDuration)}
+              {formatDuration(Math.round(totalRecordedDurationSeconds))}/
+              {formatDuration(item.maxDurationLimitSeconds)}
             </Text>
             <Text style={styles.draftDate}>
               Created: {formatDate(item.createdAt)}
