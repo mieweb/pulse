@@ -15,8 +15,8 @@ import java.nio.ByteBuffer
 
 data class RecordingSegment(
   @Field val uri: String,
-  @Field val inMs: Int? = null,
-  @Field val outMs: Int? = null
+  @Field val trimStartTimeMs: Double? = null,
+  @Field val trimEndTimeMs: Double? = null
 ) : Record
 
 class VideoConcatModule : Module() {
@@ -98,13 +98,13 @@ class VideoConcatModule : Module() {
               extractor.selectTrack(trackIndex)
               
               // Calculate time range
-              val startTimeUs = (segment.inMs ?: 0) * 1000L
+              val startTimeUs = ((segment.trimStartTimeMs ?: 0.0) * 1000.0).toLong()
               val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) {
                 format.getLong(MediaFormat.KEY_DURATION)
               } else {
                 Long.MAX_VALUE
               }
-              val endTimeUs = (segment.outMs?.let { it * 1000L } ?: durationUs)
+              val endTimeUs = (segment.trimEndTimeMs?.let { (it * 1000.0).toLong() } ?: durationUs)
               
               extractor.seekTo(startTimeUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
               
@@ -150,13 +150,13 @@ class VideoConcatModule : Module() {
             if (mime.startsWith("audio/") && audioTrackIndex != -1) {
               extractor.selectTrack(trackIndex)
               
-              val startTimeUs = (segment.inMs ?: 0) * 1000L
+              val startTimeUs = ((segment.trimStartTimeMs ?: 0.0) * 1000.0).toLong()
               val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) {
                 format.getLong(MediaFormat.KEY_DURATION)
               } else {
                 Long.MAX_VALUE
               }
-              val endTimeUs = (segment.outMs?.let { it * 1000L } ?: durationUs)
+              val endTimeUs = (segment.trimEndTimeMs?.let { (it * 1000.0).toLong() } ?: durationUs)
               
               extractor.seekTo(startTimeUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
               
