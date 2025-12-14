@@ -245,6 +245,21 @@ export default function DraftsScreen() {
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
+  // Calculate effective duration: trimmed duration if trim points exist, otherwise original duration
+  const getEffectiveDuration = (segment: any): number => {
+    if (
+      segment.trimStartTimeMs !== undefined &&
+      segment.trimEndTimeMs !== undefined &&
+      segment.trimStartTimeMs >= 0 &&
+      segment.trimEndTimeMs > segment.trimStartTimeMs
+    ) {
+      // Calculate trimmed duration in seconds
+      return (segment.trimEndTimeMs - segment.trimStartTimeMs) / 1000;
+    }
+    // Return original recorded duration if no trim points
+    return segment.recordedDurationSeconds;
+  };
+
   const formatDate = (date: Date) => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -275,7 +290,7 @@ export default function DraftsScreen() {
 
   const renderDraftItem = ({ item }: { item: Draft }) => {
     const totalRecordedDurationSeconds = item.segments.reduce(
-      (total, segment) => total + segment.recordedDurationSeconds,
+      (total, segment) => total + getEffectiveDuration(segment),
       0
     );
 

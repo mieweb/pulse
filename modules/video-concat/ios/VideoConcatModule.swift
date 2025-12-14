@@ -1,7 +1,6 @@
 import ExpoModulesCore
 import AVFoundation
 
-/// Represents a video segment with optional trimming points
 struct RecordingSegment: Record {
     @Field
     var uri: String
@@ -21,10 +20,7 @@ public class VideoConcatModule: Module {
         Events("onProgress")
         
         AsyncFunction("getDuration") { (uri: String) -> Double in
-            print("[VideoConcat] getDuration called for: \(uri)")
-            
             guard let url = URL(string: uri) else {
-                print("[VideoConcat] ❌ Invalid URI: \(uri)")
                 throw NSError(
                     domain: "VideoConcat",
                     code: 10,
@@ -32,14 +28,11 @@ public class VideoConcatModule: Module {
                 )
             }
             
-            let startTime = Date()
             let asset = AVURLAsset(url: url)
             let duration = try await asset.load(.duration)
             let durationSeconds = CMTimeGetSeconds(duration)
-            let elapsed = Date().timeIntervalSince(startTime) * 1000
             
             guard durationSeconds.isFinite && durationSeconds > 0 else {
-                print("[VideoConcat] ❌ Invalid duration: \(durationSeconds)")
                 throw NSError(
                     domain: "VideoConcat",
                     code: 11,
@@ -47,7 +40,6 @@ public class VideoConcatModule: Module {
                 )
             }
             
-            print("[VideoConcat] ✅ Duration: \(String(format: "%.2f", durationSeconds))s (\(String(format: "%.0f", elapsed))ms)")
             return durationSeconds
         }
         
@@ -55,7 +47,7 @@ public class VideoConcatModule: Module {
             
             // Create a mutable composition to hold the concatenated video
             let composition = AVMutableComposition()
-            
+
             // Create video and audio tracks for the composition
             guard let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
                   let audioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -71,7 +63,7 @@ public class VideoConcatModule: Module {
                 "currentSegment": 0,
                 "phase": "preparing"
             ])
-            
+
             for (index, segment) in segments.enumerated() {
                 guard let url = URL(string: segment.uri) else { continue }
                 
@@ -95,8 +87,26 @@ public class VideoConcatModule: Module {
                     outMs: segment.trimEndTimeMs
                 )
                 
+                guard timeRange.duration.value > 0 else {
+                    throw NSError(
+                        domain: "VideoConcat", code: 4,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "Invalid trim range for segment \(index + 1): duration is zero or negative"
+                        ])
+                }
+                
                 // Insert the video track into the composition at the current time
-                try videoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: currentTime)
+                do {
+                    try videoTrack.insertTimeRange(timeRange, of: sourceVideoTrack, at: currentTime)
+                } catch {
+                    throw NSError(
+                        domain: "VideoConcat", code: 5,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "Failed to insert video track for segment \(index + 1): \(error.localizedDescription)"
+                        ])
+                }
                 
                 // Insert audio track if available
                 // Use the audio track's own timeRange to avoid AAC stream corruption
@@ -112,7 +122,11 @@ public class VideoConcatModule: Module {
                         outMs: segment.trimEndTimeMs
                     )
                     
-                    try audioTrack.insertTimeRange(audioTrimRange, of: sourceAudioTrack, at: currentTime)
+                    do {
+                        try audioTrack.insertTimeRange(audioTrimRange, of: sourceAudioTrack, at: currentTime)
+                    } catch {
+                        // Continue without audio rather than failing completely
+                    }
                 }
                 
                 // Move to the next time position for the next segment
@@ -126,11 +140,20 @@ public class VideoConcatModule: Module {
                     "phase": "processing"
                 ])
             }
-            
+
+            guard currentTime.value > 0 else {
+                throw NSError(
+                    domain: "VideoConcat", code: 6,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "No valid segments to merge. All segments may have been skipped or have invalid trim points."
+                    ])
+            }
+
             // Apply the preferred transform from the first video to maintain orientation
             // This ensures the final video has the correct orientation
             if let firstSegment = segments.first,
-               let firstURL = URL(string: firstSegment.uri) {
+                let firstURL = URL(string: firstSegment.uri) {
                 let firstAsset = AVURLAsset(url: firstURL)
                 let firstVideoTracks = try await firstAsset.loadTracks(withMediaType: .video)
                 if let firstVideoTrack = firstVideoTracks.first {
@@ -138,27 +161,22 @@ public class VideoConcatModule: Module {
                     videoTrack.preferredTransform = firstTransform
                 }
             }
-            
-            // Create output URL for the merged video using draftId
-            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(draftId).appendingPathExtension("mp4")
-            
-            // Remove existing file if it exists to avoid conflicts
+
+            let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(draftId)
+                .appendingPathExtension("mp4")
+
             if FileManager.default.fileExists(atPath: outputURL.path) {
                 try FileManager.default.removeItem(at: outputURL)
             }
-            
-            // Create export session with highest quality preset
+
             guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
                 throw NSError(domain: "VideoConcat", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create export session"])
             }
-            
-            
-            // Configure export settings
+
             exporter.outputURL = outputURL
             exporter.outputFileType = .mp4
             exporter.shouldOptimizeForNetworkUse = false
-            
-            // Send finalizing progress
+
             self.sendEvent("onProgress", [
                 "progress": 0.9,
                 "currentSegment": segments.count,
@@ -195,23 +213,36 @@ public class VideoConcatModule: Module {
         // Convert milliseconds to CMTime
         let startTime: CMTime
         if let inMs = inMs {
-            let startValue = Int64(Double(inMs) * Double(trackTimescale) / 1000.0)
-            startTime = CMTime(value: startValue, timescale: trackTimescale)
+            let startSeconds = inMs / 1000.0
+            let frameBufferSeconds = 0.033
+            let startSecondsWithBuffer = max(0.0, startSeconds - frameBufferSeconds)
+            startTime = CMTime(seconds: startSecondsWithBuffer, preferredTimescale: 60_000)
         } else {
             startTime = fullRange.start
         }
         
         let endTime: CMTime
         if let outMs = outMs {
-            let endValue = Int64(Double(outMs) * Double(trackTimescale) / 1000.0)
-            endTime = CMTime(value: endValue, timescale: trackTimescale)
+            let endSeconds = outMs / 1000.0
+            let frameBufferSeconds = 0.033
+            let endSecondsWithBuffer = endSeconds + frameBufferSeconds
+            endTime = CMTime(seconds: endSecondsWithBuffer, preferredTimescale: 60_000)
         } else {
             endTime = fullRange.start + fullDuration
         }
         
         // Clamp values to valid range
-        let clampedStart = max(startTime, fullRange.start)
-        let clampedEnd = min(endTime, fullRange.start + fullDuration)
+        let comparisonTimescale: Int32 = 60_000
+        let startTimeConverted = CMTimeConvertScale(startTime, timescale: comparisonTimescale, method: .roundHalfAwayFromZero)
+        let endTimeConverted = CMTimeConvertScale(endTime, timescale: comparisonTimescale, method: .roundHalfAwayFromZero)
+        let fullRangeStartConverted = CMTimeConvertScale(fullRange.start, timescale: comparisonTimescale, method: .roundHalfAwayFromZero)
+        let fullRangeEndConverted = CMTimeConvertScale(fullRange.start + fullDuration, timescale: comparisonTimescale, method: .roundHalfAwayFromZero)
+        
+        let clampedStartConverted = CMTimeCompare(startTimeConverted, fullRangeStartConverted) < 0 ? fullRangeStartConverted : startTimeConverted
+        let clampedEndConverted = CMTimeCompare(endTimeConverted, fullRangeEndConverted) > 0 ? fullRangeEndConverted : endTimeConverted
+        
+        let clampedStart = CMTimeConvertScale(clampedStartConverted, timescale: startTime.timescale, method: .roundHalfAwayFromZero)
+        let clampedEnd = CMTimeConvertScale(clampedEndConverted, timescale: endTime.timescale, method: .roundHalfAwayFromZero)
         
         // Ensure start is before end
         let finalStart = min(clampedStart, clampedEnd)

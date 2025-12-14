@@ -15,13 +15,28 @@ interface RecordingProgressBarProps {
   activeRecordingDurationSeconds?: number; // Currently recording segment duration in seconds
 }
 
+// Calculate effective duration: trimmed duration if trim points exist, otherwise original duration
+const getEffectiveDuration = (segment: RecordingSegment): number => {
+  if (
+    segment.trimStartTimeMs !== undefined &&
+    segment.trimEndTimeMs !== undefined &&
+    segment.trimStartTimeMs >= 0 &&
+    segment.trimEndTimeMs > segment.trimStartTimeMs
+  ) {
+    // Calculate trimmed duration in seconds
+    return (segment.trimEndTimeMs - segment.trimStartTimeMs) / 1000;
+  }
+  // Return original recorded duration if no trim points
+  return segment.recordedDurationSeconds;
+};
+
 export default function RecordingProgressBar({
   segments,
   maxDurationLimitSeconds,
   activeRecordingDurationSeconds = 0,
 }: RecordingProgressBarProps) {
   const totalRecordedDurationSeconds = segments.reduce(
-    (total, segment) => total + segment.recordedDurationSeconds,
+    (total, segment) => total + getEffectiveDuration(segment),
     0
   );
 
@@ -43,7 +58,7 @@ export default function RecordingProgressBar({
           const segmentEndPercentage = Math.min(
             (segments
               .slice(0, index + 1)
-              .reduce((total, seg) => total + seg.recordedDurationSeconds, 0) /
+              .reduce((total, seg) => total + getEffectiveDuration(seg), 0) /
               maxDurationLimitSeconds) *
               100,
             100

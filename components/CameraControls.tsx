@@ -5,7 +5,7 @@ import React from "react";
 import { Platform, StyleSheet, TouchableOpacity, View } from "react-native";
 import VideoStabilizationControl from "./VideoStabilizationControl";
 import { VideoStabilization } from "@/constants/camera";
-import { Fontisto } from "@expo/vector-icons";
+import Feather from "@expo/vector-icons/Feather";
 
 interface CameraControlsProps {
   onFlipCamera?: () => void;
@@ -68,7 +68,7 @@ export default function CameraControls({
           style={styles.controlButton}
           onPress={onReorderSegments}
         >
-          <Fontisto name="arrow-swap" size={24} color="white" />
+          <Feather name="edit" size={24} color="white" />
         </TouchableOpacity>
       )}
     </View>
