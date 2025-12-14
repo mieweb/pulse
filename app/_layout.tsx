@@ -74,6 +74,14 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="trim-segment"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "slide_from_bottom",
+            }}
+          />
+          <Stack.Screen
             name="merged-video"
             options={{
               headerShown: false,

@@ -10,6 +10,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
 import Sortable from "react-native-sortables";
 
 const THUMBNAIL_SIZE = 60;
@@ -19,7 +20,24 @@ interface Segment {
   id: string;
   uri: string;
   recordedDurationSeconds: number;
+  trimStartTimeMs?: number;
+  trimEndTimeMs?: number;
 }
+
+// Calculate effective duration: trimmed duration if trim points exist, otherwise original duration
+const getEffectiveDuration = (segment: Segment): number => {
+  if (
+    segment.trimStartTimeMs !== undefined &&
+    segment.trimEndTimeMs !== undefined &&
+    segment.trimStartTimeMs >= 0 &&
+    segment.trimEndTimeMs > segment.trimStartTimeMs
+  ) {
+    // Calculate trimmed duration in seconds
+    return (segment.trimEndTimeMs - segment.trimStartTimeMs) / 1000;
+  }
+  // Return original recorded duration if no trim points
+  return segment.recordedDurationSeconds;
+};
 
 interface SegmentReorderListVerticalProps {
   segments: Segment[];
@@ -27,15 +45,17 @@ interface SegmentReorderListVerticalProps {
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
   isSaving?: boolean;
+  draftId?: string;
 }
 
 interface SegmentItemProps {
   item: Segment;
   index: number;
   onDelete: (segmentId: string) => void;
+  onTrim?: (segment: Segment) => void;
 }
 
-function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
+function SegmentItem({ item: segment, index, onDelete, onTrim }: SegmentItemProps) {
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -61,8 +81,9 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
+    const secs = seconds % 60;
+    // Show seconds with 2 decimal places for precision
+    return `${mins}:${secs.toFixed(2).padStart(5, "0")}`;
   };
 
   return (
@@ -88,9 +109,23 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
           Segment {index + 1}
         </ThemedText>
         <ThemedText style={styles.segmentDuration}>
-          {formatDuration(segment.recordedDurationSeconds)}
+          {formatDuration(getEffectiveDuration(segment))}
         </ThemedText>
       </View>
+
+      {/* Trim button */}
+      {onTrim && (
+        <TouchableOpacity
+          style={styles.trimButton}
+          onPress={() => onTrim(segment)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Trim segment ${index + 1}`}
+          accessibilityHint="Opens trim screen for this segment"
+        >
+          <MaterialIcons name="content-cut" size={20} color="#fff" />
+        </TouchableOpacity>
+      )}
 
       {/* Delete button */}
       <TouchableOpacity
@@ -118,6 +153,7 @@ export default function SegmentReorderListVertical({
   onSave,
   onCancel,
   isSaving = false,
+  draftId,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
@@ -144,6 +180,21 @@ export default function SegmentReorderListVertical({
     [reorderedSegments, onSegmentsReorder]
   );
 
+  const handleTrimSegment = useCallback(
+    (segment: Segment) => {
+      if (!draftId) return;
+      router.push({
+        pathname: "/trim-segment",
+        params: {
+          segmentUri: segment.uri,
+          draftId: draftId,
+          segmentId: segment.id,
+        },
+      });
+    },
+    [draftId]
+  );
+
   const handleSave = useCallback(() => {
     if (hasChanges) {
       onSave(reorderedSegments);
@@ -151,15 +202,17 @@ export default function SegmentReorderListVertical({
     }
   }, [hasChanges, reorderedSegments, onSave]);
 
+  // Calculate total duration using effective (trimmed) durations
   const totalRecordedDurationSeconds = reorderedSegments.reduce(
-    (total, segment) => total + segment.recordedDurationSeconds,
+    (total, segment) => total + getEffectiveDuration(segment),
     0
   );
 
   const formatTotalDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
+    const secs = seconds % 60;
+    // Show seconds with 2 decimal places for precision
+    return `${mins}:${secs.toFixed(2).padStart(5, "0")}`;
   };
 
   return (
@@ -199,6 +252,7 @@ export default function SegmentReorderListVertical({
               item={item}
               index={index}
               onDelete={handleDeleteSegment}
+              onTrim={handleTrimSegment}
             />
           )}
           columns={1}
@@ -367,6 +421,12 @@ const styles = StyleSheet.create({
   reorderIndicator: {
     marginLeft: 12,
     padding: 4,
+  },
+  trimButton: {
+    marginLeft: 8,
+    padding: 4,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 4,
   },
   deleteButton: {
     marginLeft: 8,

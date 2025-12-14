@@ -132,8 +132,23 @@ export default function ShortsScreen() {
   const isHoldRecording = useSharedValue(false);
   const recordingModeShared = useSharedValue("");
 
+  // Calculate effective duration: trimmed duration if trim points exist, otherwise original duration
+  const getEffectiveDuration = (segment: RecordingSegment): number => {
+    if (
+      segment.trimStartTimeMs !== undefined &&
+      segment.trimEndTimeMs !== undefined &&
+      segment.trimStartTimeMs >= 0 &&
+      segment.trimEndTimeMs > segment.trimStartTimeMs
+    ) {
+      // Calculate trimmed duration in seconds
+      return (segment.trimEndTimeMs - segment.trimStartTimeMs) / 1000;
+    }
+    // Return original recorded duration if no trim points
+    return segment.recordedDurationSeconds;
+  };
+
   const totalRecordedDurationSeconds = recordingSegments.reduce(
-    (total, segment) => total + segment.recordedDurationSeconds,
+    (total, segment) => total + getEffectiveDuration(segment),
     0
   );
 
@@ -232,9 +247,9 @@ export default function ShortsScreen() {
   );
 
   const handleTimeSelect = (newDurationLimitSeconds: number) => {
-    // Check if current segments exceed the new duration limit
+    // Check if current segments exceed the new duration limit (using effective durations)
     const currentRecordedDurationSeconds = recordingSegments.reduce(
-      (total, seg) => total + seg.recordedDurationSeconds,
+      (total, seg) => total + getEffectiveDuration(seg),
       0
     );
 
@@ -427,9 +442,9 @@ export default function ShortsScreen() {
           }
         ).catch(() => null);
 
-        // Check if adding this video would exceed the total duration limit
+        // Check if adding this video would exceed the total duration limit (using effective durations)
         const currentRecordedDurationSeconds = recordingSegments.reduce(
-          (total, seg) => total + seg.recordedDurationSeconds,
+          (total, seg) => total + getEffectiveDuration(seg),
           0
         );
         const projectedTotalDurationSeconds = currentRecordedDurationSeconds + videoFileDurationSeconds;

@@ -6,11 +6,14 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, ActivityIndicator, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 
 interface Segment {
   id: string;
   uri: string;
   recordedDurationSeconds: number;
+  trimStartTimeMs?: number;
+  trimEndTimeMs?: number;
 }
 
 export default function ReorderSegmentsScreen() {
@@ -22,39 +25,58 @@ export default function ReorderSegmentsScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [draft, setDraft] = useState<any>(null);
 
-  useEffect(() => {
-    const loadDraft = async () => {
-      if (!draftId) {
-        router.back();
-        return;
-      }
+  const loadDraft = useCallback(async (showLoading = true) => {
+    if (!draftId) {
+      router.back();
+      return;
+    }
 
-      try {
-        const draft = await DraftStorage.getDraftById(draftId);
-        if (draft && draft.segments.length > 0) {
-          setDraft(draft);
-          const formattedSegments: Segment[] = draft.segments.map(
-            (segment: any) => ({
-              id: segment.id,
-              uri: fileStore.toAbsolutePath(segment.uri),
-              recordedDurationSeconds: segment.recordedDurationSeconds,
-            })
-          );
-          setSegments(formattedSegments);
-          setOriginalSegments([...formattedSegments]);
-        } else {
-          router.back();
-        }
-      } catch (error) {
-        console.error("Draft load failed:", error);
+    if (showLoading) {
+      setIsLoading(true);
+    }
+
+    try {
+      const draft = await DraftStorage.getDraftById(draftId);
+      if (draft && draft.segments.length > 0) {
+        setDraft(draft);
+        const formattedSegments: Segment[] = draft.segments.map(
+          (segment: any) => ({
+            id: segment.id,
+            uri: fileStore.toAbsolutePath(segment.uri),
+            recordedDurationSeconds: segment.recordedDurationSeconds,
+            trimStartTimeMs: segment.trimStartTimeMs,
+            trimEndTimeMs: segment.trimEndTimeMs,
+          })
+        );
+        setSegments(formattedSegments);
+        setOriginalSegments([...formattedSegments]);
+      } else {
         router.back();
-      } finally {
+      }
+    } catch (error) {
+      console.error("Draft load failed:", error);
+      router.back();
+    } finally {
+      if (showLoading) {
         setIsLoading(false);
       }
-    };
-
-    loadDraft();
+    }
   }, [draftId]);
+
+  // Load draft on mount
+  useEffect(() => {
+    loadDraft(true);
+  }, [loadDraft]);
+
+  // Reload draft when screen comes back into focus (e.g., after trimming)
+  // Don't show loading indicator when refreshing
+  useFocusEffect(
+    useCallback(() => {
+      if (!isLoading) {
+        loadDraft(false);
+      }
+    }, [loadDraft, isLoading])
+  );
 
   const [originalSegments, setOriginalSegments] = useState<Segment[]>([]);
 
@@ -87,6 +109,8 @@ export default function ReorderSegmentsScreen() {
           id: segment.id,
           uri: fileStore.toRelativePath(segment.uri),
           recordedDurationSeconds: segment.recordedDurationSeconds,
+          trimStartTimeMs: segment.trimStartTimeMs,
+          trimEndTimeMs: segment.trimEndTimeMs,
         }));
 
         const maxDurationLimitSeconds = draft.maxDurationLimitSeconds;
@@ -130,6 +154,7 @@ export default function ReorderSegmentsScreen() {
           onSave={handleSave}
           onCancel={handleCancel}
           isSaving={isSaving}
+          draftId={draftId}
         />
       </View>
     </View>
