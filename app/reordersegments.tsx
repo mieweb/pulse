@@ -68,14 +68,14 @@ export default function ReorderSegmentsScreen() {
     loadDraft(true);
   }, [loadDraft]);
 
-  // Reload draft when screen comes back into focus (e.g., after trimming)
-  // Don't show loading indicator when refreshing
+  // Reload when screen comes back into focus (e.g., after trimming)
   useFocusEffect(
     useCallback(() => {
-      if (!isLoading) {
+      // Only reload if we're not in initial loading state
+      if (!isLoading && segments.length > 0) {
         loadDraft(false);
       }
-    }, [loadDraft, isLoading])
+    }, [loadDraft, isLoading, segments.length])
   );
 
   const [originalSegments, setOriginalSegments] = useState<Segment[]>([]);
@@ -116,7 +116,7 @@ export default function ReorderSegmentsScreen() {
         const maxDurationLimitSeconds = draft.maxDurationLimitSeconds;
 
         await DraftStorage.updateDraft(draftId, updatedSegments, maxDurationLimitSeconds);
-        // Navigate back after successful save
+        // Navigate back to shorts screen (already in navigation stack)
         router.back();
       } catch (error) {
         console.error("Failed to save reordered segments:", error);

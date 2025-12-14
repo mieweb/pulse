@@ -580,7 +580,7 @@ export default function ShortsScreen() {
             )}
             <ThemedText style={styles.recordingTimeText}>
               {(() => {
-                const totalSeconds = Math.floor(
+                const totalSeconds = Math.round(
                   totalRecordedDurationSeconds + activeRecordingDurationSeconds
                 );
                 const minutes = Math.floor(totalSeconds / 60);

@@ -159,6 +159,11 @@ export default function SegmentReorderListVertical({
     useState<Segment[]>(segments);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // Update reorderedSegments when segments prop changes (e.g., after trim points are updated)
+  useEffect(() => {
+    setReorderedSegments(segments);
+  }, [segments]);
+
   const handleOrderChange = useCallback(
     (newOrder: Segment[]) => {
       setReorderedSegments(newOrder);

@@ -88,13 +88,15 @@ export default function TrimSegmentScreen() {
         return;
       }
 
-      // Convert to milliseconds and save
+      const trimStartMs = finalTrimStart * 1000;
+      const trimEndMs = finalTrimEnd * 1000;
+      
       const updatedSegments = updatedDraft.segments.map((seg) => {
         if (seg.id === segmentId) {
           return {
             ...seg,
-            trimStartTimeMs: Math.round(finalTrimStart * 1000), // Convert to milliseconds, round for accuracy
-            trimEndTimeMs: Math.round(finalTrimEnd * 1000),
+            trimStartTimeMs: trimStartMs,
+            trimEndTimeMs: trimEndMs,
           };
         }
         return seg;
@@ -106,7 +108,11 @@ export default function TrimSegmentScreen() {
         updatedDraft.maxDurationLimitSeconds
       );
 
-      router.back();
+      // Navigate back to reorder screen - replace closes this screen and reloads reorder screen
+      router.replace({
+        pathname: "/reordersegments",
+        params: { draftId },
+      });
     } catch (error) {
       console.error("Failed to save trim points:", error);
       Alert.alert("Error", "Failed to save trim points");

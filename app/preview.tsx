@@ -149,6 +149,31 @@ export default function PreviewScreen() {
     loadDraft();
   }, [draftId]);
 
+  // Reload draft when screen comes back into focus (e.g., after editing segments in reorder)
+  useFocusEffect(
+    useCallback(() => {
+      // Reload draft to get latest trim points when screen comes into focus
+      if (draftId && !isLoading) {
+        const reloadDraft = async () => {
+          try {
+            const draft = await DraftStorage.getDraftById(draftId);
+            if (draft && draft.segments.length > 0) {
+              setDraft(draft);
+              // Convert relative paths to absolute paths for video playback
+              const uris = draft.segments.map((segment) =>
+                fileStore.toAbsolutePath(segment.uri)
+              );
+              setVideoUris(uris);
+            }
+          } catch (error) {
+            console.error("Failed to reload draft on focus:", error);
+          }
+        };
+        reloadDraft();
+      }
+    }, [draftId, isLoading])
+  );
+
   // Set up AppState listener to handle app foreground/background
   useEffect(() => {
     const subscription = AppState.addEventListener(
@@ -312,9 +337,13 @@ export default function PreviewScreen() {
       );
 
       // Convert relative paths to absolute paths for native module
+      // Explicitly include trim points to ensure they're passed to native merge
       const segmentsWithAbsolutePaths = draft.segments.map((segment) => ({
-        ...segment,
+        id: segment.id,
         uri: fileStore.toAbsolutePath(segment.uri),
+        recordedDurationSeconds: segment.recordedDurationSeconds,
+        trimStartTimeMs: segment.trimStartTimeMs,
+        trimEndTimeMs: segment.trimEndTimeMs,
       }));
 
       // Start concatenation
