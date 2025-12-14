@@ -66,6 +66,14 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="preview-new"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "none",
+            }}
+          />
+          <Stack.Screen
             name="reordersegments"
             options={{
               headerShown: false,

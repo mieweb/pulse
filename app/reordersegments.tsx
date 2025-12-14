@@ -22,7 +22,6 @@ export default function ReorderSegmentsScreen() {
 
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
   const [draft, setDraft] = useState<any>(null);
 
   const loadDraft = useCallback(async (showLoading = true) => {
@@ -88,7 +87,6 @@ export default function ReorderSegmentsScreen() {
     async (reorderedSegments: Segment[]) => {
       if (!draftId || !draft) return;
 
-      setIsSaving(true);
       try {
         const deletedSegments = originalSegments.filter(
           (originalSegment) =>
@@ -116,8 +114,8 @@ export default function ReorderSegmentsScreen() {
         const maxDurationLimitSeconds = draft.maxDurationLimitSeconds;
 
         await DraftStorage.updateDraft(draftId, updatedSegments, maxDurationLimitSeconds);
-        // Navigate back to shorts screen (already in navigation stack)
-        router.back();
+        // Update original segments to reflect the saved state
+        setOriginalSegments(reorderedSegments);
       } catch (error) {
         console.error("Failed to save reordered segments:", error);
         Alert.alert(
@@ -125,8 +123,6 @@ export default function ReorderSegmentsScreen() {
           "Failed to save changes. Some files may not have been deleted properly. Please try again.",
           [{ text: "OK" }]
         );
-      } finally {
-        setIsSaving(false);
       }
     },
     [draftId, draft, originalSegments]
@@ -153,7 +149,6 @@ export default function ReorderSegmentsScreen() {
           onSegmentsReorder={handleSegmentsReorder}
           onSave={handleSave}
           onCancel={handleCancel}
-          isSaving={isSaving}
           draftId={draftId}
         />
       </View>

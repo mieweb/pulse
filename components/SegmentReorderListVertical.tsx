@@ -1,6 +1,7 @@
 import { ThemedText } from "@/components/ThemedText";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
 import { MaterialIcons } from "@expo/vector-icons";
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import React, { useState, useCallback, useEffect } from "react";
 import {
   StyleSheet,
@@ -8,7 +9,6 @@ import {
   TouchableOpacity,
   Image,
   ScrollView,
-  ActivityIndicator,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import Sortable from "react-native-sortables";
@@ -44,7 +44,6 @@ interface SegmentReorderListVerticalProps {
   onSegmentsReorder: (reorderedSegments: Segment[]) => void;
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
-  isSaving?: boolean;
   draftId?: string;
 }
 
@@ -123,7 +122,7 @@ function SegmentItem({ item: segment, index, onDelete, onTrim }: SegmentItemProp
           accessibilityLabel={`Trim segment ${index + 1}`}
           accessibilityHint="Opens trim screen for this segment"
         >
-          <MaterialIcons name="content-cut" size={20} color="#fff" />
+          <MaterialCommunityIcons name="scissors-cutting" size={24} color="#2196F3" />
         </TouchableOpacity>
       )}
 
@@ -136,7 +135,7 @@ function SegmentItem({ item: segment, index, onDelete, onTrim }: SegmentItemProp
         accessibilityLabel={`Delete segment ${index + 1}`}
         accessibilityHint="Removes this segment from the video"
       >
-        <MaterialIcons name="delete" size={20} color={ACCENT_COLOR} />
+        <MaterialIcons name="delete" size={24} color={ACCENT_COLOR} />
       </TouchableOpacity>
 
       {/* Reorder indicator */}
@@ -152,7 +151,6 @@ export default function SegmentReorderListVertical({
   onSegmentsReorder,
   onSave,
   onCancel,
-  isSaving = false,
   draftId,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
@@ -169,8 +167,10 @@ export default function SegmentReorderListVertical({
       setReorderedSegments(newOrder);
       setHasChanges(true);
       onSegmentsReorder(newOrder);
+      // Auto-save on reorder
+      onSave(newOrder);
     },
-    [onSegmentsReorder]
+    [onSegmentsReorder, onSave]
   );
 
   const handleDeleteSegment = useCallback(
@@ -181,8 +181,10 @@ export default function SegmentReorderListVertical({
       setReorderedSegments(updatedSegments);
       setHasChanges(true);
       onSegmentsReorder(updatedSegments);
+      // Auto-save on delete
+      onSave(updatedSegments);
     },
-    [reorderedSegments, onSegmentsReorder]
+    [reorderedSegments, onSegmentsReorder, onSave]
   );
 
   const handleTrimSegment = useCallback(
@@ -200,12 +202,6 @@ export default function SegmentReorderListVertical({
     [draftId]
   );
 
-  const handleSave = useCallback(() => {
-    if (hasChanges) {
-      onSave(reorderedSegments);
-      setHasChanges(false);
-    }
-  }, [hasChanges, reorderedSegments, onSave]);
 
   // Calculate total duration using effective (trimmed) durations
   const totalRecordedDurationSeconds = reorderedSegments.reduce(
@@ -229,7 +225,7 @@ export default function SegmentReorderListVertical({
         </TouchableOpacity>
 
         <View style={styles.headerInfo}>
-          <ThemedText style={styles.headerTitle}>Reorder Segments</ThemedText>
+          <ThemedText style={styles.headerTitle}>Edit Segments</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
             {reorderedSegments.length} segments •{" "}
             {formatTotalDuration(totalRecordedDurationSeconds)}
@@ -268,40 +264,6 @@ export default function SegmentReorderListVertical({
         />
       </ScrollView>
 
-      {/* Save Button */}
-      <View style={styles.saveButtonContainer}>
-        <TouchableOpacity
-          style={[
-            styles.saveButton,
-            (!hasChanges || isSaving) && styles.disabledSaveButton,
-          ]}
-          onPress={handleSave}
-          disabled={!hasChanges || isSaving}
-          activeOpacity={0.8}
-        >
-          {isSaving ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <MaterialIcons
-              name="save"
-              size={20}
-              color={hasChanges ? "#fff" : "#666"}
-            />
-          )}
-          <ThemedText
-            style={[
-              styles.saveButtonText,
-              (!hasChanges || isSaving) && styles.disabledSaveButtonText,
-            ]}
-          >
-            {isSaving
-              ? "Saving..."
-              : hasChanges
-              ? "Save New Order"
-              : "No Changes"}
-          </ThemedText>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -430,39 +392,9 @@ const styles = StyleSheet.create({
   trimButton: {
     marginLeft: 8,
     padding: 4,
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    borderRadius: 4,
   },
   deleteButton: {
     marginLeft: 8,
     padding: 4,
-  },
-  saveButtonContainer: {
-    padding: 20,
-    backgroundColor: "rgba(0, 0, 0, 0.9)",
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255, 255, 255, 0.1)",
-  },
-  saveButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ACCENT_COLOR,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-  },
-  disabledSaveButton: {
-    backgroundColor: "#333",
-  },
-  saveButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-    fontFamily: "Roboto-Bold",
-    marginLeft: 8,
-  },
-  disabledSaveButtonText: {
-    color: "#666",
   },
 });

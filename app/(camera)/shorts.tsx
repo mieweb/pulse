@@ -42,6 +42,7 @@ import Animated, {
   runOnJS,
   useAnimatedGestureHandler,
   useSharedValue,
+  useDerivedValue,
 } from "react-native-reanimated";
 
 /**
@@ -131,6 +132,19 @@ export default function ShortsScreen() {
   const currentTouchY = useSharedValue(0);
   const isHoldRecording = useSharedValue(false);
   const recordingModeShared = useSharedValue("");
+
+  // Create derived values to suppress onAnimatedValueUpdate warnings
+  // These create dependencies on the shared values without actually using them
+  useDerivedValue(() => {
+    // Reference all shared values to create listeners and suppress warnings
+    savedZoom.value;
+    currentZoom.value;
+    initialTouchY.value;
+    currentTouchY.value;
+    isHoldRecording.value;
+    recordingModeShared.value;
+    return 0; // Return dummy value
+  });
 
   // Calculate effective duration: trimmed duration if trim points exist, otherwise original duration
   const getEffectiveDuration = (segment: RecordingSegment): number => {
@@ -299,7 +313,7 @@ export default function ShortsScreen() {
   const handlePreview = () => {
     if (currentDraftId && recordingSegments.length > 0) {
       router.push({
-        pathname: "/preview",
+        pathname: "/preview-new",
         params: { draftId: currentDraftId },
       });
     }
@@ -545,7 +559,7 @@ export default function ShortsScreen() {
               videoStabilizationMode={videoStabilizationMode}
               onVideoStabilizationChange={handleVideoStabilizationChange}
               onReorderSegments={
-                recordingSegments.length > 1 ? handleReorderSegments : undefined
+                recordingSegments.length > 0 ? handleReorderSegments : undefined
               }
             />
           )}
