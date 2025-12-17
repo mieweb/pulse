@@ -58,7 +58,7 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
-            name="preview"
+            name="preview-new"
             options={{
               headerShown: false,
               presentation: "fullScreenModal",
@@ -71,6 +71,14 @@ export default function RootLayout() {
               headerShown: false,
               presentation: "fullScreenModal",
               animation: "none",
+            }}
+          />
+          <Stack.Screen
+            name="trim-segment"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "slide_from_bottom",
             }}
           />
           <Stack.Screen

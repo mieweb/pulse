@@ -1,6 +1,7 @@
 import { ThemedText } from "@/components/ThemedText";
 import { generateVideoThumbnail } from "@/utils/videoThumbnails";
 import { MaterialIcons } from "@expo/vector-icons";
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import React, { useState, useCallback, useEffect } from "react";
 import {
   StyleSheet,
@@ -8,8 +9,8 @@ import {
   TouchableOpacity,
   Image,
   ScrollView,
-  ActivityIndicator,
 } from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
 import Sortable from "react-native-sortables";
 
 const THUMBNAIL_SIZE = 60;
@@ -18,24 +19,42 @@ const ACCENT_COLOR = "#ff0000";
 interface Segment {
   id: string;
   uri: string;
-  duration: number;
+  recordedDurationSeconds: number;
+  trimStartTimeMs?: number;
+  trimEndTimeMs?: number;
 }
+
+// Calculate effective duration: trimmed duration if trim points exist, otherwise original duration
+const getEffectiveDuration = (segment: Segment): number => {
+  if (
+    segment.trimStartTimeMs !== undefined &&
+    segment.trimEndTimeMs !== undefined &&
+    segment.trimStartTimeMs >= 0 &&
+    segment.trimEndTimeMs > segment.trimStartTimeMs
+  ) {
+    // Calculate trimmed duration in seconds
+    return (segment.trimEndTimeMs - segment.trimStartTimeMs) / 1000;
+  }
+  // Return original recorded duration if no trim points
+  return segment.recordedDurationSeconds;
+};
 
 interface SegmentReorderListVerticalProps {
   segments: Segment[];
   onSegmentsReorder: (reorderedSegments: Segment[]) => void;
   onSave: (segments: Segment[]) => void;
   onCancel: () => void;
-  isSaving?: boolean;
+  draftId?: string;
 }
 
 interface SegmentItemProps {
   item: Segment;
   index: number;
   onDelete: (segmentId: string) => void;
+  onTrim?: (segment: Segment) => void;
 }
 
-function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
+function SegmentItem({ item: segment, index, onDelete, onTrim }: SegmentItemProps) {
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -61,8 +80,9 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
+    const secs = seconds % 60;
+    // Show seconds with 2 decimal places for precision
+    return `${mins}:${secs.toFixed(2).padStart(5, "0")}`;
   };
 
   return (
@@ -88,9 +108,23 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
           Segment {index + 1}
         </ThemedText>
         <ThemedText style={styles.segmentDuration}>
-          {formatDuration(segment.duration)}
+          {formatDuration(getEffectiveDuration(segment))}
         </ThemedText>
       </View>
+
+      {/* Trim button */}
+      {onTrim && (
+        <TouchableOpacity
+          style={styles.trimButton}
+          onPress={() => onTrim(segment)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Trim segment ${index + 1}`}
+          accessibilityHint="Opens trim screen for this segment"
+        >
+          <MaterialCommunityIcons name="scissors-cutting" size={24} color="#2196F3" />
+        </TouchableOpacity>
+      )}
 
       {/* Delete button */}
       <TouchableOpacity
@@ -101,7 +135,7 @@ function SegmentItem({ item: segment, index, onDelete }: SegmentItemProps) {
         accessibilityLabel={`Delete segment ${index + 1}`}
         accessibilityHint="Removes this segment from the video"
       >
-        <MaterialIcons name="delete" size={20} color={ACCENT_COLOR} />
+        <MaterialIcons name="delete" size={24} color={ACCENT_COLOR} />
       </TouchableOpacity>
 
       {/* Reorder indicator */}
@@ -117,19 +151,26 @@ export default function SegmentReorderListVertical({
   onSegmentsReorder,
   onSave,
   onCancel,
-  isSaving = false,
+  draftId,
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
   const [hasChanges, setHasChanges] = useState(false);
+
+  // Update reorderedSegments when segments prop changes (e.g., after trim points are updated)
+  useEffect(() => {
+    setReorderedSegments(segments);
+  }, [segments]);
 
   const handleOrderChange = useCallback(
     (newOrder: Segment[]) => {
       setReorderedSegments(newOrder);
       setHasChanges(true);
       onSegmentsReorder(newOrder);
+      // Auto-save on reorder
+      onSave(newOrder);
     },
-    [onSegmentsReorder]
+    [onSegmentsReorder, onSave]
   );
 
   const handleDeleteSegment = useCallback(
@@ -140,26 +181,39 @@ export default function SegmentReorderListVertical({
       setReorderedSegments(updatedSegments);
       setHasChanges(true);
       onSegmentsReorder(updatedSegments);
+      // Auto-save on delete
+      onSave(updatedSegments);
     },
-    [reorderedSegments, onSegmentsReorder]
+    [reorderedSegments, onSegmentsReorder, onSave]
   );
 
-  const handleSave = useCallback(() => {
-    if (hasChanges) {
-      onSave(reorderedSegments);
-      setHasChanges(false);
-    }
-  }, [hasChanges, reorderedSegments, onSave]);
+  const handleTrimSegment = useCallback(
+    (segment: Segment) => {
+      if (!draftId) return;
+      router.push({
+        pathname: "/trim-segment",
+        params: {
+          segmentUri: segment.uri,
+          draftId: draftId,
+          segmentId: segment.id,
+        },
+      });
+    },
+    [draftId]
+  );
 
-  const totalDuration = reorderedSegments.reduce(
-    (total, segment) => total + segment.duration,
+
+  // Calculate total duration using effective (trimmed) durations
+  const totalRecordedDurationSeconds = reorderedSegments.reduce(
+    (total, segment) => total + getEffectiveDuration(segment),
     0
   );
 
   const formatTotalDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
+    const secs = seconds % 60;
+    // Show seconds with 2 decimal places for precision
+    return `${mins}:${secs.toFixed(2).padStart(5, "0")}`;
   };
 
   return (
@@ -171,10 +225,10 @@ export default function SegmentReorderListVertical({
         </TouchableOpacity>
 
         <View style={styles.headerInfo}>
-          <ThemedText style={styles.headerTitle}>Reorder Segments</ThemedText>
+          <ThemedText style={styles.headerTitle}>Edit Segments</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
             {reorderedSegments.length} segments •{" "}
-            {formatTotalDuration(totalDuration)}
+            {formatTotalDuration(totalRecordedDurationSeconds)}
           </ThemedText>
           <View style={styles.infoTag}>
             <MaterialIcons name="info" size={14} color={ACCENT_COLOR} />
@@ -199,6 +253,7 @@ export default function SegmentReorderListVertical({
               item={item}
               index={index}
               onDelete={handleDeleteSegment}
+              onTrim={handleTrimSegment}
             />
           )}
           columns={1}
@@ -209,40 +264,6 @@ export default function SegmentReorderListVertical({
         />
       </ScrollView>
 
-      {/* Save Button */}
-      <View style={styles.saveButtonContainer}>
-        <TouchableOpacity
-          style={[
-            styles.saveButton,
-            (!hasChanges || isSaving) && styles.disabledSaveButton,
-          ]}
-          onPress={handleSave}
-          disabled={!hasChanges || isSaving}
-          activeOpacity={0.8}
-        >
-          {isSaving ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <MaterialIcons
-              name="save"
-              size={20}
-              color={hasChanges ? "#fff" : "#666"}
-            />
-          )}
-          <ThemedText
-            style={[
-              styles.saveButtonText,
-              (!hasChanges || isSaving) && styles.disabledSaveButtonText,
-            ]}
-          >
-            {isSaving
-              ? "Saving..."
-              : hasChanges
-              ? "Save New Order"
-              : "No Changes"}
-          </ThemedText>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -368,36 +389,12 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     padding: 4,
   },
-  deleteButton: {
+  trimButton: {
     marginLeft: 8,
     padding: 4,
   },
-  saveButtonContainer: {
-    padding: 20,
-    backgroundColor: "rgba(0, 0, 0, 0.9)",
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255, 255, 255, 0.1)",
-  },
-  saveButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ACCENT_COLOR,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-  },
-  disabledSaveButton: {
-    backgroundColor: "#333",
-  },
-  saveButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-    fontFamily: "Roboto-Bold",
+  deleteButton: {
     marginLeft: 8,
-  },
-  disabledSaveButtonText: {
-    color: "#666",
+    padding: 4,
   },
 });

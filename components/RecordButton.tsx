@@ -1,6 +1,7 @@
 import { CameraView } from "expo-camera";
 import * as React from "react";
 import { Animated, StyleSheet, TouchableOpacity, View } from "react-native";
+import VideoConcatModule from "@/modules/video-concat";
 
 interface RecordButtonProps {
   cameraRef: React.RefObject<CameraView | null>;
@@ -9,7 +10,7 @@ interface RecordButtonProps {
   onRecordingComplete?: (
     videoUri: string | null,
     mode: "tap" | "hold",
-    duration: number
+    recordedDurationSeconds: number
   ) => void;
   onRecordingProgress?: (
     currentDuration: number,
@@ -67,6 +68,25 @@ export default function RecordButton({
   > | null>(null);
 
   const remainingTime = totalDuration - usedDuration;
+
+  const getVideoDuration = async (uri: string): Promise<number> => {
+    try {
+      const startTime = Date.now();
+      const duration = await Promise.race([
+        VideoConcatModule.getDuration(uri),
+        new Promise<number>((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 500)
+        )
+      ]);
+      const elapsed = Date.now() - startTime;
+      console.log(`[RecordButton] Native duration: ${duration.toFixed(2)}s (${elapsed}ms)`);
+      return duration;
+    } catch (error) {
+      const fallbackDuration = (Date.now() - recordingStartTimeRef.current) / 1000;
+      console.warn(`[RecordButton] Native duration failed, using timestamp: ${fallbackDuration.toFixed(2)}s`, error);
+      return fallbackDuration;
+    }
+  };
 
   // Handle screen-level touch end for hold recording
   React.useEffect(() => {
@@ -145,22 +165,21 @@ export default function RecordButton({
 
     recordingPromiseRef.current = cameraRef.current
       .recordAsync({ maxDuration: sessionMaxDuration })
-      .then((video) => {
-        const recordingDuration =
-          (Date.now() - recordingStartTimeRef.current) / 1000;
+      .then(async (video) => {
+        let recordingDuration = (Date.now() - recordingStartTimeRef.current) / 1000;
 
         if (!manuallyStoppedRef.current && video?.uri) {
-          console.log("Recording saved:", video.uri);
+          console.log("[RecordButton] Recording saved:", video.uri);
+          recordingDuration = await getVideoDuration(video.uri);
         }
         onRecordingComplete?.(video?.uri || null, mode, recordingDuration);
         return video;
       })
-      .catch((error) => {
-        const recordingDuration =
-          (Date.now() - recordingStartTimeRef.current) / 1000;
+      .catch(async (error) => {
+        const recordingDuration = (Date.now() - recordingStartTimeRef.current) / 1000;
 
         if (!error.message?.includes("stopped")) {
-          console.log("Recording failed");
+          console.log("[RecordButton] Recording failed");
         }
         onRecordingComplete?.(null, mode, recordingDuration);
         return null;
