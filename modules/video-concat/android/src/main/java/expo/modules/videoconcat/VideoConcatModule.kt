@@ -46,6 +46,7 @@ class VideoConcatModule : Module() {
       var videoTrackIndex = -1
       var audioTrackIndex = -1
       var muxerStarted = false
+      var rotationDegrees = 0
       
       // First pass: Add tracks from the first segment
       val firstUri = Uri.parse(segments[0].uri)
@@ -60,11 +61,18 @@ class VideoConcatModule : Module() {
           
           if (mime.startsWith("video/") && videoTrackIndex == -1) {
             videoTrackIndex = muxer.addTrack(format)
+            // Extract rotation metadata from the first video segment to preserve orientation
+            if (format.containsKey(MediaFormat.KEY_ROTATION)) {
+              rotationDegrees = format.getInteger(MediaFormat.KEY_ROTATION)
+            }
           } else if (mime.startsWith("audio/") && audioTrackIndex == -1) {
             audioTrackIndex = muxer.addTrack(format)
           }
         }
-        
+        // Apply rotation hint to the muxer to preserve video orientation
+        if (rotationDegrees != 0) {
+          muxer.setOrientationHint(rotationDegrees)
+        }
         // Start muxer after adding all tracks
         muxer.start()
         muxerStarted = true

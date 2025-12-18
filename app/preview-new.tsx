@@ -30,6 +30,7 @@ export default function PreviewNewScreen() {
     if (player) {
       player.loop = false;
       player.muted = false;
+      player.staysActiveInBackground = true; 
       player.currentTime = 0;
     }
   });
