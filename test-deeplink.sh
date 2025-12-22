@@ -132,45 +132,59 @@ echo "📱 Deeplink:"
 echo "   $DEEPLINK"
 echo ""
 
-# Generate QR code image if possible
+# Generate QR code image using online service or qrencode
 echo "3️⃣  Generating QR code image..."
-HTTP_CODE=$(curl -s -o /tmp/pulse-qr.png -w "%{http_code}" "$SERVER_URL/qr/image?userId=$TEST_USER&server=$SERVER_URL&size=400" 2>/dev/null)
+QR_DATA=$(echo "$RESPONSE" | jq -r '.qrData // .deeplink' 2>/dev/null || echo "$DEEPLINK")
 
-if [ "$HTTP_CODE" = "200" ]; then
-  # Verify it's a valid PNG
-  if file /tmp/pulse-qr.png 2>/dev/null | grep -q "PNG\|image"; then
-    echo "   ✅ QR code saved to /tmp/pulse-qr.png"
-    
-    # Try to open QR code
-    if command -v open >/dev/null 2>&1; then
-      if open /tmp/pulse-qr.png 2>/dev/null; then
-        echo "   📱 QR code opened - scan with your phone"
-      else
-        echo "   📱 QR code saved to /tmp/pulse-qr.png (open manually: open /tmp/pulse-qr.png)"
-      fi
-    elif command -v xdg-open >/dev/null 2>&1; then
-      if xdg-open /tmp/pulse-qr.png 2>/dev/null; then
-        echo "   📱 QR code opened - scan with your phone"
+if [ -n "$QR_DATA" ] && [ "$QR_DATA" != "null" ]; then
+  # Try qrencode if available (common on Linux)
+  if command -v qrencode >/dev/null 2>&1; then
+    if qrencode -o /tmp/pulse-qr.png -s 10 "$QR_DATA" 2>/dev/null; then
+      echo "   ✅ QR code saved to /tmp/pulse-qr.png"
+      
+      # Try to open QR code
+      if command -v open >/dev/null 2>&1; then
+        if open /tmp/pulse-qr.png 2>/dev/null; then
+          echo "   📱 QR code opened - scan with your phone"
+        else
+          echo "   📱 QR code saved to /tmp/pulse-qr.png (open manually: open /tmp/pulse-qr.png)"
+        fi
+      elif command -v xdg-open >/dev/null 2>&1; then
+        if xdg-open /tmp/pulse-qr.png 2>/dev/null; then
+          echo "   📱 QR code opened - scan with your phone"
+        else
+          echo "   📱 QR code saved to /tmp/pulse-qr.png (open manually)"
+        fi
       else
         echo "   📱 QR code saved to /tmp/pulse-qr.png (open manually)"
       fi
     else
-      echo "   📱 QR code saved to /tmp/pulse-qr.png (open manually)"
+      echo "   ⚠️  Failed to generate QR code with qrencode"
+      rm -f /tmp/pulse-qr.png
     fi
   else
-    echo "   ⚠️  QR code file is not a valid image"
-    echo "   Response might be JSON error - check if qrcode package is installed on server"
-    echo "   Run: cd pulse-vault/pulsevault && npm install qrcode"
-    rm -f /tmp/pulse-qr.png
+    # Use online QR code service as fallback
+    QR_URL="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=$(echo "$QR_DATA" | sed 's/:/%3A/g; s/\//%2F/g; s/?/%3F/g; s/&/%26/g; s/=/%3D/g')"
+    if curl -s -o /tmp/pulse-qr.png "$QR_URL" 2>/dev/null && file /tmp/pulse-qr.png 2>/dev/null | grep -q "PNG\|image"; then
+      echo "   ✅ QR code saved to /tmp/pulse-qr.png (generated online)"
+      
+      # Try to open QR code
+      if command -v open >/dev/null 2>&1; then
+        open /tmp/pulse-qr.png 2>/dev/null || echo "   📱 QR code saved to /tmp/pulse-qr.png"
+      elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open /tmp/pulse-qr.png 2>/dev/null || echo "   📱 QR code saved to /tmp/pulse-qr.png"
+      else
+        echo "   📱 QR code saved to /tmp/pulse-qr.png"
+      fi
+    else
+      echo "   ⚠️  Could not generate QR code image"
+      echo "   💡 Install qrencode for local generation: sudo apt-get install qrencode (Linux) or brew install qrencode (macOS)"
+      echo "   💡 Or use the deeplink URL above directly"
+      rm -f /tmp/pulse-qr.png
+    fi
   fi
-elif [ "$HTTP_CODE" = "501" ]; then
-  echo "   ⚠️  QR image generation not available (install qrcode package on server)"
-  echo "   Run: cd pulse-vault/pulsevault && npm install qrcode"
-  rm -f /tmp/pulse-qr.png
 else
-  echo "   ⚠️  QR image generation failed (HTTP $HTTP_CODE)"
-  echo "   You can still use the deeplink URL above"
-  rm -f /tmp/pulse-qr.png
+  echo "   ⚠️  Could not extract QR data from response"
 fi
 echo ""
 
