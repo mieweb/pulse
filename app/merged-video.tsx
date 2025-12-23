@@ -39,6 +39,7 @@ export default function MergedVideoScreen() {
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = false;
     player.muted = false;
+    player.currentTime = 0;
     player.staysActiveInBackground = true; 
     // player.showNowPlayingNotification=true
   });
@@ -75,7 +76,7 @@ export default function MergedVideoScreen() {
     };
 
     setupPlayer();
-  }, [videoUri]);
+  }, [videoUri, player]);
 
   // Check if upload config is available and if draft is in upload mode
   useEffect(() => {
