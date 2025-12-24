@@ -1,5 +1,6 @@
 import { getThumbnailAsync } from 'expo-video-thumbnails';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 
 export interface ThumbnailOptions {
   time?: number;
@@ -8,6 +9,16 @@ export interface ThumbnailOptions {
 
 // Simple in-memory cache for thumbnails
 const thumbnailCache = new Map<string, string>();
+
+// Helper to check if a file exists
+async function fileExists(uri: string): Promise<boolean> {
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    return info.exists;
+  } catch {
+    return false;
+  }
+}
 
 export async function generateVideoThumbnail(
   videoUri: string,
@@ -19,17 +30,27 @@ export async function generateVideoThumbnail(
     // Create cache key based on video URI and options
     const cacheKey = `${videoUri}_${time}_${quality}`;
     
-    // Check in-memory cache first
+    // Check in-memory cache first - but verify file still exists
     if (thumbnailCache.has(cacheKey)) {
-      return thumbnailCache.get(cacheKey)!;
+      const cachedUri = thumbnailCache.get(cacheKey)!;
+      if (await fileExists(cachedUri)) {
+        return cachedUri;
+      }
+      // File no longer exists, remove from cache
+      thumbnailCache.delete(cacheKey);
     }
     
-    // Check persistent storage
+    // Check persistent storage - but verify file still exists
     try {
       const cachedUri = await AsyncStorage.getItem(`thumbnail_${cacheKey}`);
       if (cachedUri) {
-        thumbnailCache.set(cacheKey, cachedUri);
-        return cachedUri;
+        if (await fileExists(cachedUri)) {
+          thumbnailCache.set(cacheKey, cachedUri);
+          return cachedUri;
+        }
+        // File no longer exists (cache was cleared), remove from AsyncStorage
+        console.log('[videoThumbnails] Cached thumbnail file no longer exists, regenerating...');
+        await AsyncStorage.removeItem(`thumbnail_${cacheKey}`);
       }
     } catch (storageError) {
       console.warn('Failed to read thumbnail from cache:', storageError);

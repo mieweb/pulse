@@ -54,21 +54,31 @@ export class DraftStorage {
         );
         // Convert relative path to absolute path for thumbnail generation
         const absoluteUri = fileStore.toAbsolutePath(segments[0].uri);
-        const tempThumb = await generateVideoThumbnail(absoluteUri);
-        if (tempThumb) {
-          await fileStore.ensureDraftDirs(targetId);
-          thumbnailUri = await fileStore.importThumbnail({
-            draftId: targetId,
-            srcUri: tempThumb,
-            name: "thumb",
-          });
-          console.log(
-            `[DraftStorage] Thumbnail generated and imported for draft: ${targetId}`
+        try {
+          const tempThumb = await generateVideoThumbnail(absoluteUri);
+          if (tempThumb) {
+            await fileStore.ensureDraftDirs(targetId);
+            thumbnailUri = await fileStore.importThumbnail({
+              draftId: targetId,
+              srcUri: tempThumb,
+              name: "thumb",
+            });
+            console.log(
+              `[DraftStorage] Thumbnail generated and imported for draft: ${targetId}`
+            );
+          } else {
+            console.log(
+              `[DraftStorage] Failed to generate thumbnail for draft: ${targetId}`
+            );
+          }
+        } catch (thumbError) {
+          // Thumbnail generation/import failed - continue without thumbnail
+          // This can happen if cache was cleared and we're recovering
+          console.warn(
+            `[DraftStorage] Thumbnail processing failed for draft ${targetId}:`,
+            thumbError
           );
-        } else {
-          console.log(
-            `[DraftStorage] Failed to generate thumbnail for draft: ${targetId}`
-          );
+          thumbnailUri = undefined;
         }
       }
 

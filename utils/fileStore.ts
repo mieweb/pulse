@@ -97,6 +97,14 @@ export const fileStore = {
 
   importThumbnail: async (params: { draftId: string; srcUri: string; name?: string }): Promise<string> => {
     const { draftId, srcUri } = params;
+    
+    // Validate source file exists before trying to copy
+    const srcInfo = await FileSystem.getInfoAsync(srcUri);
+    if (!srcInfo.exists) {
+      console.warn(`[fileStore] importThumbnail: Source file does not exist: ${srcUri}`);
+      throw new Error(`Source thumbnail file does not exist: ${srcUri}`);
+    }
+    
     const ext = getExtensionFromUri(srcUri) || 'jpg';
     const fileName = `${params.name ?? 'thumb'}.${ext}`;
     const dst = `${paths.thumbsDir(draftId)}${fileName}`;

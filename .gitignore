@@ -30,6 +30,7 @@ modules/video-concat/android/.gradle/
 *.apk
 *.aab
 local.properties
+.idea
 
 # Metro
 .metro-health-check*

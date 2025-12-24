@@ -82,6 +82,21 @@ export default function ShortsScreen() {
     storeConfig();
   }, [server, token]);
   const cameraRef = React.useRef<CameraView>(null);
+  
+  // Use a stable ref callback to avoid CameraView remounting on every render
+  // This prevents the camera from being recreated on each state update
+  const cameraRefCallback = React.useCallback((ref: CameraView | null) => {
+    cameraRef.current = ref;
+  }, []);
+  
+  // Camera remount key - increment to force CameraView to remount
+  // This is needed on Android when returning from screens that use media players
+  const [cameraKey, setCameraKey] = React.useState(0);
+  
+  // Track if we've navigated to another screen that uses video/media
+  // Set to true before navigating, checked on focus to decide if remount needed
+  const needsCameraRemountRef = React.useRef(false);
+  
   const [maxDurationLimitSeconds, setMaxDurationLimitSeconds] = React.useState(60);
   const [activeRecordingDurationSeconds, setActiveRecordingDurationSeconds] =
     React.useState(0);
@@ -238,6 +253,13 @@ export default function ShortsScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
+      // On Android, force camera remount ONLY when returning from a screen that uses video
+      // needsCameraRemountRef is explicitly set before navigating to such screens
+      if (Platform.OS === "android" && needsCameraRemountRef.current) {
+        setCameraKey(prev => prev + 1);
+        needsCameraRemountRef.current = false;
+      }
+      
       const reloadDraft = async () => {
         const draftToReload = draftId || currentDraftId;
         if (draftToReload) {
@@ -312,6 +334,10 @@ export default function ShortsScreen() {
 
   const handlePreview = () => {
     if (currentDraftId && recordingSegments.length > 0) {
+      // Mark that we need to remount camera when returning (video player will be used)
+      if (Platform.OS === "android") {
+        needsCameraRemountRef.current = true;
+      }
       router.push({
         pathname: "/preview-new",
         params: { draftId: currentDraftId },
@@ -321,6 +347,10 @@ export default function ShortsScreen() {
 
   const handleReorderSegments = () => {
     if (currentDraftId) {
+      // Mark that we need to remount camera when returning (video thumbnails/previews used)
+      if (Platform.OS === "android") {
+        needsCameraRemountRef.current = true;
+      }
       router.push({
         pathname: "/reordersegments",
         params: { draftId: currentDraftId },
@@ -529,7 +559,8 @@ export default function ShortsScreen() {
           >
             <Animated.View style={{ flex: 1 }}>
               <CameraView
-                ref={cameraRef}
+                key={`camera-${cameraKey}`}
+                ref={cameraRefCallback}
                 style={styles.camera}
                 mode="video"
                 facing={cameraFacing}

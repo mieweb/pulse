@@ -1,6 +1,7 @@
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { useVideoPlayer, VideoView } from "expo-video";
+import * as VideoThumbnails from "expo-video-thumbnails";
 import * as Sharing from "expo-sharing";
 import { MaterialIcons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
@@ -10,12 +11,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   View,
+  Dimensions,
+  Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { uploadVideo } from "@/utils/tusUpload";
 import { getUploadConfig } from "@/utils/uploadConfig";
 import { DraftStorage } from "@/utils/draftStorage";
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function MergedVideoScreen() {
   const { videoUri, draftId } = useLocalSearchParams<{
@@ -29,13 +34,14 @@ export default function MergedVideoScreen() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hasUploadConfig, setHasUploadConfig] = useState(false);
   const [isUploadModeDraft, setIsUploadModeDraft] = useState(false);
+  const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
 
   const player = useVideoPlayer(videoUri, (player) => {
-    if (player) {
-      player.loop = false;
-      player.muted = false;
-      player.currentTime = 0;
-    }
+    player.loop = false;
+    player.muted = false;
+    player.currentTime = 0;
+    player.staysActiveInBackground = true; 
+    // player.showNowPlayingNotification=true
   });
 
   useEffect(() => {
@@ -43,9 +49,23 @@ export default function MergedVideoScreen() {
       if (videoUri) {
         try {
           setIsLoading(true);
+          
+          // Generate thumbnail
+          try {
+            const { uri } = await VideoThumbnails.getThumbnailAsync(
+              videoUri,
+              {
+                time: 0,
+              }
+            );
+            setThumbnailUri(uri);
+          } catch (thumbError) {
+            console.error("Failed to generate thumbnail:", thumbError);
+          }
+
           await player.replaceAsync(videoUri);
-          // Don't auto-play in thumbnail mode
           player.pause();
+          player.currentTime = 0;
         } catch (error) {
           console.error("Failed to load merged video:", error);
           Alert.alert("Error", "Failed to load merged video");
@@ -87,13 +107,6 @@ export default function MergedVideoScreen() {
     checkUploadConfig();
   }, [draftId]);
 
-  // Pause video when not in fullscreen
-  useEffect(() => {
-    if (!isFullscreen) {
-      player.pause();
-    }
-  }, [isFullscreen, player]);
-
   // Cleanup player on component unmount
   useEffect(() => {
     return () => {
@@ -115,6 +128,7 @@ export default function MergedVideoScreen() {
     if (!isFullscreen) {
       // Enter fullscreen and start playback
       setIsFullscreen(true);
+      player.currentTime = 0; // Reset to beginning
       player.play();
     } else {
       // Exit fullscreen and pause
@@ -267,7 +281,8 @@ export default function MergedVideoScreen() {
         <ThemedText style={styles.headerTitle}>Upload Video</ThemedText>
         <View style={styles.headerSpacer} />
       </View>
-
+    
+      {!isFullscreen && (
       <View style={styles.content}>
         {/* Video Thumbnail */}
         <View style={styles.videoSection}>
@@ -275,18 +290,19 @@ export default function MergedVideoScreen() {
             style={styles.videoThumbnail}
             onPress={toggleFullscreen}
           >
-            <VideoView
-              player={player}
-              style={styles.thumbnailVideo}
-              allowsFullscreen={false}
-              allowsPictureInPicture={false}
-              showsTimecodes={false}
-              requiresLinearPlayback={false}
-              contentFit="cover"
-              nativeControls={false}
-            />
+            {thumbnailUri ? (
+              <Image 
+                source={{ uri: thumbnailUri }} 
+                style={styles.thumbnailImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.thumbnailPlaceholder}>
+                <MaterialIcons name="videocam" size={60} color="#666" />
+              </View>
+            )}
             <View style={styles.playOverlay}>
-              <MaterialIcons name="play-arrow" size={40} color="#ffffff" />
+              <MaterialIcons name="play-arrow" size={60} color="#ffffff" />
             </View>
           </TouchableOpacity>
         </View>
@@ -382,22 +398,22 @@ export default function MergedVideoScreen() {
           </TouchableOpacity>
         </View>
       </View>
+      )}
 
       {/* Fullscreen Video Overlay */}
       {isFullscreen && (
         <View style={styles.fullscreenOverlay}>
-          <View style={styles.fullscreenVideo}>
-            <VideoView
-              player={player}
-              style={styles.fullscreenVideoPlayer}
-              allowsFullscreen={true}
-              allowsPictureInPicture={false}
-              showsTimecodes={false}
-              requiresLinearPlayback={true}
-              contentFit="cover"
-              nativeControls={true}
-            />
-          </View>
+          <VideoView
+            player={player}
+            style={styles.fullscreenVideoPlayer}
+            allowsFullscreen={false}
+            allowsPictureInPicture={false}
+            showsTimecodes={true}
+            requiresLinearPlayback={true}
+            contentFit="contain"
+            nativeControls={true}
+            surfaceType="textureView"
+          />
 
           <TouchableOpacity
             style={styles.fullscreenCloseButton}
@@ -452,9 +468,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#333",
     position: "relative",
   },
-  thumbnailVideo: {
+  thumbnailImage: {
     width: "100%",
     height: "100%",
+  },
+  thumbnailPlaceholder: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#1a1a1a",
+    justifyContent: "center",
+    alignItems: "center",
   },
   staticThumbnail: {
     width: "100%",
@@ -594,16 +617,13 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: "#000",
-    zIndex: 1000,
-  },
-  fullscreenVideo: {
-    flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    zIndex: 1000,
   },
   fullscreenVideoPlayer: {
-    width: "100%",
-    height: "100%",
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
   },
   fullscreenCloseButton: {
     position: "absolute",
