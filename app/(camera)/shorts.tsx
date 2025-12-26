@@ -41,7 +41,7 @@ import {
 import Animated, {
   runOnJS,
   useSharedValue,
-  useAnimatedReaction,
+  useDerivedValue,
 } from "react-native-reanimated";
 
 /**
@@ -147,35 +147,21 @@ export default function ShortsScreen() {
   const isHoldRecording = useSharedValue(false);
   const recordingModeShared = useSharedValue("");
 
-  // Create animated reactions to suppress onAnimatedValueUpdate warnings
-  // These create proper listeners for shared values that are updated from JS
-  useAnimatedReaction(
-    () => isHoldRecording.value,
-    () => {
-      // Listener for isHoldRecording changes
-    }
-  );
-  
-  useAnimatedReaction(
-    () => recordingModeShared.value,
-    () => {
-      // Listener for recordingModeShared changes
-    }
-  );
-  
-  useAnimatedReaction(
-    () => currentZoom.value,
-    () => {
-      // Listener for currentZoom changes
-    }
-  );
-  
-  useAnimatedReaction(
-    () => savedZoom.value,
-    () => {
-      // Listener for savedZoom changes
-    }
-  );
+  // Create derived value to suppress onAnimatedValueUpdate warnings
+  // This creates proper listeners for shared values that are updated from JS
+  // The derived value ensures listeners are registered before values are updated
+  // We reference all shared values here to create listeners
+  useDerivedValue(() => {
+    // Read all shared values to create listeners
+    // This prevents warnings when values are updated from JS
+    isHoldRecording.value;
+    recordingModeShared.value;
+    currentZoom.value;
+    savedZoom.value;
+    currentTouchY.value;
+    initialTouchY.value;
+    return 0; // Return dummy value
+  });
 
   // Calculate effective duration: trimmed duration if trim points exist, otherwise original duration
   const getEffectiveDuration = (segment: RecordingSegment): number => {
