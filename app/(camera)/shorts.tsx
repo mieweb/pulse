@@ -35,14 +35,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import {
-  PanGestureHandler,
-  PinchGestureHandler,
+  Gesture,
+  GestureDetector,
 } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
-  useAnimatedGestureHandler,
   useSharedValue,
-  useDerivedValue,
+  useAnimatedReaction,
 } from "react-native-reanimated";
 
 /**
@@ -148,18 +147,35 @@ export default function ShortsScreen() {
   const isHoldRecording = useSharedValue(false);
   const recordingModeShared = useSharedValue("");
 
-  // Create derived values to suppress onAnimatedValueUpdate warnings
-  // These create dependencies on the shared values without actually using them
-  useDerivedValue(() => {
-    // Reference all shared values to create listeners and suppress warnings
-    savedZoom.value;
-    currentZoom.value;
-    initialTouchY.value;
-    currentTouchY.value;
-    isHoldRecording.value;
-    recordingModeShared.value;
-    return 0; // Return dummy value
-  });
+  // Create animated reactions to suppress onAnimatedValueUpdate warnings
+  // These create proper listeners for shared values that are updated from JS
+  useAnimatedReaction(
+    () => isHoldRecording.value,
+    () => {
+      // Listener for isHoldRecording changes
+    }
+  );
+  
+  useAnimatedReaction(
+    () => recordingModeShared.value,
+    () => {
+      // Listener for recordingModeShared changes
+    }
+  );
+  
+  useAnimatedReaction(
+    () => currentZoom.value,
+    () => {
+      // Listener for currentZoom changes
+    }
+  );
+  
+  useAnimatedReaction(
+    () => savedZoom.value,
+    () => {
+      // Listener for savedZoom changes
+    }
+  );
 
   // Calculate effective duration: trimmed duration if trim points exist, otherwise original duration
   const getEffectiveDuration = (segment: RecordingSegment): number => {
@@ -189,7 +205,8 @@ export default function ShortsScreen() {
     setIsRecording(true);
 
     // Update shared values for gesture handler
-    isHoldRecording.value = true;
+    // Only set isHoldRecording for hold mode
+    isHoldRecording.value = mode === "hold";
     recordingModeShared.value = mode;
   };
 
@@ -208,9 +225,10 @@ export default function ShortsScreen() {
     setActiveRecordingDurationSeconds(0);
     setIsRecording(false);
 
-    // Reset shared values
+    // Reset shared values and screen touch state
     isHoldRecording.value = false;
     recordingModeShared.value = "";
+    setScreenTouchActive(false); // Ensure screen touch is reset
 
     if (videoUri && recordedDurationSeconds > 0) {
       let actualDuration = recordedDurationSeconds;
@@ -250,6 +268,17 @@ export default function ShortsScreen() {
   React.useEffect(() => {
     previousCameraFacingRef.current = cameraFacing;
   }, [cameraFacing]);
+
+  // Safety effect: ensure screen touch and hold state are reset when recording stops
+  React.useEffect(() => {
+    if (!isRecording) {
+      // Reset screen touch state when recording stops
+      setScreenTouchActive(false);
+      // Reset shared values
+      isHoldRecording.value = false;
+      recordingModeShared.value = "";
+    }
+  }, [isRecording]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -383,14 +412,14 @@ export default function ShortsScreen() {
   };
 
   // Screen-level touch handler for continuous hold recording with drag-to-zoom
-  const handleScreenPanGesture = useAnimatedGestureHandler({
-    onStart: (event) => {
+  const panGesture = Gesture.Pan()
+    .onBegin((event) => {
       runOnJS(setScreenTouchActive)(true);
       // Store initial touch position for zoom calculation
       initialTouchY.value = event.y;
       currentTouchY.value = event.y;
-    },
-    onActive: (event) => {
+    })
+    .onUpdate((event) => {
       currentTouchY.value = event.y;
 
       // Only apply zoom during hold recording
@@ -411,29 +440,15 @@ export default function ShortsScreen() {
         currentZoom.value = newZoom;
         runOnJS(setZoom)(newZoom);
       }
-    },
-    onEnd: () => {
+    })
+    .onFinalize(() => {
+      // Ensure screenTouchActive is reset on any gesture end (cancel, fail, or end)
       runOnJS(setScreenTouchActive)(false);
-      // Save final zoom value when gesture ends
+      // Save zoom state on finalize
       if (isHoldRecording.value && recordingModeShared.value === "hold") {
         savedZoom.value = currentZoom.value;
       }
-    },
-    onCancel: () => {
-      runOnJS(setScreenTouchActive)(false);
-      // Save zoom state on cancel too
-      if (isHoldRecording.value && recordingModeShared.value === "hold") {
-        savedZoom.value = currentZoom.value;
-      }
-    },
-    onFail: () => {
-      runOnJS(setScreenTouchActive)(false);
-      // Save zoom state on fail too
-      if (isHoldRecording.value && recordingModeShared.value === "hold") {
-        savedZoom.value = currentZoom.value;
-      }
-    },
-  });
+    });
 
   const handleCloseWrapper = async () => {
     await handleClose();
@@ -527,55 +542,54 @@ export default function ShortsScreen() {
     }
   };
 
+  // Pinch gesture handler for zoom
+  const pinchGesture = Gesture.Pinch()
+    .onBegin(() => {
+      currentZoom.value = savedZoom.value;
+    })
+    .onUpdate((event) => {
+      const scaleChange = event.scale - 1;
+
+      // Asymmetric sensitivity compensates for scale math limitations
+      const zoomChange =
+        scaleChange >= 0
+          ? scaleChange * 0.4 // Zoom in
+          : scaleChange * 0.7; // Zoom out (more sensitive)
+
+      const newZoom = Math.min(
+        0.5,
+        Math.max(0, savedZoom.value + zoomChange)
+      );
+      currentZoom.value = newZoom;
+      runOnJS(setZoom)(newZoom);
+    })
+    .onEnd(() => {
+      savedZoom.value = currentZoom.value;
+    });
+
+  // Combine pan and pinch gestures to work simultaneously
+  const composedGesture = Gesture.Simultaneous(panGesture, pinchGesture);
+
   return (
     <ThemedView style={styles.container}>
-      <PanGestureHandler onGestureEvent={handleScreenPanGesture}>
+      <GestureDetector gesture={composedGesture}>
         <Animated.View style={{ flex: 1 }}>
-          <PinchGestureHandler
-            onGestureEvent={useAnimatedGestureHandler({
-              onStart: () => {
-                currentZoom.value = savedZoom.value;
-              },
-              onActive: (event) => {
-                const scaleChange = event.scale - 1;
-
-                // Asymmetric sensitivity compensates for scale math limitations
-                const zoomChange =
-                  scaleChange >= 0
-                    ? scaleChange * 0.4 // Zoom in
-                    : scaleChange * 0.7; // Zoom out (more sensitive)
-
-                const newZoom = Math.min(
-                  0.5,
-                  Math.max(0, savedZoom.value + zoomChange)
-                );
-                currentZoom.value = newZoom;
-                runOnJS(setZoom)(newZoom);
-              },
-              onEnd: () => {
-                savedZoom.value = currentZoom.value;
-              },
-            })}
-          >
-            <Animated.View style={{ flex: 1 }}>
-              <CameraView
-                key={`camera-${cameraKey}`}
-                ref={cameraRefCallback}
-                style={styles.camera}
-                mode="video"
-                facing={cameraFacing}
-                enableTorch={torchEnabled}
-                zoom={zoom}
-                {...(Platform.OS === "ios"
-                  ? {
-                      videoStabilizationMode: mapToNativeVideoStabilization(
-                        videoStabilizationMode
-                      ),
-                    }
-                  : {})}
-              />
-            </Animated.View>
-          </PinchGestureHandler>
+          <CameraView
+            key={`camera-${cameraKey}`}
+            ref={cameraRefCallback}
+            style={styles.camera}
+            mode="video"
+            facing={cameraFacing}
+            enableTorch={torchEnabled}
+            zoom={zoom}
+            {...(Platform.OS === "ios"
+              ? {
+                  videoStabilizationMode: mapToNativeVideoStabilization(
+                    videoStabilizationMode
+                  ),
+                }
+              : {})}
+          />
 
           {!isRecording && (
             <CameraControls
@@ -649,7 +663,7 @@ export default function ShortsScreen() {
             screenTouchActive={screenTouchActive}
           />
         </Animated.View>
-      </PanGestureHandler>
+      </GestureDetector>
 
       {/* UI controls outside gesture handler to prevent touch event conflicts */}
       {!isRecording && (

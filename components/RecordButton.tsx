@@ -195,6 +195,10 @@ export default function RecordButton({
         setButtonInitiatedRecording(false);
         recordingPromiseRef.current = null;
         manuallyStoppedRef.current = false;
+        // Ensure hold visual feedback is stopped
+        if (isHoldingForRecord) {
+          stopHoldVisualFeedback();
+        }
       });
   };
 
