@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["VideoPostprocessModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.videopostprocess.VideoPostprocessModule"]
+  }
+}
