@@ -61,6 +61,13 @@
           "recordAudioAndroid": true
         }
       ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "$(PRODUCT_NAME) needs microphone access to record audio with your videos and manage audio sessions. This allows the app to capture your voice narration during recordings and handle interruptions from phone calls or other apps gracefully.",
+          "recordAudioAndroid": true
+        }
+      ],
       "expo-video",
       "expo-web-browser"
     ],
