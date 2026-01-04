@@ -22,7 +22,11 @@ export async function uploadVideo(
   filename: string,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<UploadResult> {
+  console.log(`[TUS Upload] Starting upload process for: ${filename}`);
+  console.log(`[TUS Upload] Video URI: ${videoUri}`);
+  
   // Get stored upload config
+  console.log(`[TUS Upload] Step 1: Getting upload config...`);
   const config = await getUploadConfig();
   if (!config) {
     throw new Error(
@@ -31,6 +35,7 @@ export async function uploadVideo(
   }
 
   let { server, token } = config;
+  console.log(`[TUS Upload] Config loaded - Server: ${server}, Token: ${token ? 'present' : 'missing'}`);
 
   // Detect if we're on a physical device and server is localhost
   // Try to auto-fix by replacing localhost with a common local IP pattern
@@ -55,19 +60,27 @@ export async function uploadVideo(
 
   // Normalize server URL (remove trailing slash)
   const normalizedServer = server.replace(/\/$/, "");
+  console.log(`[TUS Upload] Normalized server URL: ${normalizedServer}`);
 
   // Get file info
+  console.log(`[TUS Upload] Step 2: Getting file info...`);
   const fileInfo = await FileSystem.getInfoAsync(videoUri);
   if (!fileInfo.exists) {
     throw new Error("Video file not found");
   }
 
   const fileSize = fileInfo.size || 0;
+  console.log(`[TUS Upload] File size: ${fileSize} bytes (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
   if (fileSize === 0) {
     throw new Error("Video file is empty");
   }
 
   // Step 1: Create upload session
+  console.log(`[TUS Upload] Step 3: Creating upload session...`);
+  console.log(`[TUS Upload] POST ${normalizedServer}/uploads`);
+  console.log(`[TUS Upload] Headers: Upload-Length=${fileSize}, Tus-Resumable=1.0.0`);
+  
+  const createUploadStartTime = Date.now();
   let createUploadResponse: Response;
   try {
     createUploadResponse = await fetch(
@@ -80,7 +93,12 @@ export async function uploadVideo(
         },
       }
     );
+    const createUploadDuration = Date.now() - createUploadStartTime;
+    console.log(`[TUS Upload] Create session response received in ${createUploadDuration}ms`);
+    console.log(`[TUS Upload] Response status: ${createUploadResponse.status} ${createUploadResponse.statusText}`);
   } catch (error) {
+    const createUploadDuration = Date.now() - createUploadStartTime;
+    console.error(`[TUS Upload] Create session failed after ${createUploadDuration}ms:`, error);
     const errorMessage =
       error instanceof Error ? error.message : "Unknown network error";
     
@@ -109,6 +127,7 @@ export async function uploadVideo(
 
   // Extract upload ID from Location header
   const location = createUploadResponse.headers.get("Location");
+  console.log(`[TUS Upload] Location header: ${location}`);
   if (!location) {
     console.error(`[TUS Upload] No Location header in response. All headers:`, Object.fromEntries(createUploadResponse.headers.entries()));
     throw new Error("No upload location returned from server");
@@ -118,16 +137,27 @@ export async function uploadVideo(
   // Handle both absolute and relative Location headers
   let uploadUrl: string;
   if (location.startsWith("http")) {
-    // If Location is absolute URL, use it but ensure it has the correct port
+    // If Location is absolute URL, use it but ensure it matches server's scheme and port
     try {
       const locationUrl = new URL(location);
       const serverUrl = new URL(normalizedServer);
+      console.log(`[TUS Upload] Location URL: ${locationUrl.toString()}, Server URL: ${serverUrl.toString()}`);
+      
+      // If server uses HTTPS but Location is HTTP, upgrade to HTTPS (Proxmox SSL termination issue)
+      if (serverUrl.protocol === "https:" && locationUrl.protocol === "http:") {
+        locationUrl.protocol = "https:";
+        console.log(`[TUS Upload] Upgraded Location URL from HTTP to HTTPS: ${locationUrl.toString()}`);
+      }
+      
       // If Location URL is missing port but server URL has one, add it
       if (!locationUrl.port && serverUrl.port) {
         locationUrl.port = serverUrl.port;
+        console.log(`[TUS Upload] Added port ${serverUrl.port} to Location URL: ${locationUrl.toString()}`);
       }
+      
       uploadUrl = locationUrl.toString();
-    } catch {
+    } catch (error) {
+      console.error(`[TUS Upload] URL parsing failed:`, error);
       // If URL parsing fails, use location as-is
       uploadUrl = location;
     }
@@ -135,12 +165,15 @@ export async function uploadVideo(
     // Relative URL - prepend server
     uploadUrl = `${normalizedServer}${location.startsWith("/") ? location : `/uploads/${uploadId}`}`;
   }
+  console.log(`[TUS Upload] Final upload URL: ${uploadUrl}`);
 
   // Step 2: Upload file in chunks using FileSystem.uploadAsync
   // Note: We'll use a workaround with fetch and base64 encoding
   // For production, consider using a TUS client library
   const chunkSize = 1024 * 1024; // 1MB chunks
   const totalChunks = Math.ceil(fileSize / chunkSize);
+  console.log(`[TUS Upload] Step 4: Starting chunked upload...`);
+  console.log(`[TUS Upload] Chunk size: ${chunkSize} bytes, Total chunks: ${totalChunks}`);
   
   let offset = 0;
   let bytesUploaded = 0;
@@ -151,6 +184,9 @@ export async function uploadVideo(
     const end = Math.min(offset + chunkSize, fileSize);
     const chunkLength = end - offset;
     
+    console.log(`[TUS Upload] Chunk ${chunkNumber}/${totalChunks}: Reading ${chunkLength} bytes from offset ${offset}...`);
+    const readStartTime = Date.now();
+    
     // Read chunk as base64
     const base64Chunk = await FileSystem.readAsStringAsync(videoUri, {
       encoding: FileSystem.EncodingType.Base64,
@@ -158,19 +194,32 @@ export async function uploadVideo(
       length: chunkLength,
     });
 
+    const readDuration = Date.now() - readStartTime;
+    console.log(`[TUS Upload] Chunk ${chunkNumber}: Read completed in ${readDuration}ms (${base64Chunk.length} base64 chars)`);
+
     // Convert base64 to Uint8Array
+    const convertStartTime = Date.now();
     const binaryString = atob(base64Chunk);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
+    const convertDuration = Date.now() - convertStartTime;
+    console.log(`[TUS Upload] Chunk ${chunkNumber}: Converted to binary in ${convertDuration}ms (${bytes.length} bytes)`);
 
     // Upload chunk
     let retries = 3;
     let uploadResponse: Response | null = null;
 
     while (retries > 0) {
+      const attemptNumber = 4 - retries;
+      const uploadStartTime = Date.now();
       try {
+        console.log(`[TUS Upload] Chunk ${chunkNumber}/${totalChunks}: Uploading (attempt ${attemptNumber}/3)...`);
+        console.log(`[TUS Upload] Chunk ${chunkNumber}: PATCH ${uploadUrl}`);
+        console.log(`[TUS Upload] Chunk ${chunkNumber}: Headers - Upload-Offset=${offset}, Content-Type=application/offset+octet-stream, Tus-Resumable=1.0.0`);
+        console.log(`[TUS Upload] Chunk ${chunkNumber}: Body size: ${bytes.length} bytes`);
+        
         uploadResponse = await fetch(uploadUrl, {
           method: "PATCH",
           headers: {
@@ -181,21 +230,33 @@ export async function uploadVideo(
           body: bytes,
         });
 
+        const uploadDuration = Date.now() - uploadStartTime;
+        console.log(`[TUS Upload] Chunk ${chunkNumber}: Response received in ${uploadDuration}ms`);
+        console.log(`[TUS Upload] Chunk ${chunkNumber}: Status: ${uploadResponse.status} ${uploadResponse.statusText}`);
+
         if (uploadResponse.ok) {
+          const uploadOffset = uploadResponse.headers.get("Upload-Offset");
+          console.log(`[TUS Upload] Chunk ${chunkNumber}: Upload-Offset header: ${uploadOffset}`);
           break;
         }
 
         // If not ok, retry
+        console.warn(`[TUS Upload] Chunk ${chunkNumber}: Upload failed with status ${uploadResponse.status}, retrying...`);
         retries--;
         if (retries > 0) {
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       } catch (error) {
-        console.error(`[TUS Upload] Chunk ${chunkNumber}: Upload error:`, error);
+        const uploadDuration = Date.now() - uploadStartTime;
+        console.error(`[TUS Upload] Chunk ${chunkNumber}: Upload error after ${uploadDuration}ms:`, error);
+        if (error instanceof Error) {
+          console.error(`[TUS Upload] Chunk ${chunkNumber}: Error name: ${error.name}, message: ${error.message}`);
+        }
         retries--;
         if (retries === 0) {
           throw error;
         }
+        console.log(`[TUS Upload] Chunk ${chunkNumber}: Retrying in 1 second...`);
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
@@ -211,6 +272,7 @@ export async function uploadVideo(
       uploadResponse.headers.get("Upload-Offset") || "0",
       10
     );
+    console.log(`[TUS Upload] Chunk ${chunkNumber}: Server confirmed offset: ${newOffset}`);
     offset = newOffset;
     bytesUploaded = offset;
 
@@ -222,9 +284,19 @@ export async function uploadVideo(
         percentage: (bytesUploaded / fileSize) * 100,
       });
     }
+
+    const progressPercent = Math.round((bytesUploaded / fileSize) * 100);
+    console.log(`[TUS Upload] Progress: ${bytesUploaded}/${fileSize} (${progressPercent}%) - Chunk ${chunkNumber}/${totalChunks} complete`);
   }
 
+  console.log(`[TUS Upload] All chunks uploaded successfully. Upload ID: ${uploadId}`);
+
   // Step 3: Finalize upload
+  console.log(`[TUS Upload] Step 5: Finalizing upload...`);
+  console.log(`[TUS Upload] POST ${normalizedServer}/uploads/finalize`);
+  console.log(`[TUS Upload] Finalize payload: uploadId=${uploadId}, filename=${filename}`);
+  
+  const finalizeStartTime = Date.now();
   const finalizeResponse = await fetch(`${normalizedServer}/uploads/finalize`, {
     method: "POST",
     headers: {
@@ -239,6 +311,10 @@ export async function uploadVideo(
     }),
   });
 
+  const finalizeDuration = Date.now() - finalizeStartTime;
+  console.log(`[TUS Upload] Finalize response received in ${finalizeDuration}ms`);
+  console.log(`[TUS Upload] Finalize status: ${finalizeResponse.status} ${finalizeResponse.statusText}`);
+
   if (!finalizeResponse.ok) {
     const errorText = await finalizeResponse.text();
     console.error(`[TUS Upload] Finalize failed - Status: ${finalizeResponse.status}, Error: ${errorText}`);
@@ -248,6 +324,8 @@ export async function uploadVideo(
   }
 
   const result = await finalizeResponse.json();
+  console.log(`[TUS Upload] Finalized successfully: ${result.videoId}`);
+  console.log(`[TUS Upload] Upload process completed successfully!`);
   return result;
 }
 
