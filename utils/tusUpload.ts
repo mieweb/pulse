@@ -47,7 +47,6 @@ export async function uploadVideo(
       if (debuggerHost && !debuggerHost.includes("localhost") && !debuggerHost.includes("127.0.0.1")) {
         const port = server.split(":")[2] || "3000";
         server = server.replace(/localhost|127\.0\.0\.1/, debuggerHost);
-        console.log(`[TUS Upload] Auto-replaced localhost with detected IP: ${server}`);
       }
     } catch (e) {
       // Constants not available, will show error below
@@ -71,13 +70,16 @@ export async function uploadVideo(
   // Step 1: Create upload session
   let createUploadResponse: Response;
   try {
-    createUploadResponse = await fetch(`${normalizedServer}/uploads`, {
-      method: "POST",
-      headers: {
-        "Upload-Length": fileSize.toString(),
-        "Tus-Resumable": "1.0.0",
-      },
-    });
+    createUploadResponse = await fetch(
+      `${normalizedServer}/uploads`,
+      {
+        method: "POST",
+        headers: {
+          "Upload-Length": fileSize.toString(),
+          "Tus-Resumable": "1.0.0",
+        },
+      }
+    );
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown network error";
@@ -99,6 +101,7 @@ export async function uploadVideo(
 
   if (!createUploadResponse.ok) {
     const errorText = await createUploadResponse.text().catch(() => "");
+    console.error(`[TUS Upload] Create session failed - Status: ${createUploadResponse.status}, Error: ${errorText}`);
     throw new Error(
       `Failed to create upload session: ${createUploadResponse.status} ${createUploadResponse.statusText}${errorText ? ` - ${errorText}` : ""}`
     );
@@ -107,28 +110,47 @@ export async function uploadVideo(
   // Extract upload ID from Location header
   const location = createUploadResponse.headers.get("Location");
   if (!location) {
+    console.error(`[TUS Upload] No Location header in response. All headers:`, Object.fromEntries(createUploadResponse.headers.entries()));
     throw new Error("No upload location returned from server");
   }
 
   const uploadId = location.split("/uploads/").pop() || location;
   // Handle both absolute and relative Location headers
-  const uploadUrl = location.startsWith("http")
-    ? location
-    : `${normalizedServer}${location.startsWith("/") ? location : `/uploads/${uploadId}`}`;
-
-  console.log(`[TUS Upload] Created upload session: ${uploadId}`);
+  let uploadUrl: string;
+  if (location.startsWith("http")) {
+    // If Location is absolute URL, use it but ensure it has the correct port
+    try {
+      const locationUrl = new URL(location);
+      const serverUrl = new URL(normalizedServer);
+      // If Location URL is missing port but server URL has one, add it
+      if (!locationUrl.port && serverUrl.port) {
+        locationUrl.port = serverUrl.port;
+      }
+      uploadUrl = locationUrl.toString();
+    } catch {
+      // If URL parsing fails, use location as-is
+      uploadUrl = location;
+    }
+  } else {
+    // Relative URL - prepend server
+    uploadUrl = `${normalizedServer}${location.startsWith("/") ? location : `/uploads/${uploadId}`}`;
+  }
 
   // Step 2: Upload file in chunks using FileSystem.uploadAsync
   // Note: We'll use a workaround with fetch and base64 encoding
   // For production, consider using a TUS client library
   const chunkSize = 1024 * 1024; // 1MB chunks
+  const totalChunks = Math.ceil(fileSize / chunkSize);
+  
   let offset = 0;
   let bytesUploaded = 0;
+  let chunkNumber = 0;
 
   while (offset < fileSize) {
+    chunkNumber++;
     const end = Math.min(offset + chunkSize, fileSize);
     const chunkLength = end - offset;
-
+    
     // Read chunk as base64
     const base64Chunk = await FileSystem.readAsStringAsync(videoUri, {
       encoding: FileSystem.EncodingType.Base64,
@@ -169,6 +191,7 @@ export async function uploadVideo(
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       } catch (error) {
+        console.error(`[TUS Upload] Chunk ${chunkNumber}: Upload error:`, error);
         retries--;
         if (retries === 0) {
           throw error;
@@ -178,6 +201,7 @@ export async function uploadVideo(
     }
 
     if (!uploadResponse || !uploadResponse.ok) {
+      console.error(`[TUS Upload] Chunk ${chunkNumber}: Final failure - Status: ${uploadResponse?.status}, StatusText: ${uploadResponse?.statusText}`);
       throw new Error(
         `Failed to upload chunk: ${uploadResponse?.statusText || "Unknown error"} (offset: ${offset})`
       );
@@ -198,15 +222,7 @@ export async function uploadVideo(
         percentage: (bytesUploaded / fileSize) * 100,
       });
     }
-
-    console.log(
-      `[TUS Upload] Progress: ${bytesUploaded}/${fileSize} (${Math.round(
-        (bytesUploaded / fileSize) * 100
-      )}%)`
-    );
   }
-
-  console.log(`[TUS Upload] Upload complete: ${uploadId}`);
 
   // Step 3: Finalize upload
   const finalizeResponse = await fetch(`${normalizedServer}/uploads/finalize`, {
@@ -225,14 +241,13 @@ export async function uploadVideo(
 
   if (!finalizeResponse.ok) {
     const errorText = await finalizeResponse.text();
+    console.error(`[TUS Upload] Finalize failed - Status: ${finalizeResponse.status}, Error: ${errorText}`);
     throw new Error(
       `Failed to finalize upload: ${finalizeResponse.statusText} - ${errorText}`
     );
   }
 
   const result = await finalizeResponse.json();
-  console.log(`[TUS Upload] Finalized: ${result.videoId}`);
-
   return result;
 }
 
