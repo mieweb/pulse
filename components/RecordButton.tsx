@@ -1,7 +1,12 @@
 import { CameraView } from "expo-camera";
+import { setAudioModeAsync } from "expo-audio";
 import * as React from "react";
 import { Animated, StyleSheet, TouchableOpacity, View } from "react-native";
 import VideoConcatModule from "@/modules/video-concat";
+
+export interface RecordButtonRef {
+  reset: () => void;
+}
 
 interface RecordButtonProps {
   cameraRef: React.RefObject<CameraView | null>;
@@ -26,7 +31,7 @@ interface RecordButtonProps {
   screenTouchActive?: boolean;
 }
 
-export default function RecordButton({
+const RecordButton = React.forwardRef<RecordButtonRef, RecordButtonProps>(({
   cameraRef,
   maxDuration = 180,
   onRecordingStart,
@@ -40,7 +45,7 @@ export default function RecordButton({
   onButtonTouchStart,
   onButtonTouchEnd,
   screenTouchActive = false,
-}: RecordButtonProps) {
+}, ref) => {
   const [isRecording, setIsRecording] = React.useState(false);
   const [recordingMode, setRecordingMode] = React.useState<
     "tap" | "hold" | null
@@ -103,8 +108,22 @@ export default function RecordButton({
     }
   }, [screenTouchActive, buttonInitiatedRecording, isRecording, recordingMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const startRecording = (mode: "tap" | "hold") => {
+  const startRecording = async (mode: "tap" | "hold") => {
     if (!cameraRef.current || isRecording || remainingTime <= 0) return;
+
+    // Configure audio session for better interruption handling
+    try {
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        interruptionMode: "doNotMix", // Request exclusive audio focus
+        shouldPlayInBackground: false, // Don't play in background
+      });
+      console.log("[RecordButton] ✅ Audio session configured successfully");
+    } catch (error) {
+      console.warn("[RecordButton] ⚠️ Failed to configure audio session:", error);
+      // Continue with recording even if audio session config fails
+    }
 
     setIsRecording(true);
     setRecordingMode(mode);
@@ -178,8 +197,17 @@ export default function RecordButton({
       .catch(async (error) => {
         const recordingDuration = (Date.now() - recordingStartTimeRef.current) / 1000;
 
-        if (!error.message?.includes("stopped")) {
-          console.log("[RecordButton] Recording failed");
+        // Check for specific error types
+        if (
+          error.message?.includes("interrupted") ||
+          error.message?.includes("stopped") ||
+          error.message?.includes("background") ||
+          error.message?.includes("cancelled")
+        ) {
+          console.warn("[RecordButton] ⚠️ Recording interrupted (expected):", error.message);
+          // Don't show error alert for expected interruptions
+        } else {
+          console.error("[RecordButton] ❌ Recording failed (unexpected):", error);
         }
         onRecordingComplete?.(null, mode, recordingDuration);
         return null;
@@ -239,6 +267,43 @@ export default function RecordButton({
       useNativeDriver: false,
     }).start();
   };
+
+  // Reset all animations and states to initial values
+  const reset = React.useCallback(() => {
+    // Stop any ongoing animations
+    if (pulsingRef.current) {
+      pulsingRef.current.stop();
+    }
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+
+    // Reset animation values to initial state
+    scaleAnim.setValue(1);
+    borderRadiusAnim.setValue(30);
+    outerBorderScaleAnim.setValue(1);
+
+    // Reset state
+    setIsHoldingForRecord(false);
+    setIsRecording(false);
+    setRecordingMode(null);
+    setButtonInitiatedRecording(false);
+    isHoldingRef.current = false;
+    manuallyStoppedRef.current = false;
+    recordingPromiseRef.current = null;
+
+    console.log("[RecordButton] 🔄 Reset all animations and states");
+  }, []);
+
+  // Expose reset method via ref
+  React.useImperativeHandle(ref, () => ({
+    reset,
+  }));
 
   const stopRecording = async () => {
     if (!cameraRef.current || !isRecording) return;
@@ -368,7 +433,11 @@ export default function RecordButton({
       </TouchableOpacity>
     </View>
   );
-}
+});
+
+RecordButton.displayName = "RecordButton";
+
+export default RecordButton;
 
 const styles = StyleSheet.create({
   buttonContainer: {
