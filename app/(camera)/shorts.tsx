@@ -270,11 +270,39 @@ export default function ShortsScreen() {
     }
   }, [isRecording]);
 
+  // Track previous app state for Android (to detect genuine background transitions)
+  const appStateRef = React.useRef<AppStateStatus>(AppState.currentState);
+  const lastBackgroundTimeRef = React.useRef<number>(0);
+
   // Handle app state changes during recording (background/foreground interruptions)
   React.useEffect(() => {
     if (!isRecording) return;
 
     const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+      const prevState = appStateRef.current;
+      
+      // On Android, ignore rapid state changes (less than 500ms in background)
+      // This prevents false triggers from permission dialogs, file pickers, etc.
+      if (Platform.OS === "android") {
+        if (nextAppState === "background" || nextAppState === "inactive") {
+          lastBackgroundTimeRef.current = Date.now();
+        } else if (nextAppState === "active" && prevState !== "active") {
+          const timeInBackground = Date.now() - lastBackgroundTimeRef.current;
+          if (timeInBackground < 500) {
+            console.log(`[ShortsScreen] Ignoring rapid state change (${timeInBackground}ms in background)`);
+            appStateRef.current = nextAppState;
+            return;
+          }
+        }
+      }
+
+      console.log("[ShortsScreen] AppState:", prevState, "->", nextAppState);
+      
+      // Only act on genuine transitions
+      if (prevState === nextAppState) {
+        return;
+      }
+
       if (nextAppState === "background" || nextAppState === "inactive") {
         // Stop recording immediately when app goes to background
         if (cameraRef.current) {
@@ -286,8 +314,8 @@ export default function ShortsScreen() {
             console.warn("[ShortsScreen] Error stopping recording on background:", error);
           }
         }
-      } else if (nextAppState === "active") {
-        // Re-enable audio when app becomes active again
+      } else if (nextAppState === "active" && prevState.match(/inactive|background/)) {
+        // Re-enable audio when app becomes active again (only from genuine background)
         try {
           await setIsAudioActiveAsync(true);
         } catch (error) {
@@ -307,9 +335,13 @@ export default function ShortsScreen() {
         
         console.log("[ShortsScreen] 🔄 Reset all animations and states");
       }
+      
+      appStateRef.current = nextAppState;
     };
 
-    const subscription = AppState.addEventListener("change", handleAppStateChange);
+    // Use 'focus' event on Android to avoid false triggers, 'change' on iOS
+    const eventType = Platform.OS === "android" ? "focus" : "change";
+    const subscription = AppState.addEventListener(eventType, handleAppStateChange);
     return () => subscription.remove();
   }, [isRecording]);
 
