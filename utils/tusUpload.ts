@@ -75,6 +75,21 @@ export async function uploadVideo(
     throw new Error("Video file is empty");
   }
 
+  // Step 1: Test basic connectivity first (helps diagnose network issues)
+  console.log(`[TUS Upload] Step 3a: Testing server connectivity...`);
+  try {
+    const healthCheckStart = Date.now();
+    const healthResponse = await fetch(`${normalizedServer}/health`, {
+      method: "GET",
+      cache: "no-store",
+    });
+    const healthDuration = Date.now() - healthCheckStart;
+    console.log(`[TUS Upload] Health check: ${healthResponse.status} in ${healthDuration}ms`);
+  } catch (healthError) {
+    console.warn(`[TUS Upload] Health check failed (this may be normal if /health doesn't exist):`, healthError);
+    // Don't fail here - some servers don't have /health endpoint
+  }
+
   // Step 1: Create upload session
   console.log(`[TUS Upload] Step 3: Creating upload session...`);
   console.log(`[TUS Upload] POST ${normalizedServer}/uploads`);
@@ -83,15 +98,20 @@ export async function uploadVideo(
   const createUploadStartTime = Date.now();
   let createUploadResponse: Response;
   try {
+    const fetchOptions: RequestInit = {
+      method: "POST",
+      headers: {
+        "Upload-Length": fileSize.toString(),
+        "Tus-Resumable": "1.0.0",
+      },
+      cache: "no-store",
+      redirect: "follow",
+    };
+    console.log(`[TUS Upload] Fetch options:`, JSON.stringify(fetchOptions, null, 2));
+    
     createUploadResponse = await fetch(
       `${normalizedServer}/uploads`,
-      {
-        method: "POST",
-        headers: {
-          "Upload-Length": fileSize.toString(),
-          "Tus-Resumable": "1.0.0",
-        },
-      }
+      fetchOptions
     );
     const createUploadDuration = Date.now() - createUploadStartTime;
     console.log(`[TUS Upload] Create session response received in ${createUploadDuration}ms`);
@@ -99,18 +119,26 @@ export async function uploadVideo(
   } catch (error) {
     const createUploadDuration = Date.now() - createUploadStartTime;
     console.error(`[TUS Upload] Create session failed after ${createUploadDuration}ms:`, error);
+    
+    // Log detailed error information
+    if (error instanceof Error) {
+      console.error(`[TUS Upload] Error name: ${error.name}`);
+      console.error(`[TUS Upload] Error message: ${error.message}`);
+      console.error(`[TUS Upload] Error stack: ${error.stack}`);
+    }
+    
     const errorMessage =
       error instanceof Error ? error.message : "Unknown network error";
     
     // Provide helpful error message for network failures
-    if (errorMessage.includes("Network request failed") || errorMessage.includes("Failed to connect")) {
+    if (errorMessage.includes("Network request failed") || errorMessage.includes("Failed to connect") || errorMessage.includes("TypeError")) {
       if (normalizedServer.includes("localhost") || normalizedServer.includes("127.0.0.1")) {
         throw new Error(
           `Cannot connect to server. If testing on a physical device, replace "localhost" with your computer's IP address (e.g., http://192.168.1.100:3000). Current server: ${normalizedServer}`
         );
       } else {
         throw new Error(
-          `Cannot connect to server at ${normalizedServer}. Please check:\n1. Server is running\n2. Device and server are on the same network\n3. Firewall allows connections\n\nError: ${errorMessage}`
+          `Cannot connect to server at ${normalizedServer}. Please check:\n1. Server is running and accessible\n2. Device has internet connectivity\n3. Server SSL certificate is valid\n4. No firewall is blocking the connection\n\nError: ${errorMessage}\n\nIf the server is accessible via curl, this may be an iOS App Transport Security issue. Check server logs to see if the request is reaching the server.`
         );
       }
     }
