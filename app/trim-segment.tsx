@@ -162,10 +162,12 @@ export default function TrimSegmentScreen() {
       </View>
 
       {/* Video Trimmer UI - includes built-in video player with looping */}
+      {/* Note: playInBackground is enabled via patch-package to fix Android stuttering */}
       <View style={styles.trimmerContainer}>
         <VideoTrimmerUI
           ref={trimmerRef}
           source={{ uri: absoluteUri }}
+          // source={{ uri: "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4" }}
           onSelected={handleTrimSelected}
           loop={true}
           containerStyle={styles.trimmerUI}
@@ -239,5 +241,6 @@ const styles = StyleSheet.create({
   },
   sliderContainer: {
     marginHorizontal: 20,
+    marginBottom: 40,
   },
 });
