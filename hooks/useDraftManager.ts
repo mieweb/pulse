@@ -693,6 +693,7 @@ export function useDraftManager(
           segmentsForStorage,
           newDurationLimitSeconds
         );
+        setSavedDurationLimitSeconds(newDurationLimitSeconds);
         console.log(
           `[DraftManager] Updated draft duration: ${currentDraftId} -> ${newDurationLimitSeconds}s`
         );
@@ -709,6 +710,7 @@ export function useDraftManager(
           draftId
         );
         setCurrentDraftId(newDraftId);
+        setSavedDurationLimitSeconds(newDurationLimitSeconds);
         console.log(
           `[DraftManager] Created draft with duration: ${newDraftId} -> ${newDurationLimitSeconds}s`
         );
