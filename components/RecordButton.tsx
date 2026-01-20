@@ -61,6 +61,9 @@ export default function RecordButton({
   const recordingPromiseRef = React.useRef<Promise<any> | null>(null);
   const manuallyStoppedRef = React.useRef(false);
   const isHoldingRef = React.useRef(false);
+  const buttonTouchActiveRef = React.useRef(false);
+  const fingerMovedOffButtonRef = React.useRef(false);
+  const initialTouchPositionRef = React.useRef<{ x: number; y: number } | null>(null);
 
   const recordingStartTimeRef = React.useRef<number>(0);
   const progressIntervalRef = React.useRef<ReturnType<
@@ -88,15 +91,14 @@ export default function RecordButton({
     }
   };
 
-  // Handle screen-level touch end for hold recording
   React.useEffect(() => {
     if (
       !screenTouchActive &&
+      !buttonTouchActiveRef.current &&
       buttonInitiatedRecording &&
       isRecording &&
       recordingMode === "hold"
     ) {
-      // Screen touch ended, stop hold recording
       stopRecording();
       stopHoldVisualFeedback();
       setButtonInitiatedRecording(false);
@@ -195,6 +197,9 @@ export default function RecordButton({
         setButtonInitiatedRecording(false);
         recordingPromiseRef.current = null;
         manuallyStoppedRef.current = false;
+        buttonTouchActiveRef.current = false;
+        fingerMovedOffButtonRef.current = false;
+        initialTouchPositionRef.current = null;
         // Ensure hold visual feedback is stopped
         if (isHoldingForRecord) {
           stopHoldVisualFeedback();
@@ -283,8 +288,17 @@ export default function RecordButton({
     }
   };
 
-  const handlePressIn = () => {
+  const handlePressIn = (event?: any) => {
     pressStartTimeRef.current = Date.now();
+    buttonTouchActiveRef.current = true;
+    fingerMovedOffButtonRef.current = false;
+    
+    if (event?.nativeEvent) {
+      initialTouchPositionRef.current = {
+        x: event.nativeEvent.pageX || 0,
+        y: event.nativeEvent.pageY || 0,
+      };
+    }
 
     // Notify parent that button touch started
     onButtonTouchStart?.();
@@ -293,7 +307,7 @@ export default function RecordButton({
       startHoldVisualFeedback();
 
       holdTimeoutRef.current = setTimeout(() => {
-        if (isHoldingRef.current) {
+        if (isHoldingRef.current && buttonTouchActiveRef.current) {
           startRecording("hold");
         }
       }, holdDelay);
@@ -301,7 +315,9 @@ export default function RecordButton({
   };
 
   const handlePressOut = () => {
-    // Notify parent that button touch ended
+    const wasButtonTouched = buttonTouchActiveRef.current;
+    buttonTouchActiveRef.current = false;
+    
     onButtonTouchEnd?.();
 
     if (holdTimeoutRef.current) {
@@ -309,18 +325,49 @@ export default function RecordButton({
       holdTimeoutRef.current = null;
     }
 
-    // Only stop hold recording on button press out if we're not using screen-level touch detection
-    // or if the screen touch is also inactive
-    if (isRecording && recordingMode === "hold") {
-      // If we have screen-level touch coordination, let the useEffect handle stopping
-      // Otherwise, stop immediately on press out
-      if (!onButtonTouchStart || !screenTouchActive) {
+    if (isRecording && recordingMode === "hold" && wasButtonTouched) {
+      const fingerMovedToScreen = fingerMovedOffButtonRef.current && screenTouchActive;
+      
+      if (!fingerMovedToScreen) {
         stopRecording();
         stopHoldVisualFeedback();
         setButtonInitiatedRecording(false);
       }
     } else if (isHoldingForRecord) {
       stopHoldVisualFeedback();
+    }
+    
+    fingerMovedOffButtonRef.current = false;
+    initialTouchPositionRef.current = null;
+  };
+
+  const handleTouchMove = (event: any) => {
+    if (!buttonTouchActiveRef.current || !initialTouchPositionRef.current) {
+      return;
+    }
+
+    const currentX = event.nativeEvent?.pageX || 0;
+    const currentY = event.nativeEvent?.pageY || 0;
+    const initialX = initialTouchPositionRef.current.x;
+    const initialY = initialTouchPositionRef.current.y;
+
+    const deltaX = Math.abs(currentX - initialX);
+    const deltaY = Math.abs(currentY - initialY);
+    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+    const MOVEMENT_THRESHOLD = 15;
+    if (distance > MOVEMENT_THRESHOLD) {
+      fingerMovedOffButtonRef.current = true;
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (buttonTouchActiveRef.current) {
+      setTimeout(() => {
+        if (buttonTouchActiveRef.current) {
+          handlePressOut();
+        }
+      }, 10);
     }
   };
 
@@ -348,24 +395,29 @@ export default function RecordButton({
       />
 
       {/* Static center button with tap animation only */}
-      <TouchableOpacity
+      <View
         style={styles.touchableArea}
-        onPress={handleRecordPress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        activeOpacity={0.8}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
-        <Animated.View
-          style={[
-            styles.innerButton,
-            {
-              transform: [{ scale: scaleAnim }],
-              borderRadius: borderRadiusAnim,
-              backgroundColor: "#ff0000",
-            },
-          ]}
-        />
-      </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleRecordPress}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
+          activeOpacity={0.8}
+        >
+          <Animated.View
+            style={[
+              styles.innerButton,
+              {
+                transform: [{ scale: scaleAnim }],
+                borderRadius: borderRadiusAnim,
+                backgroundColor: "#ff0000",
+              },
+            ]}
+          />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
