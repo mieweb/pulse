@@ -92,7 +92,7 @@ android {
         applicationId = "com.mieweb.pulse"
         minSdk = rootProject.ext.minSdkVersion
         targetSdk = rootProject.ext.targetSdkVersion
-        versionCode = 1
+        versionCode 1
         versionName = "1.0.1"
     }
     signingConfigs {
