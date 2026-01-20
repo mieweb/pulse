@@ -13,7 +13,8 @@
       "bundleIdentifier": "com.mieweb.pulse",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "appleTeamId": "X5873NL7XM"
     },
     "android": {
       "adaptiveIcon": {
