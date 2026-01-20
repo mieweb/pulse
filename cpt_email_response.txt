@@ -1,0 +1,21 @@
+From: Priyam Rajesh More <morepr01@pfw.edu>
+Date: [Current Date]
+To: Adolfo Coronado <acoronad@pfw.edu>
+Cc: Master of Computer Science <MSCS@pfw.edu>
+Subject: Re: Request for CPT Documentation for Thesis Work
+
+Hello Dr. Coronado,
+
+Thank you for your guidance. Attached please find my CPT form for your review and approval. I have also attached my previous offer letter from MIE for reference. I can request an updated offer letter from MIE reflecting full-time CPT with updated dates and a more specific job description related to Pulse if that would be helpful for the review process.
+
+**Job Description:**
+At MIE, my work focuses on Pulse, a video knowledge management platform designed to facilitate knowledge sharing and collaboration through short-form video content. Pulse enables users to capture, upload, and share video-based knowledge within an organization, addressing challenges in knowledge management and organizational learning. My responsibilities include building, deploying, maintaining, and fixing the platform to ensure its continuous operation and improvement.
+
+The concept and design of Pulse originated from my own research and is an integral component of my thesis work, which I am conducting under your supervision as my thesis chair, with Prof. Romael as my thesis advisor, and Doug serving as an external advisor. This hands-on development and deployment work is essential for completing my thesis, as it provides the real-world system and infrastructure needed to conduct my research. Additionally, I plan to conduct a user study with employees at MIE to evaluate the platform's effectiveness, usability, and adoption. The data collected from this study will directly contribute to addressing my research questions and completing my thesis under the committee's supervision.
+
+The continuous, full-time nature of this work is necessary to ensure system stability, support ongoing deployment activities, monitor system performance, and facilitate the iterative evaluation required for my thesis research.
+
+Please let me know if you need any additional information or documentation. I appreciate your support with this process.
+
+Best regards,
+Priyam More
