@@ -30,6 +30,11 @@ jobs:
           node-version: "20"
           cache: "npm"
 
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "latest-stable"
+
       - name: Install dependencies
         run: npm install
 
@@ -42,7 +47,7 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Prebuild iOS project
-        run: npx expo prebuild
+        run: npx expo prebuild --clean
 
       - name: Install iOS dependencies
         run: |
