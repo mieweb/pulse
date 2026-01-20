@@ -6,37 +6,175 @@ This thesis presents **Pulse**, a cross-platform mobile application designed for
 
 ## 1. Introduction
 
-### 1.1 Research Context
+### 1.1 The Challenge of Institutional Knowledge Management
 
-Institutional knowledge management faces significant challenges in the modern workplace:
-- **Knowledge Loss**: Critical institutional knowledge is lost when employees transition or retire
-- **Training Inefficiency**: Traditional documentation methods (text, static images) fail to capture procedural nuances
-- **Adoption Barriers**: Complex documentation systems often see low adoption rates
-- **Security Concerns**: Institutional knowledge sharing requires enterprise-grade security and compliance
+Institutional knowledge management represents one of the most critical yet challenging aspects of modern organizational operations. As organizations grow and evolve, they accumulate vast amounts of procedural knowledge, best practices, and domain expertise that are essential for effective operations. However, traditional approaches to capturing, preserving, and sharing this knowledge face significant limitations that hinder organizational effectiveness.
 
-### 1.2 Pulse: A Video-First Knowledge Sharing Platform
+#### 1.1.1 Knowledge Loss and Institutional Memory
 
-Pulse is a React Native application that enables:
-- **Segmented Video Recording**: Capture multiple clips that combine seamlessly
-- **Professional Editing**: Native hardware-accelerated video processing with EDL-based editing
-- **Cross-Platform Deployment**: iOS and Android support for organization-wide accessibility
-- **Secure Integration**: Local-first storage with optional integration to PulseVault backend
-- **Institutional Workflows**: Draft management, deep linking, and enterprise-grade security
+One of the most pressing challenges is the loss of critical institutional knowledge when employees transition, retire, or move to different roles. This "brain drain" phenomenon results in the disappearance of tacit knowledge—the unwritten procedures, contextual understanding, and problem-solving approaches that employees develop through experience. Unlike explicit knowledge that can be documented in manuals or databases, tacit knowledge is difficult to capture using traditional text-based documentation methods. When experienced employees leave, organizations often find themselves relearning processes, repeating mistakes, and losing institutional memory that took years to develop.
 
-### 1.3 Technical Architecture
+#### 1.1.2 Limitations of Traditional Documentation
 
-**Frontend (Pulse App)**:
-- React Native with Expo for cross-platform development
-- Native video processing modules (AVFoundation/Media3)
-- EDL-based editing system for non-destructive video composition
-- Local-first storage with draft management
+Traditional documentation methods, primarily text-based documents, static images, and written procedures, face fundamental limitations in capturing the nuanced, procedural knowledge that drives organizational success. Text documentation struggles to convey:
 
-**Backend (PulseVault)**:
-- Fastify + TypeScript server
-- tus-node-server for resumable video uploads
-- FFmpeg + Shaka Packager for adaptive streaming (HLS/DASH)
-- Redis queue for transcoding jobs
-- HIPAA-compliant architecture with encryption at rest and in transit
+- **Temporal sequences**: The precise timing and flow of multi-step procedures
+- **Spatial relationships**: How physical objects, interfaces, or environments relate to each other
+- **Contextual cues**: Visual and auditory information that guides decision-making
+- **Dynamic interactions**: The way systems, tools, or processes respond in real-time
+- **Non-verbal communication**: Gestures, demonstrations, and visual explanations that are central to learning
+
+These limitations become particularly acute in technical domains, where procedures often involve complex interactions with software interfaces, hardware systems, or multi-step workflows that are difficult to describe accurately in text alone.
+
+#### 1.1.3 Adoption Barriers in Knowledge Management Systems
+
+Even when organizations invest in knowledge management systems, adoption rates often remain disappointingly low. Complex documentation platforms, cumbersome authoring tools, and disconnected workflows create barriers that prevent employees from contributing to or accessing organizational knowledge. The effort required to create documentation often exceeds the perceived benefit, leading to incomplete knowledge bases, outdated information, and underutilized systems. This creates a vicious cycle where low adoption leads to incomplete knowledge, which further reduces the value of the system and discourages future participation.
+
+#### 1.1.4 Security and Compliance Requirements
+
+Institutional knowledge sharing, particularly in healthcare, finance, and other regulated industries, must operate within strict security and compliance frameworks. Organizations must ensure that sensitive information is protected, access is controlled, and regulatory requirements (such as HIPAA in healthcare) are met. These requirements add complexity to knowledge management systems and often create additional barriers to adoption, as security measures can impede ease of use and accessibility.
+
+### 1.2 The Promise of Video-Based Knowledge Sharing
+
+Video has emerged as a powerful medium for knowledge transfer, offering unique advantages over traditional text-based documentation. Unlike static text, video can capture:
+
+- **Demonstrative procedures**: Step-by-step visual demonstrations of complex processes
+- **Contextual information**: The actual environment, tools, and conditions in which procedures are performed
+- **Temporal dynamics**: The timing, pacing, and sequence of actions
+- **Multi-modal information**: Visual, auditory, and textual information simultaneously
+- **Emotional and social cues**: Non-verbal communication that facilitates understanding
+
+Research in educational technology and knowledge management has demonstrated that video-based learning can be more effective than text-based approaches for procedural knowledge transfer, particularly for complex, multi-step processes [Papers 7-9]. The rise of short-form video platforms (TikTok, Instagram Reels, YouTube Shorts) has further demonstrated the power of concise, engaging video content for knowledge sharing and engagement [Papers 10-12].
+
+However, existing video platforms are primarily designed for entertainment or general-purpose content creation, not for institutional knowledge management. They lack the security, workflow integration, and organizational features necessary for enterprise deployment. There is a clear need for a platform specifically designed for institutional knowledge sharing through short-form video content.
+
+### 1.3 Pulse: A Video-First Knowledge Sharing Platform
+
+This thesis presents **Pulse**, a cross-platform mobile application designed specifically for institutional knowledge sharing through short-form video content. Pulse addresses the limitations of traditional documentation methods by providing a mobile-first platform that enables organizations to capture, edit, and share institutional knowledge through professionally-edited video content.
+
+#### 1.3.1 Core Capabilities
+
+Pulse provides several key capabilities that distinguish it from general-purpose video platforms:
+
+**Segmented Video Recording**: Pulse enables users to record multiple video clips that combine seamlessly into a single, cohesive video. This segmented approach allows for natural pauses, retakes, and iterative refinement during the recording process, making it easier to create high-quality documentation without requiring extensive post-production editing.
+
+**Professional Editing with EDL Architecture**: At the heart of Pulse is an Edit Decision List (EDL) architecture that enables non-destructive video editing on mobile devices. This system allows users to:
+- Reorder video segments through intuitive drag-and-drop interfaces
+- Trim segments with precise in/out markers
+- Undo and redo editing operations with full history
+- Save and resume editing sessions across app launches
+- Transfer drafts between devices for collaborative editing
+
+The EDL architecture represents a significant technical contribution, as it brings professional video editing capabilities to mobile devices while maintaining performance and usability.
+
+**Cross-Platform Native Video Processing**: Pulse leverages platform-specific video processing capabilities to ensure optimal performance and quality:
+- **iOS**: Custom native module using AVFoundation for hardware-accelerated video concatenation
+- **Android**: Native module using Media3 (formerly ExoPlayer) for video processing
+
+This cross-platform approach ensures consistent quality and performance across different devices while taking advantage of platform-specific optimizations.
+
+**Secure Backend Integration**: Pulse integrates with **PulseVault**, a secure backend infrastructure designed for institutional video storage, transcoding, and delivery. PulseVault provides:
+- Resumable video uploads using the tus protocol for reliable large-file transfers
+- Automatic transcoding to adaptive HLS/DASH streams with multiple quality renditions
+- Secure access control with HMAC-signed URLs and time-limited access
+- Audit logging and monitoring capabilities for compliance and analytics
+
+**Institutional Workflows**: Pulse is designed with institutional use cases in mind, supporting:
+- Draft management and auto-save functionality
+- Deep linking for integration with organizational workflows
+- Local-first storage with optional cloud synchronization
+- Cross-device transfer for collaborative editing
+
+#### 1.3.2 Design Philosophy
+
+Pulse is built on several key design principles:
+
+**Mobile-First**: Recognizing that knowledge capture often happens in the moment and in context, Pulse is designed primarily for mobile devices. This enables users to document procedures, training, and knowledge directly where and when they occur, rather than requiring them to return to a desktop computer.
+
+**Short-Form Content**: Pulse emphasizes short-form video content (typically 15 seconds to 3 minutes), recognizing that focused, concise videos are more effective for knowledge transfer and more likely to be consumed than longer-form content.
+
+**Ease of Use**: The platform prioritizes simplicity and ease of use, recognizing that adoption barriers are a primary challenge in knowledge management systems. The editing interface is designed to be intuitive, requiring minimal training.
+
+**Security and Privacy**: While designed for ease of use, Pulse maintains security as a core consideration, with architecture that supports institutional security and compliance requirements.
+
+### 1.4 Research Questions
+
+This research addresses five fundamental questions about video-based knowledge sharing in institutional settings:
+
+**RQ1: Effectiveness of Video vs. Text Documentation**
+How does short-form video documentation compare to traditional text-based documentation in terms of knowledge retention and adoption rates? This question explores whether video-based documentation offers measurable advantages over text-based approaches for institutional knowledge management.
+
+**RQ2: Technical Challenges of Cross-Platform Video Processing**
+What are the technical challenges and solutions for implementing cross-platform native video processing in mobile applications? This question addresses the engineering challenges of providing consistent, high-quality video processing across iOS and Android platforms.
+
+**RQ3: User Adoption and Interaction Patterns**
+How do institutional users adopt and interact with video-first knowledge sharing platforms? This question examines the factors that influence adoption, usage patterns, and barriers to engagement in organizational contexts.
+
+**RQ4: Security and Compliance Considerations**
+What security and compliance considerations are necessary for institutional video content management? This question explores the security architecture, access control mechanisms, and compliance requirements for deploying video-based knowledge sharing systems in institutional settings.
+
+**RQ5: Impact of EDL Architecture on Workflow**
+How does the EDL-based editing architecture impact user workflow and content creation efficiency? This question evaluates the effectiveness of the EDL approach for mobile video editing and its impact on the content creation process.
+
+### 1.5 Contributions
+
+This research makes several key contributions to the fields of knowledge management, mobile computing, and human-computer interaction:
+
+#### 1.5.1 Technical Contributions
+
+**EDL-Based Editing Architecture for Mobile Devices**: The primary technical contribution is the design and implementation of an Edit Decision List (EDL) architecture for non-destructive video editing on mobile devices. This system enables professional-grade editing capabilities (undo/redo, segment reordering, trimming) while maintaining performance and usability on resource-constrained mobile platforms. The EDL architecture represents a novel approach to mobile video editing that balances functionality with performance.
+
+**Cross-Platform Native Video Processing**: The research demonstrates practical approaches to implementing hardware-accelerated video processing across iOS and Android platforms, addressing challenges of platform-specific APIs, performance optimization, and quality consistency.
+
+**Integration Architecture**: The research presents an integrated architecture connecting mobile video capture and editing with secure backend storage and delivery, demonstrating how to build end-to-end video knowledge sharing systems.
+
+#### 1.5.2 Empirical Contributions
+
+**Living Labs Case Study**: Through deployment at Medical Informatics Engineering, Inc. (MIE), this research provides empirical insights into how institutional users adopt and interact with video-first knowledge sharing platforms. The study examines adoption patterns, engagement metrics, usability factors, and barriers to adoption in a real-world organizational context.
+
+**Evaluation Framework**: The research establishes a comprehensive metrics framework for evaluating video-based knowledge sharing systems, drawing from research in knowledge management, CSCW, and mobile UX to provide a multi-dimensional evaluation approach.
+
+#### 1.5.3 Design Contributions
+
+**Mobile-First Knowledge Sharing Design**: The research contributes design patterns and principles for building mobile-first knowledge sharing systems, addressing the unique challenges of mobile content creation and consumption in institutional contexts.
+
+**Short-Form Video for Knowledge Management**: The research explores how short-form video content can be effectively applied to institutional knowledge management, providing insights into optimal content length, structure, and presentation for knowledge transfer.
+
+### 1.6 Thesis Structure
+
+This thesis is organized into seven chapters:
+
+**Chapter 2: Related Work** reviews relevant research across knowledge management, CSCW, mobile UX, video processing, and security domains. The chapter synthesizes findings from 21 research papers and identifies gaps that Pulse addresses.
+
+**Chapter 3: System Design & Implementation** presents the technical architecture of Pulse and PulseVault, with detailed discussion of the EDL architecture, cross-platform video processing, and backend infrastructure.
+
+**Chapter 4: Methodology** describes the Living Labs case study approach, data collection methods, metrics framework, and analysis plan for evaluating Pulse in an institutional setting.
+
+**Chapter 5: Results** presents findings from the MIE case study, including technical performance metrics, user adoption patterns, usability evaluation, and knowledge sharing effectiveness.
+
+**Chapter 6: Discussion** interprets the findings, addresses each research question, compares results to related work, and discusses implications for knowledge management and mobile computing.
+
+**Chapter 7: Conclusion** summarizes contributions, key findings, limitations, and directions for future work.
+
+### 1.7 Scope and Limitations
+
+This research focuses on institutional knowledge sharing through short-form video content, with particular emphasis on:
+- Mobile-first content creation and consumption
+- Cross-platform deployment (iOS and Android)
+- Non-destructive editing workflows
+- Institutional deployment contexts
+
+The research does not address:
+- Long-form video content (beyond 3 minutes)
+- Desktop-based video editing workflows
+- Consumer-facing video platforms
+- Real-time collaborative editing (though drafts can be transferred)
+
+The user study is conducted within a single organization (MIE), which provides valuable insights but limits generalizability. Future work should explore deployment across multiple organizations and contexts.
+
+### 1.8 Organization of This Thesis
+
+The remainder of this thesis proceeds as follows. Chapter 2 reviews related work and establishes the theoretical and empirical foundation for this research. Chapter 3 presents the system design and implementation, with particular focus on the EDL architecture and cross-platform video processing. Chapter 4 describes the methodology for the institutional case study. Chapter 5 presents results from the study, and Chapter 6 discusses implications and contributions. Chapter 7 concludes with a summary and future directions.
 
 ## 2. Research Objectives
 
@@ -170,10 +308,12 @@ The Edit Decision List (EDL) architecture enables:
 - Backend infrastructure development with focus on scalability and security
 
 ### 6.2 User Studies (Planned)
+- **Platform Deployment**: PulseVault deployed at https://pulse-vault.opensource.mieweb.org/ with video upload, sharing, and transcoding capabilities
 - **Usability Testing**: Task-based evaluation of video recording and editing workflows
 - **Adoption Studies**: Longitudinal analysis of user engagement and content creation patterns
 - **Knowledge Retention Studies**: Comparison of video vs. text-based documentation effectiveness
 - **Institutional Deployment**: Case studies with partner organizations
+- **Metrics Collection**: Technical metrics via Prometheus; user study metrics being defined (see [USER_STUDY.md](./USER_STUDY.md))
 
 ## 7. Expected Contributions
 
@@ -188,9 +328,11 @@ The Edit Decision List (EDL) architecture enables:
 - ✅ Native video processing modules (AVFoundation/Media3)
 - ✅ EDL-based editing with undo/redo
 - ✅ Draft management and cross-device transfer
-- ✅ PulseVault backend infrastructure
+- ✅ PulseVault backend infrastructure deployed and operational (https://pulse-vault.opensource.mieweb.org/)
+- ✅ Video upload and sharing via UUID links (authenticated users only)
+- ✅ Automatic transcoding to HLS/DASH with multiple quality renditions
 - ✅ Integration between Pulse app and PulseVault
-- 🔄 User studies and evaluation (in progress)
+- 🔄 User studies and evaluation (in progress - metrics planned)
 - ✅ Research paper identification and review (21 papers identified and documented)
 
 ## 9. Future Work
