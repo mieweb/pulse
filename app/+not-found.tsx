@@ -1,10 +1,14 @@
 import { Link, Stack } from "expo-router";
 import { StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
+import ReportIssueButton from "@/components/ReportIssueButton";
 
 export default function NotFoundScreen() {
+  const insets = useSafeAreaInsets();
+  
   return (
     <>
       <Stack.Screen options={{ title: "Oops!" }} />
@@ -13,6 +17,7 @@ export default function NotFoundScreen() {
         <Link href="/" style={styles.link}>
           <ThemedText type="link">Go to home screen!</ThemedText>
         </Link>
+        <ReportIssueButton top={insets.top + 10} />
       </ThemedView>
     </>
   );

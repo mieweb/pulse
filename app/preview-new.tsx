@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import ReportIssueButton from "@/components/ReportIssueButton";
 
 export default function PreviewNewScreen() {
   const { draftId } = useLocalSearchParams<{ draftId: string }>();
@@ -192,6 +193,7 @@ export default function PreviewNewScreen() {
         <ThemedText style={styles.progressText}>
           {Math.round(concatProgress * 100)}%
         </ThemedText>
+        <ReportIssueButton top={insets.top + 20} />
       </View>
     );
   }
@@ -206,6 +208,8 @@ export default function PreviewNewScreen() {
         >
           <ThemedText style={styles.closeText}>×</ThemedText>
         </TouchableOpacity>
+
+        <ReportIssueButton top={insets.top + 20} right={20} />
 
         {/* Video Preview */}
         <View style={styles.videoPreviewContainer}>
@@ -250,6 +254,7 @@ export default function PreviewNewScreen() {
       >
         <ThemedText style={styles.closeText}>×</ThemedText>
       </TouchableOpacity>
+      <ReportIssueButton top={insets.top + 20} left={20} />
     </View>
   );
 }

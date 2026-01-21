@@ -3,6 +3,7 @@ import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useEffect } from "react";
 import { StyleSheet, TouchableOpacity } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -13,8 +14,10 @@ import Animated, {
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { Colors } from "@/constants/Colors";
+import ReportIssueButton from "@/components/ReportIssueButton";
 
 export default function OnboardingScreen() {
+  const insets = useSafeAreaInsets();
   const scale = useSharedValue(1);
 
   useEffect(() => {
@@ -42,6 +45,7 @@ export default function OnboardingScreen() {
 
   return (
     <ThemedView style={styles.view}>
+      <ReportIssueButton top={insets.top + 10} />
       {renderLogo()}
       <ThemedView style={styles.contentContainer}>
         <ThemedView style={styles.welcomeContainer}>

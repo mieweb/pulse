@@ -19,6 +19,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { uploadVideo } from "@/utils/tusUpload";
 import { getUploadConfig } from "@/utils/uploadConfig";
 import { DraftStorage } from "@/utils/draftStorage";
+import ReportIssueButton from "@/components/ReportIssueButton";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -256,6 +257,8 @@ export default function MergedVideoScreen() {
           <View style={styles.headerSpacer} />
         </View>
 
+        <ReportIssueButton top={insets.top + 20} />
+
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#ffffff" />
           <ThemedText style={styles.loadingText}>
@@ -276,6 +279,8 @@ export default function MergedVideoScreen() {
         <ThemedText style={styles.headerTitle}>Upload Video</ThemedText>
         <View style={styles.headerSpacer} />
       </View>
+    
+      <ReportIssueButton top={insets.top + 20} />
     
       {!isFullscreen && (
       <View style={styles.content}>

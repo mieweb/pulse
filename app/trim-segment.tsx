@@ -14,6 +14,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { fileStore } from "@/utils/fileStore";
 import VideoTrimmerUI from "react-native-video-trimmer-ui";
 import { DraftStorage } from "@/utils/draftStorage";
+import ReportIssueButton from "@/components/ReportIssueButton";
 
 export default function TrimSegmentScreen() {
   const { segmentUri, draftId, segmentId } = useLocalSearchParams<{
@@ -143,6 +144,7 @@ export default function TrimSegmentScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <ReportIssueButton top={insets.top + 100} right={20}/>
       <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <TouchableOpacity
           style={styles.closeButton}

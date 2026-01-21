@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import ReportIssueButton from "@/components/ReportIssueButton";
 
 export default function DraftsScreen() {
   const insets = useSafeAreaInsets();
@@ -400,6 +401,8 @@ export default function DraftsScreen() {
           <Text style={styles.closeText}>×</Text>
         </TouchableOpacity>
 
+        <ReportIssueButton top={insets.top + 25} right={70} />
+
         <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
           <Text style={styles.headerTitle}>Drafts</Text>
           <Text style={styles.headerSubtitle}>Tap to continue recording</Text>
@@ -441,6 +444,8 @@ export default function DraftsScreen() {
       >
         <Text style={styles.closeText}>×</Text>
       </TouchableOpacity>
+
+      <ReportIssueButton top={insets.top + 25} right={70} />
 
         <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
           <View>

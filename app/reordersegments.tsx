@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, ActivityIndicator, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
+import ReportIssueButton from "@/components/ReportIssueButton";
 
 interface Segment {
   id: string;
@@ -143,6 +144,7 @@ export default function ReorderSegmentsScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
+      <ReportIssueButton top={insets.top + 40} />
       <View style={styles.contentContainer}>
         <SegmentReorderListVertical
           segments={segments}

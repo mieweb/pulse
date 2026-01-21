@@ -11,6 +11,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import TimeSelectorButton from "@/components/TimeSelectorButton";
 import UndoSegmentButton from "@/components/UndoSegmentButton";
+import ReportIssueButton from "@/components/ReportIssueButton";
 import * as ImagePicker from "expo-image-picker";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { useDraftManager } from "@/hooks/useDraftManager";
@@ -714,6 +715,9 @@ export default function ShortsScreen() {
           <MaterialIcons name="done" size={26} color="black" />
         </TouchableOpacity>
       )}
+
+      {/* Report Issue Button */}
+      <ReportIssueButton top={130} right={20} />
     </ThemedView>
   );
 }
@@ -742,7 +746,7 @@ const styles = StyleSheet.create({
   timeSelectorContainer: {
     position: "absolute",
     top: 80,
-    right: 25,
+    right: 20,
     zIndex: 10,
   },
   previewButton: {
