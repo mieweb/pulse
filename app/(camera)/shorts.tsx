@@ -362,10 +362,16 @@ export default function ShortsScreen() {
               draftToReload,
               "camera"
             );
-            if (draft && draft.segments) {
-              const segmentsWithAbsolutePaths =
-                fileStore.convertSegmentsToAbsolute(draft.segments);
-              setRecordingSegments(segmentsWithAbsolutePaths);
+            if (draft) {
+              if (draft.segments) {
+                const segmentsWithAbsolutePaths =
+                  fileStore.convertSegmentsToAbsolute(draft.segments);
+                setRecordingSegments(segmentsWithAbsolutePaths);
+              }
+              if (draft.maxDurationLimitSeconds !== undefined && 
+                  draft.maxDurationLimitSeconds !== maxDurationLimitSeconds) {
+                setMaxDurationLimitSeconds(draft.maxDurationLimitSeconds);
+              }
             }
           } catch (error) {
             console.error("Failed to reload draft on focus:", error);
@@ -373,7 +379,7 @@ export default function ShortsScreen() {
         }
       };
       reloadDraft();
-    }, [draftId, currentDraftId, setRecordingSegments])
+    }, [draftId, currentDraftId, setRecordingSegments, maxDurationLimitSeconds])
   );
 
   const handleTimeSelect = (newDurationLimitSeconds: number) => {

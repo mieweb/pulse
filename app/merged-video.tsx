@@ -93,7 +93,6 @@ export default function MergedVideoScreen() {
           
           if (draft) {
             setIsUploadModeDraft(draft.mode === "upload");
-            console.log(`[MergedVideo] Draft mode: ${draft.mode}, upload allowed: ${draft.mode === "upload"}`);
           }
         } catch (error) {
           console.error("[MergedVideo] Failed to check draft mode:", error);
@@ -198,8 +197,6 @@ export default function MergedVideoScreen() {
         ? `draft-${draftId}.mp4`
         : `video-${Date.now()}.mp4`;
 
-      console.log(`[Upload] Starting upload: ${filename}`);
-
       const result = await uploadVideo(
         videoUri,
         filename,
@@ -207,8 +204,6 @@ export default function MergedVideoScreen() {
           setUploadProgress(progress.percentage);
         }
       );
-
-      console.log(`[Upload] Upload successful: ${result.videoId}`);
 
       Alert.alert(
         "Upload Successful",

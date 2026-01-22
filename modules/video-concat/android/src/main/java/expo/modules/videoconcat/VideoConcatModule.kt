@@ -234,5 +234,49 @@ class VideoConcatModule : Module() {
     AsyncFunction("cancelExport") {
       // Placeholder for cancel functionality
     }
+    
+    AsyncFunction("getDuration") { uri: String ->
+      println("[VideoConcat] getDuration called for: $uri")
+      
+      val context = appContext.reactContext ?: run {
+        println("[VideoConcat] React context not available")
+        throw Exception("React context not available")
+      }
+      
+      val parsedUri = try {
+        Uri.parse(uri)
+      } catch (e: Exception) {
+        println("[VideoConcat] Invalid URI: $uri")
+        throw Exception("Invalid URI: $uri")
+      }
+      
+      val startTime = System.currentTimeMillis()
+      val retriever = android.media.MediaMetadataRetriever()
+      
+      try {
+        retriever.setDataSource(context, parsedUri)
+        val durationMs = retriever.extractMetadata(
+          android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
+        )?.toLongOrNull() ?: run {
+          println("[VideoConcat] Invalid duration metadata")
+          throw Exception("Invalid duration")
+        }
+        
+        // Convert milliseconds to seconds (matching iOS implementation)
+        val durationSeconds = durationMs / 1000.0
+        val elapsed = System.currentTimeMillis() - startTime
+        
+        // Validate duration is finite and positive
+        if (!durationSeconds.isFinite() || durationSeconds <= 0) {
+          println("[VideoConcat] Invalid duration: $durationSeconds")
+          throw Exception("Invalid duration: $durationSeconds")
+        }
+        
+        println("[VideoConcat] Duration: ${String.format("%.2f", durationSeconds)}s (${elapsed}ms)")
+        durationSeconds
+      } finally {
+        retriever.release()
+      }
+    }
   }
 }
