@@ -239,5 +239,6 @@ const styles = StyleSheet.create({
   },
   sliderContainer: {
     marginHorizontal: 20,
+    marginBottom: 40,
   },
 });

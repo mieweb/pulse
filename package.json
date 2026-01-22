@@ -46,7 +46,7 @@
     "react-native-screens": "~4.11.1",
     "react-native-sortables": "^1.9.2",
     "react-native-video": "^6.18.0",
-    "react-native-video-trimmer-ui": "^0.3.6",
+    "react-native-video-trimmer-ui": "github:adithya1012/react-native-video-trimmer-ui",
     "react-native-web": "~0.20.0",
     "react-native-webview": "13.13.5"
   },
