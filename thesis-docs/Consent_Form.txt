@@ -1,0 +1,139 @@
+================================================================================
+INFORMED CONSENT FORM — PULSEVAULT USER STUDY
+================================================================================
+Use this after IRB approves it. Your IRB may require a specific template or
+headings — paste this content into their form if needed. Replace [DATE] and
+[PI EMAIL] and add IRB approval number when you have it.
+================================================================================
+
+Study title: Adoption and Effectiveness of PulseVault for Institutional
+             Knowledge Sharing: A Longitudinal User Study with Medical
+             Informatics Engineering Employees
+
+Principal Investigator: Priyam More, Purdue University Fort Wayne
+Faculty Advisor: Romael Haque, Purdue University Fort Wayne
+IRB of Record: Purdue University Fort Wayne
+[IRB approval number: _____________ if required]
+
+
+----------------------------------------------------------------------
+INTRODUCTION AND PURPOSE
+----------------------------------------------------------------------
+You are invited to take part in a research study. This study is part of
+graduate thesis research at Purdue University Fort Wayne. We want to learn
+how employees at Medical Informatics Engineering, Inc. (MIE) use PulseVault
+— a video-based knowledge-sharing platform — and how it compares to
+text-based documentation.
+
+The purpose is to understand adoption, usability, and whether video
+documentation is helpful in your workflow. Your participation is voluntary.
+
+
+----------------------------------------------------------------------
+WHAT WILL I DO IF I TAKE PART?
+----------------------------------------------------------------------
+If you agree to take part, you will:
+
+1. Use PulseVault as you normally would for work (upload, view, share
+   short videos) for at least one month. There are no required tasks or
+   minimum usage.
+
+2. Complete up to three short online surveys:
+   - Baseline (after you consent): about your role and past use of video
+     for documentation (~3–5 min)
+   - Midpoint (~2 weeks in): questions about PulseVault usability and
+     satisfaction (~5–8 min)
+   - End of study (~1 month): usability, satisfaction, and questions
+     about video vs. text documentation (~8–12 min)
+
+3. Optionally, take part in a one-on-one interview (about 30–60 minutes)
+   to discuss your experience. If you do, we will ask separately for
+   permission to record the conversation.
+
+4. Allow the study team to use your PulseVault usage data (e.g. uploads,
+   views) for research. This data is already generated when you use the
+   platform; we will use it in anonymized or aggregated form in the thesis.
+
+
+----------------------------------------------------------------------
+RISKS AND DISCOMFORT
+----------------------------------------------------------------------
+We do not expect any significant risks. The activities are similar to
+normal use of PulseVault and answering short surveys. Possible minor
+burdens include the time needed for surveys (~5–15 minutes each) and, if
+you choose, one interview (~30–60 minutes). You may skip any question or
+withdraw at any time.
+
+
+----------------------------------------------------------------------
+BENEFITS
+----------------------------------------------------------------------
+There may be no direct benefit to you. Possible benefits include:
+- Using PulseVault for work-related knowledge sharing
+- Helping MIE and the research team understand how video documentation
+  works in practice
+- Informing future improvements to the platform
+
+
+
+----------------------------------------------------------------------
+CONFIDENTIALITY
+----------------------------------------------------------------------
+- Your responses and usage data will be kept confidential and used only
+  for this research.
+- Only the research team (Principal Investigator and Faculty Advisor) will
+  have access to information that can identify you.
+- In the thesis and any publications, we will report only aggregated or
+  anonymized results (e.g. group averages, percentages). We will not
+  identify you by name or in a way that makes you recognizable.
+- If you give an optional email to link your survey to your PulseVault
+  use, that link is only for our analysis and will not be shared.
+- Data will be stored securely and retained according to Purdue University
+  Fort Wayne and IRB policies, then deleted or de-identified when no
+  longer needed.
+
+
+----------------------------------------------------------------------
+VOLUNTARY PARTICIPATION AND WITHDRAWAL
+----------------------------------------------------------------------
+- Taking part is voluntary. You do not have to participate, and deciding
+  not to participate will not affect your employment or standing at MIE.
+- You may withdraw at any time. If you withdraw, we will stop collecting
+  new data from you. What happens to data already collected (e.g. whether
+  it is deleted or kept in anonymized form) will follow the procedures
+  approved by the IRB and described when you withdraw.
+- The investigators may stop your participation if they think it is in
+  your best interest or for other reasons allowed by the IRB.
+
+
+----------------------------------------------------------------------
+CONTACTS
+----------------------------------------------------------------------
+If you have questions about the study or your rights as a participant:
+- Principal Investigator: Priyam More — [PI EMAIL]
+- Faculty Advisor: Romael Haque — haque28@purdue.edu
+- Purdue University Fort Wayne IRB: [insert IRB office phone/email from
+  PFW website]
+
+
+----------------------------------------------------------------------
+CONSENT
+----------------------------------------------------------------------
+By signing (or submitting this form electronically), you confirm that:
+- You have read (or had read to you) this form.
+- You understand the purpose, procedures, risks, benefits, and
+  confidentiality described above.
+- You voluntarily agree to participate in this study.
+- You are at least 18 years old.
+
+Signature (or type name): _________________________  Date: [DATE]
+
+Or, for electronic consent: "I have read the information above and agree to
+participate in this study." [ ] I agree
+
+================================================================================
+NOTE: Fix the "可能的" typo to "Possible" in the Benefits section before use.
+Add your IRB’s required elements (e.g. approval number, expiration date,
+statement about genetic/research injury if required). Submit the consent
+form to your IRB as part of your application if they ask for it.
+================================================================================

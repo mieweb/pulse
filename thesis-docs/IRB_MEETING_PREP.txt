@@ -1,0 +1,183 @@
+# IRB Meeting Prep — Pulse User Study
+
+**Meeting:** Friday 10:00 AM, Colosseum Starbucks  
+**Advisor:** haque28@purdue.edu  
+**Thesis:** LaTeX  
+**Study:** User study with MIE employees (PulseVault adoption and effectiveness)
+
+---
+
+## 1. Introduction
+
+Institutional knowledge management is critical yet challenging: organizations lose tacit knowledge when employees leave, and traditional text-based documentation fails to capture procedures, timing, and context. Video can demonstrate steps, show tools and environments, and convey multi-modal information more effectively than text for many tasks. Short-form video platforms have shown strong engagement, but they are not built for institutional security, workflow integration, or enterprise use.
+
+This research introduces **Pulse**—a cross-platform mobile app for institutional knowledge sharing through short-form video—and **PulseVault**—its backend for storage, transcoding, and delivery. The study evaluates PulseVault’s adoption and effectiveness when used by employees at **Medical Informatics Engineering, Inc. (MIE)** in their normal workflow. The work addresses how short-form video documentation compares to text-based documentation (RQ1) and how institutional users adopt and use video-first knowledge-sharing tools (RQ3).
+
+---
+
+## 2. Objective
+
+**Primary objectives**
+
+1. **Evaluate adoption and engagement:** Measure how MIE employees adopt PulseVault (signups, first upload, retention, churn, videos per user, views, watch time, sharing).
+2. **Assess usability:** Collect System Usability Scale (SUS) and task-based usability metrics (e.g., task completion, time on task, errors).
+3. **Compare video vs. text documentation:** Where feasible, compare creation/usage of video vs. existing text documentation (creation rate, usage rate, preference, support-ticket impact).
+4. **Identify barriers and enablers:** Through surveys and optional interviews, identify factors that help or hinder adoption and sustained use.
+
+**Research questions addressed**
+
+- **RQ1:** How does short-form video documentation compare to traditional text-based documentation in terms of knowledge retention and adoption?
+- **RQ3:** How do institutional users adopt and interact with video-first knowledge-sharing platforms?
+
+---
+
+## 3. Motivation
+
+**Problem:** Organizations need to capture and share procedural knowledge, but text documentation is often insufficient and knowledge-management systems are underused. Video is well-suited to procedures and context but is rarely available in secure, workflow-integrated form inside institutions.
+
+**Gap:** There is limited evidence on how employees in a real organization adopt and use a dedicated, video-first knowledge-sharing platform (e.g., creation, viewing, sharing, usability, and perceived value).
+
+**Why this study:** A longitudinal, in-situ study at MIE provides ecological validity. MIE is the development partner and will use PulseVault for internal knowledge sharing. The study will produce quantitative adoption/engagement/usability data and qualitative insight into barriers and motivations, informing both the thesis and future design of institutional video-knowledge tools.
+
+**Benefit to participants and MIE:** Participants gain access to a new documentation tool; MIE gains evidence on effectiveness and barriers to inform rollout and policy.
+
+---
+
+## 4. Data: How, Why, and Maintenance
+
+### 4.1 What data are collected
+
+| Type | Examples | Purpose |
+|------|----------|--------|
+| **Usage/behavior** | Signups, logins, uploads, views, watch time, sharing events | Adoption, engagement, RQ1/RQ3 |
+| **Surveys** | SUS, satisfaction, adoption barriers, optional free text | Usability, RQ2/RQ3 |
+| **Optional interviews** | 4–6 semi-structured interviews (≈30–60 min) | Deeper understanding of adoption and barriers |
+| **Technical metrics** | Prometheus (upload/transcode success, latency, queue depth) | System performance and reliability |
+
+### 4.2 How data are collected
+
+- **Automated:** OAuth-authenticated use of PulseVault; server-side logging of uploads, views, and sharing; Prometheus for system metrics.
+- **Surveys:** Web or in-app forms (e.g., baseline, midpoint, end-of-study); SUS and custom items.
+- **Interviews:** Voluntary, scheduled; audio recorded with consent; transcribed for analysis.
+
+### 4.3 Why each type is needed
+
+- **Usage data:** Necessary to quantify adoption, engagement, and comparison to text documentation (RQ1, RQ3).
+- **Surveys:** Required for SUS and perceived usability/satisfaction (RQ2, RQ3).
+- **Interviews:** To explain quantitative patterns and identify barriers and design implications (RQ3).
+- **Technical metrics:** To ensure the system worked as intended and to interpret failures or delays.
+
+### 4.4 Data maintenance (storage, access, retention, confidentiality)
+
+- **Where:** Data stored on study infrastructure (PFW and/or MIE-hosted PulseVault and databases). Access restricted to the study team (investigator, advisor).
+- **Identifiability:** Account identifiers (e.g., email or internal user id) are needed to link usage to surveys/interviews. For thesis and publications, data will be reported in aggregated form (counts, means, themes); no individual identifying details will be published.
+- **Retention:** Raw data retained per PFW IRB and institutional policy (e.g., minimum period post-study); then deleted or fully de-identified per approved protocol.
+- **Confidentiality:** Only the study team accesses identifiable data. Transcripts and recordings stored on protected systems; participants can withdraw and request deletion of their data per IRB-approved procedures.
+- **Security:** PulseVault uses OAuth, access control, and audit logging; for this internal study, basic authentication and access control are used. No clinical or HIPAA-covered data are collected.
+
+---
+
+## 5. System Design
+
+### 5.1 Overview
+
+**Pulse** is a cross-platform mobile app (iOS/Android) for recording, editing, and sharing short-form video. **PulseVault** is the backend used for the study: it handles upload, transcoding, storage, and playback.
+
+**Study deployment:** https://pulse-vault.opensource.mieweb.org/
+
+### 5.2 Pulse (mobile)
+
+- **Recording:** Segmented capture with configurable duration (e.g., 15 s, 30 s, 1 min, 3 min).
+- **Editing:** EDL-based, non-destructive editing (reorder, trim, undo/redo, drafts).
+- **Processing:** Native modules (iOS AVFoundation, Android Media3) for concatenation and encoding.
+- **Sharing:** Upload to PulseVault; sharing via UUID-based links.
+
+### 5.3 PulseVault (backend)
+
+- **Stack:** Fastify (Node.js), Nginx, Redis, PostgreSQL (or equivalent), file storage, FFmpeg workers.
+- **Upload:** Resumable uploads (tus) from mobile or web.
+- **Transcoding:** FFmpeg → HLS/DASH, multiple renditions.
+- **Access:** OAuth (e.g., Google/GitHub); only authenticated users can view; links can be scoped to individuals or groups.
+- **Observability:** Prometheus metrics, audit logs, optional Grafana/Loki.
+
+### 5.4 Data collection in the system
+
+- **Server-side:** Upload/view/share events and metadata (user id, video id, timestamps, watch time if implemented) stored in DB and/or logs.
+- **Prometheus:** Counters and histograms for uploads, transcodes, and API usage.
+- **Surveys:** Separate survey tool or in-app forms; responses stored with consent and linked to user id only as needed for analysis.
+
+This design supports the planned adoption, engagement, and usability metrics without requiring participants to install extra software beyond the Pulse app and browser access to PulseVault.
+
+---
+
+## 6. Results and Discussion (Plan — After User Study)
+
+*To be filled after data collection. Outline below.*
+
+### 6.1 Results (planned structure)
+
+1. **Adoption and engagement (RQ3)**  
+   - Active users, retention, time to first upload, videos per user, views, watch time, sharing.  
+   - Simple time-series and descriptives; optionally segment by role/team if sample allows.
+
+2. **Usability (RQ2/RQ3)**  
+   - SUS scores (mean, SD, interpretation).  
+   - Task completion, time on task, errors if task-based data are collected.
+
+3. **Video vs. text (RQ1)**  
+   - Where comparable: creation/usage rates, preference items, support-ticket or self-reported effectiveness.  
+   - Limitations (e.g., no random assignment) stated clearly.
+
+4. **Qualitative themes**  
+   - From surveys and interviews: adoption drivers, barriers, workflow fit, and suggestions.
+
+5. **System performance**  
+   - Brief summary of uptime, upload/transcode success, and any incidents affecting use.
+
+### 6.2 Discussion (planned structure)
+
+- **RQ1:** How the findings align with prior work on video vs. text documentation; limitations (design, sample, context).
+- **RQ3:** Patterns of adoption and engagement; comparison to adoption models or prior CSCW/short-form-video studies; implications for design and rollout.
+- **Practical implications:** For MIE (rollout, training, incentives) and for institutional video-knowledge tools in general.
+- **Limitations:** Single organization, self-selection, duration, and any missing controls.
+- **Future work:** Longer deployment, other institutions, controlled comparisons, or additional metrics.
+
+---
+
+## 7. CITI-Aligned Sections (Introduction, Objectives, Methods)
+
+*Use these for IRB forms and for protocol documents that reference CITI training.*
+
+### 7.1 Introduction
+
+This study examines the adoption and effectiveness of **PulseVault**, a video-based knowledge-sharing platform, when used by employees at **Medical Informatics Engineering, Inc. (MIE)**. Institutional knowledge is often lost when staff leave, and text-based documentation is limited for procedural, visual, and contextual knowledge. Video can address these gaps, but few tools are built for secure, workflow-integrated use inside organizations. PulseVault provides upload, storage, transcoding, and sharing for short-form video tied to institutional accounts. The research asks how such a platform is adopted (RQ3) and how video documentation compares to text-based documentation in practice (RQ1). The investigator has completed CITI training for human subjects research.
+
+### 7.2 Objectives
+
+1. **Adoption and engagement:** Estimate adoption (active users, time to first upload, retention, churn) and engagement (videos per user, views, watch time, sharing).
+2. **Usability:** Obtain System Usability Scale (SUS) scores and, where feasible, task-based metrics (completion, time, errors).
+3. **Video vs. text:** Compare creation and use of video vs. text documentation when data allow (rates, preferences, perceived impact).
+4. **Barriers and enablers:** Identify factors that hinder or support adoption and sustained use via surveys and optional interviews.
+
+### 7.3 Methods
+
+- **Design:** Longitudinal living-labs case study at MIE; naturalistic use of PulseVault for at least one month.
+- **Participants:** MIE employees (e.g., developers, support, knowledge workers); internal recruitment; voluntary participation.
+- **Data collection:**  
+  - **Quantitative:** Automated usage data (logins, uploads, views, watch time, sharing), system metrics (Prometheus), and surveys (baseline, midpoint, end) including SUS and satisfaction.  
+  - **Qualitative:** Optional semi-structured interviews (4–6 participants, ~30–60 min) on adoption, barriers, and workflow fit.
+- **Analysis:** Descriptive and time-series for usage and surveys; thematic analysis for interviews; mixed methods where appropriate.
+- **Reporting:** Only aggregated or de-identified results in the thesis and any publications; no identifying information disclosed.
+
+---
+
+## 8. Meeting Checklist
+
+- [ ] Share this doc (or key sections) with haque28@purdue.edu before Friday if helpful.
+- [ ] Confirm IRB form section names at PFW so Intro/Objective/Motivation/Data/System/Results map correctly.
+- [ ] Have consent and recruitment language ready for IRB (can be drafted from Section 4).
+- [ ] Note: “Electronics POS” — confirm with advisor whether this means electronic submission, a separate project, or something else.
+
+---
+
+*Generated for IRB meeting — Friday 10:00 AM, Colosseum Starbucks. LaTeX thesis; copy sections into IRB application or thesis as needed.*

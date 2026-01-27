@@ -1,0 +1,23 @@
+Thesis and IRB documents — all .txt for use in Word/Google Docs
+Copy or move this folder to your preferred location (e.g. Drive, USB) and open files there.
+
+----------------------------------------------------------------------
+FILE                     DESCRIPTION
+----------------------------------------------------------------------
+00_INDEX.txt             This file — list of contents
+IRB_Protocol.txt         Full IRB research protocol (attach as PDF for submission)
+IRB_SUBMISSION_FILL_IN.txt  Copy-paste text for each IRB form field
+IRB_Remaining_Checklist.txt What’s left to do for IRB + where everything is
+Consent_Form.txt         Informed consent form (customize, then submit to IRB)
+Recruitment_Email.txt    Email/announcement to recruit MIE participants
+Survey_All_Questions.txt Baseline, midpoint, end surveys (SUS + video vs text)
+IRB_MEETING_PREP.txt     Intro, objectives, motivation, data, system, results/CITI
+VIDEO_VS_TEXT_METRICS.txt  Simple video-vs-text comparison for RQ1 (survey design)
+USER_STUDY.txt           User study plan: metrics, methodology, MIE deployment
+THESIS_MASTER_PLAN.txt   Build/test/write plan, milestones, defense prep
+thesis.txt               Thesis draft: intro, RQs, related work, contributions
+papers.txt               Research papers list and relevance (21 papers)
+progress_update_advisor.txt  Email template: CITI/IRB progress update
+----------------------------------------------------------------------
+
+To attach protocol for IRB: Open IRB_Protocol.txt → Print/Save as PDF → upload PDF.

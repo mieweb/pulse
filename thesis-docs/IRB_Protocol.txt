@@ -1,0 +1,184 @@
+# Research Protocol  
+## Adoption and Effectiveness of PulseVault for Institutional Knowledge Sharing: A Longitudinal User Study with Medical Informatics Engineering Employees
+
+**Principal Investigator:** Priyam More  
+**Institution:** Purdue University Fort Wayne  
+**Study Type:** Single-site; student-led thesis research (Master's)  
+**IRB of Record:** Purdue University Fort Wayne  
+**CITI Training:** The investigator has completed CITI training for the protection of human subjects in research.  
+**Faculty Advisor:** Romael Haque (haque28@purdue.edu)
+
+---
+
+## 1. Purpose and Objectives
+
+### 1.1 Purpose
+
+This study evaluates the **adoption** and **effectiveness** of PulseVault—a video-based knowledge-sharing platform—when used by employees at **Medical Informatics Engineering, Inc. (MIE)** in their normal work context. The work is conducted as part of a Master's thesis at Purdue University Fort Wayne and is designed to generate ecologically valid evidence on how institutional users adopt video-first knowledge-sharing tools and how short-form video documentation compares to traditional text-based documentation in an organizational setting.
+
+### 1.2 Objectives
+
+1. **Adoption and engagement:** Measure adoption (active users, time to first upload, retention, churn) and engagement (videos per user, views, watch time, sharing frequency) using server-side usage data and survey responses.
+2. **Usability:** Assess perceived usability via the **System Usability Scale (SUS)** and user satisfaction via Likert-scale and open-ended survey items.
+3. **Video vs. text documentation:** Where feasible, compare creation rates, usage rates, and user preference for video vs. existing text-based documentation at MIE.
+4. **Barriers and enablers:** Identify factors that support or hinder adoption and sustained use through periodic surveys and optional semi-structured interviews.
+
+### 1.3 Research Questions Addressed
+
+- **RQ1:** How does short-form video documentation compare to traditional text-based documentation in terms of knowledge retention and adoption rates?
+- **RQ3:** How do institutional users adopt and interact with video-first knowledge-sharing platforms?
+
+These questions are central to the thesis; the present study provides the primary empirical basis for RQ1 and RQ3.
+
+---
+
+## 2. Background and Significance
+
+### 2.1 Problem
+
+Institutional knowledge is often lost when employees leave ("brain drain"), and text-based documentation is limited in capturing procedural, spatial, and contextual knowledge. Even when organizations invest in knowledge management systems, adoption is often low due to cumbersome tools and disconnected workflows. Video can convey demonstrations, timing, and context more effectively than text for many procedures, but few platforms are built for secure, workflow-integrated use inside organizations.
+
+### 2.2 Pulse and PulseVault
+
+**Pulse** is a cross-platform mobile application (iOS/Android) for recording, editing, and sharing short-form video; it uses an Edit Decision List (EDL) architecture for non-destructive editing and integrates with **PulseVault**, a backend for upload, storage, transcoding, and delivery. PulseVault supports OAuth-based authentication, resumable uploads (tus protocol), and access-controlled sharing. The study uses a dedicated instance deployed at https://pulse-vault.opensource.mieweb.org/.
+
+### 2.3 Significance
+
+This study will produce evidence on adoption, usability, and perceived value of a dedicated video-knowledge platform in a real organizational setting. Findings will inform the thesis conclusions, contribute to the literature on CSCW and knowledge management, and provide MIE with actionable evidence for rollout and training decisions.
+
+---
+
+## 3. Study Design
+
+- **Design:** **Longitudinal living-labs case study** with **mixed methods** (quantitative usage and survey data; optional qualitative interviews). The approach is informed by living-labs and naturalistic evaluation methods used in HCI and CSCW.
+- **Setting:** Internal deployment at Medical Informatics Engineering, Inc. (MIE). PulseVault is used as part of participants' normal workflow for technical documentation, knowledge transfer, training, and process documentation.
+- **Duration:** Minimum **one month** of naturalistic use; **extension** based on engagement and organizational need.
+- **Comparison:** Where data allow, video-based documentation behavior and attitudes will be contrasted with participants' use of and attitudes toward existing text-based documentation at MIE.
+- **No deception or experimental manipulation:** Participants use PulseVault as they would for work; no placebo conditions or undisclosed procedures.
+
+---
+
+## 4. Participants
+
+- **Population:** MIE employees, including developers, support staff, and other knowledge workers who may create or consume procedural documentation.
+- **Recruitment:** Internal recruitment within MIE (e.g., email, team announcements) by or in coordination with MIE leadership. Participation is **voluntary**; there is no coercion, and non-participation has no effect on employment or standing.
+- **Eligibility:** MIE employees who are permitted by their employer to use PulseVault for work-related knowledge sharing and who can read and understand the consent form (English).
+- **Sample size:** Determined by MIE team size and willingness to participate. The study is designed to support descriptive and time-series analysis of adoption and engagement; a target of **approximately 5–25 active users** is anticipated, with **4–6 optional interviewees** for qualitative depth. No minimum sample size is required for thesis feasibility; findings will be reported with appropriate caveats if the sample is small.
+
+---
+
+## 5. Procedures
+
+1. **Recruitment:** Prospective participants receive a brief, IRB-approved study description and are directed to the informed consent process (electronic or paper, per IRB approval).
+2. **Informed consent:** Consent is obtained **before** any study procedures, including creation of accounts used for research data. The consent form covers purpose, procedures, risks, benefits, confidentiality, voluntary participation, withdrawal, and contact information for the PI and IRB.
+3. **Account creation and onboarding:** After consent, participants create or use an existing PulseVault account (OAuth, e.g., Google/GitHub) and receive brief instructions on uploading, viewing, and sharing videos. No additional software beyond the Pulse app and/or PulseVault web interface is required.
+4. **Naturalistic use:** Participants use PulseVault in their normal workflow (upload, view, share work-related short-form video). There are no prescribed tasks or minimum usage requirements.
+5. **Surveys:**  
+   - **Baseline:** Short survey after consent (demographics/role, prior use of video for documentation).  
+   - **Midpoint (~2 weeks):** SUS and satisfaction items, optional open-ended feedback.  
+   - **End of study (~1 month or later):** SUS, satisfaction, adoption barriers, and preference for video vs. text.  
+   Surveys are administered via web or in-app form; total time per survey is estimated at 5–15 minutes.
+6. **Interviews (optional):** A subset of participants may be invited to semi-structured interviews (approximately 30–60 minutes) on adoption, barriers, workflow fit, and suggestions. **Separate consent for audio recording** will be obtained when applicable. Interviews may be conducted in person or via video call.
+7. **Usage data:** Collected automatically via the PulseVault backend (logins, uploads, views, sharing events, watch time when available). No additional tracking software is installed on participants' devices beyond normal use of the platform.
+
+---
+
+## 6. Data Collection
+
+### 6.1 Overview
+
+| Data type          | Method                                           | Identifiers / linkage                         | Purpose |
+|--------------------|--------------------------------------------------|-----------------------------------------------|---------|
+| Usage/behavior     | Server logs, database, Prometheus metrics        | User/account ID (email or internal id)        | Adoption, engagement, RQ1/RQ3 |
+| Surveys            | Web or in-app forms (e.g., Google Forms, in-app) | Optional user ID to link to usage (per consent)| Usability, satisfaction, barriers, RQ1/RQ3 |
+| Interviews         | Audio recording (with consent), transcription    | Pseudonym or study ID per consent             | Barriers, enablers, workflow, RQ3 |
+| Technical metrics  | Prometheus (upload/transcode success, latency)   | No direct participant identifiers             | System performance interpretation |
+
+### 6.2 Metrics Collected (Summary)
+
+- **Adoption:** Active users, time to first upload, retention, churn, adoption rate, videos per user.
+- **Engagement:** Videos viewed per user, watch time, completion rate, sharing frequency, usage frequency.
+- **Usability:** System Usability Scale (SUS, 10 items, score 0–100), task completion rate/time (if task-based data are collected), user satisfaction (Likert).
+- **Video vs. text:** Creation rate, usage rate, preference scores, and self-reported impact on support or workflow where applicable.
+
+### 6.3 Analysis Plan
+
+- **Quantitative:** Descriptive statistics (means, medians, SD); time-series and trend analysis for adoption/engagement; correlation and, where appropriate, simple comparative analyses (e.g., video vs. text attitudes). SUS will be scored and interpreted using standard practice.
+- **Qualitative:** Thematic analysis of interview transcripts and open-ended survey responses; identification of barriers, enablers, and design implications.
+- **Mixed methods:** Qualitative findings will be used to interpret and contextualize quantitative patterns (explanatory sequential approach).
+- **Reporting:** Only aggregated or de-identified results will appear in the thesis and any publications; no identifying information will be disclosed.
+
+---
+
+## 7. Data Storage, Access, and Retention
+
+- **Storage:** Data are stored on PFW and/or MIE-hosted systems used for the study. Access is restricted to the study team (PI, faculty advisor). Survey data may be collected via institutional or third-party tools (e.g., Google Forms) in compliance with IRB and institutional data policies.
+- **Access:** Only the study team accesses identifiable data. Aggregated or de-identified data only will be used in the thesis, defense, and any publications or presentations.
+- **Retention:** Retention will follow Purdue University Fort Wayne IRB and institutional policy. Raw identifiable data will be retained for the minimum period required by the approved protocol and then deleted or fully de-identified. Transcripts and recordings will be handled in the same manner unless the consent form specifies a different disposition.
+- **Security:** PulseVault uses OAuth, access control, and audit logging. The study does **not** collect clinical data or data subject to HIPAA; the deployment uses authentication and access control appropriate for internal organizational use.
+
+---
+
+## 8. Confidentiality and Privacy
+
+- **Confidentiality:** Identifiable information is not shared outside the study team. In all thesis and publication materials, only aggregated statistics, de-identified themes, or anonymized illustrative quotes (with consent) will be reported.
+- **Withdrawal:** Participants may withdraw at any time. Withdrawal and disposition of already-collected data (retention vs. deletion) will be governed by the IRB-approved consent form and procedures.
+- **Privacy:** Participation is not disclosed to other employees except as needed for recruitment (e.g., awareness by MIE leadership that the study is being conducted). Survey and interview responses are treated as confidential.
+- **Data linkage:** Where user IDs are used to link usage to surveys, this is disclosed in the consent form; such linkage is limited to the study team and is only for research analysis.
+
+---
+
+## 9. Risks and Benefits
+
+### 9.1 Risks
+
+- **Minimal risk.** Activities consist of normal use of an internal documentation platform and completion of voluntary surveys and, for some, an optional interview.
+- **Possible minor burdens:** Time and attention required for surveys (estimated 5–15 minutes each) and, if applicable, interviews (30–60 minutes). There are no sensitive topics, no physical or psychological harm anticipated, and no collection of health or legally protected data.
+- **Mitigation:** Survey and interview participation are optional beyond the baseline survey (or as specified in the consent form); participants may skip questions or withdraw at any time.
+
+### 9.2 Benefits
+
+- **To participants:** Access to PulseVault for work-related knowledge sharing; opportunity to influence design and rollout of the platform.
+- **To MIE:** Evidence on effectiveness, usability, and adoption barriers to inform training, rollout, and policy.
+- **To research and thesis:** Empirical contribution to knowledge on video-based institutional knowledge sharing and user adoption of video-first platforms in organizational settings.
+
+---
+
+## 10. Consent
+
+Informed consent will be obtained in writing or electronically, as approved by the IRB, **before** any study procedures. The consent form will include:
+
+- Purpose of the study and nature of participation  
+- Procedures (account use, surveys, optional interviews, automatic usage logging)  
+- Risks and benefits  
+- Confidentiality and data handling  
+- Voluntary participation and right to withdraw  
+- Contact information for the Principal Investigator and for the Purdue University Fort Wayne IRB  
+- For interviews: separate consent for audio recording and use of anonymized quotes, if applicable  
+
+A copy of the consent form will be provided to the participant.
+
+---
+
+## 11. System Description (PulseVault)
+
+PulseVault is a web-accessible platform for uploading, storing, transcoding, and streaming short-form video. It supports:
+
+- **Authentication:** OAuth (e.g., Google, GitHub).  
+- **Upload:** Resumable uploads via the tus protocol.  
+- **Processing:** FFmpeg-based transcoding to HLS/DASH with multiple quality renditions.  
+- **Access control:** Only authenticated users can view content; sharing is via UUID-based links and existing access rules.  
+- **Observability:** Prometheus metrics and audit logs for uploads, views, and system health.  
+
+The study instance is at **https://pulse-vault.opensource.mieweb.org/**. Participants may use the **Pulse** mobile app (iOS/Android) and/or the PulseVault web interface. No clinical or HIPAA-covered data are collected; the study uses authentication and access control appropriate for internal organizational use.
+
+---
+
+## 12. Investigator and Oversight
+
+- **Principal Investigator (student):** Priyam More, Purdue University Fort Wayne  
+- **Faculty Advisor:** [Name] (haque28@purdue.edu), Purdue University Fort Wayne  
+- **Institution:** Purdue University Fort Wayne  
+- **IRB of Record:** Purdue University Fort Wayne  
+
+This protocol is submitted as the required protocol attachment for IRB review. It will be revised as needed to reflect IRB determinations or advisor feedback.

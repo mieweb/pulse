@@ -1,0 +1,73 @@
+================================================================================
+RECRUITMENT EMAIL / ANNOUNCEMENT — MIE EMPLOYEES
+================================================================================
+Use this (or a shortened version) when recruiting. Send after IRB approval.
+Customize [LINK_TO_CONSENT] and [LINK_TO_PULSEVAULT] before sending.
+================================================================================
+
+--- SUBJECT LINE ---
+Option A: PulseVault user study — help us evaluate video-based knowledge sharing
+Option B: Invitation: User study on PulseVault (video documentation platform)
+Option C: Participate in PulseVault study at MIE (voluntary, ~1 month)
+
+--- EMAIL BODY ---
+
+Hi everyone,
+
+I’m Priyam More, a graduate student at Purdue University Fort Wayne, and I’m
+working with MIE on a thesis study about **PulseVault** — the video-based
+knowledge-sharing platform we’re using for procedures, training, and
+documentation.
+
+I’m inviting you to take part in a **user study** to see how PulseVault is
+used in practice and how it compares to text-based documentation. Your
+feedback will help improve the platform and inform my research.
+
+**What’s involved**
+- Using PulseVault as you normally would for work (upload, watch, share
+  short videos) for about **1 month**
+- Up to **3 short surveys** (baseline, midpoint, end) — about 5–10 minutes
+  each
+- Option to do a **30–60 minute interview** to talk about your experience
+  (completely voluntary)
+
+**Eligibility**
+- MIE employees who are allowed to use PulseVault for work-related knowledge
+  sharing
+- Participation is **voluntary**. Whether you take part or not has no effect
+  on your job or standing at MIE.
+
+**What happens next**
+If you’d like to participate:
+1. Read the study information and consent form: [LINK_TO_CONSENT]
+2. Complete the consent form (electronically or as instructed).
+3. After you consent, you’ll get a short baseline survey and info on how to
+   use PulseVault if you haven’t already: [LINK_TO_PULSEVAULT]
+
+**Contacts**
+- Principal Investigator: Priyam More — [your email]
+- Faculty Advisor: Romael Haque — haque28@purdue.edu
+- Purdue Fort Wayne IRB: [IRB office contact from PFW website]
+
+Thank you for considering participation. Your input will help us understand
+how video documentation works at MIE and how to make tools like PulseVault
+more useful.
+
+Best,
+Priyam More
+
+================================================================================
+SHORT VERSION (e.g. for Slack or a brief announcement)
+================================================================================
+
+We’re running a voluntary **PulseVault user study** at MIE to see how people
+use the platform and how it compares to text docs. If you use (or want to
+try) PulseVault for work, you can take part by:
+- Using it as usual for ~1 month
+- Filling out 3 short surveys (5–10 min each)
+- Optionally doing one interview
+
+No impact on your job either way. To join: read the consent form and sign up
+here — [LINK_TO_CONSENT]. Questions? Contact Priyam More or Romael Haque.
+
+================================================================================

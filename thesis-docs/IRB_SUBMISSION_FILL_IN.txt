@@ -1,0 +1,126 @@
+# IRB Submission — Copy-Paste Fill-In Guide (Refined)
+
+Use the text below in the **Basic Study Information** form. Wording is detailed and professor-ready; trim only if the form has a strict character limit.
+
+---
+
+## * Title of study
+
+**Paste this (full, formal title):**
+
+Adoption and Effectiveness of PulseVault for Institutional Knowledge Sharing: A Longitudinal User Study with Medical Informatics Engineering Employees
+
+**Alternative (slightly shorter):**
+
+Adoption and Effectiveness of a Video-Based Knowledge-Sharing Platform: A Longitudinal User Study at Medical Informatics Engineering, Inc.
+
+---
+
+## * Short title
+
+**Paste this (used in forms and correspondence):**
+
+PulseVault MIE User Study
+
+**Alternative:** PulseVault Adoption & Effectiveness Study
+
+---
+
+## * Brief description
+
+**Paste this version (comprehensive; use when the form allows ~600–800 characters):**
+
+This study evaluates the adoption and effectiveness of PulseVault, a video-based knowledge-sharing platform, when used by employees at Medical Informatics Engineering, Inc. (MIE), in their normal work context. The work is conducted as Master's thesis research at Purdue University Fort Wayne. Design: longitudinal living-labs case study with mixed methods (quantitative usage and surveys; optional qualitative interviews). Participants use PulseVault for at least one month for technical documentation, knowledge transfer, and training. Data include automated usage metrics (uploads, views, watch time, sharing), the System Usability Scale (SUS), satisfaction and adoption-barrier surveys, and optional semi-structured interviews. The study addresses how institutional users adopt video-first knowledge-sharing tools (RQ3) and how video documentation compares to text-based documentation (RQ1). No clinical or HIPAA-covered data are collected. Purdue Fort Wayne is the sole institution conducting the research; MIE is the recruitment and deployment site. Minimal risk; voluntary participation; informed consent required before any study procedures.
+
+**Medium length (~400 characters) if the form is restrictive:**
+
+Longitudinal user study of PulseVault (video-based knowledge-sharing platform) at Medical Informatics Engineering, Inc. (MIE). Mixed methods: usage logs, SUS and satisfaction surveys, optional interviews. Addresses adoption of video-first knowledge sharing (RQ3) and comparison to text documentation (RQ1). Single-site; PFW IRB of record; minimal risk; no clinical data. Master's thesis research at Purdue University Fort Wayne.
+
+**Short version (~250 characters) for tight limits:**
+
+PulseVault adoption and effectiveness study at MIE. Mixed methods: usage data, SUS/satisfaction surveys, optional interviews. Supports thesis RQ1 (video vs. text) and RQ3 (user adoption). Single-site, PFW; minimal risk; consent required.
+
+---
+
+## * What kind of study is this?
+
+**Choose:** **Single-site study**
+
+**Why:** Purdue University Fort Wayne is the only institution conducting the research and the IRB of record. MIE is the organizational partner and recruitment/deployment site, not a separate research site.
+
+---
+
+## * Will an external IRB act as the IRB of record for this study?
+
+**Choose:** **No**
+
+**Why:** Purdue University Fort Wayne IRB is the IRB of record for this submission.
+
+---
+
+## * Local principal investigator
+
+**Enter:** **Priyam More**
+
+(Select from the dropdown if your system preloads PIs, or enter as above.)
+
+---
+
+## * Does the local principal investigator have a financial interest related to this research?
+
+**Choose:** **No**
+
+(Unless you or your advisor have a disclosed financial interest in MIE, Pulse, PulseVault, or related entities—in which case answer according to institutional policy and disclosure requirements.)
+
+---
+
+## * Attach the protocol (required for ALL submission types)
+
+**Action:** Upload **one** protocol document.
+
+**Use the file:** **IRB_Protocol.txt** (in this folder, thesis-docs).
+
+1. **Create a PDF:**  
+   - Open IRB_Protocol.txt → Print → Save as PDF, or  
+   - Paste the contents into Word/Google Docs → Export or Save as PDF.
+2. In the IRB system, click **Add** under "Attach the protocol" and upload this PDF.
+3. **Category:** Select "Protocol" or "Study Protocol" if the form asks for a document category.
+
+The protocol includes: purpose and objectives, background and significance, study design, participants, procedures, data collection and analysis, storage/access/retention, confidentiality, risks and benefits, consent, system description, and investigator/advisor information.
+
+---
+
+## * Is this project student-led research?
+
+**Choose:** **Yes**
+
+**Why:** This is Master's thesis research with the student (Priyam More) as Principal Investigator and the faculty advisor providing oversight.
+
+---
+
+## Quick reference table
+
+| Field | Your answer |
+|-------|-------------|
+| **Title of study** | Adoption and Effectiveness of PulseVault for Institutional Knowledge Sharing: A Longitudinal User Study with Medical Informatics Engineering Employees |
+| **Short title** | PulseVault MIE User Study |
+| **Brief description** | Use the comprehensive (or medium/short) version above depending on character limit |
+| **Kind of study** | Single-site study |
+| **External IRB of record?** | No |
+| **Local PI** | Priyam More |
+| **PI financial interest?** | No |
+| **Attach protocol** | Upload PDF generated from IRB_Protocol.txt; category: Protocol / Study Protocol |
+| **Student-led?** | Yes |
+
+---
+
+## Checklist before submit
+
+- [ ] Advisor name filled in where indicated in IRB_Protocol.txt (Section 12).
+- [ ] Protocol PDF generated from IRB_Protocol.txt and attached.
+- [ ] Brief description fits the form's character limit (use long, medium, or short version as needed).
+- [ ] Consent form and recruitment materials are prepared and will be submitted where required by your IRB.
+
+---
+
+All text is aligned with IRB_Protocol.txt. Update if your IRB or advisor request changes.

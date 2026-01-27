@@ -1,0 +1,179 @@
+================================================================================
+VIDEO VS. TEXT COMPARISON — SIMPLE METRICS FOR YOUR THESIS (RQ1)
+================================================================================
+Keep the study doable at MIE. No lab, no control group, no access to internal
+ticket systems unless MIE offers it. Collect these via surveys + what you
+already get from PulseVault.
+================================================================================
+
+WHY THIS WORKS FOR RQ1
+-------------------------
+RQ1: "How does short-form video documentation compare to traditional text-based
+documentation in terms of knowledge retention and adoption?"
+
+You can answer it with:
+  (a) **Adoption**: Are people using video (PulseVault) for documentation?
+  (b) **Preference**: Do they prefer video or text for learning procedures?
+  (c) **Perceived effectiveness**: Do they find video more helpful than text
+      for specific tasks?
+  (d) **Relative use**: When they need to learn something, do they turn to
+      video or text more often (self-report)?
+
+You do NOT need:
+  - Pre/post knowledge tests (adds a lot of work)
+  - A/B comparison with a control group (hard at one company)
+  - Access to support tickets (nice if MIE gives it, not required)
+
+================================================================================
+RECOMMENDED METRICS (EASY TO COLLECT)
+================================================================================
+
+1. PREFERENCE (survey, 1 question)
+----------------------------------
+**Question (end-of-study or midpoint):**
+"For learning a new work procedure or tool, I prefer:"
+  1 = Strongly prefer text (wiki, docs, email)
+  2 = Prefer text
+  3 = No preference
+  4 = Prefer video (e.g. PulseVault, screen recordings)
+  5 = Strongly prefer video
+
+**Thesis use:** Mean score, proportion preferring video (4–5) vs. text (1–2).
+Simple table or bar chart. "Participants leaned toward video/text/neutral."
+
+
+2. PERCEIVED HELPFULNESS (survey, 2–3 questions)
+------------------------------------------------
+**Questions (Likert 1–5 or 1–7, end-of-study):**
+
+  "Video documentation on PulseVault was more helpful than text documentation
+   when I needed to learn a new procedure or fix an issue."
+  1 = Strongly disagree … 5 = Strongly agree
+
+  "I would choose to look at a short video before reading a text doc when
+   both were available for the same topic."
+  1 = Strongly disagree … 5 = Strongly agree
+
+  (Optional) "Using PulseVault videos reduced how often I had to ask a
+   colleague for help, compared to using only text docs."
+  1 = Strongly disagree … 5 = Strongly agree
+
+**Thesis use:** Mean and SD for each item; short paragraph: "Participants
+reported that video was more helpful than text for learning procedures (M=…,
+SD=…)."
+
+
+3. RELATIVE USE — VIDEO VS. TEXT (survey, 1 question)
+-----------------------------------------------------
+**Question (end-of-study):**
+"In the past [study period, e.g. 4 weeks], when you needed to learn something
+work-related (procedure, tool, bug fix), how often did you use:"
+  ( ) Only text (wiki, docs, email)
+  ( ) Mostly text
+  ( ) Both about equally
+  ( ) Mostly video (including PulseVault)
+  ( ) Only video
+
+**Thesis use:** Percent in each bucket. "X% used mostly or only video,…"
+
+
+4. CREATION — VIDEO VS. TEXT (survey, 1 question)
+-------------------------------------------------
+**Question (end-of-study):**
+"Roughly how many work procedures or tutorials did you create in the study
+period?"
+  - As VIDEO (e.g. uploaded to PulseVault): _____
+  - As TEXT (wiki, doc, email, Slack): _____
+
+(If they don’t know exact numbers: "None / 1–2 / 3–5 / 6–10 / More than 10"
+for each.)
+
+**Thesis use:** For people who used PulseVault: compare avg videos created vs.
+avg text docs created. Or: "Among participants who created at least one
+video, the ratio of video to text documentation was …"
+
+
+5. FROM PULSEVAULT (your planned logging is enough)
+--------------------------------------------------
+You do NOT need to add metrics for "text documentation" in the app. You also
+don't need extra log collection beyond what you already planned.
+
+What you need FROM THE APP (you likely already have or have planned):
+- Uploads: who, when, how many (per user and total)
+- Views: who watched what, when (and watch time / completion if you have it)
+- Time to first upload, retention (derived from the above)
+
+That's it. The "video" side = PulseVault logs. The "text" side = survey
+(self-report only). You are not building a text-doc viewer, so you don't
+instrument it.
+
+**Thesis use:** "Adoption of video documentation" = usage of PulseVault. You
+report counts and trends. This is your behavioral side of "video vs. text":
+people chose to create and watch video.
+
+
+================================================================================
+WHERE TO PUT THESE IN YOUR SURVEYS
+================================================================================
+
+**Baseline (after consent):**
+  - Role/demographics, prior use of video for work documentation.
+  - Optional: one preference question ("Before this study, for learning
+    procedures I preferred: text / no preference / video") so you can say
+    "preference before vs. after" if you want.
+
+**End-of-study (required for RQ1):**
+  - Preference (Metric 1)
+  - Perceived helpfulness (Metric 2)
+  - Relative use (Metric 3)
+  - Creation — video vs. text (Metric 4)
+  - SUS + satisfaction (you already planned these)
+
+**Midpoint (optional):**
+  - Same preference + perceived helpfulness if you want to look at change
+    over time (can be a short "RQ1 subsection" in the thesis).
+
+
+================================================================================
+THESIS WRITING — HOW TO USE THIS FOR RQ1
+================================================================================
+
+In **Methodology** you say:
+  "To compare video and text documentation (RQ1), we used (1) adoption
+   metrics from PulseVault (videos created, views), (2) self-reported
+   preference for video vs. text, (3) perceived usefulness of video relative
+   to text, and (4) self-reported proportion of video vs. text use for
+   learning and for creating documentation."
+
+In **Results** you have a small "Video vs. text (RQ1)" subsection:
+  - Adoption: e.g. "N participants uploaded M videos; total views = X."
+  - Preference: mean score, % preferring video vs. text.
+  - Perceived helpfulness: means (and SDs) for each item.
+  - Relative use: % in each category (only/mostly text … only video).
+  - Creation: average videos vs. text docs per participant (or ratio).
+
+In **Discussion** you say:
+  - What the pattern is (e.g. "participants preferred and used video more
+    for learning procedures" or "preference was mixed but adoption of
+    video increased").
+  - Limitations: self-report, single org, no random assignment; so you
+    are not claiming causation, only describing adoption and perception
+    in this setting.
+
+
+================================================================================
+ONE-PAGE SUMMARY FOR YOURSELF
+================================================================================
+
+| What you need for RQ1     | How you get it                          | Effort     |
+|---------------------------|-----------------------------------------|------------|
+| Adoption of video         | PulseVault logs (uploads, views)        | Already have|
+| Preference (video vs text)| 1 Likert question, end survey           | 1 question |
+| Perceived effectiveness   | 2–3 Likert questions, end survey        | 2–3 questions |
+| Relative use              | 1 multiple-choice, end survey           | 1 question |
+| Creation (video vs text)  | 1 short question (counts or bands)      | 1 question |
+
+Total added: about 5–6 survey questions at the end. No extra systems, no
+MIE ticket data required. You keep the study easy and still have a clear
+"video vs. text" comparison for the thesis.
+================================================================================

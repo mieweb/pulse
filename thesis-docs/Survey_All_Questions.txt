@@ -1,0 +1,183 @@
+================================================================================
+PULSEVAULT USER STUDY — SURVEY QUESTIONS
+================================================================================
+Use these to build 3 surveys in Google Forms (or one form with sections/skip
+logic). Replace [STUDY_PERIOD] with e.g. "4 weeks" or "1 month."
+"This system" = PulseVault (the video knowledge-sharing platform).
+================================================================================
+
+----------------------------------------------------------------------
+SURVEY 1: BASELINE (after consent, before or right after first use)
+----------------------------------------------------------------------
+Est. time: 3–5 min
+
+--- DEMOGRAPHICS / ROLE ---
+1. What best describes your role at MIE?
+   ( ) Developer / Engineer
+   ( ) Support / Customer success
+   ( ) Product / Project management
+   ( ) Other: _____________
+
+2. Before this study, how often did you use video (e.g. screen recordings,
+   Loom, PulseVault, or other) for work-related documentation or training?
+   ( ) Never
+   ( ) Rarely (once or twice)
+   ( ) Sometimes (a few times a month)
+   ( ) Often (weekly or more)
+
+--- PREFERENCE (optional, for before/after comparison) ---
+3. Before this study, for learning a new work procedure or tool, I preferred:
+   ( ) Text (wiki, docs, email)
+   ( ) No strong preference
+   ( ) Video (e.g. screen recordings, tutorials)
+
+--- OPTIONAL: link to usage (only if consent allows) ---
+4. [Optional] If you’re okay linking this survey to your PulseVault account
+   for analysis, enter the email you use for PulseVault: _____________
+   (Leave blank if you prefer to stay anonymous.)
+
+
+----------------------------------------------------------------------
+SURVEY 2: MIDPOINT (~2 weeks into study)
+----------------------------------------------------------------------
+Est. time: 5–8 min
+
+--- SYSTEM USABILITY SCALE (SUS) ---
+For the next 10 questions, "this system" means PulseVault (the video
+platform you’ve been using). Rate from 1 = Strongly disagree to
+5 = Strongly agree.
+
+5. I think that I would like to use this system frequently.
+   1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+6. I found the system unnecessarily complex.
+   1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+7. I thought the system was easy to use.
+   1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+8. I think that I would need the support of a technical person to be able
+   to use this system.
+   1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+9. I found the various functions in this system were well integrated.
+   1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+10. I thought there was too much inconsistency in this system.
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+11. I would imagine that most people would learn to use this system very
+    quickly.
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+12. I found the system very cumbersome to use.
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+13. I felt very confident using the system.
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+14. I needed to learn a lot of things before I could get going with this
+    system.
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+--- SATISFACTION ---
+15. Overall, I am satisfied with PulseVault for sharing work knowledge
+    through video.
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+16. [Optional] Anything you’d like to share about your experience so far?
+    (Open text)
+
+
+----------------------------------------------------------------------
+SURVEY 3: END OF STUDY (~1 month or when you close data collection)
+----------------------------------------------------------------------
+Est. time: 8–12 min
+
+--- SYSTEM USABILITY SCALE (SUS) — same 10 items as midpoint ---
+For the next 10 questions, "this system" means PulseVault. Rate from
+1 = Strongly disagree to 5 = Strongly agree.
+
+17. I think that I would like to use this system frequently.
+18. I found the system unnecessarily complex.
+19. I thought the system was easy to use.
+20. I think that I would need the support of a technical person to be able
+    to use this system.
+21. I found the various functions in this system were well integrated.
+22. I thought there was too much inconsistency in this system.
+23. I would imagine that most people would learn to use this system very
+    quickly.
+24. I found the system very cumbersome to use.
+25. I felt very confident using the system.
+26. I needed to learn a lot of things before I could get going with this
+    system.
+
+--- SATISFACTION ---
+27. Overall, I am satisfied with PulseVault for sharing work knowledge
+    through video.
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+--- VIDEO VS. TEXT (RQ1) ---
+28. For learning a new work procedure or tool, I prefer:
+    1 = Strongly prefer text (wiki, docs, email)
+    2 = Prefer text
+    3 = No preference
+    4 = Prefer video (e.g. PulseVault, screen recordings)
+    5 = Strongly prefer video
+
+29. "Video documentation on PulseVault was more helpful than text
+    documentation when I needed to learn a new procedure or fix an issue."
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+30. "I would choose to look at a short video before reading a text doc when
+    both were available for the same topic."
+    1 – Strongly disagree  2  3  4  5 – Strongly agree
+
+31. In the past [STUDY_PERIOD], when you needed to learn something
+    work-related (procedure, tool, bug fix), how often did you use:
+    ( ) Only text (wiki, docs, email)
+    ( ) Mostly text
+    ( ) Both about equally
+    ( ) Mostly video (including PulseVault)
+    ( ) Only video
+
+32. Roughly how many work procedures or tutorials did you create in the
+    study period?
+    - As VIDEO (e.g. uploaded to PulseVault): _____ (number or None / 1–2 /
+      3–5 / 6–10 / More than 10)
+    - As TEXT (wiki, doc, email, Slack): _____ (same options)
+
+--- ADOPTION BARRIERS ---
+33. What helped you use PulseVault? (Check all that apply or add your own.)
+    [ ] Easy to upload / share
+    [ ] Fits my workflow
+    [ ] Team encouraged it
+    [ ] Faster than writing docs
+    [ ] Other: _____________
+
+34. What made it hard to use PulseVault or to use it more? (Check all or
+    add your own.)
+    [ ] Too time-consuming
+    [ ] Didn’t know when to use it
+    [ ] Prefer text
+    [ ] Technical issues
+    [ ] Nothing – it was fine
+    [ ] Other: _____________
+
+35. [Optional] Any other feedback about PulseVault or video vs. text
+    documentation at work? (Open text)
+
+--- OPTIONAL: link to usage ---
+36. [Optional] If you’re okay linking this survey to your PulseVault
+    account for analysis, enter the email you use for PulseVault:
+    _____________ (Leave blank to stay anonymous.)
+
+
+================================================================================
+SUS SCORING REMINDER
+================================================================================
+Odd items (1,3,5,7,9): contribution = (response – 1). Even items (2,4,6,8,10):
+contribution = (5 – response). Sum all 10 contributions, multiply by 2.5 =
+SUS score (0–100). Replace "this system" with "PulseVault" in the form if
+you prefer.
+================================================================================

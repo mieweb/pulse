@@ -1,0 +1,101 @@
+================================================================================
+WHAT'S REMAINING FOR IRB — CHECKLIST
+================================================================================
+You now have the main documents. Use this list to finish your IRB submission
+and to resubmit later if IRB asks for more materials.
+================================================================================
+
+----------------------------------------------------------------------
+ALREADY DONE (you have these)
+----------------------------------------------------------------------
+[OK] Protocol document ...................... IRB_Protocol.txt
+[OK] Basic study info (title, description,
+     single-site, PI, etc.) ................. IRB_SUBMISSION_FILL_IN.txt
+[OK] Survey questions (baseline, midpoint,
+     end; SUS + video vs. text) ............. Survey_All_Questions.txt
+[OK] Recruitment email / announcement ....... Recruitment_Email.txt
+[OK] Consent form (draft) ................... Consent_Form.txt
+[OK] Advisor name in protocol ............... Romael Haque (done)
+
+
+----------------------------------------------------------------------
+BEFORE YOU SUBMIT — DO THESE
+----------------------------------------------------------------------
+[ ] 1. Export IRB_Protocol.txt to PDF and attach it in the IRB system
+      as the required "Protocol" document.
+
+[ ] 2. Fill in Basic Study Information using IRB_SUBMISSION_FILL_IN.txt
+      (title, short title, brief description, single-site, no external
+      IRB, PI = Priyam More, no financial interest, student-led = Yes).
+
+[ ] 3. Fix Consent_Form.txt:
+      - Insert [PI EMAIL] (your email).
+      - Insert Purdue Fort Wayne IRB contact (phone/email from PFW
+        IRB website).
+      - Add [IRB approval number] and [DATE] placeholders if your IRB
+        template needs them.
+      - If PFW provides a consent template, copy this content into it.
+
+[ ] 4. If the IRB system has separate upload slots for "Consent Form" or
+      "Recruitment Materials," upload:
+      - Consent_Form.txt (or PDF/Word version of it)
+      - Recruitment_Email.txt (or a one-page recruitment script that
+        uses that text)
+
+[ ] 5. If the IRB form asks for "Data collection instruments" or
+      "Surveys," upload Survey_All_Questions.txt (or a PDF/Word version)
+      so they see exactly what you will ask.
+
+
+----------------------------------------------------------------------
+WHAT IRB OFTEN ASKS FOR (and where it is)
+----------------------------------------------------------------------
+| IRB wants...              | Where it is                      |
+|---------------------------|----------------------------------|
+| Protocol                  | IRB_Protocol.txt → save as PDF  |
+| Consent form              | Consent_Form.txt                |
+| Recruitment script/email  | Recruitment_Email.txt           |
+| Survey / instruments      | Survey_All_Questions.txt        |
+| Principal Investigator    | Priyam More                     |
+| Faculty Advisor           | Romael Haque, haque28@purdue.edu|
+| IRB of record             | Purdue University Fort Wayne    |
+
+
+----------------------------------------------------------------------
+AFTER IRB APPROVAL
+----------------------------------------------------------------------
+[ ] Replace [LINK_TO_CONSENT] in Recruitment_Email.txt with the real link
+    to your consent form (e.g. Qualtrics/Google Form or hosted PDF).
+
+[ ] Replace [LINK_TO_PULSEVAULT] with https://pulse-vault.opensource.mieweb.org/
+    (or the exact URL you give participants).
+
+[ ] Build your 3 surveys in Google Forms (or your institution’s tool)
+    using Survey_All_Questions.txt. Turn on “collect email” only if you
+    need to link responses to PulseVault usage and consent allows it.
+
+[ ] Send recruitment email (or short version) to MIE employees only
+    after IRB approval and after MIE leadership is okay with it.
+
+
+----------------------------------------------------------------------
+IF IRB ASKS FOR MORE
+----------------------------------------------------------------------
+- “Debriefing form” …. Usually for studies with deception; you have none.
+  You can say “Not applicable — no deception.”
+- “Demographic questionnaire” …. Your baseline survey already has role
+  and prior video use; add more only if IRB insists.
+- “Interview guide” …. You can add a one-pager: “Topics: adoption,
+  barriers, workflow fit, video vs. text, suggestions.” No need for
+  scripted questions.
+- “Data management plan” …. Your protocol Section 7 (Data storage,
+  access, retention) covers it; point IRB there or paste that section
+  into their template if they have one.
+
+================================================================================
+SUMMARY: You have protocol, consent, recruitment, and survey. The remaining
+steps are (1) export protocol to PDF and attach, (2) fill in the IRB form
+from the fill-in guide, (3) add your email and IRB contact to the consent
+form and attach consent + recruitment + survey if the system has slots for
+them. Then submit.
+================================================================================
