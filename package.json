@@ -48,7 +48,8 @@
     "react-native-video": "^6.18.0",
     "react-native-video-trimmer-ui": "^0.3.6",
     "react-native-web": "~0.20.0",
-    "react-native-webview": "13.13.5"
+    "react-native-webview": "13.13.5",
+    "react-native-zip-archive": "^7.0.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

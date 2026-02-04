@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system';
 import { Draft, DraftStorage } from './draftStorage';
 import { fileStore } from './fileStore';
+import { zip } from 'react-native-zip-archive';
 
 interface DraftPackage {
   version: string;
@@ -12,6 +13,40 @@ interface DraftPackage {
 
 const DRAFT_PACKAGE_VERSION = '1.0';
 const EXPORT_DIR = `${FileSystem.cacheDirectory}exports/`;
+
+/**
+ * Recursively read all files from a directory and return their paths
+ */
+async function getAllFilesInDirectory(dirPath: string): Promise<string[]> {
+  const files: string[] = [];
+  
+  try {
+    const dirInfo = await FileSystem.getInfoAsync(dirPath);
+    if (!dirInfo.exists) {
+      return files;
+    }
+
+    const items = await FileSystem.readDirectoryAsync(dirPath);
+    
+    for (const item of items) {
+      const itemPath = `${dirPath}${item}`;
+      const itemInfo = await FileSystem.getInfoAsync(itemPath);
+      
+      if (itemInfo.isDirectory) {
+        // Recursively get files from subdirectory
+        const subFiles = await getAllFilesInDirectory(`${itemPath}/`);
+        files.push(...subFiles);
+      } else {
+        // It's a file, add it to the list
+        files.push(itemPath);
+      }
+    }
+  } catch (error) {
+    console.error(`[DraftTransfer] Error reading directory ${dirPath}:`, error);
+  }
+  
+  return files;
+}
 
 /**
  * Utility for exporting and importing drafts between devices.
@@ -327,6 +362,76 @@ export class DraftTransfer {
       return importedDraftIds;
     } catch (error) {
       console.error('[DraftTransfer] Backup import failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Export the entire user folder (pulse directory) as a ZIP file.
+   * This includes all drafts, segments, and thumbnails.
+   * 
+   * @returns Object containing the zip file path and file count
+   */
+  static async exportUserFolderPackage(): Promise<{ 
+    filePath: string;
+    fileCount: number;
+  }> {
+    try {
+      console.log(`[DraftTransfer] Starting user folder ZIP export`);
+      
+      // Use the actual pulse directory path on Android
+      const baseDir = fileStore.toAbsolutePath('pulse/');
+      const baseDirInfo = await FileSystem.getInfoAsync(baseDir);
+      
+      // Ensure export directory exists
+      const exportDirInfo = await FileSystem.getInfoAsync(EXPORT_DIR);
+      if (!exportDirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(EXPORT_DIR, { intermediates: true });
+      }
+
+      const zipFileName = `user-folder-${Date.now()}.zip`;
+      const zipPath = `${EXPORT_DIR}${zipFileName}`;
+      
+      if (!baseDirInfo.exists) {
+        console.warn('[DraftTransfer] User folder does not exist, creating empty zip');
+        
+        // Create an empty directory and zip it
+        const tempEmptyDir = `${EXPORT_DIR}empty/`;
+        const tempEmptyDirInfo = await FileSystem.getInfoAsync(tempEmptyDir);
+        if (!tempEmptyDirInfo.exists) {
+          await FileSystem.makeDirectoryAsync(tempEmptyDir, { intermediates: true });
+        }
+        
+        // Create empty zip
+        await zip(tempEmptyDir, zipPath);
+        
+        // Clean up temp directory
+        await FileSystem.deleteAsync(tempEmptyDir, { idempotent: true });
+        
+        console.log(`[DraftTransfer] Empty ZIP created: ${zipPath}`);
+
+        return {
+          filePath: zipPath,
+          fileCount: 0,
+        };
+      }
+
+      // Get all files in the user folder recursively
+      const allFilePaths = await getAllFilesInDirectory(baseDir);
+      console.log(`[DraftTransfer] Found ${allFilePaths.length} files to ZIP`);
+
+      // Create ZIP file from the entire pulse directory
+      await zip(baseDir, zipPath);
+
+      console.log(`[DraftTransfer] User folder ZIP export complete: ${zipPath}`);
+      console.log(`[DraftTransfer] Zipped ${allFilePaths.length} files`);
+
+      return {
+        filePath: zipPath,
+        fileCount: allFilePaths.length,
+      };
+    } catch (error) {
+      console.error('[DraftTransfer] User folder ZIP export failed:', error);
       throw error;
     }
   }
