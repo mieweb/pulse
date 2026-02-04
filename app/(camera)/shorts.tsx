@@ -105,14 +105,9 @@ export default function ShortsScreen() {
     recordingSegments,
     redoStack,
     currentDraftId,
-    hasStartedOver,
-    isContinuingLastDraft,
     showContinuingIndicator,
     savedDurationLimitSeconds,
     currentDraftName,
-    handleStartOver,
-    handleStartNew,
-    handleSaveAsDraft,
     handleClose,
     handleUndoSegment,
     handleRedoSegment,
@@ -379,13 +374,6 @@ export default function ShortsScreen() {
     }
   };
 
-  const handleSaveAsDraftWrapper = async (
-    segments: RecordingSegment[],
-    options?: { forceNew?: boolean }
-  ) => {
-    await handleSaveAsDraft(segments, maxDurationLimitSeconds, options);
-  };
-
   const handleUndoSegmentWrapper = async () => {
     await handleUndoSegment(maxDurationLimitSeconds);
   };
@@ -444,7 +432,13 @@ export default function ShortsScreen() {
 
   const handleCloseWrapper = async () => {
     await handleClose();
-    router.push("/(tabs)");
+    // In upload mode we likely came from QR/deeplink; back() would land on root index (white screen).
+    // Go to home (tabs) so the user sees the app instead of a blank screen.
+    if (draftMode === "upload") {
+      router.replace("/(tabs)");
+    } else {
+      router.back();
+    }
   };
 
   const handleAddVideoFromLibrary = async () => {
@@ -680,22 +674,9 @@ export default function ShortsScreen() {
 
       {!isRecording &&
         (draftMode === "upload" ? (
-          <UploadCloseButton
-            segments={recordingSegments}
-            onStartOver={handleStartOver}
-            hasStartedOver={hasStartedOver}
-            onClose={handleCloseWrapper}
-          />
+          <UploadCloseButton onClose={handleCloseWrapper} />
         ) : (
-          <CloseButton
-            segments={recordingSegments}
-            onStartOver={handleStartOver}
-            onStartNew={handleStartNew}
-            onSaveAsDraft={handleSaveAsDraftWrapper}
-            hasStartedOver={hasStartedOver}
-            onClose={handleCloseWrapper}
-            isContinuingLastDraft={isContinuingLastDraft}
-          />
+          <CloseButton onClose={handleCloseWrapper} />
         ))}
 
       {recordingSegments.length > 0 && !isRecording && (
