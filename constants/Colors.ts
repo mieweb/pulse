@@ -19,6 +19,16 @@ export const Colors = {
     appPrimary: "#F01E21",
     success: "#4CAF50",
     error: "#F44336",
+    /** Card/surface background (home drafts list, buttons) */
+    surface: "#F2F2F7",
+    /** Card and control borders */
+    border: "#C6C6C8",
+    /** Secondary text (subtitles, dates) */
+    secondaryText: "#6B6B70",
+    /** Input background */
+    inputBackground: "#E5E5EA",
+    /** Selected/highlight border (e.g. draft selection) */
+    selection: "#0A84FF",
   },
   dark: {
     text: "#ECEDEE",
@@ -32,5 +42,15 @@ export const Colors = {
     appPrimary: "#F01E21",
     success: "#4CAF50",
     error: "#F44336",
+    /** Card/surface background (home drafts list, buttons) */
+    surface: "#1C1C1E",
+    /** Card and control borders */
+    border: "#38383A",
+    /** Secondary text (subtitles, dates) */
+    secondaryText: "#8E8E93",
+    /** Input background */
+    inputBackground: "#2C2C2E",
+    /** Selected/highlight border (e.g. draft selection) */
+    selection: "#0A84FF",
   },
 };

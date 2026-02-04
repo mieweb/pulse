@@ -112,32 +112,9 @@ export function useDraftManager(
           draftToLoad = await DraftStorage.getDraftById(draftId, mode);
           setIsContinuingLastDraft(false);
         } else {
-          if (redoData && redoData.segments && redoData.segments.length > 0) {
-            draftToLoad = null;
-            setIsContinuingLastDraft(false);
-          } else {
-            if (!mode || mode === "camera") {
-              const cameraDraft = await DraftStorage.getLastModifiedDraft(
-                "camera"
-              );
-              const uploadDraft = await DraftStorage.getLastModifiedDraft(
-                "upload"
-              );
-
-              if (cameraDraft && uploadDraft) {
-                draftToLoad =
-                  cameraDraft.lastModified.getTime() >
-                  uploadDraft.lastModified.getTime()
-                    ? cameraDraft
-                    : uploadDraft;
-              } else {
-                draftToLoad = cameraDraft || uploadDraft;
-              }
-            } else {
-              draftToLoad = await DraftStorage.getLastModifiedDraft(mode);
-            }
-            setIsContinuingLastDraft(!!draftToLoad);
-          }
+          // No draftId: always start with a fresh draft (no auto-loading last draft)
+          draftToLoad = null;
+          setIsContinuingLastDraft(false);
         }
 
         if (draftToLoad) {
@@ -154,9 +131,13 @@ export function useDraftManager(
           setCurrentDraftName(draftToLoad.name);
           lastSegmentCount.current = draftToLoad.segments.length;
         } else {
-          if (redoData && redoData.segments && redoData.segments.length > 0) {
-            if (redoData.draftId) {
-              setOriginalDraftId(redoData.draftId);
+          if (draftId) {
+            if (redoData && redoData.segments && redoData.segments.length > 0) {
+              if (redoData.draftId) {
+                setOriginalDraftId(redoData.draftId);
+              } else {
+                setOriginalDraftId(null);
+              }
             } else {
               setOriginalDraftId(null);
             }
@@ -165,7 +146,10 @@ export function useDraftManager(
           }
         }
 
-        if (redoData && redoData.segments) {
+        if (!draftId) {
+          // Fresh draft: don't restore redo stack from previous session
+          setRedoStack([]);
+        } else if (redoData && redoData.segments) {
           if (draftToLoad) {
             const shouldLoadRedoStack =
               redoData.draftId === draftToLoad.id || !redoData.draftId;
