@@ -65,21 +65,32 @@ export default function ShortsScreen() {
     | "camera"
     | "upload";
   
-  // Store server and token if provided (from deeplink)
+  // Store per-draft config only when QR includes draftId (required for upload)
+  const serverNotSetupForUpload = useLocalSearchParams<{ serverNotSetupForUpload?: string }>().serverNotSetupForUpload === "true";
   React.useEffect(() => {
     const storeConfig = async () => {
-      if (server && token) {
+      if (server && token && draftId) {
         try {
-          const { storeUploadConfig } = await import("@/utils/uploadConfig");
-          await storeUploadConfig(server, token);
-          console.log("✅ Stored upload config in shorts screen");
+          const { storeUploadConfigForDraft } = await import("@/utils/uploadConfig");
+          await storeUploadConfigForDraft(draftId, server, token);
+          console.log("✅ Stored upload config for draft", draftId);
         } catch (error) {
           console.error("❌ Failed to store upload config:", error);
         }
       }
     };
     storeConfig();
-  }, [server, token]);
+  }, [draftId, server, token]);
+
+  React.useEffect(() => {
+    if (serverNotSetupForUpload) {
+      Alert.alert(
+        "Server not set up for upload",
+        "Server is not properly set up for upload.",
+        [{ text: "OK" }]
+      );
+    }
+  }, [serverNotSetupForUpload]);
   const cameraRef = React.useRef<CameraView>(null);
   
   // Use a stable ref callback to avoid CameraView remounting on every render
@@ -147,14 +158,15 @@ export default function ShortsScreen() {
   // The derived value ensures listeners are registered before values are updated
   // We reference all shared values here to create listeners
   useDerivedValue(() => {
-    // Read all shared values to create listeners
-    // This prevents warnings when values are updated from JS
-    isHoldRecording.value;
-    recordingModeShared.value;
-    currentZoom.value;
-    savedZoom.value;
-    currentTouchY.value;
-    initialTouchY.value;
+    // Read all shared values to create listeners (void = intentional read for dependency)
+    void (
+      isHoldRecording.value,
+      recordingModeShared.value,
+      currentZoom.value,
+      savedZoom.value,
+      currentTouchY.value,
+      initialTouchY.value
+    );
     return 0; // Return dummy value
   });
 
@@ -259,6 +271,8 @@ export default function ShortsScreen() {
       isHoldRecording.value = false;
       recordingModeShared.value = "";
     }
+    // isHoldRecording and recordingModeShared are Reanimated shared refs (stable), omit from deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording]);
 
   useFocusEffect(

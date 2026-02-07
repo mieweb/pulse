@@ -10,7 +10,7 @@ import {
   Image,
   ScrollView,
 } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { router } from "expo-router";
 import Sortable from "react-native-sortables";
 
 const THUMBNAIL_SIZE = 60;
@@ -155,7 +155,6 @@ export default function SegmentReorderListVertical({
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
-  const [hasChanges, setHasChanges] = useState(false);
 
   // Update reorderedSegments when segments prop changes (e.g., after trim points are updated)
   useEffect(() => {
@@ -165,7 +164,6 @@ export default function SegmentReorderListVertical({
   const handleOrderChange = useCallback(
     (newOrder: Segment[]) => {
       setReorderedSegments(newOrder);
-      setHasChanges(true);
       onSegmentsReorder(newOrder);
       // Auto-save on reorder
       onSave(newOrder);
@@ -179,7 +177,6 @@ export default function SegmentReorderListVertical({
         (segment) => segment.id !== segmentId
       );
       setReorderedSegments(updatedSegments);
-      setHasChanges(true);
       onSegmentsReorder(updatedSegments);
       // Auto-save on delete
       onSave(updatedSegments);

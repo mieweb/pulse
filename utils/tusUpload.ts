@@ -1,5 +1,5 @@
 import * as FileSystem from "expo-file-system";
-import { getUploadConfig } from "./uploadConfig";
+import { getUploadConfigForDraft } from "./uploadConfig";
 
 export interface UploadProgress {
   bytesUploaded: number;
@@ -20,18 +20,19 @@ export interface UploadResult {
 export async function uploadVideo(
   videoUri: string,
   filename: string,
-  onProgress?: (progress: UploadProgress) => void
+  onProgress?: (progress: UploadProgress) => void,
+  draftId?: string
 ): Promise<UploadResult> {
   console.log(`[TUS Upload] Starting upload process for: ${filename}`);
   console.log(`[TUS Upload] Video URI: ${videoUri}`);
   
-  // Get stored upload config
-  console.log(`[TUS Upload] Step 1: Getting upload config...`);
-  const config = await getUploadConfig();
+  if (!draftId) {
+    throw new Error("Server not set up for upload.");
+  }
+  console.log(`[TUS Upload] Step 1: Getting upload config for draft...`);
+  const config = await getUploadConfigForDraft(draftId);
   if (!config) {
-    throw new Error(
-      "No upload configuration found. Please scan a QR code to configure upload settings."
-    );
+    throw new Error("Server not set up for upload.");
   }
 
   let { server, token } = config;

@@ -1,7 +1,6 @@
 import { Draft, DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import { DraftTransfer } from "@/utils/draftTransfer";
-import { getUploadConfig } from "@/utils/uploadConfig";
 import { DRAFT_NAME_LENGTH } from "@/constants/camera";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -38,24 +37,15 @@ export default function HomeScreen() {
   const [importing, setImporting] = useState(false);
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [uploadDestinationName, setUploadDestinationName] = useState<string | null>(null);
 
   const loadDrafts = useCallback(async () => {
     try {
-      const [savedDrafts, config] = await Promise.all([
-        DraftStorage.getAllDrafts(),
-        getUploadConfig(),
-      ]);
+      const savedDrafts = await DraftStorage.getAllDrafts();
       setDrafts(
         savedDrafts.sort(
           (a, b) => b.lastModified.getTime() - a.lastModified.getTime()
         )
       );
-      if (config?.server) {
-        setUploadDestinationName(config.server);
-      } else {
-        setUploadDestinationName(null);
-      }
     } catch (error) {
       console.error("Error loading drafts:", error);
     } finally {
@@ -545,11 +535,15 @@ export default function HomeScreen() {
             {item.mode === "upload" && (
               <View style={styles.uploadDestination}>
                 <MaterialIcons name="link" size={14} color={colors.secondaryText} />
-                {uploadDestinationName ? (
+                {item.uploadConfig?.server ? (
                   <Text style={styles.uploadDestinationText} numberOfLines={2}>
-                    {uploadDestinationName}
+                    {item.uploadConfig.server}
                   </Text>
-                ) : null}
+                ) : (
+                  <Text style={[styles.uploadDestinationText, { fontStyle: "italic", color: colors.secondaryText }]} numberOfLines={2}>
+                    Server not set up for upload
+                  </Text>
+                )}
               </View>
             )}
           </View>

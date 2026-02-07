@@ -1,10 +1,20 @@
 import { RecordingSegment } from "@/components/RecordingProgressBar";
 import { fileStore } from "@/utils/fileStore";
+import {
+  getUploadConfigsForDraftIds,
+  clearUploadConfigForDraft,
+} from "@/utils/uploadConfig";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { generateVideoThumbnail } from "./videoThumbnails";
 import * as Crypto from "expo-crypto";
 
 export type DraftMode = "camera" | "upload";
+
+/** Per-draft upload config (server URL + token), e.g. Pulse Vault vs Pulse Clip */
+export interface DraftUploadConfig {
+  server: string;
+  token: string;
+}
 
 export interface Draft {
   id: string;
@@ -15,6 +25,8 @@ export interface Draft {
   lastModified: Date;
   thumbnail?: string;
   name?: string;
+  /** Upload server + token for this draft (set when opened via QR); each draft can have its own server */
+  uploadConfig?: DraftUploadConfig;
 }
 
 const DRAFTS_STORAGE_KEY = "recording_drafts";
@@ -248,10 +260,18 @@ export class DraftStorage {
         };
       });
 
+      // Merge per-draft upload config (each draft can have its own server, e.g. Pulse Vault vs Pulse Clip)
+      const draftIds = parsedDrafts.map((d: Draft) => d.id);
+      const uploadConfigs = await getUploadConfigsForDraftIds(draftIds);
+      const draftsWithConfig = parsedDrafts.map((draft: Draft) => ({
+        ...draft,
+        uploadConfig: uploadConfigs.get(draft.id) ?? draft.uploadConfig,
+      }));
+
       // Filter by mode if specified
       return mode
-        ? parsedDrafts.filter((draft: Draft) => draft.mode === mode)
-        : parsedDrafts;
+        ? draftsWithConfig.filter((draft: Draft) => draft.mode === mode)
+        : draftsWithConfig;
     } catch (error) {
       console.error("Error getting drafts:", error);
       return [];
@@ -333,6 +353,8 @@ export class DraftStorage {
           // Non-fatal: proceed with metadata cleanup
         }
       }
+
+      await clearUploadConfigForDraft(id);
 
       const drafts = await this.getAllDrafts();
       const updatedDrafts = drafts.filter((draft) => draft.id !== id);

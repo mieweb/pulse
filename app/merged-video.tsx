@@ -17,7 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { uploadVideo } from "@/utils/tusUpload";
-import { getUploadConfig } from "@/utils/uploadConfig";
+import { getUploadConfigForDraft } from "@/utils/uploadConfig";
 import { DraftStorage } from "@/utils/draftStorage";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -78,10 +78,10 @@ export default function MergedVideoScreen() {
     setupPlayer();
   }, [videoUri, player]);
 
-  // Check if upload config is available and if draft is in upload mode
+  // Check if upload config is available for this draft (per-draft only; draftId required)
   useEffect(() => {
     const checkUploadConfig = async () => {
-      const config = await getUploadConfig();
+      const config = draftId ? await getUploadConfigForDraft(draftId) : null;
       setHasUploadConfig(!!config);
 
       // Check if the draft was created in upload mode
@@ -172,12 +172,11 @@ export default function MergedVideoScreen() {
       return;
     }
 
-    // Check if upload config exists
-    const config = await getUploadConfig();
-    if (!config) {
+    const config = draftId ? await getUploadConfigForDraft(draftId) : null;
+    if (!draftId || !config) {
       Alert.alert(
-        "Upload Not Configured",
-        "Please scan a QR code to configure upload settings first.",
+        "Server not set up for upload",
+        "Server is not properly set up for upload.",
         [
           {
             text: "OK",
@@ -202,7 +201,8 @@ export default function MergedVideoScreen() {
         filename,
         (progress) => {
           setUploadProgress(progress.percentage);
-        }
+        },
+        draftId ?? undefined
       );
 
       Alert.alert(
@@ -317,10 +317,10 @@ export default function MergedVideoScreen() {
         {isUploadModeDraft && !hasUploadConfig && (
           <View style={styles.inputSection}>
             <ThemedText style={styles.inputLabel}>
-              Upload Not Configured
+              Server not set up for upload
             </ThemedText>
             <ThemedText style={styles.uploadInfoText}>
-              Scan a QR code to configure upload settings
+              Server is not properly set up for upload.
             </ThemedText>
           </View>
         )}
