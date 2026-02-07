@@ -22,15 +22,17 @@ export default function Index() {
     draftId?: string;
     server?: string;
     token?: string;
+    serverNotSetupForUpload?: string;
   }>();
   const router = useRouter();
   const [hasRedirected, setHasRedirected] = useState(false);
 
   const hasValidDraftId = params.draftId && isUUIDv4(params.draftId);
   const serverNotSetupForUpload =
-    params.mode === "upload" &&
-    (params.server != null || params.token != null) &&
-    !hasValidDraftId;
+    params.serverNotSetupForUpload === "true" ||
+    (params.mode === "upload" &&
+      (params.server != null || params.token != null) &&
+      !hasValidDraftId);
 
   // Debug logging for deeplink parameters
   console.log("🔗 Deeplink params:", params);
