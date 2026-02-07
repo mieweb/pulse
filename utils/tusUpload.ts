@@ -1,5 +1,5 @@
 import * as FileSystem from "expo-file-system";
-import { getUploadConfigForDraftOrGlobal } from "./uploadConfig";
+import { getUploadConfigForDraft } from "./uploadConfig";
 
 export interface UploadProgress {
   bytesUploaded: number;
@@ -26,13 +26,13 @@ export async function uploadVideo(
   console.log(`[TUS Upload] Starting upload process for: ${filename}`);
   console.log(`[TUS Upload] Video URI: ${videoUri}`);
   
-  // Use this draft's upload config (each draft can have its own server, e.g. Pulse Vault vs Pulse Clip)
-  console.log(`[TUS Upload] Step 1: Getting upload config...`);
-  const config = await getUploadConfigForDraftOrGlobal(draftId);
+  if (!draftId) {
+    throw new Error("Server not set up for upload.");
+  }
+  console.log(`[TUS Upload] Step 1: Getting upload config for draft...`);
+  const config = await getUploadConfigForDraft(draftId);
   if (!config) {
-    throw new Error(
-      "No upload configuration found. Please scan a QR code to configure upload settings."
-    );
+    throw new Error("Server not set up for upload.");
   }
 
   let { server, token } = config;

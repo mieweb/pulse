@@ -37,6 +37,7 @@ export default function HomeScreen() {
   const [importing, setImporting] = useState(false);
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+
   const loadDrafts = useCallback(async () => {
     try {
       const savedDrafts = await DraftStorage.getAllDrafts();
@@ -538,7 +539,11 @@ export default function HomeScreen() {
                   <Text style={styles.uploadDestinationText} numberOfLines={2}>
                     {item.uploadConfig.server}
                   </Text>
-                ) : null}
+                ) : (
+                  <Text style={[styles.uploadDestinationText, { fontStyle: "italic", color: colors.secondaryText }]} numberOfLines={2}>
+                    Server not set up for upload
+                  </Text>
+                )}
               </View>
             )}
           </View>

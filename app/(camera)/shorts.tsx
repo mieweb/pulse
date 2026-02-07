@@ -65,22 +65,15 @@ export default function ShortsScreen() {
     | "camera"
     | "upload";
   
-  // Store server and token for this draft only when provided (from QR deeplink)
+  // Store per-draft config only when QR includes draftId (required for upload)
+  const serverNotSetupForUpload = useLocalSearchParams<{ serverNotSetupForUpload?: string }>().serverNotSetupForUpload === "true";
   React.useEffect(() => {
     const storeConfig = async () => {
-      if (server && token) {
+      if (server && token && draftId) {
         try {
-          const {
-            storeUploadConfigForDraft,
-            storeUploadConfig,
-          } = await import("@/utils/uploadConfig");
-          if (draftId) {
-            await storeUploadConfigForDraft(draftId, server, token);
-            console.log("✅ Stored upload config for draft", draftId);
-          } else {
-            await storeUploadConfig(server, token);
-            console.log("✅ Stored upload config in shorts (global)");
-          }
+          const { storeUploadConfigForDraft } = await import("@/utils/uploadConfig");
+          await storeUploadConfigForDraft(draftId, server, token);
+          console.log("✅ Stored upload config for draft", draftId);
         } catch (error) {
           console.error("❌ Failed to store upload config:", error);
         }
@@ -88,6 +81,16 @@ export default function ShortsScreen() {
     };
     storeConfig();
   }, [draftId, server, token]);
+
+  React.useEffect(() => {
+    if (serverNotSetupForUpload) {
+      Alert.alert(
+        "Server not set up for upload",
+        "Server is not properly set up for upload.",
+        [{ text: "OK" }]
+      );
+    }
+  }, [serverNotSetupForUpload]);
   const cameraRef = React.useRef<CameraView>(null);
   
   // Use a stable ref callback to avoid CameraView remounting on every render
