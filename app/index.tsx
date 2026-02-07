@@ -1,6 +1,9 @@
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { storeUploadConfig } from "@/utils/uploadConfig";
+import {
+  storeUploadConfig,
+  storeUploadConfigForDraft,
+} from "@/utils/uploadConfig";
 
 // Simple UUID v4 validation (basic format check)
 const isUUIDv4 = (uuid: string) => {
@@ -26,11 +29,20 @@ export default function Index() {
   useEffect(() => {
     const handleDeeplink = async () => {
       if (params.mode === "upload") {
-        // Store server and token if provided
+        // Store server and token for this draft only (so Pulse Vault vs Pulse Clip stay per-draft)
         if (params.server && params.token) {
           try {
-            await storeUploadConfig(params.server, params.token);
-            console.log("✅ Stored upload config from deeplink");
+            if (params.draftId && isUUIDv4(params.draftId)) {
+              await storeUploadConfigForDraft(
+                params.draftId,
+                params.server,
+                params.token
+              );
+              console.log("✅ Stored upload config for draft", params.draftId);
+            } else {
+              await storeUploadConfig(params.server, params.token);
+              console.log("✅ Stored upload config from deeplink (global)");
+            }
           } catch (error) {
             console.error("❌ Failed to store upload config:", error);
           }

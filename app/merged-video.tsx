@@ -17,7 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { uploadVideo } from "@/utils/tusUpload";
-import { getUploadConfig } from "@/utils/uploadConfig";
+import { getUploadConfigForDraftOrGlobal } from "@/utils/uploadConfig";
 import { DraftStorage } from "@/utils/draftStorage";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -78,10 +78,10 @@ export default function MergedVideoScreen() {
     setupPlayer();
   }, [videoUri, player]);
 
-  // Check if upload config is available and if draft is in upload mode
+  // Check if upload config is available for this draft and if draft is in upload mode
   useEffect(() => {
     const checkUploadConfig = async () => {
-      const config = await getUploadConfig();
+      const config = await getUploadConfigForDraftOrGlobal(draftId ?? undefined);
       setHasUploadConfig(!!config);
 
       // Check if the draft was created in upload mode
@@ -172,8 +172,8 @@ export default function MergedVideoScreen() {
       return;
     }
 
-    // Check if upload config exists
-    const config = await getUploadConfig();
+    // Use this draft's upload config (each draft can have its own server, e.g. Pulse Vault vs Pulse Clip)
+    const config = await getUploadConfigForDraftOrGlobal(draftId ?? undefined);
     if (!config) {
       Alert.alert(
         "Upload Not Configured",
@@ -202,7 +202,8 @@ export default function MergedVideoScreen() {
         filename,
         (progress) => {
           setUploadProgress(progress.percentage);
-        }
+        },
+        draftId ?? undefined
       );
 
       Alert.alert(
