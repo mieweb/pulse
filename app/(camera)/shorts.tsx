@@ -155,14 +155,15 @@ export default function ShortsScreen() {
   // The derived value ensures listeners are registered before values are updated
   // We reference all shared values here to create listeners
   useDerivedValue(() => {
-    // Read all shared values to create listeners
-    // This prevents warnings when values are updated from JS
-    isHoldRecording.value;
-    recordingModeShared.value;
-    currentZoom.value;
-    savedZoom.value;
-    currentTouchY.value;
-    initialTouchY.value;
+    // Read all shared values to create listeners (void = intentional read for dependency)
+    void (
+      isHoldRecording.value,
+      recordingModeShared.value,
+      currentZoom.value,
+      savedZoom.value,
+      currentTouchY.value,
+      initialTouchY.value
+    );
     return 0; // Return dummy value
   });
 
@@ -267,6 +268,8 @@ export default function ShortsScreen() {
       isHoldRecording.value = false;
       recordingModeShared.value = "";
     }
+    // isHoldRecording and recordingModeShared are Reanimated shared refs (stable), omit from deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording]);
 
   useFocusEffect(

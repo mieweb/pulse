@@ -94,6 +94,8 @@ export default function PreviewNewScreen() {
     };
 
     loadDraft();
+    // Intentionally only re-run when draftId changes; handleConcatenate/hasStartedMerge are stable for this flow
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftId]);
 
   const handleClose = useCallback(() => {
