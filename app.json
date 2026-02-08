@@ -12,9 +12,16 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.mieweb.pulse",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["pulsecam"],
+            "CFBundleURLName": "com.mieweb.pulse"
+          }
+        ]
       },
-      "appleTeamId": "X5873NL7XM"
+      "appleTeamId": "X5873NL7XM",
+      "associatedDomains": ["applinks:your-domain.com"]
     },
     "android": {
       "adaptiveIcon": {
@@ -29,7 +36,21 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.ACCESS_MEDIA_LOCATION"
       ],
-      "package": "com.mieweb.pulse"
+      "package": "com.mieweb.pulse",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "pulsecam",
+              "host": "auth",
+              "pathPrefix": "/callback"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "bundler": "metro",

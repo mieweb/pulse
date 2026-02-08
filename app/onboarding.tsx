@@ -40,7 +40,7 @@ export default function OnboardingScreen() {
 
   async function handleGetStarted() {
     await AsyncStorage.setItem("onboardingComplete", "true");
-    router.replace("/(tabs)");
+    router.replace("/login");
   }
 
   return (
