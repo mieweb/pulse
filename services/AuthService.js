@@ -2,6 +2,7 @@ import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import * as Application from 'expo-application';
+import { Platform } from 'react-native';
 import axios from 'axios';
 
 /**
@@ -25,8 +26,9 @@ class AuthService {
     this.DEVICE_ID_KEY = 'deviceId';
     
     // OAuth configuration
-    this.CLIENT_ID = 'pulse-mobile';
+    this.CLIENT_ID = 'pulsevault-mobile';
     this.REDIRECT_URI = 'pulsecam://auth/callback';
+    this.SCOPE = 'read write'; // OAuth scopes
   }
   /**
    * Convert ArrayBuffer or base64 string to base64url format
@@ -39,10 +41,29 @@ class AuthService {
     let base64String;
     
     // If input is ArrayBuffer, convert to base64 first
-    if (input instanceof ArrayBuffer) {
-      const uint8Array = new Uint8Array(input);
-      const binaryString = String.fromCharCode(...uint8Array);
-      base64String = btoa(binaryString);
+    if (input instanceof ArrayBuffer || input instanceof Uint8Array) {
+      // Convert ArrayBuffer/Uint8Array to base64 manually
+      const uint8Array = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      let result = '';
+      let i;
+      
+      for (i = 0; i < uint8Array.length; i += 3) {
+        const byte1 = uint8Array[i];
+        const byte2 = i + 1 < uint8Array.length ? uint8Array[i + 1] : 0;
+        const byte3 = i + 2 < uint8Array.length ? uint8Array[i + 2] : 0;
+        
+        const encoded1 = byte1 >> 2;
+        const encoded2 = ((byte1 & 0x03) << 4) | (byte2 >> 4);
+        const encoded3 = ((byte2 & 0x0f) << 2) | (byte3 >> 6);
+        const encoded4 = byte3 & 0x3f;
+        
+        result += chars[encoded1] + chars[encoded2];
+        result += i + 1 < uint8Array.length ? chars[encoded3] : '=';
+        result += i + 2 < uint8Array.length ? chars[encoded4] : '=';
+      }
+      
+      base64String = result;
     } else {
       // Input is already a base64 string
       base64String = input;
@@ -137,42 +158,6 @@ class AuthService {
   }
 
   /**
-   * Verify PKCE implementation (for testing)
-   * Generates a PKCE pair and logs the results
-   * 
-   * @returns {Promise<boolean>} True if verification succeeds
-   */
-  async verifyPKCEImplementation() {
-    try {
-      console.log('🧪 Testing PKCE implementation...');
-      
-      const { codeVerifier, codeChallenge, codeChallengeMethod } = await this.generatePKCEPair();
-      
-      console.log('📋 PKCE Test Results:');
-      console.log('  code_verifier length:', codeVerifier.length);
-      console.log('  code_challenge length:', codeChallenge.length);
-      console.log('  code_challenge_method:', codeChallengeMethod);
-      console.log('  code_verifier:', codeVerifier);
-      console.log('  code_challenge:', codeChallenge);
-      
-      // Verify lengths are within spec
-      const verifierValid = codeVerifier.length >= 43 && codeVerifier.length <= 128;
-      const challengeValid = codeChallenge.length === 43; // SHA256 always produces 43 chars in base64url
-      
-      if (verifierValid && challengeValid) {
-        console.log('✅ PKCE implementation verified successfully!');
-        return true;
-      } else {
-        console.error('❌ PKCE verification failed - invalid lengths');
-        return false;
-      }
-    } catch (error) {
-      console.error('❌ PKCE verification failed:', error);
-      return false;
-    }
-  }
-
-  /**
    * Generate a random state parameter for OAuth
    * Used to prevent CSRF attacks
    * 
@@ -197,7 +182,6 @@ class AuthService {
   async securelyStore(key, value) {
     try {
       await SecureStore.setItemAsync(key, value);
-      console.log(`✅ Securely stored: ${key}`);
     } catch (error) {
       console.error(`❌ Failed to store ${key}:`, error);
       throw new Error(`Failed to store ${key}: ` + error.message);
@@ -228,8 +212,7 @@ class AuthService {
    */
   async startLogin(vaultUrl) {
     try {
-      console.log('🔐 Starting OAuth login flow...');
-      console.log('📍 Vault URL:', vaultUrl);
+      console.log('🔐 Starting OAuth login...');
 
       // Validate and normalize vault URL
       let normalizedUrl = vaultUrl.trim();
@@ -253,7 +236,7 @@ class AuthService {
       await this.securelyStore(this.STATE_KEY, state);
 
       // Build authorization URL
-      const authorizationUrl = this.buildAuthorizationUrl(
+      const authorizationUrl = await this.buildAuthorizationUrl(
         normalizedUrl,
         codeChallenge,
         state
@@ -288,9 +271,11 @@ class AuthService {
    * @param {string} vaultUrl - The vault/backend URL
    * @param {string} codeChallenge - The PKCE code challenge
    * @param {string} state - Random state parameter
-   * @returns {string} Complete authorization URL
+   * @returns {Promise<string>} Complete authorization URL
    */
-  buildAuthorizationUrl(vaultUrl, codeChallenge, state) {
+  async buildAuthorizationUrl(vaultUrl, codeChallenge, state) {
+    const deviceId = await this.getDeviceId();
+    
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.CLIENT_ID,
@@ -298,11 +283,13 @@ class AuthService {
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
       state: state,
-      // Optional: Add scope if needed
-      // scope: 'openid profile email'
+      scope: this.SCOPE,
+      device_id: deviceId,
+      device_name: 'Pulse Mobile App',
+      device_type: 'mobile'
     });
 
-    return `${vaultUrl}/oauth/authorize?${params.toString()}`;
+    return `${vaultUrl}/mobile-login?${params.toString()}`;
   }
 
   /**
@@ -319,16 +306,18 @@ class AuthService {
         console.log('⚠️ User cancelled login');
         return {
           success: false,
+          cancelled: true,
           error: 'User cancelled login'
         };
       }
 
-      // Check if login was dismissed
+      // Check if login was dismissed (user hit back/cancel)
       if (result.type === 'dismiss') {
-        console.log('⚠️ Login dismissed');
+        console.log('⚠️ Login dismissed by user');
         return {
           success: false,
-          error: 'Login dismissed'
+          cancelled: true,
+          error: 'User dismissed login'
         };
       }
 
@@ -339,6 +328,7 @@ class AuthService {
         // Parse the callback URL
         const url = new URL(result.url);
         const code = url.searchParams.get('code');
+        const token = url.searchParams.get('token');
         const state = url.searchParams.get('state');
         const error = url.searchParams.get('error');
         const errorDescription = url.searchParams.get('error_description');
@@ -361,12 +351,22 @@ class AuthService {
           };
         }
 
+        // Check if we received a direct token (will be handled by completeLogin)
+        if (token) {
+          console.log('✅ Token received (will be processed by completeLogin)');
+          return {
+            success: true,
+            hasToken: true,
+            url: result.url
+          };
+        }
+
         // Verify we received the authorization code
         if (!code) {
-          console.error('❌ No authorization code received');
+          console.error('❌ No authorization code or token received');
           return {
             success: false,
-            error: 'No authorization code received'
+            error: 'No authorization code or token received'
           };
         }
 
@@ -418,17 +418,26 @@ class AuthService {
         return deviceId;
       }
 
-      // Try to get native device ID
-      deviceId = Application.androidId || Application.getIosIdForVendorAsync?.() || null;
+      // Try to get native device ID based on platform
+      try {
+        if (Platform.OS === 'android') {
+          deviceId = await Application.getAndroidId();
+        } else if (Platform.OS === 'ios') {
+          deviceId = await Application.getIosIdForVendorAsync();
+        }
+      } catch (error) {
+        console.log('⚠️ Could not get native device ID:', error.message);
+      }
       
       // If no native ID available, generate a random one
       if (!deviceId) {
+        console.log('📱 Generating random device ID...');
         const randomBytes = await Crypto.getRandomBytesAsync(16);
         deviceId = this.base64URLEncode(randomBytes);
       }
 
-      // Store for future use
-      await this.securelyStore(this.DEVICE_ID_KEY, deviceId);
+      // Store for future use (ensure it's a string)
+      await this.securelyStore(this.DEVICE_ID_KEY, String(deviceId));
       
       return deviceId;
     } catch (error) {
@@ -452,7 +461,12 @@ class AuthService {
       
       // Parse the callback URL
       const url = new URL(callbackUrl);
+      
       const code = url.searchParams.get('code');
+      const token = url.searchParams.get('token');
+      const userId = url.searchParams.get('user_id');
+      const email = url.searchParams.get('email');
+      const name = url.searchParams.get('name');
       const state = url.searchParams.get('state');
       const error = url.searchParams.get('error');
       const errorDescription = url.searchParams.get('error_description');
@@ -469,28 +483,48 @@ class AuthService {
       // Retrieve stored state
       const storedState = await this.securelyRetrieve(this.STATE_KEY);
       
-      // Verify state to prevent CSRF
-      if (!storedState || state !== storedState) {
+      // Verify state to prevent CSRF (only if state is provided)
+      if (state && storedState && state !== storedState) {
         console.error('❌ State mismatch - possible CSRF attack');
-        console.log('  Expected:', storedState);
-        console.log('  Received:', state);
         return {
           success: false,
           error: 'Invalid state parameter - security check failed'
         };
       }
 
-      // Verify we received the authorization code
-      if (!code) {
-        console.error('❌ No authorization code received');
+      // Check if backend sent token directly (Implicit Grant flow)
+      if (token) {
+        console.log('✅ Token received directly from backend');
+        
+        // Store the token as access token
+        const tokens = {
+          access_token: token,
+          token_type: 'Bearer',
+          expires_in: 86400, // Default to 24 hours
+          user_id: userId,
+          email: email,
+          name: name
+        };
+        
+        await this.storeTokens(tokens);
+        
         return {
-          success: false,
-          error: 'No authorization code received'
+          success: true,
+          tokens,
+          directToken: true
         };
       }
 
-      console.log('✅ Callback validated successfully');
-      console.log('📝 Authorization code received');
+      // Check if we received authorization code (Authorization Code flow)
+      if (!code) {
+        console.error('❌ No authorization code or token received');
+        return {
+          success: false,
+          error: 'No authorization code or token received'
+        };
+      }
+
+      console.log('✅ Authorization code received');
       
       return {
         success: true,
@@ -848,7 +882,16 @@ class AuthService {
         return callbackResult;
       }
 
-      // Step 2: Exchange code for token
+      // Check if we received token directly (Implicit Grant flow)
+      if (callbackResult.directToken) {
+        console.log('✅ Login completed with direct token');
+        return {
+          success: true,
+          tokens: callbackResult.tokens
+        };
+      }
+
+      // Step 2: Exchange code for token (Authorization Code flow)
       const tokenResult = await this.exchangeCodeForToken(callbackResult.code);
       
       return tokenResult;

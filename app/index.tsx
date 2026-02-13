@@ -1,8 +1,10 @@
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
+import { View, ActivityIndicator, StyleSheet } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { storeUploadConfig } from "@/utils/uploadConfig";
 import { isLoggedIn, hasCompletedInitialLogin } from "@/utils/authStorage";
+import AuthService from "@/services/AuthService";
 
 // Simple UUID v4 validation (basic format check)
 const isUUIDv4 = (uuid: string) => {
@@ -23,6 +25,7 @@ export default function Index() {
   const [isChecking, setIsChecking] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   // Debug logging for deeplink parameters
   console.log("🔗 Deeplink params:", params);
@@ -31,29 +34,52 @@ export default function Index() {
   useEffect(() => {
     const checkAppStatus = async () => {
       try {
+        console.log("🔍 Checking app status...");
+        
         // Check if onboarding is complete
         const onboardingComplete = await AsyncStorage.getItem("onboardingComplete");
         
         if (onboardingComplete === null) {
           // First time user - show onboarding
+          console.log("📋 First time user - showing onboarding");
           setShowOnboarding(true);
           setIsChecking(false);
           return;
         }
 
-        // Onboarding is complete, check login status
-        const completedInitialLogin = await hasCompletedInitialLogin();
-        const loggedIn = await isLoggedIn();
+        // Check authentication using AuthService
+        const authenticated = await AuthService.isAuthenticated();
+        console.log("🔐 Authentication status:", authenticated);
         
-        if (!completedInitialLogin) {
-          // User has completed onboarding but not logged in yet
-          setShowLogin(true);
-        } else if (!loggedIn) {
-          // User logged out - don't show login, just go to tabs (they can login from button)
-          setShowLogin(false);
+        if (authenticated) {
+          // User is authenticated with valid token
+          setIsAuthenticated(true);
+        } else {
+          // Check if user has completed initial login
+          const completedInitialLogin = await hasCompletedInitialLogin();
+          
+          if (!completedInitialLogin) {
+            // User has completed onboarding but not logged in yet
+            console.log("🔑 Showing login screen");
+            setShowLogin(true);
+          } else {
+            // User was logged in before but token expired/logged out
+            // Check if they have any stored auth (guest mode, etc)
+            const loggedIn = await isLoggedIn();
+            
+            if (!loggedIn) {
+              // No auth at all - can go to tabs (will show login button)
+              console.log("👤 No auth - going to tabs with login option");
+              setShowLogin(false);
+            } else {
+              // Has some auth but not valid token - go to tabs
+              console.log("⚠️ Invalid token - going to tabs");
+              setIsAuthenticated(true);
+            }
+          }
         }
       } catch (error) {
-        console.error("Error checking app status:", error);
+        console.error("❌ Error checking app status:", error);
       } finally {
         setIsChecking(false);
       }
@@ -112,9 +138,13 @@ export default function Index() {
     return null;
   }
 
-  // Show nothing while checking status
+  // Show loading screen while checking authentication
   if (isChecking) {
-    return null;
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#F01E21" />
+      </View>
+    );
   }
 
   // Show onboarding if first time
@@ -127,6 +157,15 @@ export default function Index() {
     return <Redirect href="/login" />;
   }
 
-  // Default to tabs
+  // Default to tabs (user is authenticated or can access as guest)
   return <Redirect href="/(tabs)" />;
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+});
