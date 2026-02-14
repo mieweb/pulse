@@ -7,8 +7,8 @@ headings — paste this content into their form if needed. Replace [DATE] and
 ================================================================================
 
 Study title: Adoption and Effectiveness of PulseVault for Institutional
-             Knowledge Sharing: A Longitudinal User Study with Medical
-             Informatics Engineering Employees
+             Knowledge Sharing: A Longitudinal User Study with Employees
+             at Participating Organizations
 
 Principal Investigator: Priyam More, Purdue University Fort Wayne
 Faculty Advisor: Romael Haque, Purdue University Fort Wayne
@@ -21,9 +21,10 @@ INTRODUCTION AND PURPOSE
 ----------------------------------------------------------------------
 You are invited to take part in a research study. This study is part of
 graduate thesis research at Purdue University Fort Wayne. We want to learn
-how employees at Medical Informatics Engineering, Inc. (MIE) use PulseVault
+how employees at participating organizations use PulseVault
 — a video-based knowledge-sharing platform — and how it compares to
-text-based documentation.
+text-based documentation. The study team will approach different
+organizations to implement this study.
 
 The purpose is to understand adoption, usability, and whether video
 documentation is helpful in your workflow. Your participation is voluntary.
@@ -70,8 +71,8 @@ BENEFITS
 ----------------------------------------------------------------------
 There may be no direct benefit to you. Possible benefits include:
 - Using PulseVault for work-related knowledge sharing
-- Helping MIE and the research team understand how video documentation
-  works in practice
+- Helping your organization and the research team understand how video
+  documentation works in practice
 - Informing future improvements to the platform
 
 
@@ -97,7 +98,8 @@ CONFIDENTIALITY
 VOLUNTARY PARTICIPATION AND WITHDRAWAL
 ----------------------------------------------------------------------
 - Taking part is voluntary. You do not have to participate, and deciding
-  not to participate will not affect your employment or standing at MIE.
+  not to participate will not affect your employment or standing at your
+  organization.
 - You may withdraw at any time. If you withdraw, we will stop collecting
   new data from you. What happens to data already collected (e.g. whether
   it is deleted or kept in anonymized form) will follow the procedures

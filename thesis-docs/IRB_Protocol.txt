@@ -1,5 +1,5 @@
 # Research Protocol  
-## Adoption and Effectiveness of PulseVault for Institutional Knowledge Sharing: A Longitudinal User Study with Medical Informatics Engineering Employees
+## Adoption and Effectiveness of PulseVault for Institutional Knowledge Sharing: A Longitudinal User Study with Employees at Participating Organizations
 
 **Principal Investigator:** Priyam More  
 **Institution:** Purdue University Fort Wayne  
@@ -14,13 +14,13 @@
 
 ### 1.1 Purpose
 
-This study evaluates the **adoption** and **effectiveness** of PulseVault—a video-based knowledge-sharing platform—when used by employees at **Medical Informatics Engineering, Inc. (MIE)** in their normal work context. The work is conducted as part of a Master's thesis at Purdue University Fort Wayne and is designed to generate ecologically valid evidence on how institutional users adopt video-first knowledge-sharing tools and how short-form video documentation compares to traditional text-based documentation in an organizational setting.
+This study evaluates the **adoption** and **effectiveness** of PulseVault—a video-based knowledge-sharing platform—when used by employees at **participating organizations** in their normal work context. The study team will **approach different organizations** to implement the study; organizations that agree to participate will have their employees invited. The work is conducted as part of a Master's thesis at Purdue University Fort Wayne and is designed to generate ecologically valid evidence on how institutional users adopt video-first knowledge-sharing tools and how short-form video documentation compares to traditional text-based documentation in an organizational setting.
 
 ### 1.2 Objectives
 
 1. **Adoption and engagement:** Measure adoption (active users, time to first upload, retention, churn) and engagement (videos per user, views, watch time, sharing frequency) using server-side usage data and survey responses.
 2. **Usability:** Assess perceived usability via the **System Usability Scale (SUS)** and user satisfaction via Likert-scale and open-ended survey items.
-3. **Video vs. text documentation:** Where feasible, compare creation rates, usage rates, and user preference for video vs. existing text-based documentation at MIE.
+3. **Video vs. text documentation:** Where feasible, compare creation rates, usage rates, and user preference for video vs. existing text-based documentation at participating organizations.
 4. **Barriers and enablers:** Identify factors that support or hinder adoption and sustained use through periodic surveys and optional semi-structured interviews.
 
 ### 1.3 Research Questions Addressed
@@ -44,26 +44,26 @@ Institutional knowledge is often lost when employees leave ("brain drain"), and 
 
 ### 2.3 Significance
 
-This study will produce evidence on adoption, usability, and perceived value of a dedicated video-knowledge platform in a real organizational setting. Findings will inform the thesis conclusions, contribute to the literature on CSCW and knowledge management, and provide MIE with actionable evidence for rollout and training decisions.
+This study will produce evidence on adoption, usability, and perceived value of a dedicated video-knowledge platform in a real organizational setting. Findings will inform the thesis conclusions, contribute to the literature on CSCW and knowledge management, and provide participating organizations with actionable evidence for rollout and training decisions.
 
 ---
 
 ## 3. Study Design
 
 - **Design:** **Longitudinal living-labs case study** with **mixed methods** (quantitative usage and survey data; optional qualitative interviews). The approach is informed by living-labs and naturalistic evaluation methods used in HCI and CSCW.
-- **Setting:** Internal deployment at Medical Informatics Engineering, Inc. (MIE). PulseVault is used as part of participants' normal workflow for technical documentation, knowledge transfer, training, and process documentation.
+- **Setting:** The study team will approach different organizations to participate. At each participating organization, PulseVault is deployed for internal use; participants use it as part of their normal workflow for technical documentation, knowledge transfer, training, and process documentation.
 - **Duration:** Minimum **one month** of naturalistic use; **extension** based on engagement and organizational need.
-- **Comparison:** Where data allow, video-based documentation behavior and attitudes will be contrasted with participants' use of and attitudes toward existing text-based documentation at MIE.
+- **Comparison:** Where data allow, video-based documentation behavior and attitudes will be contrasted with participants' use of and attitudes toward existing text-based documentation at their organization.
 - **No deception or experimental manipulation:** Participants use PulseVault as they would for work; no placebo conditions or undisclosed procedures.
 
 ---
 
 ## 4. Participants
 
-- **Population:** MIE employees, including developers, support staff, and other knowledge workers who may create or consume procedural documentation.
-- **Recruitment:** Internal recruitment within MIE (e.g., email, team announcements) by or in coordination with MIE leadership. Participation is **voluntary**; there is no coercion, and non-participation has no effect on employment or standing.
-- **Eligibility:** MIE employees who are permitted by their employer to use PulseVault for work-related knowledge sharing and who can read and understand the consent form (English).
-- **Sample size:** Determined by MIE team size and willingness to participate. The study is designed to support descriptive and time-series analysis of adoption and engagement; a target of **approximately 5–25 active users** is anticipated, with **4–6 optional interviewees** for qualitative depth. No minimum sample size is required for thesis feasibility; findings will be reported with appropriate caveats if the sample is small.
+- **Population:** Employees at participating organizations, including developers, support staff, and other knowledge workers who may create or consume procedural documentation. The study team will approach different organizations to implement the study; each organization may agree to participate and have its employees invited.
+- **Recruitment:** The study team approaches organizations to participate. Within each participating organization, recruitment is internal (e.g., email, team announcements) by or in coordination with organizational leadership. Participation is **voluntary**; there is no coercion, and non-participation has no effect on employment or standing.
+- **Eligibility:** Employees at a participating organization who are permitted by their employer to use PulseVault for work-related knowledge sharing and who can read and understand the consent form (English).
+- **Sample size:** Determined by the number of participating organizations and willingness of employees to participate. The study is designed to support descriptive and time-series analysis of adoption and engagement; a target of **approximately 5–25 active users** across participating organizations is anticipated, with **4–6 optional interviewees** for qualitative depth. No minimum sample size is required for thesis feasibility; findings will be reported with appropriate caveats if the sample is small.
 
 ---
 
@@ -112,7 +112,7 @@ This study will produce evidence on adoption, usability, and perceived value of 
 
 ## 7. Data Storage, Access, and Retention
 
-- **Storage:** Data are stored on PFW and/or MIE-hosted systems used for the study. Access is restricted to the study team (PI, faculty advisor). Survey data may be collected via institutional or third-party tools (e.g., Google Forms) in compliance with IRB and institutional data policies.
+- **Storage:** Data are stored on PFW and/or systems used for the study (e.g., hosted by participating organizations or PFW). Access is restricted to the study team (PI, faculty advisor). Survey data may be collected via institutional or third-party tools (e.g., Google Forms) in compliance with IRB and institutional data policies.
 - **Access:** Only the study team accesses identifiable data. Aggregated or de-identified data only will be used in the thesis, defense, and any publications or presentations.
 - **Retention:** Retention will follow Purdue University Fort Wayne IRB and institutional policy. Raw identifiable data will be retained for the minimum period required by the approved protocol and then deleted or fully de-identified. Transcripts and recordings will be handled in the same manner unless the consent form specifies a different disposition.
 - **Security:** PulseVault uses OAuth, access control, and audit logging. The study does **not** collect clinical data or data subject to HIPAA; the deployment uses authentication and access control appropriate for internal organizational use.
@@ -123,7 +123,7 @@ This study will produce evidence on adoption, usability, and perceived value of 
 
 - **Confidentiality:** Identifiable information is not shared outside the study team. In all thesis and publication materials, only aggregated statistics, de-identified themes, or anonymized illustrative quotes (with consent) will be reported.
 - **Withdrawal:** Participants may withdraw at any time. Withdrawal and disposition of already-collected data (retention vs. deletion) will be governed by the IRB-approved consent form and procedures.
-- **Privacy:** Participation is not disclosed to other employees except as needed for recruitment (e.g., awareness by MIE leadership that the study is being conducted). Survey and interview responses are treated as confidential.
+- **Privacy:** Participation is not disclosed to other employees except as needed for recruitment (e.g., awareness by organizational leadership that the study is being conducted). Survey and interview responses are treated as confidential.
 - **Data linkage:** Where user IDs are used to link usage to surveys, this is disclosed in the consent form; such linkage is limited to the study team and is only for research analysis.
 
 ---
@@ -139,7 +139,7 @@ This study will produce evidence on adoption, usability, and perceived value of 
 ### 9.2 Benefits
 
 - **To participants:** Access to PulseVault for work-related knowledge sharing; opportunity to influence design and rollout of the platform.
-- **To MIE:** Evidence on effectiveness, usability, and adoption barriers to inform training, rollout, and policy.
+- **To participating organizations:** Evidence on effectiveness, usability, and adoption barriers to inform training, rollout, and policy.
 - **To research and thesis:** Empirical contribution to knowledge on video-based institutional knowledge sharing and user adoption of video-first platforms in organizational settings.
 
 ---

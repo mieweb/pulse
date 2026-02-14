@@ -1,0 +1,399 @@
+
+============================================================
+Parsing: /Users/priyam/Developer/pulse/HRP- 502b- Exempt Research Information Sheet.doc
+============================================================
+# Parsed: HRP- 502b- Exempt Research Information Sheet.doc (doc)
+
+## Paragraphs
+
+- RESEARCH PARTICIPANT Information Sheet
+- [insert Title of project - consent form title should match application title]
+- [insert Principal Investigator’s name]
+- [insert Academic Department]
+- [insert IRB protocol number]
+- Purdue University
+- You are being asked to participate or be a part of a research study. Your participation is voluntary which means that you may choose not to participate at any time.
+- The researchers hope to learn more about [DESCRIBE RESEARCH PURPOSE].
+- You are being asked to participate because [STATE THE BASIS WHY THE PERSON IS ASKED TO PARTICIPATE AND/OR HOW THEY WERE CHOSEN TO RECEIVE THE STUDY.]
+- You will be asked to [take a survey, participate in an interview, participate in a focus group] about [insert topic of questions, especially if sensitive issues will be asked about, i.e. – alcohol/drug use, mental health, child abuse, etc.]]
+- The study will take a total of [TIME in minutes/hours].
+- Please take time to review the rest of the information. This will give you information about this study to help you decide if you want to participate.
+- This study is only intended for people who are 18 years of age or older.  Do not complete the study if you are not legally considered an adult.
+- Before agreeing to participate, consider the risks and potential benefits of taking part in this study.
+- All research carries the risk of breach of confidentiality which means that someone outside of our study could figure out that you were in the study or information was yours.  How we will protect your information to reduce this risk is below.
+- Some questions could make you feel uncomfortable. You can skip any of these questions or stop answering.
+- [If applicable, insert any additional resources available to assist participants, such as counseling, helplines, resources, referrals]
+- [If applicable add any other foreseeable risks, stressors, or discomforts and the means to mitigate these risks]
+- It is unlikely that there will be personal benefits to you for participating. Having more information from the answers in this research study might help us or other researchers understand more about [insert research topic].
+- Will I receive payment or other incentive?
+- Please select and revise a response below and delete the remaining inapplicable language.
+- To thank you for being in our research study, you will receive [insert payment amount and payment method and timing]
+- Explain the payment method if using a crowdsourcing platform (Mturk, Prolific, etc.)
+- or
+- You will not be paid for being in this research study.
+- If payment procedures involve monetary compensation including gift cards/credits, add this sentence: “According to the rules of the Internal Revenue Service (IRS), payments that are made to you as a result of your participation in a study may be considered taxable income.”
+- How will the researchers protect my information, privacy, and confidentiality?
+- Your personal information may be shared outside the research study if required by law. We also may need to share your research records with other groups for quality assurance or data analysis. These groups include the Purdue University Institutional Review Board or its designees, and state or federal agencies who may need to access the research records (as allowed by law).
+- Your research information may also be shared with collaborators on this research at [institution name] and the study sponsor [insert funding agency]. (if applicable)
+- The study team plans to keep answers for this study to answer research questions.  We will keep this information until we are done with the study, approximately [state anticipated time to completion in years or months] and for at least three years after we are finished.  We may share the anonymous data and findings with other researchers or in research papers or presentations.
+- If audio or video recordings will be made, include an explanation regarding who will have access to the recordings, how the recordings are securely stored, and when the recordings will be destroyed. If audio or video recordings may be shared during publication or for educational purposes, this must be explained, as this data is considered identifiable.
+- If the research study design, use of focus groups or other procedures may result in participants knowing the identity of other participants, state the researchers cannot guarantee that the other study participants will not breach your confidentiality.
+- What are my rights as a research participant in this study?
+- You do not have to participate in this research project.  If you agree to participate, you may withdraw your participation at any time without penalty.
+- Who can I contact if I have questions about the study?
+- If you have questions, comments or concerns about this research project, you can talk to one of the researchers.  Please contact (insert PI name and phone number plus any additional research personnel that participants may need to contact and their contact information.  If more than one person is listed, please indicate the first point of contact).
+- To report anonymously via Purdue’s Hotline, see  HYPERLINK "http://www.purdue.edu/hotline" www.purdue.edu/hotline
+- If you have questions about your rights while taking part in the study or have concerns about the treatment of research participants, please call the Human Research Protection Program at (765) 494-5942, email ( HYPERLINK "mailto:irb@purdue.edu" irb@purdue.edu) or write to:
+- Human Research Protection Program
+- Purdue University
+- Seng Liang Wang Hall
+- 516 Northwestern Ave,
+- West Lafayette, IN 47906
+- [Insert checkbox or question to click] By [clicking/checking] this box, I agree to take part in this research. I am 18 years of age or older and understand the information above about my participation. Researcher may also insert other inclusion/exclusion criteria into this statement.
+- Example: I am 18 years of age or older and I reside in the United States
+- INSTRUCTIONS FOR RESEARCHERS: Please provide relevant information in the sections below, replacing text in this font color with information specific to your study, and deleting sections that do not apply to your research. Please delete this section before finalizing your consent form. Remember that information in the consent form should match what is described in your protocol submission.
+- Page  PAGE 1
+
+## Full text (concatenated)
+
+RESEARCH PARTICIPANT Information Sheet
+[insert Title of project - consent form title should match application title]
+[insert Principal Investigator’s name]
+[insert Academic Department]
+[insert IRB protocol number]
+Purdue University
+You are being asked to participate or be a part of a research study. Your participation is voluntary which means that you may choose not to participate at any time.
+The researchers hope to learn more about [DESCRIBE RESEARCH PURPOSE].
+You are being asked to participate because [STATE THE BASIS WHY THE PERSON IS ASKED TO PARTICIPATE AND/OR HOW THEY WERE CHOSEN TO RECEIVE THE STUDY.]
+You will be asked to [take a survey, participate in an interview, participate in a focus group] about [insert topic of questions, especially if sensitive issues will be asked about, i.e. – alcohol/drug use, mental health, child abuse, etc.]]
+The study will take a total of [TIME in minutes/hours].
+Please take time to review the rest of the information. This will give you information about this study to help you decide if you want to participate.
+This study is only intended for people who are 18 years of age or older.  Do not complete the study if you are not legally considered an adult.
+Before agreeing to participate, consider the risks and potential benefits of taking part in this study.
+All research carries the risk of breach of confidentiality which means that someone outside of our study could figure out that you were in the study or information was yours.  How we will protect your information to reduce this risk is below.
+Some questions could make you feel uncomfortable. You can skip any of these questions or stop answering.
+[If applicable, insert any additional resources available to assist participants, such as counseling, helplines, resources, referrals]
+[If applicable add any other foreseeable risks, stressors, or discomforts and the means to mitigate these risks]
+It is unlikely that there will be personal benefits to you for participating. Having more information from the answers in this research study might help us or other researchers understand more about [insert research topic].
+Will I receive payment or other incentive?
+Please select and revise a response below and delete the remaining inapplicable language.
+To thank you for being in our research study, you will receive [insert payment amount and payment method and timing]
+Explain the payment method if using a crowdsourcing platform (Mturk, Prolific, etc.)
+or
+You will not be paid for being in this research study.
+If payment procedures involve monetary compensation including gift cards/credits, add this sentence: “According to the rules of the Internal Revenue Service (IRS), payments that are made to you as a result of your participation in a study may be considered taxable income.”
+How will the researchers protect my information, privacy, and confidentiality?
+Your personal information may be shared outside the research study if required by law. We also may need to share your research records with other groups for quality assurance or data analysis. These groups include the Purdue University Institutional Review Board or its designees, and state or federal agencies who may need to access the research records (as allowed by law).
+Your research information may also be shared with collaborators on this research at [institution name] and the study sponsor [insert funding agency]. (if applicable)
+The study team plans to keep answers for this study to answer research questions.  We will keep this information until we are done with the study, approximately [state anticipated time to completion in years or months] and for at least three years after we are finished.  We may share the anonymous data and findings with other researchers or in research papers or presentations.
+If audio or video recordings will be made, include an explanation regarding who will have access to the recordings, how the recordings are securely stored, and when the recordings will be destroyed. If audio or video recordings may be shared during publication or for educational purposes, this must be explained, as this data is considered identifiable.
+If the research study design, use of focus groups or other procedures may result in participants knowing the identity of other participants, state the researchers cannot guarantee that the other study participants will not breach your confidentiality.
+What are my rights as a research participant in this study?
+You do not have to participate in this research project.  If you agree to participate, you may withdraw your participation at any time without penalty.
+Who can I contact if I have questions about the study?
+If you have questions, comments or concerns about this research project, you can talk to one of the researchers.  Please contact (insert PI name and phone number plus any additional research personnel that participants may need to contact and their contact information.  If more than one person is listed, please indicate the first point of contact).
+To report anonymously via Purdue’s Hotline, see  HYPERLINK "http://www.purdue.edu/hotline" www.purdue.edu/hotline
+If you have questions about your rights while taking part in the study or have concerns about the treatment of research participants, please call the Human Research Protection Program at (765) 494-5942, email ( HYPERLINK "mailto:irb@purdue.edu" irb@purdue.edu) or write to:
+Human Research Protection Program
+Purdue University
+Seng Liang Wang Hall
+516 Northwestern Ave,
+West Lafayette, IN 47906
+[Insert checkbox or question to click] By [clicking/checking] this box, I agree to take part in this research. I am 18 years of age or older and understand the information above about my participation. Researcher may also insert other inclusion/exclusion criteria into this statement.
+Example: I am 18 years of age or older and I reside in the United States
+INSTRUCTIONS FOR RESEARCHERS: Please provide relevant information in the sections below, replacing text in this font color with information specific to your study, and deleting sections that do not apply to your research. Please delete this section before finalizing your consent form. Remember that information in the consent form should match what is described in your protocol submission.
+Page  PAGE 1
+
+============================================================
+Parsing: /Users/priyam/Developer/pulse/2026-01-21 HRP-503c Protocol - Exempt Research (1).docx
+============================================================
+# Parsed: 2026-01-21 HRP-503c Protocol - Exempt Research (1).docx (docx)
+
+## Paragraphs
+
+- [Normal] HRP-503c-EXEMPT STUDY PROTOCOL
+- [Normal] Exempt Research Protocol Template Instructions:
+- [Normal] This template is designed for investigator-initiated research studies written and designed by a Purdue University investigator.
+- [Normal] This template is only for studies that are considered exempt. Exempt research must be minimal risk and fit into at least 1 of 6 exempt categories.
+- [Style1] Exempt research is not the same as “not human subjects research.” Exempt research specifically refers to studies that meet the regulatory definition of “human subjects research” but are exempt from certain regulatory requirements.
+- [Style1] Exempt research must be submitted to the HRPP in PERA and receive a determination prior to initiating any research activity including recruitment.
+- [Normal] Respond to all applicable instruction prompts. For those that do not apply, type “N/A.” Once complete, upload this and all other study documents in the PERA application SmartForm. This document and your consent form(s) should be uploaded as Word documents.
+- [Normal] Text in BLACK font and the gold instruction boxes indicate Purdue standard language or reference information and must remain on the page and unchanged.
+- [Normal] Delete instructions/examples in RED font and replace with applicable study-specific language using black font.
+- [Normal] DO NOT CONVERT INTO PDF
+- [Normal] All other Study Personnel will be added in the PERA SmartForm
+- [Heading 1] Exempt Justification
+- [Normal] For Category 1 be sure you:
+- [List Paragraph] Describe how the research activity, not the instructional material or curriculum, is a “normal educational practice”.
+- [List Paragraph] Describe how the study will not likely adversely impact students’ opportunity to learn required educational content or the assessment of educators who provide instruction.
+- [Normal] For Category 3 research, provide the following additional information.
+- [List Paragraph] Is there any reason to think that participants may find the intervention activity offensive or embarrassing? Explain why or why not.
+- [List Paragraph] Describe how the intervention activity qualifies as “harmless, painless, and not physically invasive”.
+- [Heading 1] Objectives
+- [List Paragraph] Clearly and succinctly state the purpose of the study (e.g., research questions and/or study objectives).
+- [List Paragraph] In experimental designs, objectives may be stated as hypotheses to be tested.
+- [Heading 1] Study Design & Procedures
+- [Normal] Research Design
+- [Normal] Detailed Study Procedures
+- [Heading 1] Participant Population
+- [Normal] Number of Participants at Purdue University
+- [Normal] Participant Identification
+- [Normal] Participant Recruitment and Selection
+- [Normal] NOTE: The final versions of recruitment materials require IRB approval prior to use. Upload the materials to the documents page of the PERA SmartForm.
+- [Heading 1] Incentives to Participate
+- [Normal] NOTE: Reimbursements are not considered incentives.
+- [Heading 1] Informed Consent Process
+- [Heading 1] Privacy of Participants
+- [Normal] NOTE: Privacy refers to a person’s desire to place limits on with whom they interact or whom they provide personal information. Privacy is about the person and protection of their information leading up to and during the act of data collection, as opposed to confidentiality which is about the management/protection of data after it is collected.
+- [Normal] Examples:
+- [List Paragraph] Conducting an interview in a private place where others cannot hear what is said.
+- [List Paragraph] Limiting the number of study personnel who access private information about a participant.
+- [Heading 1] 8. Confidentiality and Management of Study Materials
+- [Block Text] Consider:
+- [List Paragraph] Training
+- [List Paragraph] Authorization of access
+- [List Paragraph] Password protection, encryption
+- [List Paragraph] Certificates of confidentiality
+- [List Paragraph] Separation of identifiers and data during storage, use, and/or transmission.
+- [Block Text] NOTE: Methods for handling and storing data (including the use of personal computers and portable storage devices) must comply with university policies. Restricted data, including protected health information and Sensitive data, including research health information, must be encrypted if stored or used on portable devices, if removed from a secure university location, or if electronically transmitted. For more information, see the Secure Purdue Data Classification and Handling Procedures.
+- [Block Text] NOTE: In general, research data should be deidentified at the end of a project unless there is a compelling reason to maintain linked identifiers.
+- [Block Text] NOTE: Research-related records should be retained for a period of at least three years after the research has been discontinued (i.e., no further data collection, long term follow-up, re-contact, or analysis of identifiable data).
+- [Heading 1] 9.  Educational Records
+- [Heading 1] 10.  Bibliography
+
+## Tables
+
+Study Title | 
+Principal Investigator/Faculty Advisor | Name:
+Principal Investigator/Faculty Advisor | Department:
+Principal Investigator/Faculty Advisor | Telephone Number:
+Principal Investigator/Faculty Advisor | Institutional Email Address:
+Student Investigator (if applicable) | Name:
+Student Investigator (if applicable) | Current Academic Status:
+Student Investigator (if applicable) | Department:
+Student Investigator (if applicable) | Telephone Number:
+Student Investigator (if applicable) | Institutional Email Address:
+
+Categories and criteria for exempt research | Categories and criteria for exempt research
+Select all categories that describe the research project. | Select all categories that describe the research project.
+ | (1)Research, conducted in established or commonly accepted educational settings, that specifically involves normal educational practices that are not likely to adversely impact students’ opportunity to learn required educational content or the assessment of educators who provide instruction. This includes most research on regular and special education instructional strategies, and research on the effectiveness of or the comparison among instructional techniques, curricula, or classroom management methods.
+ | (2) Research that only includes interactions involving educational tests (cognitive, diagnostic, aptitude, achievement), survey procedures, interview procedures, or observation of public behavior (including visual or auditory recording) if at least one of the following criteria is met: 
+(i) The information obtained is recorded by the investigator in such a manner that the identity of the human subjects cannot readily be ascertained, directly or through identifiers linked to the subjects. 
+(ii) Any disclosure of the human subjects’ responses outside the research would not reasonably place the subjects at risk of criminal or civil liability or be damaging to the subjects’ financial standing, employability, educational advancement, or reputation; or 
+(iii) The information obtained is recorded by the investigator in such a manner that the identity of the human subjects can readily be ascertained, directly or through identifiers linked to the subjects, and an IRB conducts a limited IRB review to make the determination required by §46.111(a)(7).
+ | (3) (i) Research involving benign behavioral interventions in conjunction with the collection of information from an adult subject through verbal or written responses (including data entry) or audiovisual recording if the subject prospectively agrees to the intervention and information collection and at least one of the following criteria is met: 
+(A) The information obtained is recorded by the investigator in such a manner that the identity of the human subjects cannot readily be ascertained, directly or through identifiers linked to the subjects; 
+(B) Any disclosure of the human subjects’ responses outside the research would not reasonably place the subjects at risk of criminal or civil liability or be damaging to the subjects’ financial standing, employability, educational advancement, or reputation; or 
+(C) The information obtained is recorded by the investigator in such a manner that the identity of the human subjects can readily be ascertained, directly or through identifiers linked to the subjects, and an IRB conducts a limited IRB review to make the determination required by §46.111(a)(7). 
+(ii) For the purpose of this provision, benign behavioral interventions are brief in duration, harmless, painless, not physically invasive, not likely to have a significant adverse lasting impact on the subjects, and the investigator has no reason to think the subjects will find the interventions offensive or embarrassing. Provided all such criteria are met, examples of such benign behavioral interventions would include having the subjects play an online game, having them solve puzzles under various noise conditions, or having them decide how to allocate a nominal amount of received cash between themselves and someone else. 
+(iii) If the research involves deceiving the subjects regarding the nature or purposes of the research, this exemption is not applicable unless the subject authorizes the deception through a prospective agreement to participate in research in circumstances in which the subject is informed that he or she will be unaware of or misled regarding the nature or purposes of the research.
+ | (4) Secondary research for which consent is not required: Secondary research uses of identifiable private information or identifiable biospecimens, if at least one of the following criteria is met: 
+(i) The identifiable private information or identifiable biospecimens are publicly available; 
+(ii) Information, which may include information about biospecimens, is recorded by the investigator in such a manner that the identity of the human subjects cannot readily be ascertained directly or through identifiers linked to the subjects, the investigator does not contact the subjects, and the investigator will not re-identify subjects;
+ | (6) Taste and food quality evaluation and consumer acceptance studies: 
+(i) If wholesome foods without additives are consumed, or 
+(ii) If a food is consumed that contains a food ingredient at or below the level and for a use found to be safe, or agricultural chemical or environmental contaminant at or below the level found to be safe, by the Food and Drug Administration or approved by the Environmental Protection Agency or the Food Safety and Inspection Service of the U.S. Department of Agriculture.
+
+1.1 Describe how the proposed research meets the criteria for exemption. Reference the exempt research table above and address each category you selected.
+
+2.1 Describe the purpose of the study.
+
+3.1 Provide information about all research interactions, interventions, and activities that are to be performed. If the research is taking place during a Purdue course, provide the course number(s).
+
+3.2 Identify and describe the research design appropriate to answer the question(s) under study.
+Describe the type of research proposed (e.g. experimental, correlational, survey, qualitative). 
+Describe the specific study design that will be used (e.g. pre-test /post-test control group design, cross-sectional design)
+Describe the study intervention if applicable (e.g. procedure, curriculum)
+
+3.4 Describe procedures for data collection. They must be sufficiently outlined to justify their using in answering the research question(s).Be sure to specify the source records that will be used to collect data about participants. 
+Upload all surveys, scripts, and data collection forms/spreadsheets to the Other Attachments section of the SmartForm.
+
+3.5 Describe the timeline for participant evaluations and the duration of project participation, for both individual study activities and total study participation, when applicable.
+
+4.1 Specify the participant population(s). Check all participant groups that apply. For any population other than adults, you may e asked to complete the applicable appendix.
+Adults
+  Adults with impaired decision-making capacity
+   Children (In Indiana those under 18 years of age)
+   Economically or educationally disadvantaged
+  Non-English-speaking individuals
+  Pregnant women/fetuses (only if pregnant women will be intentionally recruited and/or   studied)
+  Prisoners 
+   University Students
+  Employees
+
+4.2 Describe the sample population from which the study team plans to either recruit or access private, identifiable information for the research. If student pools are involved, please specify the applicable pool.
+
+4.3 The number of participants is defined as the number of individuals who agree to participate (i.e., those who provide consent) even if all do not prove eligible or complete the study. | 4.3 The number of participants is defined as the number of individuals who agree to participate (i.e., those who provide consent) even if all do not prove eligible or complete the study.
+Indicate the number of participants to be enrolled locally by Purdue researchers. | Click or tap here to enter text.
+For studies at other sites, indicate the total number of participants to be enrolled across all sites. | Click or tap here to enter text.
+
+4.4 Explain how this number was derived (e.g., meets statistical power, limited population).
+
+4.5 Describe how potential participants will be identified (e.g., advertising, individuals known to the investigators, record review). Explain how the investigator(s) will gain access to this population. 
+Do not explain the recruitment process here, you will do that in 4.8 below.
+
+4.6 Describe how potential participants will be screened or otherwise determined to be eligible.
+
+4.7 Describe the recruitment process, including the setting in which recruitment will take place. Describe how, when, and who will recruit participants for the study.  Identify general strategies for participant recruitment and retention (e.g. use of research participant pools, online recruitment services, community advisors, newspaper, local flyers) and indicate where recruitment will occur.  Include rationale for why the strategy will be appropriate for reaching the targeted study population
+
+4.8 Explain how the recruitment process respects potential participants' privacy. 
+Using a query to identify potentially eligible individuals prior to accessing identifiable information directly. 
+Accessing educational records in a private setting. 
+Limiting the number of study team members accessing identifiable information.
+If there are no privacy concerns, then please state that.
+
+5.1 Describe any compensation or other incentives (e.g., cash payments, gift cards, classroom credit) that will be offered to potential participants. Include the amount and timing of all incentives or compensation, the form of compensation (e.g., cash, check, gift card), and how the compensation will be received (e.g., mailed, in person, online). This information must also be included in the consent form.
+
+6.1 Describe the consent process. Explain when and where consent will be obtained and how participants or their legally authorized representatives will be provided with sufficient opportunity to consider participation.
+
+6.2 If deception (i.e., procedure in which investigators deliberately mislead participants during research by withholding information or providing false information) is being used, describe if, how and when you are debriefing participants.
+
+7.1 Describe the steps that will be taken to protect participants’ privacy and make them feel at ease with the research situation in terms of the questions being asked and the procedures being performed.
+
+8.1 Describe the steps that will be taken to secure study data.
+
+8.2 If identifiable data will be collected, indicate what will happen to identifiable data at the end of the study (e.g., kept identifiable, coded, deidentified). If identifiers will be maintained, provide the rationale supporting this request.  If the data will be deidentified, describe the process. If transcriptions of audio recordings will be made, please include details of who/what transcription service will be transcribing the data.
+
+8.3 If data or biospecimens will be shared broadly with outside groups or Open Science, describe those procedures.
+
+9.1 Are you accessing or collecting information that is a part of the students’ educational record?
+No
+  Yes
+
+NOTE: Education Records are any records held by the educational institution including records related to an individual student's performance, records typically found in transcripts (grades/courses/GPA/test scores), student work products such as tests, homework assignments and interactions with online student learning systems. Education records of students in most K-12 and colleges/universities are subject to regulations under the Family Educational Rights and Privacy Act (FERPA).
+Permission to use Purdue students’ data comes from the Office of the Registrar. Please submit a Student Data Agreement Request to them prior to or at the time of PERA submission. A completed agreement must be uploaded into the PERA SmartForm in Other Attachments before an approval from the HRPP/IRB may be granted. 
+
+Permission from K-12 schools must be in written form and upload to PERA SmartForm Local Site Documents. A template letter is available, if needed.
+
+9.2 Describe how you have permission for this for research purposes. Note that as the instructor of a course, you do NOT have permission to view education records for research purposes.
+
+## Full text (concatenated)
+
+HRP-503c-EXEMPT STUDY PROTOCOL
+Exempt Research Protocol Template Instructions:
+This template is designed for investigator-initiated research studies written and designed by a Purdue University investigator.
+This template is only for studies that are considered exempt. Exempt research must be minimal risk and fit into at least 1 of 6 exempt categories.
+Exempt research is not the same as “not human subjects research.” Exempt research specifically refers to studies that meet the regulatory definition of “human subjects research” but are exempt from certain regulatory requirements.
+Exempt research must be submitted to the HRPP in PERA and receive a determination prior to initiating any research activity including recruitment.
+Respond to all applicable instruction prompts. For those that do not apply, type “N/A.” Once complete, upload this and all other study documents in the PERA application SmartForm. This document and your consent form(s) should be uploaded as Word documents.
+Text in BLACK font and the gold instruction boxes indicate Purdue standard language or reference information and must remain on the page and unchanged.
+Delete instructions/examples in RED font and replace with applicable study-specific language using black font.
+DO NOT CONVERT INTO PDF
+All other Study Personnel will be added in the PERA SmartForm
+Exempt Justification
+For Category 1 be sure you:
+Describe how the research activity, not the instructional material or curriculum, is a “normal educational practice”.
+Describe how the study will not likely adversely impact students’ opportunity to learn required educational content or the assessment of educators who provide instruction.
+For Category 3 research, provide the following additional information.
+Is there any reason to think that participants may find the intervention activity offensive or embarrassing? Explain why or why not.
+Describe how the intervention activity qualifies as “harmless, painless, and not physically invasive”.
+Objectives
+Clearly and succinctly state the purpose of the study (e.g., research questions and/or study objectives).
+In experimental designs, objectives may be stated as hypotheses to be tested.
+Study Design & Procedures
+Research Design
+Detailed Study Procedures
+Participant Population
+Number of Participants at Purdue University
+Participant Identification
+Participant Recruitment and Selection
+NOTE: The final versions of recruitment materials require IRB approval prior to use. Upload the materials to the documents page of the PERA SmartForm.
+Incentives to Participate
+NOTE: Reimbursements are not considered incentives.
+Informed Consent Process
+Privacy of Participants
+NOTE: Privacy refers to a person’s desire to place limits on with whom they interact or whom they provide personal information. Privacy is about the person and protection of their information leading up to and during the act of data collection, as opposed to confidentiality which is about the management/protection of data after it is collected.
+Examples:
+Conducting an interview in a private place where others cannot hear what is said.
+Limiting the number of study personnel who access private information about a participant.
+8. Confidentiality and Management of Study Materials
+Consider:
+Training
+Authorization of access
+Password protection, encryption
+Certificates of confidentiality
+Separation of identifiers and data during storage, use, and/or transmission.
+NOTE: Methods for handling and storing data (including the use of personal computers and portable storage devices) must comply with university policies. Restricted data, including protected health information and Sensitive data, including research health information, must be encrypted if stored or used on portable devices, if removed from a secure university location, or if electronically transmitted. For more information, see the Secure Purdue Data Classification and Handling Procedures.
+NOTE: In general, research data should be deidentified at the end of a project unless there is a compelling reason to maintain linked identifiers.
+NOTE: Research-related records should be retained for a period of at least three years after the research has been discontinued (i.e., no further data collection, long term follow-up, re-contact, or analysis of identifiable data).
+9.  Educational Records
+10.  Bibliography
+Study Title | 
+Principal Investigator/Faculty Advisor | Name:
+Principal Investigator/Faculty Advisor | Department:
+Principal Investigator/Faculty Advisor | Telephone Number:
+Principal Investigator/Faculty Advisor | Institutional Email Address:
+Student Investigator (if applicable) | Name:
+Student Investigator (if applicable) | Current Academic Status:
+Student Investigator (if applicable) | Department:
+Student Investigator (if applicable) | Telephone Number:
+Student Investigator (if applicable) | Institutional Email Address:
+Categories and criteria for exempt research | Categories and criteria for exempt research
+Select all categories that describe the research project. | Select all categories that describe the research project.
+ | (1)Research, conducted in established or commonly accepted educational settings, that specifically involves normal educational practices that are not likely to adversely impact students’ opportunity to learn required educational content or the assessment of educators who provide instruction. This includes most research on regular and special education instructional strategies, and research on the effectiveness of or the comparison among instructional techniques, curricula, or classroom management methods.
+ | (2) Research that only includes interactions involving educational tests (cognitive, diagnostic, aptitude, achievement), survey procedures, interview procedures, or observation of public behavior (including visual or auditory recording) if at least one of the following criteria is met: 
+(i) The information obtained is recorded by the investigator in such a manner that the identity of the human subjects cannot readily be ascertained, directly or through identifiers linked to the subjects. 
+(ii) Any disclosure of the human subjects’ responses outside the research would not reasonably place the subjects at risk of criminal or civil liability or be damaging to the subjects’ financial standing, employability, educational advancement, or reputation; or 
+(iii) The information obtained is recorded by the investigator in such a manner that the identity of the human subjects can readily be ascertained, directly or through identifiers linked to the subjects, and an IRB conducts a limited IRB review to make the determination required by §46.111(a)(7).
+ | (3) (i) Research involving benign behavioral interventions in conjunction with the collection of information from an adult subject through verbal or written responses (including data entry) or audiovisual recording if the subject prospectively agrees to the intervention and information collection and at least one of the following criteria is met: 
+(A) The information obtained is recorded by the investigator in such a manner that the identity of the human subjects cannot readily be ascertained, directly or through identifiers linked to the subjects; 
+(B) Any disclosure of the human subjects’ responses outside the research would not reasonably place the subjects at risk of criminal or civil liability or be damaging to the subjects’ financial standing, employability, educational advancement, or reputation; or 
+(C) The information obtained is recorded by the investigator in such a manner that the identity of the human subjects can readily be ascertained, directly or through identifiers linked to the subjects, and an IRB conducts a limited IRB review to make the determination required by §46.111(a)(7). 
+(ii) For the purpose of this provision, benign behavioral interventions are brief in duration, harmless, painless, not physically invasive, not likely to have a significant adverse lasting impact on the subjects, and the investigator has no reason to think the subjects will find the interventions offensive or embarrassing. Provided all such criteria are met, examples of such benign behavioral interventions would include having the subjects play an online game, having them solve puzzles under various noise conditions, or having them decide how to allocate a nominal amount of received cash between themselves and someone else. 
+(iii) If the research involves deceiving the subjects regarding the nature or purposes of the research, this exemption is not applicable unless the subject authorizes the deception through a prospective agreement to participate in research in circumstances in which the subject is informed that he or she will be unaware of or misled regarding the nature or purposes of the research.
+ | (4) Secondary research for which consent is not required: Secondary research uses of identifiable private information or identifiable biospecimens, if at least one of the following criteria is met: 
+(i) The identifiable private information or identifiable biospecimens are publicly available; 
+(ii) Information, which may include information about biospecimens, is recorded by the investigator in such a manner that the identity of the human subjects cannot readily be ascertained directly or through identifiers linked to the subjects, the investigator does not contact the subjects, and the investigator will not re-identify subjects;
+ | (6) Taste and food quality evaluation and consumer acceptance studies: 
+(i) If wholesome foods without additives are consumed, or 
+(ii) If a food is consumed that contains a food ingredient at or below the level and for a use found to be safe, or agricultural chemical or environmental contaminant at or below the level found to be safe, by the Food and Drug Administration or approved by the Environmental Protection Agency or the Food Safety and Inspection Service of the U.S. Department of Agriculture.
+1.1 Describe how the proposed research meets the criteria for exemption. Reference the exempt research table above and address each category you selected.
+2.1 Describe the purpose of the study.
+3.1 Provide information about all research interactions, interventions, and activities that are to be performed. If the research is taking place during a Purdue course, provide the course number(s).
+3.2 Identify and describe the research design appropriate to answer the question(s) under study.
+Describe the type of research proposed (e.g. experimental, correlational, survey, qualitative). 
+Describe the specific study design that will be used (e.g. pre-test /post-test control group design, cross-sectional design)
+Describe the study intervention if applicable (e.g. procedure, curriculum)
+3.4 Describe procedures for data collection. They must be sufficiently outlined to justify their using in answering the research question(s).Be sure to specify the source records that will be used to collect data about participants. 
+Upload all surveys, scripts, and data collection forms/spreadsheets to the Other Attachments section of the SmartForm.
+3.5 Describe the timeline for participant evaluations and the duration of project participation, for both individual study activities and total study participation, when applicable.
+4.1 Specify the participant population(s). Check all participant groups that apply. For any population other than adults, you may e asked to complete the applicable appendix.
+Adults
+  Adults with impaired decision-making capacity
+   Children (In Indiana those under 18 years of age)
+   Economically or educationally disadvantaged
+  Non-English-speaking individuals
+  Pregnant women/fetuses (only if pregnant women will be intentionally recruited and/or   studied)
+  Prisoners 
+   University Students
+  Employees
+4.2 Describe the sample population from which the study team plans to either recruit or access private, identifiable information for the research. If student pools are involved, please specify the applicable pool.
+4.3 The number of participants is defined as the number of individuals who agree to participate (i.e., those who provide consent) even if all do not prove eligible or complete the study. | 4.3 The number of participants is defined as the number of individuals who agree to participate (i.e., those who provide consent) even if all do not prove eligible or complete the study.
+Indicate the number of participants to be enrolled locally by Purdue researchers. | Click or tap here to enter text.
+For studies at other sites, indicate the total number of participants to be enrolled across all sites. | Click or tap here to enter text.
+4.4 Explain how this number was derived (e.g., meets statistical power, limited population).
+4.5 Describe how potential participants will be identified (e.g., advertising, individuals known to the investigators, record review). Explain how the investigator(s) will gain access to this population. 
+Do not explain the recruitment process here, you will do that in 4.8 below.
+4.6 Describe how potential participants will be screened or otherwise determined to be eligible.
+4.7 Describe the recruitment process, including the setting in which recruitment will take place. Describe how, when, and who will recruit participants for the study.  Identify general strategies for participant recruitment and retention (e.g. use of research participant pools, online recruitment services, community advisors, newspaper, local flyers) and indicate where recruitment will occur.  Include rationale for why the strategy will be appropriate for reaching the targeted study population
+4.8 Explain how the recruitment process respects potential participants' privacy. 
+Using a query to identify potentially eligible individuals prior to accessing identifiable information directly. 
+Accessing educational records in a private setting. 
+Limiting the number of study team members accessing identifiable information.
+If there are no privacy concerns, then please state that.
+5.1 Describe any compensation or other incentives (e.g., cash payments, gift cards, classroom credit) that will be offered to potential participants. Include the amount and timing of all incentives or compensation, the form of compensation (e.g., cash, check, gift card), and how the compensation will be received (e.g., mailed, in person, online). This information must also be included in the consent form.
+6.1 Describe the consent process. Explain when and where consent will be obtained and how participants or their legally authorized representatives will be provided with sufficient opportunity to consider participation.
+6.2 If deception (i.e., procedure in which investigators deliberately mislead participants during research by withholding information or providing false information) is being used, describe if, how and when you are debriefing participants.
+7.1 Describe the steps that will be taken to protect participants’ privacy and make them feel at ease with the research situation in terms of the questions being asked and the procedures being performed.
+8.1 Describe the steps that will be taken to secure study data.
+8.2 If identifiable data will be collected, indicate what will happen to identifiable data at the end of the study (e.g., kept identifiable, coded, deidentified). If identifiers will be maintained, provide the rationale supporting this request.  If the data will be deidentified, describe the process. If transcriptions of audio recordings will be made, please include details of who/what transcription service will be transcribing the data.
+8.3 If data or biospecimens will be shared broadly with outside groups or Open Science, describe those procedures.
+9.1 Are you accessing or collecting information that is a part of the students’ educational record?
+No
+  Yes
+
+NOTE: Education Records are any records held by the educational institution including records related to an individual student's performance, records typically found in transcripts (grades/courses/GPA/test scores), student work products such as tests, homework assignments and interactions with online student learning systems. Education records of students in most K-12 and colleges/universities are subject to regulations under the Family Educational Rights and Privacy Act (FERPA).
+Permission to use Purdue students’ data comes from the Office of the Registrar. Please submit a Student Data Agreement Request to them prior to or at the time of PERA submission. A completed agreement must be uploaded into the PERA SmartForm in Other Attachments before an approval from the HRPP/IRB may be granted. 
+
+Permission from K-12 schools must be in written form and upload to PERA SmartForm Local Site Documents. A template letter is available, if needed.
+9.2 Describe how you have permission for this for research purposes. Note that as the instructor of a course, you do NOT have permission to view education records for research purposes.
