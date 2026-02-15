@@ -5,7 +5,15 @@ sidebar_position: 1
 
 # Getting Started
 
-**Pulse Cam** is a mobile video capture app built for institutional knowledge sharing. Developers can integrate Pulse Cam into their own applications to let users **record**, **edit**, and **upload** short-form video content — without building a camera or upload pipeline from scratch.
+**Pulse Cam** is a mobile video capture app for institutional knowledge sharing. Integrate it into your app so users can **record**, **edit**, and **upload** short-form video — without you building a camera or upload pipeline.
+
+## Quick path
+
+1. **Pick an upload strategy** — [PulseVault](./uploads/pulsevault) (turnkey), [TUS](./uploads/tus) (your server), or [Chunked](./uploads/chunked) (custom API).
+2. **Generate a deep link** — Your backend creates a `pulsecam://` URL with `draftId`, `server`, and `token`. See [Launching Pulse Cam](./launching).
+3. **Show the link or a QR code** — User opens it on their phone; Pulse Cam opens in upload mode and sends the video to your server.
+
+New to the stack? Read **How it works** and **Deep link format** below, then follow [Launching](./launching) and your chosen upload guide. Hit a snag? See [Troubleshooting](./troubleshooting).
 
 ## How It Works
 
@@ -50,9 +58,9 @@ All four parameters are required. If `draftId` is missing or not a valid UUID v4
 
 | Strategy | Protocol | Best For |
 |----------|----------|----------|
-| [**PulseVault**](./uploads/pulsevault) | TUS + managed server | Turnkey solution — deploy PulseVault and go |
-| [**TUS**](./uploads/tus) | TUS 1.0.0 | Resumable uploads to your own TUS-compatible server |
-| [**Chunked**](./uploads/chunked) | multipart/form-data or application/octet-stream | Custom servers without TUS support |
+| [**PulseVault**](./uploads/pulsevault) | TUS + managed server | Turnkey — deploy and go; includes Nginx, Proxmox/LXC notes |
+| [**TUS**](./uploads/tus) | TUS 1.0.0 | Resumable uploads on your own server (3 endpoints) |
+| [**Chunked**](./uploads/chunked) | multipart or raw binary | Existing upload API; TUS-compatible facade |
 
 ## Choose Your Framework
 
@@ -63,6 +71,31 @@ All four parameters are required. If `draftId` is missing or not a valid UUID v4
 
 ## Requirements
 
-- **Pulse Cam** installed on the user's device (iOS or Android)
-- A server that accepts video uploads via one of the supported protocols
+- **Pulse Cam** installed on the user's device (iOS or Android) — distributed via App Store, Play Store, or your organization
+- A server that accepts video uploads via one of the supported protocols (e.g. [PulseVault](./uploads/pulsevault))
 - Ability to generate UUID v4 identifiers and authentication tokens
+
+## Security and production
+
+- **HTTPS:** Use HTTPS for the upload server URL in production so the token and video are not sent over plain HTTP.
+- **Token expiry:** Issue short-lived tokens (e.g. 24 hours). PulseVault and the examples use expiring tokens; your custom backend should too.
+- **Validate on finalize:** Your server must validate the token on `POST /uploads/finalize` and associate the upload with the correct user or session.
+
+For deployment (Proxmox, Nginx, SSL), see [PulseVault — Deployment](./uploads/pulsevault#deployment). For common errors, see [Troubleshooting](./troubleshooting).
+
+## Terms you'll see
+
+| Term | Meaning |
+|------|---------|
+| **draftId** | A UUID v4 you generate for each recording session; ties the upload to your system. |
+| **Deep link** | A `pulsecam://` URL that opens Pulse Cam in upload mode with your `server` and `token`. |
+| **TUS** | Resumable upload protocol (1.0.0) used by Pulse Cam: `POST /uploads`, `PATCH /uploads/:id`, `POST /uploads/finalize`. |
+| **PulseVault** | Reference upload server (Docker, Nginx, `/qr/deeplink` API); use it as-is or implement TUS yourself. |
+
+## Next steps
+
+- **First time?** → [Launching Pulse Cam](./launching) (deep link format, QR workflow, testing).
+- **Using PulseVault?** → [PulseVault](./uploads/pulsevault) (deploy, `/qr/deeplink`, Proxmox/Nginx).
+- **Building your own server?** → [TUS](./uploads/tus) or [Chunked](./uploads/chunked).
+- **Web integration?** → [JavaScript](./frameworks/javascript) or [React @mieweb/ui](./frameworks/react-mieweb-ui).
+- **Something broken?** → [Troubleshooting](./troubleshooting).

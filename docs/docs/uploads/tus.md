@@ -333,3 +333,10 @@ app.use((req, res, next) => {
 ## HTTPS / SSL Termination
 
 If your server is behind a reverse proxy (e.g. nginx, Caddy) that terminates SSL, Pulse Cam will automatically upgrade `http://` Location headers to `https://` when the original server URL uses HTTPS. No special configuration is needed on the app side.
+
+## Next steps
+
+- **Turnkey option** — [PulseVault](./pulsevault) (Docker, Nginx, Proxmox/LXC, `/qr/deeplink`).
+- **Non-TUS backend** — [Chunked Uploads](./chunked) (same three-step flow with a different backend).
+- **Launch flow** — [Launching Pulse Cam](../launching) (deep link format, testing).
+- **Stuck?** — [Troubleshooting](../troubleshooting) (token, chunk, connection errors).

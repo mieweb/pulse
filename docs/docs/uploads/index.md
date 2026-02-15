@@ -57,3 +57,10 @@ Your server should validate this token to ensure the upload is authorized.
 :::tip
 If you're starting from scratch, **PulseVault** is the fastest path. If you have an existing backend, implementing the **TUS** endpoints is straightforward (3 routes). If you need maximum flexibility, the **chunked** approach lets you adapt to any API.
 :::
+
+## Next steps
+
+- **Turnkey server** → [PulseVault](./pulsevault) (Docker, `/qr/deeplink`, Proxmox/Nginx).
+- **Your own TUS server** → [TUS Resumable Uploads](./tus) (3 endpoints, headers, examples).
+- **Non-TUS or custom API** → [Chunked Uploads](./chunked) (multipart or binary facade).
+- **Stuck?** → [Troubleshooting](../troubleshooting) (connection, token, chunk errors).

@@ -4,7 +4,11 @@ sidebar_position: 2
 
 # Launching Pulse Cam
 
-To launch Pulse Cam from your application, you open a deep link using the `pulsecam://` URL scheme. When the link is opened, Pulse Cam starts in **upload mode** — the user records video, edits it, and uploads the result to your server.
+Open Pulse Cam from your app by loading a **deep link** with the `pulsecam://` scheme. The app starts in **upload mode**: the user records, edits, and uploads the video to the server URL you put in the link.
+
+:::tip Quick reference
+`pulsecam://?mode=upload&draftId=<uuid>&server=<url>&token=<token>` — all four parameters required; `draftId` must be UUID v4; `server` must be URL-encoded.
+:::
 
 ## Deep Link URL Format
 
@@ -201,3 +205,10 @@ Pulse Cam does **not** test the server URL when the deep link opens. The `server
 :::caution Physical Device Testing
 If your server is on `localhost`, deep links will open Pulse Cam successfully but **uploads will fail** on physical devices. Always use your machine's network IP address (e.g. `192.168.1.100`) when testing on real devices.
 :::
+
+## Next steps
+
+- **Upload handling** — [Handling Uploads](./uploads/) (flow, PulseVault vs TUS vs Chunked).
+- **PulseVault** — [Deploy and use `/qr/deeplink`](./uploads/pulsevault) for deep links and QR.
+- **Test script** — Run `./test-deeplink.sh` in the Pulse repo against a running PulseVault server.
+- **Problems?** — [Troubleshooting](./troubleshooting) (e.g. "Server not set up for upload", connection errors).

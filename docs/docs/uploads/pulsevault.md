@@ -33,13 +33,27 @@ Default port: **8080** (configurable via `PULSEVAULT_PORT` environment variable)
 
 ### Proxmox / LXC Deployment
 
-For non-privileged containers (e.g. Proxmox LXC), use the alternate compose file:
+The default PulseVault Docker Compose exposes **Nginx on port 8080** (not 80/443), which is suitable for **non-privileged** environments such as Proxmox LXC where binding to low ports is restricted:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.proxmox.yml up -d
+docker compose up -d
 ```
 
-This binds to port 8080 (HTTP) and 8443 (HTTPS) instead of the standard 80/443.
+Nginx listens on 8080; the backend receives HTTP from Nginx. SSL/TLS is typically terminated at the Proxmox host or an external load balancer. The container uses the `X-Forwarded-Proto` header (when set by the proxy) to build correct HTTPS URLs in responses (e.g. TUS `Location` headers and deep links). No extra configuration is required inside the container for this.
+
+:::tip
+If the deep link or upload server URL must use HTTPS, ensure the reverse proxy or Proxmox forwards `X-Forwarded-Proto: https` so PulseVault and Pulse Cam see the correct scheme.
+:::
+
+### Nginx and reverse proxy (production)
+
+The PulseVault Docker stack includes **Nginx** as a reverse proxy in front of the API: it handles routing, rate limiting, and (optionally) caching. In production:
+
+- **SSL/TLS** is often terminated at Nginx or at an outer layer (e.g. Proxmox, cloud load balancer). Nginx serves HTTP to the backend; the backend uses `X-Forwarded-Proto` to construct HTTPS URLs when needed.
+- **Certificates:** For a standard Nginx-in-Docker setup, place your certs (e.g. from Let’s Encrypt) in the PulseVault repo’s `nginx/ssl/` and point the Nginx config at them. Full steps (certbot, paths, firewall) are in the [PulseVault SETUP guide](https://github.com/mieweb/pulse-vault/blob/main/SETUP.md).
+- **Location and proxy rules:** Upload paths (`/uploads`, `/uploads/*`) and API routes are proxied to the Fastify backend. The PulseVault repo’s `nginx/` directory contains the config; see the [PulseVault repository](https://github.com/mieweb/pulse-vault) for the exact Nginx config and production checklist.
+
+Using these deployment options, developers can run PulseVault in development (Quick Start), in Proxmox/LXC (non-privileged ports), or behind Nginx with SSL in production—all covered by the PulseVault repo docs.
 
 ## API Endpoints
 
@@ -164,3 +178,10 @@ After Pulse Cam uploads a video, your application can query PulseVault for the s
 ```
 
 Use `videoId` to track the asset in your own system.
+
+## Next steps
+
+- **TUS details** — [TUS Resumable Uploads](./tus) (headers, chunk behavior, CORS, SSL).
+- **Web integration** — [JavaScript](../frameworks/javascript) or [React @mieweb/ui](../frameworks/react-mieweb-ui) (deep link + QR).
+- **Test locally** — Run `./test-deeplink.sh` in the Pulse repo against this server.
+- **Problems?** — [Troubleshooting](../troubleshooting) (connection, token, Proxmox/Nginx).

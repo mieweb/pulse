@@ -21,6 +21,7 @@ const sidebars = {
         "frameworks/react-mieweb-ui",
       ],
     },
+    "troubleshooting",
   ],
 };
 

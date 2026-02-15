@@ -64,6 +64,7 @@ const config = {
             items: [
               { label: "Getting Started", to: "/" },
               { label: "Launching Pulse Cam", to: "/launching" },
+              { label: "Troubleshooting", to: "/troubleshooting" },
               { label: "Handling Uploads", to: "/uploads/" },
             ],
           },

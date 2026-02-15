@@ -292,3 +292,9 @@ app.post("/uploads/finalize", express.json(), async (req, res) => {
   res.json(result);
 });
 ```
+
+## Next steps
+
+- **Full TUS spec** — [TUS Resumable Uploads](./tus) (protocol details, headers, resume).
+- **Turnkey server** — [PulseVault](./pulsevault) (uses TUS; no adapter needed).
+- **Stuck?** — [Troubleshooting](../troubleshooting) (chunk errors, offset mismatch).
