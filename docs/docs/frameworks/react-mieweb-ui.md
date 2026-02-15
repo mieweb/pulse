@@ -4,7 +4,11 @@ sidebar_position: 2
 
 # React Integration with `@mieweb/ui`
 
-The `@mieweb/ui` npm package provides ready-made React components for integrating Pulse Cam into your application. Instead of manually generating deep links and managing QR codes, you drop in a component and wire up callbacks.
+The `@mieweb/ui` package provides ready-made React components for integrating Pulse Cam into your application: deep link generation, QR display, and upload status polling. This page documents the component API.
+
+:::info If the package is not available in your environment
+Use the [JavaScript Guide](./javascript) to integrate with vanilla JS or your own React components — the deep link format and server endpoints are the same.
+:::
 
 ## Installation
 

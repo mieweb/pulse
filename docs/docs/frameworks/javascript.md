@@ -162,12 +162,11 @@ function openPulseCam(deeplink) {
   setTimeout(() => {
     if (Date.now() - start < 2000) {
       const userChoice = confirm(
-        "Pulse Cam doesn't seem to be installed. Open the App Store?"
+        "Pulse Cam doesn't seem to be installed. Open the store?"
       );
       if (userChoice) {
-        // Replace with actual App Store / Play Store link
-        window.location.href =
-          "https://apps.apple.com/app/pulse-cam/id0000000000";
+        // Use your app's App Store / Play Store link when available
+        // window.location.href = "https://apps.apple.com/... or https://play.google.com/...";
       }
     }
   }, 1500);
