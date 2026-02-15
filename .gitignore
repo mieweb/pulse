@@ -51,3 +51,4 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+.playwright-mcp/
