@@ -8,6 +8,8 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useFirstTimeOpen } from "@/hooks/useFirstTimeOpen";
 import AntDesign from "@expo/vector-icons/AntDesign";
+import Entypo from "@expo/vector-icons/Entypo";
+import Ionicons from "@expo/vector-icons/Ionicons";
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -36,25 +38,14 @@ export default function TabLayout() {
         }),
       }}
     >
-      {/* Commented out - Home Tab */}
-      {/* <Tabs.Screen
+      <Tabs.Screen
         name="index"
         options={{
           title: "Home",
           tabBarButton: HapticTab,
-          tabBarIcon: ({ color, focused }) => (
+          tabBarIcon: ({ color }) => (
             <Entypo name="home" size={24} color={color} />
           ),
-        }}
-      /> */}
-
-      {/* Placeholder tab to maintain center positioning */}
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "",
-          tabBarButton: () => null, // Hidden tab
-          tabBarIcon: () => null,
         }}
       />
 
@@ -135,25 +126,14 @@ export default function TabLayout() {
         }}
       />
 
-      {/* Commented out - Profile Tab */}
-      {/* <Tabs.Screen
+      <Tabs.Screen
         name="profile"
         options={{
           title: "Profile",
           tabBarButton: HapticTab,
-          tabBarIcon: ({ color, focused }) => (
+          tabBarIcon: ({ color }) => (
             <Ionicons name="person-circle-outline" size={24} color={color} />
           ),
-        }}
-      /> */}
-
-      {/* Placeholder tab to maintain center positioning */}
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: "",
-          tabBarButton: () => null, // Hidden tab
-          tabBarIcon: () => null,
         }}
       />
     </Tabs>
