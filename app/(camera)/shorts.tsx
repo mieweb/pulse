@@ -1,7 +1,7 @@
 import CameraControls from "@/components/CameraControls";
 import CloseButton from "@/components/CloseButton";
 import UploadCloseButton from "@/components/UploadCloseButton";
-import RecordButton from "@/components/RecordButton";
+import RecordButton, { RecordButtonRef } from "@/components/RecordButton";
 import RecordingProgressBar, {
   RecordingSegment,
 } from "@/components/RecordingProgressBar";
@@ -26,12 +26,15 @@ import { router, useLocalSearchParams } from "expo-router";
 import * as React from "react";
 import {
   Alert,
+  AppState,
+  AppStateStatus,
   Platform,
   StyleSheet,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { setIsAudioActiveAsync } from "expo-audio";
 import { DraftStorage } from "@/utils/draftStorage";
 import { fileStore } from "@/utils/fileStore";
 import {
@@ -92,6 +95,7 @@ export default function ShortsScreen() {
     }
   }, [serverNotSetupForUpload]);
   const cameraRef = React.useRef<CameraView>(null);
+  const recordButtonRef = React.useRef<RecordButtonRef>(null);
   
   // Use a stable ref callback to avoid CameraView remounting on every render
   // This prevents the camera from being recreated on each state update
@@ -275,6 +279,81 @@ export default function ShortsScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording]);
 
+  // Track previous app state for Android (to detect genuine background transitions)
+  const appStateRef = React.useRef<AppStateStatus>(AppState.currentState);
+  const lastBackgroundTimeRef = React.useRef<number>(0);
+
+  // Handle app state changes during recording (background/foreground interruptions)
+  React.useEffect(() => {
+    if (!isRecording) return;
+
+    const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+      const prevState = appStateRef.current;
+      
+      // On Android, ignore rapid state changes (less than 500ms in background)
+      // This prevents false triggers from permission dialogs, file pickers, etc.
+      if (Platform.OS === "android") {
+        if (nextAppState === "background" || nextAppState === "inactive") {
+          lastBackgroundTimeRef.current = Date.now();
+        } else if (nextAppState === "active" && prevState !== "active") {
+          const timeInBackground = Date.now() - lastBackgroundTimeRef.current;
+          if (timeInBackground < 500) {
+            console.log(`[ShortsScreen] Ignoring rapid state change (${timeInBackground}ms in background)`);
+            appStateRef.current = nextAppState;
+            return;
+          }
+        }
+      }
+
+      console.log("[ShortsScreen] AppState:", prevState, "->", nextAppState);
+      
+      // Only act on genuine transitions
+      if (prevState === nextAppState) {
+        return;
+      }
+
+      if (nextAppState === "background" || nextAppState === "inactive") {
+        // Stop recording immediately when app goes to background
+        if (cameraRef.current) {
+          try {
+            cameraRef.current.stopRecording();
+            // Disable audio when going to background
+            await setIsAudioActiveAsync(false);
+          } catch (error) {
+            console.warn("[ShortsScreen] Error stopping recording on background:", error);
+          }
+        }
+      } else if (nextAppState === "active" && prevState.match(/inactive|background/)) {
+        // Re-enable audio when app becomes active again (only from genuine background)
+        try {
+          await setIsAudioActiveAsync(true);
+        } catch (error) {
+          console.warn("[ShortsScreen] Error re-enabling audio:", error);
+        }
+        
+        // Reset all animations and button states to initial state
+        recordButtonRef.current?.reset();
+        
+        // Reset zoom and touch states
+        setZoom(0);
+        savedZoom.value = 0;
+        currentZoom.value = 0;
+        setScreenTouchActive(false);
+        isHoldRecording.value = false;
+        recordingModeShared.value = "";
+        
+        console.log("[ShortsScreen] 🔄 Reset all animations and states");
+      }
+      
+      appStateRef.current = nextAppState;
+    };
+
+    // Use 'focus' event on Android to avoid false triggers, 'change' on iOS
+    const eventType = Platform.OS === "android" ? "focus" : "change";
+    const subscription = AppState.addEventListener(eventType, handleAppStateChange);
+    return () => subscription.remove();
+  }, [isRecording]);
+
   useFocusEffect(
     React.useCallback(() => {
       // On Android, force camera remount ONLY when returning from a screen that uses video
@@ -360,6 +439,29 @@ export default function ShortsScreen() {
 
   const handleVideoStabilizationChange = (mode: VideoStabilization) => {
     updateVideoStabilizationMode(mode);
+  };
+
+  const handleCameraMountError = (error: { message: string }) => {
+    console.error("[ShortsScreen] ❌ Camera mount error:", error);
+    Alert.alert(
+      "Camera Error",
+      "Failed to start camera. Please try again.",
+      [
+        {
+          text: "Retry",
+          onPress: () => {
+            console.log("[ShortsScreen] 🔄 Retrying camera mount...");
+            // Force camera remount
+            setCameraKey((prev) => prev + 1);
+          },
+        },
+        { text: "OK" },
+      ]
+    );
+  };
+
+  const handleCameraReady = () => {
+    console.log("[ShortsScreen] ✅ Camera ready");
   };
 
   const handlePreview = () => {
@@ -582,6 +684,8 @@ export default function ShortsScreen() {
             facing={cameraFacing}
             enableTorch={torchEnabled}
             zoom={zoom}
+            onMountError={handleCameraMountError}
+            onCameraReady={handleCameraReady}
             {...(Platform.OS === "ios"
               ? {
                   videoStabilizationMode: mapToNativeVideoStabilization(
@@ -650,6 +754,7 @@ export default function ShortsScreen() {
           </View>
 
           <RecordButton
+            ref={recordButtonRef}
             cameraRef={cameraRef}
             maxDuration={180}
             totalDuration={maxDurationLimitSeconds}
