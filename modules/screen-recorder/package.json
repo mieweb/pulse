@@ -1,0 +1,7 @@
+{
+  "name": "@pulse/screen-recorder",
+  "version": "1.0.0",
+  "description": "Audio-gated screen recording module for Pulse",
+  "main": "index.ts",
+  "types": "index.ts"
+}
