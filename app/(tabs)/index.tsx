@@ -149,6 +149,7 @@ export default function HomeScreen() {
         listContent: {
           padding: 20,
           paddingTop: 0,
+          paddingBottom: insets.bottom + 88,
         },
         draftItem: {
           backgroundColor: colors.surface,
@@ -245,7 +246,7 @@ export default function HomeScreen() {
           marginTop: 100,
         },
       }),
-    [colors, colorScheme]
+    [colors, colorScheme, insets.bottom]
   );
 
   const handleDraftPress = (draft: Draft) => {
