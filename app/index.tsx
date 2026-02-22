@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import { storeUploadConfigForDraft } from "@/utils/uploadConfig";
+import { addDestination } from "@/utils/uploadDestinations";
 
 // Simple UUID v4 validation (basic format check)
 const isUUIDv4 = (uuid: string) => {
@@ -22,6 +23,7 @@ export default function Index() {
     draftId?: string;
     server?: string;
     token?: string;
+    name?: string;
     serverNotSetupForUpload?: string;
   }>();
   const router = useRouter();
@@ -36,6 +38,35 @@ export default function Index() {
 
   // Debug logging for deeplink parameters
   console.log("🔗 Deeplink params:", params);
+
+  // configure_destination: add upload destination and go to profile (cold start)
+  useEffect(() => {
+    if (
+      params.mode === "configure_destination" &&
+      params.server &&
+      params.token &&
+      !hasRedirected
+    ) {
+      setHasRedirected(true);
+      addDestination(
+        params.server,
+        params.token,
+        params.name ?? undefined
+      ).then(() => {
+        router.replace({
+          pathname: "/(tabs)/profile",
+          params: { destinationAdded: "true" },
+        });
+      });
+    }
+  }, [
+    params.mode,
+    params.server,
+    params.token,
+    params.name,
+    hasRedirected,
+    router,
+  ]);
 
   // When we have a valid draftId: store config and redirect to shorts
   useEffect(() => {

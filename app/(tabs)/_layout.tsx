@@ -9,6 +9,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { useFirstTimeOpen } from "@/hooks/useFirstTimeOpen";
 import AntDesign from "@expo/vector-icons/AntDesign";
 import Entypo from "@expo/vector-icons/Entypo";
+import FontAwesome5 from "@expo/vector-icons/FontAwesome5";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 export default function TabLayout() {
@@ -129,10 +130,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: "Profile",
+          title: "Upload",
           tabBarButton: HapticTab,
           tabBarIcon: ({ color }) => (
-            <Ionicons name="person-circle-outline" size={24} color={color} />
+            <FontAwesome5 name="upload" size={20} color={color} solid={false} />
           ),
         }}
       />

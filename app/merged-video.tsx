@@ -18,6 +18,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { uploadVideo } from "@/utils/tusUpload";
 import { getUploadConfigForDraft } from "@/utils/uploadConfig";
+import {
+  getAllDestinations,
+  type UploadDestination,
+} from "@/utils/uploadDestinations";
 import { DraftStorage } from "@/utils/draftStorage";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -35,6 +39,9 @@ export default function MergedVideoScreen() {
   const [hasUploadConfig, setHasUploadConfig] = useState(false);
   const [isUploadModeDraft, setIsUploadModeDraft] = useState(false);
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+  const [destinations, setDestinations] = useState<UploadDestination[]>([]);
+  const [selectedDestination, setSelectedDestination] =
+    useState<UploadDestination | null>(null);
 
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = false;
@@ -78,19 +85,16 @@ export default function MergedVideoScreen() {
     setupPlayer();
   }, [videoUri, player]);
 
-  // Check if upload config is available for this draft (per-draft only; draftId required)
+  // Check upload config and load saved destinations
   useEffect(() => {
     const checkUploadConfig = async () => {
       const config = draftId ? await getUploadConfigForDraft(draftId) : null;
       setHasUploadConfig(!!config);
 
-      // Check if the draft was created in upload mode
       if (draftId) {
         try {
-          // Try both modes to find the draft
           const draft = await DraftStorage.getDraftById(draftId, "upload") ||
                        await DraftStorage.getDraftById(draftId, "camera");
-          
           if (draft) {
             setIsUploadModeDraft(draft.mode === "upload");
           }
@@ -99,12 +103,15 @@ export default function MergedVideoScreen() {
           setIsUploadModeDraft(false);
         }
       } else {
-        // No draft ID means it's a new recording, not from upload mode
         setIsUploadModeDraft(false);
       }
     };
     checkUploadConfig();
   }, [draftId]);
+
+  useEffect(() => {
+    getAllDestinations().then(setDestinations);
+  }, []);
 
   // Cleanup player on component unmount
   useEffect(() => {
@@ -159,30 +166,45 @@ export default function MergedVideoScreen() {
     }
   };
 
+  const canUploadWithDestination =
+    draftId && (hasUploadConfig || selectedDestination);
+  const showDestinationPicker =
+    !hasUploadConfig && destinations.length > 0 && draftId;
+
   const handleUpload = async () => {
     if (!videoUri) return;
 
-    // Check if this is an upload mode draft
-    if (!isUploadModeDraft) {
+    if (!draftId) {
       Alert.alert(
-        "Upload Not Available",
-        "This recording was created in camera mode. Upload is only available for recordings created via QR code.",
+        "Upload not available",
+        "This recording has no draft. Save as draft first.",
         [{ text: "OK" }]
       );
       return;
     }
 
-    const config = draftId ? await getUploadConfigForDraft(draftId) : null;
-    if (!draftId || !config) {
+    let configOverride: { server: string; token: string } | undefined;
+    if (hasUploadConfig) {
+      const config = await getUploadConfigForDraft(draftId);
+      if (!config) {
+        Alert.alert(
+          "Server not set up for upload",
+          "Server is not properly set up for upload.",
+          [{ text: "OK", onPress: () => router.back() }]
+        );
+        return;
+      }
+      configOverride = undefined;
+    } else if (selectedDestination) {
+      configOverride = {
+        server: selectedDestination.server,
+        token: selectedDestination.token,
+      };
+    } else {
       Alert.alert(
-        "Server not set up for upload",
-        "Server is not properly set up for upload.",
-        [
-          {
-            text: "OK",
-            onPress: () => router.back(),
-          },
-        ]
+        "Choose a destination",
+        "Select an upload destination from the list above, or add one in Profile.",
+        [{ text: "OK" }]
       );
       return;
     }
@@ -191,18 +213,13 @@ export default function MergedVideoScreen() {
       setIsUploading(true);
       setUploadProgress(0);
 
-      // Generate filename from draft ID or timestamp
-      const filename = draftId
-        ? `draft-${draftId}.mp4`
-        : `video-${Date.now()}.mp4`;
-
+      const filename = `draft-${draftId}.mp4`;
       const result = await uploadVideo(
         videoUri,
         filename,
-        (progress) => {
-          setUploadProgress(progress.percentage);
-        },
-        draftId ?? undefined
+        (progress) => setUploadProgress(progress.percentage),
+        draftId,
+        configOverride
       );
 
       Alert.alert(
@@ -303,7 +320,7 @@ export default function MergedVideoScreen() {
         </View>
 
         {/* Upload Info */}
-        {isUploadModeDraft && hasUploadConfig && (
+        {hasUploadConfig && (
           <View style={styles.inputSection}>
             <ThemedText style={styles.inputLabel}>
               Upload Server Configured
@@ -314,24 +331,72 @@ export default function MergedVideoScreen() {
           </View>
         )}
 
-        {isUploadModeDraft && !hasUploadConfig && (
+        {showDestinationPicker && (
           <View style={styles.inputSection}>
             <ThemedText style={styles.inputLabel}>
-              Server not set up for upload
+              Choose upload destination
             </ThemedText>
             <ThemedText style={styles.uploadInfoText}>
-              Server is not properly set up for upload.
+              Select a server to upload this video to.
             </ThemedText>
+            <View style={styles.destinationList}>
+              {destinations.map((dest) => (
+                <TouchableOpacity
+                  key={dest.id}
+                  style={[
+                    styles.destinationItem,
+                    selectedDestination?.id === dest.id &&
+                      styles.destinationItemSelected,
+                  ]}
+                  onPress={() =>
+                    setSelectedDestination(
+                      selectedDestination?.id === dest.id ? null : dest
+                    )
+                  }
+                  activeOpacity={0.8}
+                >
+                  <MaterialIcons
+                    name={
+                      selectedDestination?.id === dest.id
+                        ? "radio-button-checked"
+                        : "radio-button-unchecked"
+                    }
+                    size={20}
+                    color={
+                      selectedDestination?.id === dest.id ? "#0A84FF" : "#666"
+                    }
+                  />
+                  <View style={styles.destinationItemContent}>
+                    <ThemedText
+                      style={styles.destinationItemName}
+                      numberOfLines={1}
+                    >
+                      {dest.name || dest.server}
+                    </ThemedText>
+                    <ThemedText
+                      style={styles.destinationItemServer}
+                      numberOfLines={1}
+                    >
+                      {dest.server}
+                    </ThemedText>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
         )}
 
-        {!isUploadModeDraft && (
+        {!hasUploadConfig && !showDestinationPicker && (
           <View style={styles.inputSection}>
             <ThemedText style={styles.inputLabel}>
-              Camera Mode Recording
+              {draftId
+                ? "No upload destination"
+                : "Upload not available"}
             </ThemedText>
             <ThemedText style={styles.uploadInfoText}>
-              This recording was created in camera mode. Upload is only available for recordings created via QR code.
+              {draftId
+                ? "Add an upload destination in Profile (scan a Setup QR from your vault), or use a per-draft QR code."
+                : "Save as draft first to upload."}
             </ThemedText>
           </View>
         )}
@@ -358,11 +423,12 @@ export default function MergedVideoScreen() {
           <TouchableOpacity
             style={[
               styles.uploadButton,
-              (!hasUploadConfig || isUploading) && styles.uploadButtonDisabled,
+              (!canUploadWithDestination || isUploading) &&
+                styles.uploadButtonDisabled,
             ]}
             onPress={handleUpload}
             activeOpacity={0.8}
-            disabled={!isUploadModeDraft || !hasUploadConfig || isUploading}
+            disabled={!canUploadWithDestination || isUploading}
           >
             {isUploading ? (
               <ActivityIndicator size="small" color="#ffffff" />
@@ -552,6 +618,37 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#999",
     marginTop: 4,
+  },
+  destinationList: {
+    marginTop: 8,
+    gap: 6,
+  },
+  destinationItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: "#1a1a1a",
+    borderWidth: 1,
+    borderColor: "#333",
+    gap: 10,
+  },
+  destinationItemSelected: {
+    borderColor: "#0A84FF",
+    backgroundColor: "#0A84FF18",
+  },
+  destinationItemContent: {
+    flex: 1,
+  },
+  destinationItemName: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#ffffff",
+  },
+  destinationItemServer: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 2,
   },
   progressSection: {
     paddingHorizontal: 16,

@@ -14,25 +14,43 @@ export interface UploadResult {
   checksum: string;
 }
 
+/** When using a saved destination (long-lived token), app sends draftId in finalize body. */
+export interface UploadConfigOverride {
+  server: string;
+  token: string;
+}
+
 /**
- * Upload video using TUS protocol to PulseVault
+ * Upload video using TUS protocol to PulseVault.
+ * Uses per-draft config if no override; otherwise uses configOverride and sends draftId in finalize (destination token).
  */
 export async function uploadVideo(
   videoUri: string,
   filename: string,
   onProgress?: (progress: UploadProgress) => void,
-  draftId?: string
+  draftId?: string,
+  configOverride?: UploadConfigOverride
 ): Promise<UploadResult> {
   console.log(`[TUS Upload] Starting upload process for: ${filename}`);
   console.log(`[TUS Upload] Video URI: ${videoUri}`);
-  
-  if (!draftId) {
-    throw new Error("Server not set up for upload.");
-  }
-  console.log(`[TUS Upload] Step 1: Getting upload config for draft...`);
-  const config = await getUploadConfigForDraft(draftId);
-  if (!config) {
-    throw new Error("Server not set up for upload.");
+
+  let config: { server: string; token: string } | null;
+  let sendDraftIdInBody = false;
+  if (configOverride) {
+    config = configOverride;
+    sendDraftIdInBody = true;
+    if (!draftId) {
+      throw new Error("Draft ID is required when using a configured destination.");
+    }
+  } else {
+    if (!draftId) {
+      throw new Error("Server not set up for upload.");
+    }
+    console.log(`[TUS Upload] Step 1: Getting upload config for draft...`);
+    config = await getUploadConfigForDraft(draftId);
+    if (!config) {
+      throw new Error("Server not set up for upload.");
+    }
   }
 
   let { server, token } = config;
@@ -298,18 +316,22 @@ export async function uploadVideo(
   console.log(`[TUS Upload] Finalize payload: uploadId=${uploadId}, filename=${filename}`);
   
   const finalizeStartTime = Date.now();
+  const finalizeBody: Record<string, unknown> = {
+    uploadId,
+    filename,
+    userId: "anonymous",
+    uploadToken: token,
+  };
+  if (sendDraftIdInBody && draftId) {
+    finalizeBody.draftId = draftId;
+  }
   const finalizeResponse = await fetch(`${normalizedServer}/uploads/finalize`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Upload-Token": token, // Send token in header
+      "X-Upload-Token": token,
     },
-    body: JSON.stringify({
-      uploadId,
-      filename,
-      userId: "anonymous", // Could be extracted from token if needed
-      uploadToken: token, // Also send in body
-    }),
+    body: JSON.stringify(finalizeBody),
   });
 
   const finalizeDuration = Date.now() - finalizeStartTime;
