@@ -129,7 +129,8 @@ export default function RecordButton({
     const sessionMaxDuration = shouldEnforceTotalLimit
       ? Math.min(maxDuration, remainingTime)
       : maxDuration;
-    onRecordingStart?.(mode, remainingTime);
+    const clampedRemainingTime = Math.max(0, remainingTime);
+    onRecordingStart?.(mode, clampedRemainingTime);
     progressIntervalRef.current = setInterval(() => {
       const currentRecordingDuration =
         (Date.now() - recordingStartTimeRef.current) / 1000;
