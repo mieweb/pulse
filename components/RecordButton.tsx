@@ -24,6 +24,7 @@ interface RecordButtonProps {
   onButtonTouchStart?: () => void;
   onButtonTouchEnd?: () => void;
   screenTouchActive?: boolean;
+  allowRecordingPastTotalDuration?: boolean;
 }
 
 export default function RecordButton({
@@ -40,6 +41,7 @@ export default function RecordButton({
   onButtonTouchStart,
   onButtonTouchEnd,
   screenTouchActive = false,
+  allowRecordingPastTotalDuration = false,
 }: RecordButtonProps) {
   const [isRecording, setIsRecording] = React.useState(false);
   const [recordingMode, setRecordingMode] = React.useState<
@@ -69,6 +71,7 @@ export default function RecordButton({
   const progressIntervalRef = React.useRef<ReturnType<
     typeof setInterval
   > | null>(null);
+  const enforceTotalLimitForSessionRef = React.useRef<boolean>(true);
 
   const remainingTime = totalDuration - usedDuration;
 
@@ -106,7 +109,14 @@ export default function RecordButton({
   }, [screenTouchActive, buttonInitiatedRecording, isRecording, recordingMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startRecording = (mode: "tap" | "hold") => {
-    if (!cameraRef.current || isRecording || remainingTime <= 0) return;
+    const canStartWhenAtLimit = allowRecordingPastTotalDuration;
+    if (
+      !cameraRef.current ||
+      isRecording ||
+      (remainingTime <= 0 && !canStartWhenAtLimit)
+    ) {
+      return;
+    }
 
     setIsRecording(true);
     setRecordingMode(mode);
@@ -114,7 +124,11 @@ export default function RecordButton({
     manuallyStoppedRef.current = false;
     recordingStartTimeRef.current = Date.now();
 
-    const sessionMaxDuration = Math.min(maxDuration, remainingTime);
+    const shouldEnforceTotalLimit = remainingTime > 0;
+    enforceTotalLimitForSessionRef.current = shouldEnforceTotalLimit;
+    const sessionMaxDuration = shouldEnforceTotalLimit
+      ? Math.min(maxDuration, remainingTime)
+      : maxDuration;
     onRecordingStart?.(mode, remainingTime);
     progressIntervalRef.current = setInterval(() => {
       const currentRecordingDuration =
@@ -126,7 +140,7 @@ export default function RecordButton({
         Math.max(0, newRemainingTime)
       );
 
-      if (newRemainingTime <= 0) {
+      if (enforceTotalLimitForSessionRef.current && newRemainingTime <= 0) {
         stopRecording();
         if (mode === "hold") {
           stopHoldVisualFeedback();

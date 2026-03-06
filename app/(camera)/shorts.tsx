@@ -60,10 +60,26 @@ export default function ShortsScreen() {
     mode?: string;
     server?: string;
     token?: string;
+    duration?: string;
   }>();
+  const parseDurationParam = React.useCallback((value?: string) => {
+    if (!value) return undefined;
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+    return parsed;
+  }, []);
+  const deeplinkDurationSeconds = parseDurationParam(
+    useLocalSearchParams<{ duration?: string }>().duration
+  );
   const draftMode = (mode === "upload" ? "upload" : "camera") as
     | "camera"
     | "upload";
+  const [lockedDurationSeconds, setLockedDurationSeconds] =
+    React.useState<number | null>(deeplinkDurationSeconds ?? null);
+  const [lockedDurationBlinkVisible, setLockedDurationBlinkVisible] =
+    React.useState(true);
+  const [warningIconBlinkVisible, setWarningIconBlinkVisible] =
+    React.useState(true);
   
   // Store per-draft config only when QR includes draftId (required for upload)
   const serverNotSetupForUpload = useLocalSearchParams<{ serverNotSetupForUpload?: string }>().serverNotSetupForUpload === "true";
@@ -72,7 +88,12 @@ export default function ShortsScreen() {
       if (server && token && draftId) {
         try {
           const { storeUploadConfigForDraft } = await import("@/utils/uploadConfig");
-          await storeUploadConfigForDraft(draftId, server, token);
+          await storeUploadConfigForDraft(
+            draftId,
+            server,
+            token,
+            deeplinkDurationSeconds
+          );
           console.log("✅ Stored upload config for draft", draftId);
         } catch (error) {
           console.error("❌ Failed to store upload config:", error);
@@ -80,7 +101,29 @@ export default function ShortsScreen() {
       }
     };
     storeConfig();
-  }, [draftId, server, token]);
+  }, [draftId, server, token, deeplinkDurationSeconds]);
+
+  React.useEffect(() => {
+    const loadDurationFromConfig = async () => {
+      if (deeplinkDurationSeconds) {
+        setLockedDurationSeconds(deeplinkDurationSeconds);
+        return;
+      }
+      if (draftMode !== "upload" || !draftId) {
+        setLockedDurationSeconds(null);
+        return;
+      }
+      try {
+        const { getUploadConfigForDraft } = await import("@/utils/uploadConfig");
+        const config = await getUploadConfigForDraft(draftId);
+        setLockedDurationSeconds(config?.durationSeconds ?? null);
+      } catch {
+        setLockedDurationSeconds(null);
+      }
+    };
+
+    loadDurationFromConfig();
+  }, [deeplinkDurationSeconds, draftId, draftMode]);
 
   React.useEffect(() => {
     if (serverNotSetupForUpload) {
@@ -189,6 +232,40 @@ export default function ShortsScreen() {
     (total, segment) => total + getEffectiveDuration(segment),
     0
   );
+  const totalUsedDurationSeconds =
+    totalRecordedDurationSeconds + activeRecordingDurationSeconds;
+  const isLockedDurationReached =
+    lockedDurationSeconds !== null &&
+    totalUsedDurationSeconds >= lockedDurationSeconds;
+  const shouldBlinkLockedDuration =
+    lockedDurationSeconds !== null &&
+    totalRecordedDurationSeconds >= lockedDurationSeconds &&
+    isRecording;
+  const shouldBlinkWarningIcon = isLockedDurationReached && isRecording;
+
+  React.useEffect(() => {
+    if (!shouldBlinkLockedDuration) {
+      setLockedDurationBlinkVisible(true);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setLockedDurationBlinkVisible((prev) => !prev);
+    }, 500);
+    return () => clearInterval(timer);
+  }, [shouldBlinkLockedDuration]);
+
+  React.useEffect(() => {
+    if (!shouldBlinkWarningIcon) {
+      setWarningIconBlinkVisible(true);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setWarningIconBlinkVisible((prev) => !prev);
+    }, 500);
+    return () => clearInterval(timer);
+  }, [shouldBlinkWarningIcon]);
 
   const handleRecordingStart = (
     mode: "tap" | "hold",
@@ -252,10 +329,22 @@ export default function ShortsScreen() {
 
   // Restore loaded duration when draft is loaded
   React.useEffect(() => {
+    if (lockedDurationSeconds !== null) {
+      if (maxDurationLimitSeconds !== lockedDurationSeconds) {
+        setMaxDurationLimitSeconds(lockedDurationSeconds);
+        updateDraftDuration(lockedDurationSeconds);
+      }
+      return;
+    }
     if (savedDurationLimitSeconds !== null && savedDurationLimitSeconds !== maxDurationLimitSeconds) {
       setMaxDurationLimitSeconds(savedDurationLimitSeconds);
     }
-  }, [savedDurationLimitSeconds, maxDurationLimitSeconds]);
+  }, [
+    lockedDurationSeconds,
+    savedDurationLimitSeconds,
+    maxDurationLimitSeconds,
+    updateDraftDuration,
+  ]);
 
   // Sync previousCameraFacing ref when cameraFacing changes
   React.useEffect(() => {
@@ -637,16 +726,36 @@ export default function ShortsScreen() {
                 <ThemedText style={styles.separatorText}>•</ThemedText>
               </>
             )}
-            <ThemedText style={styles.recordingTimeText}>
+            <ThemedText
+              style={[
+                styles.recordingTimeText,
+                isLockedDurationReached && styles.recordingTimeWarningText,
+                shouldBlinkLockedDuration &&
+                  !lockedDurationBlinkVisible &&
+                  styles.recordingTimeBlinkHidden,
+              ]}
+            >
               {(() => {
                 const totalSeconds = Math.round(
-                  totalRecordedDurationSeconds + activeRecordingDurationSeconds
+                  totalUsedDurationSeconds
                 );
                 const minutes = Math.floor(totalSeconds / 60);
                 const seconds = totalSeconds % 60;
                 return `${minutes}:${seconds.toString().padStart(2, "0")}`;
               })()}
             </ThemedText>
+            {isLockedDurationReached && (
+              <View
+                style={[
+                  styles.warningIconInline,
+                  shouldBlinkWarningIcon &&
+                    !warningIconBlinkVisible &&
+                    styles.warningIconBlinkHidden,
+                ]}
+              >
+                <MaterialIcons name="warning-amber" size={16} color="#ff4d4d" />
+              </View>
+            )}
           </View>
 
           <RecordButton
@@ -661,6 +770,7 @@ export default function ShortsScreen() {
             onButtonTouchStart={handleButtonTouchStart}
             onButtonTouchEnd={handleButtonTouchEnd}
             screenTouchActive={screenTouchActive}
+            allowRecordingPastTotalDuration={lockedDurationSeconds !== null}
           />
         </Animated.View>
       </GestureDetector>
@@ -668,10 +778,40 @@ export default function ShortsScreen() {
       {/* UI controls outside gesture handler to prevent touch event conflicts */}
       {!isRecording && (
         <View style={styles.timeSelectorContainer}>
-          <TimeSelectorButton
-            onTimeSelect={handleTimeSelect}
-            selectedTime={maxDurationLimitSeconds}
-          />
+          {lockedDurationSeconds !== null ? (
+            <View style={styles.lockedDurationContainer}>
+              <View
+                style={[
+                  styles.lockedDurationBadge,
+                  isLockedDurationReached && styles.lockedDurationBadgeWarning,
+                  shouldBlinkLockedDuration &&
+                    !lockedDurationBlinkVisible &&
+                    styles.lockedDurationBlinkHidden,
+                ]}
+              >
+                <ThemedText
+                  style={[
+                    styles.lockedDurationText,
+                    isLockedDurationReached && styles.lockedDurationTextWarning,
+                  ]}
+                >
+                  {lockedDurationSeconds >= 60
+                    ? `${Math.floor(lockedDurationSeconds / 60)}m${
+                        lockedDurationSeconds % 60
+                          ? ` ${lockedDurationSeconds % 60}s`
+                          : ""
+                      }`
+                    : `${lockedDurationSeconds}s`}
+                </ThemedText>
+              </View>
+
+            </View>
+          ) : (
+            <TimeSelectorButton
+              onTimeSelect={handleTimeSelect}
+              selectedTime={maxDurationLimitSeconds}
+            />
+          )}
         </View>
       )}
 
@@ -740,6 +880,46 @@ const styles = StyleSheet.create({
     right: 25,
     zIndex: 10,
   },
+  lockedDurationBadge: {
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    width: 56,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 8,
+  },
+  lockedDurationContainer: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  lockedDurationBadgeWarning: {
+    backgroundColor: "rgba(255, 0, 0, 0.25)",
+    borderWidth: 1,
+    borderColor: "#ff4d4d",
+  },
+  lockedDurationBlinkHidden: {
+    opacity: 0.35,
+  },
+  lockedDurationText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
+    fontFamily: "Roboto-Bold",
+    textAlign: "center",
+  },
+  lockedDurationTextWarning: {
+    color: "#ff4d4d",
+  },
+  warningIconInline: {
+    marginLeft: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  warningIconBlinkHidden: {
+    opacity: 0.25,
+  },
   previewButton: {
     position: "absolute",
     bottom: 40,
@@ -788,6 +968,12 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0, 0, 0, 0.7)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+  },
+  recordingTimeWarningText: {
+    color: "#ff4d4d",
+  },
+  recordingTimeBlinkHidden: {
+    opacity: 0.35,
   },
   videoLibraryButton: {
     position: "absolute",
