@@ -377,10 +377,11 @@ export default function ShortsScreen() {
         const draftToReload = draftId || currentDraftId;
         if (draftToReload) {
           try {
-            const draft = await DraftStorage.getDraftById(
-              draftToReload,
-              "camera"
-            );
+            const draft =
+              (await DraftStorage.getDraftById(draftToReload, draftMode)) ||
+              (draftMode === "upload"
+                ? await DraftStorage.getDraftById(draftToReload, "camera")
+                : await DraftStorage.getDraftById(draftToReload, "upload"));
             if (draft) {
               if (draft.segments) {
                 const segmentsWithAbsolutePaths =
@@ -398,7 +399,13 @@ export default function ShortsScreen() {
         }
       };
       reloadDraft();
-    }, [draftId, currentDraftId, setRecordingSegments, maxDurationLimitSeconds])
+    }, [
+      draftId,
+      currentDraftId,
+      setRecordingSegments,
+      maxDurationLimitSeconds,
+      draftMode,
+    ])
   );
 
   const handleTimeSelect = (newDurationLimitSeconds: number) => {
