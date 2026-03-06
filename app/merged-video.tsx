@@ -212,7 +212,7 @@ export default function MergedVideoScreen() {
   const isOverLockedDuration =
     lockedDurationSeconds !== null &&
     draftDurationSeconds !== null &&
-    draftDurationSeconds > lockedDurationSeconds;
+    draftDurationSeconds >= lockedDurationSeconds;
   const showDestinationPicker =
     !hasUploadConfig && destinations.length > 0 && draftId;
 
