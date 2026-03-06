@@ -20,6 +20,13 @@ import { addDestination } from "@/utils/uploadDestinations";
 const isUUIDv4 = (uuid: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
 
+const parseDurationParam = (duration?: string | null): number | undefined => {
+  if (!duration) return undefined;
+  const parsed = Number.parseInt(duration, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+};
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const router = useRouter();
@@ -38,6 +45,7 @@ export default function RootLayout() {
       const server = search.get("server");
       const token = search.get("token");
       const name = search.get("name");
+      const duration = parseDurationParam(search.get("duration"));
 
       if (mode === "configure_destination" && server && token) {
         try {
@@ -58,13 +66,19 @@ export default function RootLayout() {
       const hasValidDraftId = draftId && isUUIDv4(draftId);
       if (hasValidDraftId && server && token) {
         try {
-          await storeUploadConfigForDraft(draftId, server, token);
+          await storeUploadConfigForDraft(draftId, server, token, duration);
         } catch (e) {
           console.warn("[Deeplink] Failed to store upload config:", e);
         }
         router.replace({
           pathname: "/(camera)/shorts",
-          params: { mode: "upload", draftId, server, token },
+          params: {
+            mode: "upload",
+            draftId,
+            server,
+            token,
+            ...(duration ? { duration: String(duration) } : {}),
+          },
         });
       } else {
         router.replace({
@@ -73,6 +87,7 @@ export default function RootLayout() {
             mode: "upload",
             ...(server && { server }),
             ...(token && { token }),
+            ...(duration ? { duration: String(duration) } : {}),
             serverNotSetupForUpload: "true",
           },
         });

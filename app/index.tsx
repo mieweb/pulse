@@ -17,6 +17,13 @@ const isUUIDv4 = (uuid: string) => {
   return uuidv4Regex.test(uuid);
 };
 
+const parseDurationParam = (duration?: string | null): number | undefined => {
+  if (!duration) return undefined;
+  const parsed = Number.parseInt(duration, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+};
+
 export default function Index() {
   const params = useLocalSearchParams<{
     mode?: string;
@@ -24,12 +31,14 @@ export default function Index() {
     server?: string;
     token?: string;
     name?: string;
+    duration?: string;
     serverNotSetupForUpload?: string;
   }>();
   const router = useRouter();
   const [hasRedirected, setHasRedirected] = useState(false);
 
   const hasValidDraftId = params.draftId && isUUIDv4(params.draftId);
+  const parsedDuration = parseDurationParam(params.duration);
   const serverNotSetupForUpload =
     params.serverNotSetupForUpload === "true" ||
     (params.mode === "upload" &&
@@ -81,7 +90,8 @@ export default function Index() {
           await storeUploadConfigForDraft(
             params.draftId!,
             params.server,
-            params.token
+            params.token,
+            parsedDuration
           );
           console.log("✅ Stored upload config for draft", params.draftId);
         } catch (error) {
@@ -96,6 +106,7 @@ export default function Index() {
               draftId: params.draftId,
               server: params.server,
               token: params.token,
+              ...(parsedDuration ? { duration: String(parsedDuration) } : {}),
             },
           });
         }
@@ -108,6 +119,7 @@ export default function Index() {
     params.draftId,
     params.server,
     params.token,
+    parsedDuration,
     hasValidDraftId,
     router,
     hasRedirected,
