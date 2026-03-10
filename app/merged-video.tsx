@@ -42,6 +42,37 @@ export default function MergedVideoScreen() {
   const [destinations, setDestinations] = useState<UploadDestination[]>([]);
   const [selectedDestination, setSelectedDestination] =
     useState<UploadDestination | null>(null);
+  const [lockedDurationSeconds, setLockedDurationSeconds] = useState<number | null>(
+    null
+  );
+  const [draftDurationSeconds, setDraftDurationSeconds] = useState<number | null>(
+    null
+  );
+
+  const getEffectiveDuration = (segment: {
+    recordedDurationSeconds: number;
+    trimStartTimeMs?: number;
+    trimEndTimeMs?: number;
+  }): number => {
+    if (
+      segment.trimStartTimeMs !== undefined &&
+      segment.trimEndTimeMs !== undefined &&
+      segment.trimStartTimeMs >= 0 &&
+      segment.trimEndTimeMs > segment.trimStartTimeMs
+    ) {
+      return (segment.trimEndTimeMs - segment.trimStartTimeMs) / 1000;
+    }
+    return segment.recordedDurationSeconds;
+  };
+
+  const formatDurationLabel = (seconds: number): string => {
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return remainingSeconds > 0
+      ? `${minutes}m ${remainingSeconds}s`
+      : `${minutes}m`;
+  };
 
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = false;
@@ -90,6 +121,7 @@ export default function MergedVideoScreen() {
     const checkUploadConfig = async () => {
       const config = draftId ? await getUploadConfigForDraft(draftId) : null;
       setHasUploadConfig(!!config);
+      setLockedDurationSeconds(config?.durationSeconds ?? null);
 
       if (draftId) {
         try {
@@ -97,13 +129,22 @@ export default function MergedVideoScreen() {
                        await DraftStorage.getDraftById(draftId, "camera");
           if (draft) {
             setIsUploadModeDraft(draft.mode === "upload");
+            const total = draft.segments.reduce(
+              (acc, segment) => acc + getEffectiveDuration(segment),
+              0
+            );
+            setDraftDurationSeconds(total);
+          } else {
+            setDraftDurationSeconds(null);
           }
         } catch (error) {
           console.error("[MergedVideo] Failed to check draft mode:", error);
           setIsUploadModeDraft(false);
+          setDraftDurationSeconds(null);
         }
       } else {
         setIsUploadModeDraft(false);
+        setDraftDurationSeconds(null);
       }
     };
     checkUploadConfig();
@@ -168,6 +209,10 @@ export default function MergedVideoScreen() {
 
   const canUploadWithDestination =
     draftId && (hasUploadConfig || selectedDestination);
+  const isOverLockedDuration =
+    lockedDurationSeconds !== null &&
+    draftDurationSeconds !== null &&
+    draftDurationSeconds >= lockedDurationSeconds;
   const showDestinationPicker =
     !hasUploadConfig && destinations.length > 0 && draftId;
 
@@ -180,6 +225,10 @@ export default function MergedVideoScreen() {
         "This recording has no draft. Save as draft first.",
         [{ text: "OK" }]
       );
+      return;
+    }
+
+    if (isOverLockedDuration) {
       return;
     }
 
@@ -418,17 +467,30 @@ export default function MergedVideoScreen() {
           </View>
         )}
 
+        {isOverLockedDuration && (
+          <View style={styles.durationWarningSection}>
+            <MaterialIcons name="warning-amber" size={18} color="#ff4d4d" />
+            <ThemedText style={styles.durationWarningText}>
+              {`This video is ${formatDurationLabel(
+                Math.round(draftDurationSeconds ?? 0)
+              )}. It must be under ${formatDurationLabel(
+                lockedDurationSeconds ?? 0
+              )} to upload.`}
+            </ThemedText>
+          </View>
+        )}
+
         {/* Action Buttons */}
         <View style={styles.actionButtons}>
           <TouchableOpacity
             style={[
               styles.uploadButton,
-              (!canUploadWithDestination || isUploading) &&
+              (!canUploadWithDestination || isUploading || isOverLockedDuration) &&
                 styles.uploadButtonDisabled,
             ]}
             onPress={handleUpload}
             activeOpacity={0.8}
-            disabled={!canUploadWithDestination || isUploading}
+            disabled={!canUploadWithDestination || isUploading || isOverLockedDuration}
           >
             {isUploading ? (
               <ActivityIndicator size="small" color="#ffffff" />
@@ -670,6 +732,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#999",
     textAlign: "center",
+  },
+  durationWarningSection: {
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  durationWarningText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#ff4d4d",
   },
   separator: {
     flexDirection: "row",

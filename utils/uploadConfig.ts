@@ -5,6 +5,17 @@ const UPLOAD_CONFIG_PREFIX = "upload_config_";
 export interface UploadConfig {
   server: string;
   token: string;
+  durationSeconds?: number;
+}
+
+function parseDurationSeconds(duration?: string | number | null): number | undefined {
+  if (duration == null) return undefined;
+  const parsed =
+    typeof duration === "number"
+      ? duration
+      : Number.parseInt(String(duration), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
 }
 
 /**
@@ -15,13 +26,19 @@ export interface UploadConfig {
 export async function storeUploadConfigForDraft(
   draftId: string,
   server: string,
-  token: string
+  token: string,
+  durationSeconds?: number
 ): Promise<void> {
   try {
     const key = UPLOAD_CONFIG_PREFIX + draftId;
+    const safeDuration = parseDurationSeconds(durationSeconds);
     await AsyncStorage.setItem(
       key,
-      JSON.stringify({ server, token })
+      JSON.stringify({
+        server,
+        token,
+        ...(safeDuration ? { durationSeconds: safeDuration } : {}),
+      })
     );
     console.log("[UploadConfig] Stored config for draft:", draftId);
   } catch (error) {
@@ -41,9 +58,17 @@ export async function getUploadConfigForDraft(
     const key = UPLOAD_CONFIG_PREFIX + draftId;
     const raw = await AsyncStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { server?: string; token?: string };
+    const parsed = JSON.parse(raw) as {
+      server?: string;
+      token?: string;
+      durationSeconds?: number | string;
+    };
     if (parsed?.server && parsed?.token) {
-      return { server: parsed.server, token: parsed.token };
+      return {
+        server: parsed.server,
+        token: parsed.token,
+        durationSeconds: parseDurationSeconds(parsed.durationSeconds),
+      };
     }
     return null;
   } catch (error) {
@@ -67,9 +92,17 @@ export async function getUploadConfigsForDraftIds(
       const [, value] = pairs[i];
       if (value) {
         try {
-          const parsed = JSON.parse(value) as { server?: string; token?: string };
+          const parsed = JSON.parse(value) as {
+            server?: string;
+            token?: string;
+            durationSeconds?: number | string;
+          };
           if (parsed?.server && parsed?.token) {
-            map.set(draftIds[i], { server: parsed.server, token: parsed.token });
+            map.set(draftIds[i], {
+              server: parsed.server,
+              token: parsed.token,
+              durationSeconds: parseDurationSeconds(parsed.durationSeconds),
+            });
           }
         } catch {
           // skip invalid entry
