@@ -124,7 +124,7 @@ export default function RecordButton({
     manuallyStoppedRef.current = false;
     recordingStartTimeRef.current = Date.now();
 
-    const shouldEnforceTotalLimit = remainingTime > 0;
+    const shouldEnforceTotalLimit = !allowRecordingPastTotalDuration && remainingTime > 0;
     enforceTotalLimitForSessionRef.current = shouldEnforceTotalLimit;
     const sessionMaxDuration = shouldEnforceTotalLimit
       ? Math.min(maxDuration, remainingTime)
