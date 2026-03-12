@@ -27,6 +27,8 @@ android/build/
 android/.gradle/
 modules/video-concat/android/build/
 modules/video-concat/android/.gradle/
+modules/audio-focus/android/build/
+modules/audio-focus/android/.gradle/
 *.apk
 *.aab
 local.properties
