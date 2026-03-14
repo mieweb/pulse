@@ -41,6 +41,8 @@ yarn-error.*
 
 # macOS
 .DS_Store
+# Word lock files
+~$*
 *.pem
 
 # local env files

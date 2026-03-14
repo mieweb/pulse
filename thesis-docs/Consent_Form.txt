@@ -57,6 +57,18 @@ If you agree to take part, you will:
 
 
 ----------------------------------------------------------------------
+WHERE TO ACCESS PULSE VAULT AND PULSE
+----------------------------------------------------------------------
+To get started, you can use Pulse Vault (web) and/or the Pulse app (mobile):
+
+- Pulse Vault (web): https://pulse-vault.opensource.mieweb.org/
+- Pulse app (iOS): https://apps.apple.com/app/pulse-video-recorder/id6748621024
+- Pulse app (Android): https://play.google.com/store/apps/details?id=com.mieweb.pulse
+- Pulse (GitHub): https://github.com/mieweb/pulse
+- Pulse Vault (GitHub): https://github.com/mieweb/pulsevault
+
+
+----------------------------------------------------------------------
 RISKS AND DISCOMFORT
 ----------------------------------------------------------------------
 We do not expect any significant risks. The activities are similar to

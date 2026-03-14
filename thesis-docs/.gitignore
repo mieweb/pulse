@@ -1,0 +1,6 @@
+# Word lock files
+~$*
+# macOS
+.DS_Store
+# Redundant nested copy
+thesis-docs/

@@ -1,0 +1,243 @@
+Reference text extracted from professor's IRB-related documents.
+These are from a different study (mental health app recommender) and are
+for structural/tone reference only. Pulse Vault study content is in
+HRP_503c_FINAL_PROTOCOL.md and HRP_502b_INFORMATION_SHEET_FINAL.md.
+
+========================================================================
+
+### Consent Form.docx
+
+Consent Form
+Title of the Study:
+Evaluating the Usability and Trustworthiness of a Mental Health App Recommender Website
+Principal Investigator:
+Dr. Sabirat Rubya
+Marquette University, Department of Computer Science
+Email: sabirat.rubya@marquette.edu
+MD Romael Haque
+Purdue University Fort Wayne
+Email: haque28@purdue.edu
+Student Principal Investigator:
+Hanqi Zhang
+PhD Student
+Marquette University, Department of Computer Science
+Email: hanqi.zhang@marquette.edu
+Purpose of the Study
+You are invited to take part in a research study about how users and mental health professionals evaluate a mental health app recommender website. The goal of this study is to understand how people perceive the usability, trustworthiness, and usefulness of the website, and how it may support mental health app decision-making. We expect up to 30 people to take part in this study.
+What You Will Be Asked to Do
+If you agree to participate, you will be asked to:
+Explore a mental health app recommender website
+Complete a short set of tasks using the site
+Participate in a follow-up interview where we ask about your experience using the site
+Fill out a brief questionnaire, including questions about your background and mental health app experience
+With your permission, the session will be recorded, and we may also observe how you interact with the website, such as where you click and how you navigate, to better understand your experience.
+Your responses will help us understand how to improve the design and usefulness of the site.
+Duration
+The session will take 60 to 90 minutes total, including task completion, observation, and interview. It may be conducted in person or online, based on your preference.
+Voluntary Participation
+Your participation is completely voluntary. You may skip any question or stop the session at any time without any penalty or loss of benefits. Choosing not to participate will not affect your relationship with Marquette University in any way.
+Confidentiality and Data Privacy
+Your responses will be kept confidential.
+No personally identifying information will be published.
+Audio and/or screen recordings may be collected with your permission and will be stored securely.
+All data will be anonymized before analysis and will be used for research purposes only, including publications or presentations.
+Risks
+You may feel mild emotional discomfort when reflecting on your experiences with mental health apps.
+Your responses will be audio-recorded if you give permission, which may raise privacy concerns.
+Benifits
+You will receive a $50 Amazon e-gift card after completing the session.
+You may gain awareness of different mental health app options.
+You will have the opportunity to share your feedback, which could help improve the website and your future user experience.
+Confidentiality
+The data collected in this study will not be used or distributed for future research even if they have been deidentified.
+All your data will be assigned an arbitrary code number rather than using your name or other information that could identify you as an individual
+Audio or video recordings, interview transcripts, survey responses, and task interaction notes will be stored securely on password-protected computers and encrypted storage devices, accessible only to the research team. No personal identifiers will appear in any presentations or publications.
+The key document (a separate file that connects your name to your participant ID) will also be stored securely in a password-protected folder, separate from research data. This key will be used only for scheduling and gift card delivery.
+Your research records may be inspected by the Marquette University Institutional Review Board or its designees, and (as allowable by law) state and federal agencies.
+Both the research data and the key document will be permanently deleted five years after the study is complete. You may choose to turn off your camera or skip any question at any time.
+Questions or Concerns
+If you have questions about the study or about your rights as a research participant, please contact:
+Hanqi Zhang Email: hanqi.zhang@marquette.edu | Phone: (414) 921-8657
+You may also contact the Marquette Office of Research Compliance at orc@marquette.edu.
+Consent
+I have read and understood the information above. I voluntarily agree to participate in this study.
+I agree to be audio/screen recorded for research purposes.
+Signature: ______________________________________
+Printed Name: ___________________________________
+Date: __________________
+
+
+### Study Protocol_.docx
+
+Evaluating User Experiences and Expectations for a Mental Health App Recommender Website
+Study Objectives
+This study looks at how people use and respond to a new website that reviews mental health apps. Many apps are available to support mental health, but it can be hard to know which ones are safe, reliable, or effective. The website was created to help users make more informed decisions by offering expert insights and real user reviews in one place. The goal is to understand how helpful and easy-to-use the website is. Participants will be asked to explore the site and give feedback through short surveys or interviews. This feedback will be used to improve the website for future users.
+We aim to explore:
+To understand how mental health professionals and general users interact with the website.
+To assess how clear, useful, and trustworthy the information on the website is.
+To identify areas where the website can be improved in terms of design and content.
+To explore how this kind of tool might help people make better choices when selecting mental health apps.
+Target Participants
+General Users: Adults (18+) who have used or are interested in mental health apps.
+Mental Health Professionals: Therapists, clinicians, researchers, or other professionals who recommend or evaluate digital mental health tools.
+Study Setting & Duration
+Interviews can be conducted in person (lab) or online (Zoom)
+Duration: 60–90 minutes total
+Compensation
+Participants will receive a $50 Amazon e-gift card upon completing the interview.
+Interview Procedure
+Welcome and rapport-building
+Consent form and Introduction
+Audio recording begins (if approved)
+Three structured tasks (Website Interaction)
+Fill out surveys
+Semi-Structured Interview (8–10 in-depth questions)
+Wrap-up and Compensation
+Interview Guide:
+Section 1 - Consent Form (10 min)
+Consent Form
+Title of the Study:
+Evaluating the Usability and Trustworthiness of a Mental Health App Recommender Website
+Principal Investigator:
+Dr. Sabirat Rubya
+Marquette University, Department of Computer Science
+Email: sabirat.rubya@marquette.edu
+MD Romael Haque
+Purdue University Fort Wayne
+Email: haque28@purdue.edu
+Student Principal Investigator:
+Hanqi Zhang
+PhD Student
+Marquette University, Department of Computer Science
+Email: hanqi.zhang@marquette.edu
+Purpose of the Study
+You are invited to take part in a research study about how users and mental health professionals evaluate a mental health app recommender website. The goal of this study is to understand how people perceive the usability, trustworthiness, and usefulness of the website, and how it may support mental health app decision-making.
+What You Will Be Asked to Do
+If you agree to participate, you will be asked to:
+Explore a mental health app recommender website
+Complete a short set of tasks using the site
+Participate in a follow-up interview where we ask about your experience using the site
+Your responses will help us understand how to improve the design and usefulness of the site.
+Duration
+The session will take 60 to 90 minutes total, including task completion, observation, and interview. It may be conducted in person or online, based on your preference.
+Voluntary Participation
+Your participation is completely voluntary. You may skip any question or stop the session at any time without any penalty or loss of benefits. Choosing not to participate will not affect your relationship with Marquette University in any way.
+Confidentiality and Data Privacy
+Your responses will be kept confidential.
+No personally identifying information will be published.
+Audio and/or screen recordings may be collected with your permission and will be stored securely.
+All data will be anonymized before analysis and will be used for research purposes only, including publications or presentations.
+Compensation
+As a thank you for your time, you will receive a $50 Amazon e-gift card after completing the session.
+Questions or Concerns
+If you have questions about the study or about your rights as a research participant, please contact:
+Hanqi Zhang Email: hanqi.zhang@marquette.edu
+Consent
+I have read and understood the information above. I voluntarily agree to participate in this study.
+I agree to be audio/screen recorded for research purposes.
+Signature: ______________________________________
+Printed Name: ___________________________________
+Date: __________________
+Section 2 - Tasks (30 min)
+Task 1: Comparison Task – Other Platforms vs Our Website
+User Prompt:
+You’re looking for a mental health app to help with stress or anxiety. Start by searching the way you normally would. For example, by using Google, the Apple App Store, or the Google Play Store. After that, switch to using this website and try to find an app you’d actually use.
+Expert Prompt:
+Imagine a client or colleague asked you to recommend a mental health app. Start by using a typical method. For example, searching on Google, the Apple App Store, or the Google Play Store, or anything you would like to use. After that, try using this website to explore options.
+(Observer Notes:
+How do they search on the App Store/Google? (keywords, ratings, top apps, reviews)
+What kind of content do they miss or appreciate in the app store vs your site?
+Do they mention trust, confusion, frustration, or usefulness?
+Do they appear more engaged or more hesitant with either method?)
+Task 2: Explore and Evaluate the Homepage Features
+User Prompt:
+Start from the homepage of this website. You're looking for a mental health app, but don’t have a specific app in mind yet. Use the filters, search bar, or any other homepage tools to find an app that might suit your needs. Walk me through what you’re noticing as you explore.
+Expert Prompt:
+Explore the homepage from the perspective of a professional who may want to recommend this website to clients or students. Try using the filters and explore how the homepage organizes and presents the apps.
+(Observer Notes:
+Did the participant interact with the filters or search bar?
+Did they use multiple filters at once (e.g., condition + rating)?
+Did they seem to understand how the filters work (e.g., combining logic)?
+Did they scroll through multiple apps or stop at the top few?
+Did they hesitate or appear unsure at any point while exploring?)
+Did they comment on any confusion or difficulty with layout, language, or icons?
+Did they express surprise (positive or negative) at the results returned?)
+Task 3: Evaluate the Side-by-Side Layout (Pros & Cons vs Expert Review)
+User Prompt:
+Use the website to find one app you’re interested in, and take a close look at the Expert Review and Pros and Cons sections, that can help you decide whether a mental health app is trustworthy and right for you.
+Expert Prompt:
+Imagine you’re reviewing this website to evaluate whether it would be helpful for recommending apps to clients or patients. Select one app that you’d consider referring someone to, and examine the Pros and Cons section (left) and the Expert Review section (right).
+(Observer Notes:
+Do they notice the side-by-side design intentionally?
+Do they compare the two sections naturally, or focus on just one?
+Do they express trust or preference for expert vs user info?
+Do they seem overwhelmed or find the layout helpful?
+Do they suggest any changes to the layout, amount of text, or clarity?)
+Section 3: Fill out surveys (10 min)
+General User:
+1 System Usability Scale
+3 NASA TLX
+1 Trust & Satisfaction Rating
+Expert:
+1 System Usability Scale
+Section 4: Interview Questions (9 Questions - 20 to 30 min)
+Task-Based Questions (3 Questions)
+Task 1: Other Platform vs Our Website
+Reflect on your experience comparing the website with other platforms in task 1. What were the biggest differences in how you searched and evaluated apps across the two platforms? Anything easier or harder about using that method compared to using our website?
+Enough content?
+Clear layout?
+Any Confusion while using?
+Task 2: Exploring the Homepage
+When you were on the homepage using filters and browsing in task 2, how did the layout and options shape your decisions about which apps to explore? Can you describe what helped and what was confusing or missing?
+Enough content?
+Clear filter options?
+Easy to navigate?
+Any Confusion while using?
+Any visual effects need improvement?
+Task 3: Pros & Cons vs Expert Review Layout
+When looking at the Pros and Cons section next to the Expert Review in task 3, how did those two types of information affect your impression of the app? Which section felt more helpful or trustworthy
+Enough content?
+Too long or too short?
+Easy to navigate?
+Which one is more helpful?
+Any Confusion while using?
+Anything missing?
+Side-by-Side design layout helpful?
+Other Questions: (6 Questions)
+What types of information on the website are most valuable to you? Why? Are those elements meaningful or useful to you? Why do you care about it?
+User Reviews?
+Ratings?
+Themes?
+Screenshots?
+Other Contents?
+Under the pros and cons section, did the review themes like “Ease of Use,” “Cost Transparency,” or others help you better understand the strengths or concerns about each app? Which ones stood out or seemed unclear?
+See the detailed 20 pros and cons?
+See the counted number of reviews for each pro and con?
+Easy to navigate in this section?
+Anything didn’t make sense?
+Was there anything that surprised you when using the website? Like something you feel is very useful or didn’t expect to see, but we have it? Either positively or negatively?
+Try the review themes in the user review section?
+Try the search bar for the keyword search in the user review section?
+See the detailed 20 pros and cons with the review counts in the pros and cons section?
+See the original link buttons in the app info page?
+Were there any features or sections of the website that you actively avoided or didn’t feel comfortable using? What made them less appealing or helpful for you?
+Anything on the homepage?
+The review section?
+Pros and cons section?
+Experts review section?
+In what way?
+What’s one thing you would change or improve if you were redesigning this website? Like something you expect to see, but it’s not there.
+Content?
+Layout?
+Colors?
+Which section?
+Which feature?
+Section orders in the app info page?
+Filter options?
+If you were recommending this website to a friend, client, or colleague, how would you describe it to them? What would you highlight as strengths or potential limitations?
+Top three things you like about our website?
+Data Management and Analysis
+Interviews will be audio-recorded and transcribed
+Identifiable information will be removed
+Data will be stored securely
+Analysis will follow thematic coding to identify user needs, pain points, and feedback categories that can guide design and functionality improvements
