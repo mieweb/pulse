@@ -8,11 +8,13 @@ import { useRouter } from "expo-router";
 import { Stack } from "expo-router";
 import * as Linking from "expo-linking";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
 import { PermissionMonitor } from "@/components/PermissionMonitor";
+import { ReportIssueFab } from "@/components/ReportIssueFab";
+import { ReportIssueModal } from "@/components/ReportIssueModal";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { storeUploadConfigForDraft } from "@/utils/uploadConfig";
 import { addDestination } from "@/utils/uploadDestinations";
@@ -23,6 +25,7 @@ const isUUIDv4 = (uuid: string) =>
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const router = useRouter();
+  const [isReportIssueModalVisible, setIsReportIssueModalVisible] = useState(false);
   const [loaded] = useFonts({
     "Roboto-Regular": require("../assets/fonts/Roboto-Regular.ttf"),
     "Roboto-Bold": require("../assets/fonts/Roboto-Bold.ttf"),
@@ -184,6 +187,11 @@ export default function RootLayout() {
           />
         </Stack>
         <StatusBar style="auto" />
+        <ReportIssueFab onPress={() => setIsReportIssueModalVisible(true)} />
+        <ReportIssueModal
+          visible={isReportIssueModalVisible}
+          onClose={() => setIsReportIssueModalVisible(false)}
+        />
         <PermissionMonitor />
       </ThemeProvider>
     </GestureHandlerRootView>
