@@ -1,9 +1,9 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import React, { useMemo, useState } from "react";
+import * as React from "react";
 import {
   ActivityIndicator,
-  Alert,
   GestureResponderEvent,
+  Linking,
   Modal,
   Pressable,
   StyleSheet,
@@ -14,7 +14,7 @@ import {
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { submitIssueReport } from "@/utils/reportIssue";
+import { SubmitIssueReportResult, submitIssueReport } from "@/utils/reportIssue";
 
 interface ReportIssueModalProps {
   visible: boolean;
@@ -25,13 +25,14 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
   const colorScheme = useColorScheme();
   const colors = colorScheme === "dark" ? Colors.dark : Colors.light;
 
-  const [summary, setSummary] = useState("");
-  const [description, setDescription] = useState("");
-  const [includeDraftFolder, setIncludeDraftFolder] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [summary, setSummary] = React.useState("");
+  const [description, setDescription] = React.useState("");
+  const [includeDraftFolder, setIncludeDraftFolder] = React.useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const [submittedIssue, setSubmittedIssue] = React.useState<SubmitIssueReportResult | null>(null);
 
-  const canSubmit = useMemo(
+  const canSubmit = React.useMemo(
     () => !!summary.trim() && !!description.trim() && !isSubmitting,
     [description, isSubmitting, summary]
   );
@@ -41,7 +42,22 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
     setDescription("");
     setIncludeDraftFolder(false);
     setErrorMessage(null);
+    setSubmittedIssue(null);
     onClose();
+  };
+
+  const handleOpenIssueUrl = async () => {
+    if (!submittedIssue?.issueUrl) return;
+    try {
+      const supported = await Linking.canOpenURL(submittedIssue.issueUrl);
+      if (!supported) {
+        setErrorMessage("Unable to open issue URL on this device.");
+        return;
+      }
+      await Linking.openURL(submittedIssue.issueUrl);
+    } catch {
+      setErrorMessage("Unable to open issue URL on this device.");
+    }
   };
 
   const handleSubmit = async () => {
@@ -54,18 +70,16 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
     setErrorMessage(null);
 
     try {
-      await submitIssueReport({
+      const result = await submitIssueReport({
         summary,
         description,
         includeDraftFolder,
       });
 
-      Alert.alert("Issue reported", "Thanks. Your report was sent to Pulse Vault.", [
-        { text: "OK", onPress: resetAndClose },
-      ]);
+      setSubmittedIssue(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to submit issue report.";
-      console.error(error)
+      console.error(error);
       setErrorMessage(message);
     } finally {
       setIsSubmitting(false);
@@ -104,89 +118,126 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
             </Pressable>
           </View>
 
-          <ThemedText style={[styles.label, { color: colors.secondaryText }]}>Summary</ThemedText>
-          <TextInput
-            editable={!isSubmitting}
-            onChangeText={setSummary}
-            placeholder="Brief summary"
-            placeholderTextColor={colors.secondaryText}
-            style={[
-              styles.input,
-              {
-                backgroundColor: colors.inputBackground,
-                borderColor: colors.border,
-                color: colors.text,
-              },
-            ]}
-            value={summary}
-          />
+          {submittedIssue ? (
+            <View>
+              <ThemedText style={[styles.successText, { color: colors.text }]}> 
+                {`Success message and issue created : ${submittedIssue.issueNumber ?? "-"}. Thank you for the feedback. We will work on it.`}
+              </ThemedText>
 
-          <ThemedText style={[styles.label, { color: colors.secondaryText }]}>Description</ThemedText>
-          <TextInput
-            editable={!isSubmitting}
-            multiline
-            numberOfLines={5}
-            onChangeText={setDescription}
-            placeholder="Describe what happened and how to reproduce it"
-            placeholderTextColor={colors.secondaryText}
-            style={[
-              styles.input,
-              styles.descriptionInput,
-              {
-                backgroundColor: colors.inputBackground,
-                borderColor: colors.border,
-                color: colors.text,
-              },
-            ]}
-            textAlignVertical="top"
-            value={description}
-          />
+              <Pressable
+                disabled={!submittedIssue.issueUrl}
+                onPress={handleOpenIssueUrl}
+                style={[
+                  styles.secondaryButton,
+                  {
+                    borderColor: colors.selection,
+                    backgroundColor: colors.background,
+                    opacity: submittedIssue.issueUrl ? 1 : 0.6,
+                  },
+                ]}
+              >
+                <ThemedText style={[styles.secondaryButtonText, { color: colors.selection }]}>Open GitHub URL</ThemedText>
+              </Pressable>
 
-          <Pressable
-            disabled={isSubmitting}
-            onPress={() => setIncludeDraftFolder((prev: boolean) => !prev)}
-            style={styles.checkboxRow}
-          >
-            <View
-              style={[
-                styles.checkbox,
-                {
-                  borderColor: colors.border,
-                  backgroundColor: includeDraftFolder
-                    ? colors.selection
-                    : "transparent",
-                },
-              ]}
-            >
-              {includeDraftFolder ? (
-                <MaterialIcons name="check" size={15} color="#FFFFFF" />
-              ) : null}
+              <Pressable
+                onPress={resetAndClose}
+                style={[
+                  styles.submitButton,
+                  {
+                    backgroundColor: colors.appPrimary,
+                  },
+                ]}
+              >
+                <ThemedText style={styles.submitButtonText}>Close</ThemedText>
+              </Pressable>
             </View>
-            <ThemedText style={styles.checkboxLabel}>Include draft folder</ThemedText>
-          </Pressable>
+          ) : (
+            <>
+              <ThemedText style={[styles.label, { color: colors.secondaryText }]}>Summary</ThemedText>
+              <TextInput
+                editable={!isSubmitting}
+                onChangeText={setSummary}
+                placeholder="Brief summary"
+                placeholderTextColor={colors.secondaryText}
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+                value={summary}
+              />
 
-          {errorMessage ? (
-            <ThemedText style={[styles.errorText, { color: colors.error }]}>
-              {errorMessage}
-            </ThemedText>
-          ) : null}
+              <ThemedText style={[styles.label, { color: colors.secondaryText }]}>Description</ThemedText>
+              <TextInput
+                editable={!isSubmitting}
+                multiline
+                numberOfLines={5}
+                onChangeText={setDescription}
+                placeholder="Describe what happened and how to reproduce it"
+                placeholderTextColor={colors.secondaryText}
+                style={[
+                  styles.input,
+                  styles.descriptionInput,
+                  {
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+                textAlignVertical="top"
+                value={description}
+              />
 
-          <Pressable
-            disabled={!canSubmit}
-            onPress={handleSubmit}
-            style={[
-              styles.submitButton,
-              {
-                backgroundColor: canSubmit ? colors.appPrimary : colors.border,
-              },
-            ]}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
-            )}
-          </Pressable>
+              <Pressable
+                disabled={isSubmitting}
+                onPress={() => setIncludeDraftFolder((prev: boolean) => !prev)}
+                style={styles.checkboxRow}
+              >
+                <View
+                  style={[
+                    styles.checkbox,
+                    {
+                      borderColor: colors.border,
+                      backgroundColor: includeDraftFolder
+                        ? colors.selection
+                        : "transparent",
+                    },
+                  ]}
+                >
+                  {includeDraftFolder ? (
+                    <MaterialIcons name="check" size={15} color="#FFFFFF" />
+                  ) : null}
+                </View>
+                <ThemedText style={styles.checkboxLabel}>Include draft folder</ThemedText>
+              </Pressable>
+
+              {errorMessage ? (
+                <ThemedText style={[styles.errorText, { color: colors.error }]}> 
+                  {errorMessage}
+                </ThemedText>
+              ) : null}
+
+              <Pressable
+                disabled={!canSubmit}
+                onPress={handleSubmit}
+                style={[
+                  styles.submitButton,
+                  {
+                    backgroundColor: canSubmit ? colors.appPrimary : colors.border,
+                  },
+                ]}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
+                )}
+              </Pressable>
+            </>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
@@ -260,6 +311,25 @@ const styles = StyleSheet.create({
   errorText: {
     marginTop: 12,
     fontFamily: "Roboto-Regular",
+  },
+  successText: {
+    marginTop: 10,
+    marginBottom: 16,
+    fontFamily: "Roboto-Regular",
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  secondaryButton: {
+    borderWidth: 1,
+    height: 44,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  secondaryButtonText: {
+    fontFamily: "Roboto-Bold",
+    fontSize: 15,
   },
   submitButton: {
     marginTop: 14,

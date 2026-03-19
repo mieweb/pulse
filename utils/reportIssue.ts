@@ -14,10 +14,22 @@ export interface SubmitIssueReportInput {
 export interface SubmitIssueReportResult {
   success: boolean;
   attachedFileName?: string;
+  issueNumber?: number;
+  issueUrl?: string;
+  uploadId?: string | null;
+  downloadUrl?: string | null;
+}
+
+interface ReportIssueApiResponse {
+  success?: boolean;
+  issueNumber?: number;
+  issueUrl?: string;
+  uploadId?: string | null;
+  downloadUrl?: string | null;
 }
 
 function appendAttachment(formData: FormData, attachment: ReportIssueAttachment) {
-  formData.append("attachment", {
+  formData.append("zip", {
     uri: attachment.uri,
     name: attachment.name,
     type: attachment.type,
@@ -45,9 +57,10 @@ export async function submitIssueReport(
   let attachment: ReportIssueAttachment | null = null;
   if (input.includeDraftFolder) {
     attachment = await buildDraftsAttachment();
-    if (attachment) {
-      appendAttachment(formData, attachment);
+    if (!attachment) {
+      throw new Error("Failed to create draft attachment.");
     }
+    appendAttachment(formData, attachment);
   }
 
   const response = await fetch(REPORT_ISSUE_ENDPOINT, {
@@ -62,8 +75,20 @@ export async function submitIssueReport(
     throw new Error(message);
   }
 
+  const responseJson = (await response.json().catch(() => null)) as
+    | ReportIssueApiResponse
+    | null;
+
+  if (responseJson && responseJson.success === false) {
+    throw new Error("Issue report was not accepted by the server.");
+  }
+
   return {
-    success: true,
+    success: responseJson?.success ?? true,
     attachedFileName: attachment?.name,
+    issueNumber: responseJson?.issueNumber,
+    issueUrl: responseJson?.issueUrl,
+    uploadId: responseJson?.uploadId ?? null,
+    downloadUrl: responseJson?.downloadUrl ?? null,
   };
 }
