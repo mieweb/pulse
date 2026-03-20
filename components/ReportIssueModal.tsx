@@ -14,7 +14,11 @@ import {
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { SubmitIssueReportResult, submitIssueReport } from "@/utils/reportIssue";
+import {
+  SubmitIssueReportProgress,
+  SubmitIssueReportResult,
+  submitIssueReport,
+} from "@/utils/reportIssue";
 
 interface ReportIssueModalProps {
   visible: boolean;
@@ -31,6 +35,8 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [submittedIssue, setSubmittedIssue] = React.useState<SubmitIssueReportResult | null>(null);
+  const [submitProgress, setSubmitProgress] = React.useState(0);
+  const [submitProgressMessage, setSubmitProgressMessage] = React.useState("");
 
   const canSubmit = React.useMemo(
     () => !!summary.trim() && !!description.trim() && !isSubmitting,
@@ -43,8 +49,30 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
     setIncludeDraftFolder(false);
     setErrorMessage(null);
     setSubmittedIssue(null);
+    setSubmitProgress(0);
+    setSubmitProgressMessage("");
     onClose();
   };
+
+  const handleSubmitProgress = React.useCallback(
+    (progressUpdate: SubmitIssueReportProgress) => {
+      setSubmitProgress(progressUpdate.progress);
+      if (progressUpdate.message) {
+        setSubmitProgressMessage(progressUpdate.message);
+        return;
+      }
+
+      if (progressUpdate.phase === "uploading") {
+        const pct = Math.round(progressUpdate.progress * 100);
+        setSubmitProgressMessage(`Uploading report... ${pct}%`);
+      } else if (progressUpdate.phase === "finalizing") {
+        setSubmitProgressMessage("Finalizing issue report...");
+      } else {
+        setSubmitProgressMessage("Preparing payload...");
+      }
+    },
+    []
+  );
 
   const handleOpenIssueUrl = async () => {
     if (!submittedIssue?.issueUrl) return;
@@ -68,13 +96,15 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
 
     setIsSubmitting(true);
     setErrorMessage(null);
+    setSubmitProgress(0);
+    setSubmitProgressMessage("Preparing payload...");
 
     try {
       const result = await submitIssueReport({
         summary,
         description,
         includeDraftFolder,
-      });
+      }, handleSubmitProgress);
 
       setSubmittedIssue(result);
     } catch (error) {
@@ -214,6 +244,25 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
                 <ThemedText style={styles.checkboxLabel}>Include draft folder</ThemedText>
               </Pressable>
 
+              {isSubmitting ? (
+                <View style={styles.progressContainer}>
+                  <View style={[styles.progressTrack, { backgroundColor: colors.border }]}> 
+                    <View
+                      style={[
+                        styles.progressFill,
+                        {
+                          backgroundColor: colors.appPrimary,
+                          width: `${Math.max(5, Math.round(submitProgress * 100))}%`,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <ThemedText style={[styles.progressText, { color: colors.secondaryText }]}> 
+                    {submitProgressMessage || "Uploading report..."}
+                  </ThemedText>
+                </View>
+              ) : null}
+
               {errorMessage ? (
                 <ThemedText style={[styles.errorText, { color: colors.error }]}> 
                   {errorMessage}
@@ -231,7 +280,12 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
                 ]}
               >
                 {isSubmitting ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <View style={styles.submitProgressInline}>
+                    <ActivityIndicator color="#FFFFFF" />
+                    <ThemedText style={styles.submitButtonText}>
+                      {`${Math.round(submitProgress * 100)}%`}
+                    </ThemedText>
+                  </View>
                 ) : (
                   <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
                 )}
@@ -308,6 +362,23 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     fontSize: 14,
   },
+  progressContainer: {
+    marginTop: 12,
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  progressText: {
+    marginTop: 6,
+    fontSize: 13,
+    fontFamily: "Roboto-Regular",
+  },
   errorText: {
     marginTop: 12,
     fontFamily: "Roboto-Regular",
@@ -342,5 +413,10 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontFamily: "Roboto-Bold",
     fontSize: 16,
+  },
+  submitProgressInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
 });
