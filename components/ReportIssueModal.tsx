@@ -151,7 +151,7 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
           {submittedIssue ? (
             <View>
               <ThemedText style={[styles.successText, { color: colors.text }]}> 
-                {`Success message and issue created : ${submittedIssue.issueNumber ?? "-"}. Thank you for the feedback. We will work on it.`}
+                {`Issue created successfully. Thank you for the feedback. We will work on it.`}
               </ThemedText>
 
               <Pressable
@@ -243,6 +243,12 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
                 </View>
                 <ThemedText style={styles.checkboxLabel}>Include draft folder</ThemedText>
               </Pressable>
+
+              {includeDraftFolder ? (
+                <ThemedText style={[styles.noteText, { color: colors.secondaryText }]}> 
+                  Note: This draft folder will become publicly accessible on GitHub once you upload it.
+                </ThemedText>
+              ) : null}
 
               {isSubmitting ? (
                 <View style={styles.progressContainer}>
@@ -361,6 +367,12 @@ const styles = StyleSheet.create({
   checkboxLabel: {
     marginLeft: 10,
     fontSize: 14,
+  },
+  noteText: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: "Roboto-Regular",
   },
   progressContainer: {
     marginTop: 12,

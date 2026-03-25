@@ -3,7 +3,8 @@ import {
   ReportIssueAttachment,
 } from "@/utils/reportIssueAttachment";
 
-const REPORT_ISSUE_ENDPOINT = "http://localhost:3000/api/report_issue";
+// const REPORT_ISSUE_ENDPOINT = "http://localhost:3000/api/report_issue";
+const REPORT_ISSUE_ENDPOINT = "https://pulse-vault.opensource.mieweb.org/api/report_issue";
 
 const PREPARING_START_PROGRESS = 0;
 const PREPARING_DONE_PROGRESS = 0.35;
@@ -148,11 +149,17 @@ export async function submitIssueReport(
     attachment = await buildDraftsAttachment();
     console.log("2 :::", new Date().toLocaleTimeString());
     if (!attachment) {
-      throw new Error("Failed to create draft attachment.");
+      emitProgress(onProgress, {
+        phase: "preparing-payload",
+        progress: 0.22,
+        message: "No drafts found. Continuing without draft attachment.",
+      });
+      console.log("[ReportIssue] No drafts available; submitting without draft attachment.");
+    } else {
+      console.log("3 :::", new Date().toLocaleTimeString());
+      appendAttachment(formData, attachment);
+      console.log("4 :::", new Date().toLocaleTimeString());
     }
-    console.log("3 :::", new Date().toLocaleTimeString());
-    appendAttachment(formData, attachment);
-    console.log("4 :::", new Date().toLocaleTimeString());
   }
 
   emitProgress(onProgress, {
