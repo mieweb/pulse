@@ -45,11 +45,12 @@
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.11.1",
     "react-native-sortables": "^1.9.2",
-    "react-native-zip-archive": "^7.0.2",
     "react-native-video": "^6.18.0",
     "react-native-video-trimmer-ui": "github:adithya1012/react-native-video-trimmer-ui",
     "react-native-web": "~0.20.0",
-    "react-native-webview": "13.13.5"
+    "react-native-webview": "13.13.5",
+    "react-native-zip-archive": "^7.0.2",
+    "tus-js-client": "^4.3.1"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

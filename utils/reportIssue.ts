@@ -2,9 +2,13 @@ import {
   buildDraftsAttachment,
   ReportIssueAttachment,
 } from "@/utils/reportIssueAttachment";
+import { uploadIssueZipViaTus } from "@/utils/reportIssueTusUpload";
 
 // const REPORT_ISSUE_ENDPOINT = "http://localhost:3000/api/report_issue";
 const REPORT_ISSUE_ENDPOINT = "https://pulse-vault.opensource.mieweb.org/api/report_issue";
+const REPORT_ISSUE_TUS_ENDPOINT = "https://pulse-vault.opensource.mieweb.org/api/report_issue/tus";
+// const REPORT_ISSUE_ENDPOINT = "http://localhost:3000/api/report_issue";
+// const REPORT_ISSUE_TUS_ENDPOINT = "http://localhost:3000/api/report_issue/tus";
 
 const PREPARING_START_PROGRESS = 0;
 const PREPARING_DONE_PROGRESS = 0.35;
@@ -60,14 +64,6 @@ function clampProgress(value: number): number {
   return value;
 }
 
-function appendAttachment(formData: FormData, attachment: ReportIssueAttachment) {
-  formData.append("zip", {
-    uri: attachment.uri,
-    name: attachment.name,
-    type: attachment.type,
-  } as unknown as Blob);
-}
-
 function emitProgress(
   onProgress: SubmitIssueReportProgressCallback | undefined,
   progress: SubmitIssueReportProgress
@@ -79,10 +75,9 @@ function emitProgress(
   });
 }
 
-function postFormDataWithProgress(
+function postFormData(
   url: string,
-  formData: FormData,
-  onProgress?: (loaded: number, total?: number) => void
+  formData: FormData
 ): Promise<{ status: number; responseText: string }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -104,13 +99,23 @@ function postFormDataWithProgress(
       reject(new Error("Issue report upload was aborted."));
     };
 
-    xhr.upload.onprogress = (event: ProgressEvent<EventTarget>) => {
-      const total = event.lengthComputable ? event.total : undefined;
-      onProgress?.(event.loaded, total);
-    };
-
     xhr.send(formData);
   });
+}
+
+function createReportId(): string {
+  return `report-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+}
+
+async function cleanupAttachment(attachment: ReportIssueAttachment | null): Promise<void> {
+  if (!attachment) return;
+
+  try {
+    const fileSystem = await import("expo-file-system");
+    await fileSystem.deleteAsync(attachment.uri, { idempotent: true });
+  } catch {
+    // non-blocking cleanup
+  }
 }
 
 export async function submitIssueReport(
@@ -137,6 +142,8 @@ export async function submitIssueReport(
   const formData = new FormData();
   formData.append("summary", summary);
   formData.append("description", description);
+  const reportId = createReportId();
+  formData.append("reportId", reportId);
 
   let attachment: ReportIssueAttachment | null = null;
   if (input.includeDraftFolder) {
@@ -155,10 +162,6 @@ export async function submitIssueReport(
         message: "No drafts found. Continuing without draft attachment.",
       });
       console.log("[ReportIssue] No drafts available; submitting without draft attachment.");
-    } else {
-      console.log("3 :::", new Date().toLocaleTimeString());
-      appendAttachment(formData, attachment);
-      console.log("4 :::", new Date().toLocaleTimeString());
     }
   }
 
@@ -175,25 +178,69 @@ export async function submitIssueReport(
     message: "Uploading issue report.",
   });
 
-  const { status, responseText } = await postFormDataWithProgress(
-    REPORT_ISSUE_ENDPOINT,
-    formData,
-    (loaded, total) => {
-      const uploadProgress =
-        typeof total === "number" && total > 0 ? loaded / total : 0;
-      const globalProgress =
-        UPLOAD_START_PROGRESS +
-        (UPLOAD_DONE_PROGRESS - UPLOAD_START_PROGRESS) *
-          clampProgress(uploadProgress);
+  if (attachment) {
+    console.log("3 :::", new Date().toLocaleTimeString());
+    const attachmentType = attachment.type || "application/zip";
+    const attachmentName = attachment.name || `issue-report-${Date.now()}.zip`;
 
-      emitProgress(onProgress, {
-        phase: "uploading",
-        progress: globalProgress,
-        loaded,
-        total,
-      });
-    }
-  );
+    const tusUploadResult = await uploadIssueZipViaTus({
+      endpoint: REPORT_ISSUE_TUS_ENDPOINT,
+      fileUri: attachment.uri,
+      fileName: attachmentName,
+      fileType: attachmentType,
+      reportId,
+      onProgress: ({ bytesUploaded, bytesTotal }) => {
+        const uploadProgress =
+          typeof bytesTotal === "number" && bytesTotal > 0
+            ? bytesUploaded / bytesTotal
+            : 0;
+
+        const globalProgress =
+          UPLOAD_START_PROGRESS +
+          (UPLOAD_DONE_PROGRESS - UPLOAD_START_PROGRESS) *
+            clampProgress(uploadProgress);
+
+        emitProgress(onProgress, {
+          phase: "uploading",
+          progress: globalProgress,
+          loaded: bytesUploaded,
+          total: bytesTotal,
+        });
+      },
+      onNotice: (message) => {
+        emitProgress(onProgress, {
+          phase: "uploading",
+          progress: UPLOAD_START_PROGRESS,
+          message,
+        });
+      },
+    });
+
+    formData.append("zipUploadMode", "tus");
+    formData.append("zipFileName", attachmentName);
+    formData.append("zipContentType", attachmentType);
+    formData.append("zipTusUploadId", tusUploadResult.uploadId);
+    formData.append("zipTusUploadUrl", tusUploadResult.uploadUrl);
+
+    emitProgress(onProgress, {
+      phase: "uploading",
+      progress: UPLOAD_DONE_PROGRESS,
+      loaded: 1,
+      total: 1,
+      message: "Upload complete. Submitting report details.",
+    });
+    console.log("4 :::", new Date().toLocaleTimeString());
+  } else {
+    emitProgress(onProgress, {
+      phase: "uploading",
+      progress: UPLOAD_DONE_PROGRESS,
+      loaded: 1,
+      total: 1,
+      message: "Submitting report details.",
+    });
+  }
+
+  const { status, responseText } = await postFormData(REPORT_ISSUE_ENDPOINT, formData);
 
   emitProgress(onProgress, {
     phase: "finalizing",
@@ -227,6 +274,8 @@ export async function submitIssueReport(
     progress: FINALIZING_DONE_PROGRESS,
     message: "Issue report submitted.",
   });
+
+  await cleanupAttachment(attachment);
 
   return {
     success: responseJson?.success ?? true,
