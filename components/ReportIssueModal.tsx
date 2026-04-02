@@ -19,6 +19,9 @@ import {
   SubmitIssueReportResult,
   submitIssueReport,
 } from "@/utils/reportIssue";
+import {
+  notifyBackgroundBugReportResult,
+} from "@/utils/localNotification";
 
 interface ReportIssueModalProps {
   visible: boolean;
@@ -37,13 +40,22 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
   const [submittedIssue, setSubmittedIssue] = React.useState<SubmitIssueReportResult | null>(null);
   const [submitProgress, setSubmitProgress] = React.useState(0);
   const [submitProgressMessage, setSubmitProgressMessage] = React.useState("");
+  const [showBackgroundUploadButton, setShowBackgroundUploadButton] = React.useState(false);
+  const [activeSubmissionToken, setActiveSubmissionToken] = React.useState<string | null>(null);
+  const backgroundEnabledByTokenRef = React.useRef<Map<string, boolean>>(new Map());
+
+  const normalizedSummary = summary.trim();
+  const normalizedDescription = description.trim();
+
+  const canUploadInBackground = showBackgroundUploadButton && isSubmitting;
+  const isBusy = isSubmitting;
 
   const canSubmit = React.useMemo(
-    () => !!summary.trim() && !!description.trim() && !isSubmitting,
-    [description, isSubmitting, summary]
+    () => !!normalizedSummary && !!normalizedDescription && !isSubmitting,
+    [isSubmitting, normalizedDescription, normalizedSummary]
   );
 
-  const resetAndClose = () => {
+  const resetAndClose = React.useCallback(() => {
     setSummary("");
     setDescription("");
     setIncludeDraftFolder(false);
@@ -51,8 +63,10 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
     setSubmittedIssue(null);
     setSubmitProgress(0);
     setSubmitProgressMessage("");
+    setShowBackgroundUploadButton(false);
+    setActiveSubmissionToken(null);
     onClose();
-  };
+  }, [onClose]);
 
   const handleSubmitProgress = React.useCallback(
     (progressUpdate: SubmitIssueReportProgress) => {
@@ -99,31 +113,75 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
     setSubmitProgress(0);
     setSubmitProgressMessage("Preparing payload...");
 
-    try {
-      const result = await submitIssueReport({
-        summary,
-        description,
-        includeDraftFolder,
-      }, handleSubmitProgress);
+    const currentSubmissionToken = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    backgroundEnabledByTokenRef.current.set(currentSubmissionToken, false);
+    setActiveSubmissionToken(currentSubmissionToken);
+    setShowBackgroundUploadButton(includeDraftFolder);
 
-      setSubmittedIssue(result);
+    try {
+      const result = await submitIssueReport(
+        {
+          summary,
+          description,
+          includeDraftFolder,
+        },
+        handleSubmitProgress
+      );
+
+      const shouldNotifyInBackground =
+        backgroundEnabledByTokenRef.current.get(currentSubmissionToken) === true;
+
+      if (shouldNotifyInBackground) {
+        void notifyBackgroundBugReportResult(true, result.issueUrl);
+      } else {
+        setSubmittedIssue(result);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to submit issue report.";
       console.error(error);
-      setErrorMessage(message);
+
+      const shouldNotifyInBackground =
+        backgroundEnabledByTokenRef.current.get(currentSubmissionToken) === true;
+
+      if (shouldNotifyInBackground) {
+        void notifyBackgroundBugReportResult(false);
+      } else {
+        setErrorMessage(message);
+      }
     } finally {
+      backgroundEnabledByTokenRef.current.delete(currentSubmissionToken);
+      setShowBackgroundUploadButton(false);
+      setActiveSubmissionToken(null);
       setIsSubmitting(false);
     }
   };
+
+  const handleUploadInBackground = React.useCallback(() => {
+    if (!canUploadInBackground || !activeSubmissionToken) {
+      return;
+    }
+
+    backgroundEnabledByTokenRef.current.set(activeSubmissionToken, true);
+    resetAndClose();
+  }, [activeSubmissionToken, canUploadInBackground, resetAndClose]);
 
   return (
     <Modal
       animationType="fade"
       transparent
       visible={visible}
-      onRequestClose={resetAndClose}
+      onRequestClose={() => {
+        if (isBusy) return;
+        resetAndClose();
+      }}
     >
-      <Pressable style={styles.backdrop} onPress={resetAndClose}>
+      <Pressable
+        style={styles.backdrop}
+        onPress={() => {
+          if (isBusy) return;
+          resetAndClose();
+        }}
+      >
         <Pressable
           style={[
             styles.modalCard,
@@ -140,7 +198,7 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
             </ThemedText>
             <Pressable
               accessibilityLabel="Close report issue form"
-              disabled={isSubmitting}
+              disabled={isBusy}
               onPress={resetAndClose}
               style={styles.closeButton}
             >
@@ -275,27 +333,47 @@ export function ReportIssueModal({ visible, onClose }: ReportIssueModalProps) {
                 </ThemedText>
               ) : null}
 
-              <Pressable
-                disabled={!canSubmit}
-                onPress={handleSubmit}
-                style={[
-                  styles.submitButton,
-                  {
-                    backgroundColor: canSubmit ? colors.appPrimary : colors.border,
-                  },
-                ]}
-              >
-                {isSubmitting ? (
-                  <View style={styles.submitProgressInline}>
-                    <ActivityIndicator color="#FFFFFF" />
-                    <ThemedText style={styles.submitButtonText}>
-                      {`${Math.round(submitProgress * 100)}%`}
-                    </ThemedText>
-                  </View>
-                ) : (
-                  <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
-                )}
-              </Pressable>
+              <View style={styles.footerButtons}>
+                {showBackgroundUploadButton ? (
+                  <Pressable
+                    disabled={!canUploadInBackground}
+                    onPress={handleUploadInBackground}
+                    style={[
+                      styles.secondaryFooterButton,
+                      {
+                        borderColor: canUploadInBackground ? colors.selection : colors.border,
+                        backgroundColor: colors.background,
+                        opacity: canUploadInBackground ? 1 : 0.6,
+                      },
+                    ]}
+                  >
+                    <ThemedText style={[styles.secondaryButtonText, { color: colors.selection }]}>Upload in Background</ThemedText>
+                  </Pressable>
+                ) : null}
+
+                <Pressable
+                  disabled={!canSubmit}
+                  onPress={handleSubmit}
+                  style={[
+                    styles.submitButton,
+                    showBackgroundUploadButton ? styles.footerButtonHalf : null,
+                    {
+                      backgroundColor: canSubmit ? colors.appPrimary : colors.border,
+                    },
+                  ]}
+                >
+                  {isSubmitting ? (
+                    <View style={styles.submitProgressInline}>
+                      <ActivityIndicator color="#FFFFFF" />
+                      <ThemedText style={styles.submitButtonText}>
+                        {`${Math.round(submitProgress * 100)}%`}
+                      </ThemedText>
+                    </View>
+                  ) : (
+                    <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
+                  )}
+                </Pressable>
+              </View>
             </>
           )}
         </Pressable>
@@ -413,6 +491,23 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontFamily: "Roboto-Bold",
     fontSize: 15,
+  },
+  footerButtons: {
+    marginTop: 14,
+    flexDirection: "row",
+    gap: 10,
+  },
+  secondaryFooterButton: {
+    flex: 1,
+    borderWidth: 1,
+    height: 46,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  footerButtonHalf: {
+    flex: 1,
+    marginTop: 0,
   },
   submitButton: {
     marginTop: 14,

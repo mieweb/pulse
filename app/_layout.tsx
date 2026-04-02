@@ -16,6 +16,10 @@ import { PermissionMonitor } from "@/components/PermissionMonitor";
 import { ReportIssueFab } from "@/components/ReportIssueFab";
 import { ReportIssueModal } from "@/components/ReportIssueModal";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import {
+  BUG_REPORT_NOTIFICATION_OPEN_ACTION,
+  openBugReportNotificationUrl,
+} from "@/utils/localNotification";
 import { storeUploadConfigForDraft } from "@/utils/uploadConfig";
 import { addDestination } from "@/utils/uploadDestinations";
 
@@ -114,6 +118,56 @@ export default function RootLayout() {
       cancelled = true;
     };
   }, [router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let subscription: { remove: () => void } | null = null;
+
+    const setupNotifications = async () => {
+      const Notifications = await import("expo-notifications");
+
+      const handleResponse = async (response: {
+        actionIdentifier: string;
+        notification: {
+          request: {
+            content: {
+              data?: {
+                issueUrl?: string | null;
+              };
+            };
+          };
+        };
+      }) => {
+        if (cancelled) return;
+
+        const issueUrl = response.notification.request.content.data?.issueUrl;
+        if (!issueUrl) return;
+
+        if (
+          response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER ||
+          response.actionIdentifier === BUG_REPORT_NOTIFICATION_OPEN_ACTION
+        ) {
+          await openBugReportNotificationUrl(issueUrl);
+        }
+      };
+
+      subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+        void handleResponse(response);
+      });
+
+      const lastResponse = await Notifications.getLastNotificationResponseAsync();
+      if (lastResponse) {
+        await handleResponse(lastResponse as never);
+      }
+    };
+
+    void setupNotifications();
+
+    return () => {
+      cancelled = true;
+      subscription?.remove();
+    };
+  }, []);
 
   if (!loaded) {
     // Async font loading only occurs in development.
