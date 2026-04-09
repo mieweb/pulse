@@ -1,2 +1,0 @@
-# For parsing IRB Word documents
-python-docx>=1.1.0
