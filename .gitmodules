@@ -6,3 +6,7 @@
 	path = pulse-vault
 	url = https://github.com/mieweb/PulseVault.git
 	branch = main
+[submodule "PurdueThesis"]
+	path = PurdueThesis
+	url = https://github.com/morepriyam/PurdueThesis.git
+	branch = main
