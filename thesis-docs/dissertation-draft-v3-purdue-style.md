@@ -1,718 +1,335 @@
-# DESIGN AND IMPLEMENTATION OF PULSEVAULT:
-# A SECURE VIDEO-FIRST PLATFORM FOR INSTITUTIONAL KNOWLEDGE CAPTURE
+# DESIGN AND IMPLEMENTATION OF PULSEVAULT
 
-by
-Priyam More
+## Quick-Read Thesis Companion (Synced to current `PurdueThesis` chapters)
 
-A Thesis
-Submitted to the Faculty of Purdue University
-In Partial Fulfillment of the Requirements for the degree of
-Master of Science in Computer Science
-
-Department of Computer Science
-Fort Wayne, Indiana
-2026
+**Author:** Priyam More  
+**Degree:** Master of Science in Computer Science  
+**Institution:** Purdue University Fort Wayne  
+**Year:** 2026  
+**Citation style:** APA 7th edition (author-date)
 
 ---
 
-# THE PURDUE UNIVERSITY GRADUATE SCHOOL
-# STATEMENT OF COMMITTEE APPROVAL
+## 1-Minute Read
 
-Dr. Adolfo Coronado, Co-Chair
-Department of Computer Science
+This thesis argues that institutions need a **secure, operable, reproducible video pipeline** for procedural knowledge, and that this can be defended as a systems artifact through:
 
-Dr. MD Romael Haque, Co-Chair
-Department of Computer Science
+1. **Architecture rationale** (decision, alternatives, criteria, trade-off).
+2. **Implementation traceability** (direct mapping to routes/workers/libs).
+3. **Bounded technical validation** (correctness checks without overclaiming adoption outcomes).
 
-Jay Johns
-Department of Computer Science
+The core architecture decisions are:
 
-Approved by:
-Dr. MD Romael Haque
-
----
-
-# DEDICATION
-
-To my family.
+- Resumable ingest + explicit finalize boundary.
+- Queue-mediated async transcoding.
+- HLS + short-lived signed token access.
+- Gateway trust-zone enforcement.
+- Crash-consistent disk-first metadata.
+- Tamper-evident audit chain logging.
+- Segment-based mobile draft workflow.
 
 ---
 
-# ACKNOWLEDGMENTS
+## Abstract (Quick)
 
-I thank my advisor and committee members for their guidance, feedback, and encouragement. Their support made it possible to frame this work as a rigorous systems dissertation rather than only an implementation report.
+Institutions lose procedural knowledge when expertise remains tacit or fragmented. Pulse/PulseVault is presented as a **design-rationale systems artifact**: a mobile capture client plus secure backend pipeline for ingesting, processing, and delivering short-form institutional video.
 
-I also thank colleagues and collaborators who provided technical feedback during the design and deployment of Pulse and PulseVault.
-
-I am deeply grateful to my family for their patience and support throughout this process.
+The contribution is not product novelty alone; it is the explicit rationale chain grounded in standards/literature, traceability to implementation, and bounded validation checks. Claims are intentionally limited to architecture coherence and technical plausibility. Large-scale user outcomes are deferred.
 
 ---
 
-**Citation style:** APA 7th edition (author-date).
+## CHAPTER 1. INTRODUCTION (Quick)
+
+### Problem
+
+How should institutions design and justify a secure short-form procedural video system when full human-subject evaluation is out of current scope?
+
+### Research Objectives
+
+1. Design coherent end-to-end architecture.
+2. Provide explicit rationale with alternatives/trade-offs.
+3. Demonstrate implementation traceability.
+4. Provide bounded technical validation.
+
+### Research Questions
+
+- **RQ1:** Best architecture pattern under institutional constraints?
+- **RQ2:** How to justify decisions with explicit trade-offs?
+- **RQ3:** How to map rationale to code-level implementation?
+- **RQ4:** What bounded checks are enough for plausibility?
+
+### Scope Boundary
+
+In scope: architecture + traceability + bounded technical checks.  
+Out of scope: adoption impact, universal video superiority claims, generalized ROI.
 
 ---
 
-## ABSTRACT
+## CHAPTER 2. LITERATURE REVIEW (Decision-Relevant)
 
-Institutions routinely lose procedural knowledge when expertise remains tacit, fragmented, or weakly externalized. Text-based documentation remains necessary for policy and reference content, but often undercaptures temporal, visual, and tool-mediated details required for procedural transfer (Nonaka, 1994; Davenport & Prusak, 1998). This thesis presents Pulse and PulseVault as a research-informed systems artifact: a mobile-first capture client and secure backend pipeline for ingesting, processing, and delivering short-form institutional knowledge video.
-
-The thesis contribution is structured around design rationale rather than product demonstration. First, it provides a literature-grounded architecture argument for key decisions, including resumable ingest, explicit finalize boundaries, asynchronous transcoding, adaptive HTTP delivery, tokenized media access, gateway policy, and observability. Second, it maps these decisions to concrete implementation evidence in the current codebase. Third, it provides bounded technical validation checks that establish implementation correctness envelopes while explicitly deferring large-scale human-subject and organizational adoption studies to future work.
-
-Methodologically, the thesis follows design-science expectations for artifact-oriented information systems research by making the rationale chain explicit, grounding decisions in standards and high-quality references, and documenting trade-offs and non-claims (Hevner et al., 2004). Core claims are supported by standards-track and foundational sources, including RFC 8216 (HLS), RFC 6749 and RFC 9700 (OAuth), the tus resumable upload protocol, NIST SP 800-66r2, and reliability/observability practice literature.
-
-**Keywords:** institutional knowledge, design rationale, software architecture, resumable upload, HLS, OAuth, observability, secure media systems
-
----
-
-## CHAPTER 1. INTRODUCTION
-
-### 1.1 Background and Context
-
-Organizations depend on procedural knowledge for onboarding, incident recovery, and routine operations. In many environments, this knowledge is spread across documents, chat, tickets, and verbal guidance. The result is frequent rediscovery costs, inconsistent procedure execution, and avoidable delays when expertise is unavailable.
-
-Knowledge management theory distinguishes tacit and explicit knowledge and emphasizes the need for systematic externalization pathways (Nonaka, 1994). Practice-oriented work further shows that institutional capability is constrained when operational know-how remains person-bound rather than durable and transferable (Davenport & Prusak, 1998).
-
-### 1.2 Problem Statement and Research Objectives
-
-This thesis addresses the following problem:
-
-How should an institution design and justify a secure, operable, and reproducible short-form video system for procedural knowledge capture and delivery, when full-scale human-subject evaluation is out of current scope?
-
-The objectives are:
-
-1. Design a coherent end-to-end architecture for capture, ingest, processing, delivery, and operations.
-2. Provide explicit decision rationale with alternatives and trade-offs.
-3. Demonstrate implementation traceability to the argued architecture.
-4. Provide bounded technical validation and clearly separate deferred empirical claims.
-
-### 1.3 Significance of the Study
-
-The significance is methodological and practical:
-
-- Methodological: it demonstrates how to produce a defendable systems dissertation using design-rationale rigor and bounded technical validation.
-- Practical: it provides an implementation blueprint for institutions that need self-hosted, security-aware video workflows without adopting consumer platform assumptions.
-
-### 1.4 Overview of Methodological Approach
-
-The thesis follows design-science principles where artifact creation, grounding, and evaluation are treated as a coherent research process (Hevner et al., 2004). Architectural decisions are documented using a decision template: decision, alternatives, criteria, evidence, and accepted trade-offs.
-
-### 1.5 Structure of the Thesis
-
-- Chapter 1 introduces context, objectives, and scope.
-- Chapter 2 synthesizes literature and standards used for decision grounding.
-- Chapter 3 defines the design-rationale method and validation boundaries.
-- Chapter 4 presents system design, implementation traceability, and minimal technical validation.
-- Chapter 5 discusses implications, threats, and non-claims.
-- Chapter 6 concludes and defines future work.
-
-### 1.6 Chapter Progression Logic
-
-The chapter sequence is intentionally cumulative. Chapter 2 establishes decision-relevant knowledge, Chapter 3 defines how decisions are justified and bounded, and Chapter 4 provides architecture plus implementation traceability. Chapters 5 and 6 then interpret implications and delimit future claims.
+| Theme                     | Anchor                               | Design Impact                                   |
+| ------------------------- | ------------------------------------ | ----------------------------------------------- |
+| Knowledge externalization | Nonaka; Davenport & Prusak           | Treat capture as infrastructure, not formatting |
+| Multimedia cognition      | Mayer                                | Support short/segmented procedural media        |
+| Mobile heterogeneity      | Mobile CSCW constraints              | Keep edge capture simple; normalize server-side |
+| Resumable ingest          | tus protocol                         | Reliability under unstable networks             |
+| Adaptive delivery         | RFC 8216 (HLS)                       | Interoperable adaptive playback                 |
+| Auth/security             | RFC 6749 + RFC 9700                  | Scoped token and hardened access posture        |
+| Regulated framing         | NIST SP 800-66r2; HHS HIPAA guidance | Compliance-aligned control language             |
+| Reliability/observability | Google SRE; Prometheus docs          | Telemetry as first-class architecture           |
 
 ---
 
-## CHAPTER 2. LITERATURE REVIEW
+## CHAPTER 3. METHODOLOGY (Quick)
 
-### 2.1 Overview
+### 3-Layer Method
 
-This review is organized around decision-relevant themes, not an encyclopedic bibliography. Each subsection supports architectural reasoning used later in Chapter 4.
+1. Design-rationale records.
+2. Implementation traceability.
+3. Bounded technical validation.
 
-### 2.1.1 Inclusion Logic for Sources
+### Scope Control Rule
 
-Sources are prioritized by claim-bearing quality: standards-track references, foundational peer-reviewed work, and high-confidence technical guidance. Contextual sources are used only when they do not carry central architectural claims.
+A claim is allowed only if it is:
 
-### 2.2 Organizational Knowledge and Externalization
+- grounded in standards/high-confidence literature, and/or
+- traceable to concrete implementation evidence.
 
-Nonaka (1994) and Davenport and Prusak (1998) provide the conceptual basis for treating procedural knowledge capture as an infrastructure problem, not only a documentation formatting problem.
+### Validation Domains
 
-Design consequence: capture workflows must minimize friction and preserve context-rich procedural signals.
+- Upload/finalize correctness.
+- Transcode lifecycle correctness.
+- Token/path access control correctness.
+- Observability pathway availability.
 
-### 2.3 Procedural Learning and Video as Medium
-
-Mayer (2005, 2009) offers a bounded theoretical basis for multimedia learning: dual-channel processing, limited capacity, and active integration. Kumar et al. (2024) report positive effects of video-based interventions in health-education contexts, with caution regarding heterogeneity and bias.
-
-Design consequence: short-form video is justified as a plausible medium, but claims should remain bounded to architecture readiness and technical feasibility unless stronger domain-matched evidence is produced.
-
-### 2.4 Mobile Capture and Cross-Platform Constraints
-
-Mobile CSCW and groupware literature identifies heterogeneity, resource variance, and deployment constraints across clients (Johnson, 2013).
-
-Architectural consequence: capture responsibilities should remain client-friendly while normalization and delivery standardization occur server-side.
-
-### 2.5 Media Ingest, Streaming, and Pipeline Standards
-
-The tus protocol defines resumable upload semantics over HTTP. RFC 8216 defines HLS playlist and segment behavior for adaptive delivery.
-
-Architectural consequence: reliable ingest under unstable connectivity and adaptive playback can be justified with standards-based architecture rather than platform-specific ad hoc patterns.
-
-### 2.6 Security, Identity, and Regulated Context Framing
-
-RFC 6749 provides OAuth 2.0 framework baseline, while RFC 9700 provides modern security best current practice updates. NIST SP 800-66r2 and HHS HIPAA Security Rule resources provide implementation-oriented compliance framing for systems handling sensitive health-adjacent data.
-
-Architectural consequence: identity, tokenization, and gateway policy should be treated as first-class architectural decisions.
-
-### 2.7 Observability and Reliability Operations
-
-Google SRE and Prometheus documentation emphasize explicit telemetry, operational diagnostics, and reliability-oriented measurement.
-
-Architectural consequence: observability must be embedded in architecture and validation planning, not added after deployment.
-
-### 2.8 Architecture Rationale and Research Positioning
-
-Software architecture practice highlights quality-attribute trade-offs and stakeholder communication needs (Bass et al., 2012; Kruchten, 1995). Design-science framing requires explicit contribution articulation and evaluation boundaries (Hevner et al., 2004).
-
-Implication for this thesis: explicit rationale is part of the research output.
-
-### 2.9 Research Gap
-
-Existing literature provides components of the problem space, but fewer works present an integrated, standards-grounded, institution-oriented short-form video architecture with explicit design rationale and implementation traceability.
-
-This thesis addresses that integration gap.
-
-### 2.10 Summary of Literature-to-Decision Mapping
-
-| Decision Theme | Primary Literature Anchor | Design Relevance |
-|---|---|---|
-| Artifact and rationale method | Hevner et al. (2004); Bass et al. (2012) | Justifies rationale-first dissertation method |
-| Resumable ingest | tus protocol | Supports reliability under unstable networks |
-| Adaptive delivery | RFC 8216 | Standard basis for HLS playback architecture |
-| Identity and token security | RFC 6749; RFC 9700 | Framework and hardening baseline |
-| Compliance framing | NIST SP 800-66r2; HHS guidance | Regulated-context control language |
-| Observability | Google SRE; Prometheus docs | Reliability and operational diagnosability |
+| Validation Domain | Check Type                   | Evidence Source                             | Scope    |
+| ----------------- | ---------------------------- | ------------------------------------------- | -------- |
+| Upload/finalize   | State transition correctness | Backend routes + sidecar writes             | In scope |
+| Transcode         | Queue-worker lifecycle       | Worker + Redis logic                        | In scope |
+| Access control    | Token/path safety            | Media route + gateway policy                | In scope |
+| Observability     | Metrics/log availability     | Prometheus/Loki/Grafana configs + endpoints | In scope |
+| Human outcomes    | Adoption/usability impact    | Not finalized                               | Deferred |
 
 ---
 
-## CHAPTER 3. METHODOLOGY
+## CHAPTER 4. SYSTEM DESIGN + MINIMAL TECHNICAL VALIDATION
 
-### 3.1 Overview
+### 4.1 End-to-End Architecture (Concise)
 
-The methodology contains three layers:
+**Subsystems:** mobile app, Fastify backend, Redis queue, transcode worker (FFmpeg/ffprobe), Nginx gateway, authenticated frontend, observability stack, filesystem + metadata sidecars.
 
-1. Design-rationale method for architecture decisions.
-2. Implementation traceability method to connect decisions to code/system behavior.
-3. Minimal technical validation method to test core system properties without overclaiming human-subject outcomes.
-
-### 3.1.1 Scope Control Rule
-
-Any claim included in Chapters 4 and 5 must satisfy one of the following:
-
-1. directly supported by standards or high-confidence literature and
-2. traceable to implementation evidence in the repository.
-
-Claims failing this rule are moved to future work or contextual notes.
-
-### 3.2 Design-Rationale Method
-
-Each major decision is documented with:
-
-- Decision statement
-- Alternatives considered
-- Decision criteria
-- Literature/standards backing
-- Trade-offs accepted
-
-This structure aligns with architecture decision quality practices and design-science expectations.
-
-### 3.3 Claim Boundary and Non-Claims
-
-In-scope claims:
-
-- Architecture coherence and rationale quality.
-- Implementation traceability for key subsystems.
-- Bounded technical checks for reliability/security pathways.
-
-Out-of-scope claims:
-
-- Large-scale user adoption outcomes.
-- Broad video-versus-text performance superiority.
-- Generalized organizational ROI.
-
-### 3.4 Data and Evidence Protocol
-
-Evidence sources:
-
-- Repository implementation artifacts.
-- Deployment architecture/configuration files.
-- Standards and peer-reviewed references.
-- Reproducible technical checks.
-
-### 3.5 Minimal Technical Validation Procedure
-
-Validation focuses on four check families:
-
-1. Upload/finalize correctness.
-2. Async transcode lifecycle correctness.
-3. Signed URL and access control checks.
-4. Operational visibility checks (metrics/logs availability).
-
-### 3.6 Validity, Limitations, and Reproducibility
-
-- Internal validity strengthened through standards-grounded decision criteria and code traceability.
-- External validity is intentionally bounded.
-- Reproducibility is supported by explicit component paths and service-level flow descriptions.
-
-### 3.7 Validation Matrix Template
-
-| Validation Domain | Check Type | Evidence Source | Current Scope |
-|---|---|---|---|
-| Upload/finalize | Protocol and state transition correctness | Backend routes + metadata sidecar writes | In scope |
-| Transcode pipeline | Queue-to-worker lifecycle correctness | Worker + Redis queue logic | In scope |
-| Access control | Token verification and path safety | Media route checks + gateway policy | In scope |
-| Observability | Metrics/log pathways available | Prometheus/Loki/Grafana config + endpoints | In scope |
-| Human outcomes | User adoption/usability change | Not collected in final form | Deferred |
+**Flow:** capture/upload -> resumable ingest -> explicit finalize -> async transcode -> tokenized playback -> monitored operation.
 
 ---
 
-## CHAPTER 4. SYSTEM DESIGN AND MINIMAL TECHNICAL VALIDATION RESULTS
-
-### 4.1 Overview
-
-This chapter presents the architecture, rationale, implementation mapping, and minimal technical validation checks for Pulse/PulseVault.
-
-### 4.1.1 Chapter Reading Guide
-
-Sections 4.2-4.9 document the design rationale. Section 4.10 reports bounded technical validation checks. Section 4.11 explicitly separates proven statements from deferred work to avoid inference overreach.
-
-### 4.2 End-to-End Architecture
-
-The platform includes:
-
-- Pulse mobile capture client.
-- PulseVault backend (Fastify routes/plugins).
-- Redis-backed queue for transcode jobs.
-- Worker pipeline (FFmpeg/ffprobe).
-- Nginx gateway.
-- Frontend layer for authenticated web interactions.
-- Observability stack (Prometheus/Grafana/Loki).
-- Filesystem storage with per-video metadata sidecars.
-
-#### 4.2.1 Trust-Zone View
-
-- Public zone: browser/mobile clients via gateway.
-- Application zone: backend and frontend service logic.
-- Internal processing zone: queue/worker pipeline.
-- Storage and telemetry zone: media store, metadata, logs, metrics.
-
-#### 4.2.2 Data-Flow View
-
-1. capture or upload initiation
-2. resumable ingest
-3. explicit finalize
-4. async transcode
-5. tokenized playback request
-6. monitored operation
-
-#### 4.2.3 Deployment View
-
-The implementation is containerized and service-separated, supporting reproducibility and subsystem isolation.
-
-### 4.3 Design Decision A: Resumable Ingest and Explicit Finalize
-
-**Decision:** use resumable upload semantics and a separate finalize step.
-
-**Alternatives:** single-shot upload; implicit finalize at upload completion.
-
-**Rationale:** better interruption tolerance, clearer failure boundaries, explicit commit transition.
-
-**Implementation evidence:**
-
-- `pulse-vault/pulsevault/routes/uploads.js` initializes `@tus/server` with `FileStore`.
-- `/uploads/finalize` validates token, enforces draft/video identity, moves file, computes checksum, writes metadata, enqueues transcode.
-
-#### 4.3.1 Decision Table
-
-| Element | Detail |
-|---|---|
-| Decision | Resumable ingest + explicit finalize endpoint |
-| Alternatives | Single-shot upload; implicit finalize |
-| Primary criteria | Reliability, recoverability, explicit state boundaries |
-| Trade-off | More control-plane complexity for clearer commit semantics |
-
-### 4.4 Design Decision B: Asynchronous Transcode Pipeline
-
-**Decision:** isolate transcode in worker process with queue mediation.
-
-**Alternatives:** synchronous transcode in API path; monolithic process.
-
-**Rationale:** protects ingest latency and enables horizontal worker scaling.
-
-**Implementation evidence:**
-
-- `pulse-vault/pulsevault/plugins/redis.js` queue keying.
-- `pulse-vault/pulsevault/workers/transcode-worker.js` `BRPOP` loop, rendition generation, metadata update.
-
-#### 4.4.1 Decision Table
-
-| Element | Detail |
-|---|---|
-| Decision | Queue-backed worker transcoding |
-| Alternatives | Synchronous transcode in request path |
-| Primary criteria | API responsiveness, scaling, operational separation |
-| Trade-off | Eventual consistency until transcode completion |
-
-### 4.5 Design Decision C: Adaptive Delivery and Tokenized Access
-
-**Decision:** HLS delivery with short-lived HMAC tokenization.
-
-**Alternatives:** static public URLs; long-lived direct media links.
-
-**Rationale:** standards-aligned adaptive delivery with bounded capability access.
-
-**Implementation evidence:**
-
-- `pulse-vault/pulsevault/routes/media.js` signs `videoId:path:expiresAt`, verifies token, rewrites playlist URLs with tokenized segment URLs, supports range streaming.
-
-#### 4.5.1 Decision Table
-
-| Element | Detail |
-|---|---|
-| Decision | HLS + short-lived signed URLs |
-| Alternatives | Public static links; long-lived URLs |
-| Primary criteria | Bounded access, interoperability, adaptive delivery |
-| Trade-off | Token issuance/validation overhead |
-
-### 4.6 Design Decision D: Gateway Policy and Trust-Zone Separation
-
-**Decision:** edge proxy enforces route behavior and separates signing from public media retrieval.
-
-**Implementation evidence:**
-
-- `pulse-vault/nginx/conf.d/pulsevault-locations.conf` blocks unsafe public access paths and fronts upload/media routing.
-
-#### 4.6.1 Endpoint Security Traceability
-
-| Surface | Control | Intended Effect |
-|---|---|---|
-| `/uploads` | gateway forwarding + backend validation | controlled ingest path |
-| `/media/sign` | restricted/segmented access policy | prevent broad public signing exposure |
-| `/media/videos/...` | token checks + path validation | bounded media retrieval |
-
-### 4.7 Design Decision E: Disk-First Metadata with Atomic Durability
-
-**Decision:** sidecar metadata as local source-of-truth with atomic write protocol.
-
-**Rationale:** recoverability, inspectability, and crash-consistency-aware state transitions.
-
-**Implementation evidence:**
-
-- `pulse-vault/pulsevault/lib/metadata-writer.js` writes temp file, fsyncs file, atomically renames, fsyncs directory.
-
-#### 4.7.1 Durability Sequence
-
-1. serialize stable metadata
-2. write temp file
-3. fsync temp file
-4. atomic rename to canonical metadata path
-5. fsync parent directory
-
-This sequence is aligned with crash-consistency guidance for avoiding partial-state visibility after failure events.
-
-### 4.8 Design Decision F: Tamper-Evident Audit Logging
-
-**Decision:** append-only hash-chained audit entries.
-
-**Rationale:** integrity signaling for post-event review and operational accountability.
-
-**Implementation evidence:**
-
-- `pulse-vault/pulsevault/lib/audit-logger.js` stores `prevHash` and `hash`, includes chain verification routine.
-
-#### 4.8.1 Integrity Logic
-
-Each entry links to the previous entry hash, creating an append-only chain where undetected modification requires chain reconstruction. This supports integrity signaling and post-event audit confidence within system limits.
-
-### 4.9 Design Decision G: Mobile Draft and Segment Workflow
-
-**Decision:** segment-based, non-destructive client draft model prior to final export/upload.
-
-**Rationale:** capture/edit flexibility without destructive source mutation during authoring.
-
-**Implementation evidence:**
-
-- `app/(camera)/shorts.tsx` segmented capture, trim-aware effective duration, draft mode handling.
-- `utils/draftStorage.ts` AsyncStorage draft persistence with metadata.
-- `utils/tusUpload.ts` upload session creation, chunked patching, finalize call.
-
-#### 4.9.1 Client Workflow Trace
-
-1. segmented capture and edit actions
-2. draft persistence and recovery
-3. export/upload transition
-4. resumable transfer and finalize
-
-### 4.10 Minimal Technical Validation (Bounded)
-
-#### 4.10.1 Upload/Finalize Path Checks
-
-Observed implementation properties:
-
-- Upload session creation and chunked transfer endpoints exist.
-- Finalize enforces upload token policy (configurable), draft-to-video identity binding, checksum computation, and metadata write.
-
-Result table (to fill with your run evidence):
-
-| Check | Expected | Observed | Notes |
-|---|---|---|---|
-| Upload session creation | session id issued | [fill] | |
-| Chunk patch acceptance | offset advances | [fill] | |
-| Finalize state transition | uploaded metadata committed | [fill] | |
-
-Validation interpretation:
-
-- Confirms architectural intent for reliable ingest and explicit commit boundaries.
-- Does not by itself quantify large-sample field reliability.
-
-#### 4.10.2 Transcode Lifecycle Checks
-
-Observed implementation properties:
-
-- Queue dequeue and job execution loop implemented.
-- Rendition selection and playlist generation logic implemented.
-- Metadata status transitions (`uploaded` to `transcoded` / failure states) implemented.
-
-Result table (to fill with your run evidence):
-
-| Check | Expected | Observed | Notes |
-|---|---|---|---|
-| Queue dequeue | job consumed by worker | [fill] | |
-| Rendition outputs | playlists + segments generated | [fill] | |
-| Metadata update | transcoded fields written | [fill] | |
-
-Validation interpretation:
-
-- Confirms asynchronous lifecycle behavior and state update plumbing.
-- Throughput and scale saturation remain future benchmarking tasks.
-
-#### 4.10.3 Token and Access-Control Checks
-
-Observed implementation properties:
-
-- HMAC signing and expiry validation implemented.
-- Path traversal checks implemented.
-- Playlist rewriting ensures child media requests include signed paths.
-
-Result table (to fill with your run evidence):
-
-| Check | Expected | Observed | Notes |
-|---|---|---|---|
-| Expired token request | denied | [fill] | |
-| Tampered signature | denied | [fill] | |
-| Valid token path | served | [fill] | |
-
-Validation interpretation:
-
-- Confirms bounded-token access mechanism behavior.
-- Formal adversarial security evaluation is out of current scope.
-
-#### 4.10.4 Observability Availability Checks
-
-Observed implementation properties:
-
-- Prometheus scrape endpoint and ecosystem config present.
-- Audit logs and log shipping configs present.
-
-Result table (to fill with your run evidence):
-
-| Check | Expected | Observed | Notes |
-|---|---|---|---|
-| `/metrics` exposure | scrape-ready endpoint | [fill] | |
-| Log file emission | access/upload/transcode entries | [fill] | |
-| Dashboard pipeline | metric/log ingestion available | [fill] | |
-
-Validation interpretation:
-
-- Confirms architecture supports operational telemetry pathways.
-- SLO calibration and long-window operational analytics remain future work.
-
-### 4.11 Summary: Proven vs Deferred
-
-Proven in this thesis scope:
-
-- Coherent architecture rationale chain.
-- Concrete implementation traceability.
-- Minimal correctness checks for key pathways.
-
-Deferred:
-
-- Full empirical user studies.
-- Broad adoption outcome claims.
-- Large-scale comparative evaluation.
-
-### 4.12 Figure and Table Index for Chapter 4
-
-Planned figures:
-
-1. End-to-end architecture diagram
-2. Upload and finalize sequence diagram
-3. Worker pipeline lifecycle diagram
-4. Signed URL and playlist rewrite flow
-5. Gateway trust-zone route map
-
-Planned tables:
-
-1. Decision table A (ingest/finalize)
-2. Decision table B (transcode)
-3. Decision table C (delivery/access)
-4. Endpoint security traceability table
-5. Validation result tables (4 sets)
+### 4.2 Decision A: Resumable Ingest + Explicit Finalize
+
+| Element      | Detail                                                |
+| ------------ | ----------------------------------------------------- |
+| Decision     | Resumable ingest + separate finalize endpoint         |
+| Alternatives | Single-shot upload; implicit finalize                 |
+| Criteria     | Reliability, recoverability, explicit commit boundary |
+| Trade-off    | Added control-plane complexity                        |
+
+**Implementation evidence:** `pulse-vault/pulsevault/routes/uploads.js`, `/uploads/finalize` logic.
 
 ---
 
-## CHAPTER 5. DISCUSSION AND IMPLICATIONS
+### 4.3 Decision B: Async Queue-Based Transcoding
 
-### 5.1 Overview
+| Element      | Detail                                              |
+| ------------ | --------------------------------------------------- |
+| Decision     | Worker-based queue-mediated transcode               |
+| Alternatives | Sync transcode in API path                          |
+| Criteria     | API responsiveness, scaling, operational separation |
+| Trade-off    | Eventual consistency delay                          |
 
-This chapter interprets the design and validation outcomes against research objectives while preserving scope discipline.
-
-### 5.2 Design Trade-Offs by Research Objective
-
-#### Objective 1: Architecture Coherence
-
-The architecture prioritizes separation of concerns: capture, ingest, processing, delivery, and observability. This improves modularity and evolvability but increases deployment coordination complexity.
-
-#### Objective 2: Explicit Rationale
-
-Decision transparency is improved by standards-backed justifications and alternative analysis. The cost is added documentation overhead that must be maintained as implementation evolves.
-
-#### Objective 3: Implementation Traceability
-
-Repository-level evidence supports a strong traceability narrative. The risk is drift if undocumented changes occur after thesis freeze.
-
-#### Objective 4: Bounded Validation
-
-Minimal technical checks establish system plausibility and implementation consistency. They do not establish generalized organizational impact.
-
-### 5.3 Discussion by Research Question
-
-#### 5.3.1 RQ1 (Architecture Synthesis)
-
-The architecture demonstrates coherent subsystem boundaries for capture, ingest, process, and delivery with explicit governance points.
-
-#### 5.3.2 RQ2 (Rationale and Trade-Offs)
-
-The dissertation makes alternatives explicit for each major decision and records accepted trade-offs.
-
-#### 5.3.3 RQ3/RQ4 (Technical Validation and Protocol)
-
-Bounded checks establish baseline correctness but intentionally do not claim population-level operational statistics.
-
-### 5.4 Practical Implications for Institutional Deployments
-
-- Institutions can adapt this architecture where secure procedural media workflows are needed.
-- Tokenized delivery and explicit finalize boundaries are useful control points for governance.
-- Observability should be considered deployment-critical from day one.
-
-### 5.5 Threats to Validity
-
-- Single codebase and deployment profile.
-- Limited benchmark depth in this thesis version.
-- No completed human-subject evidence included in core claims.
-
-### 5.6 Scope Boundaries and Non-Claims
-
-This thesis does not claim universal superiority of video over text, full compliance certification, or large-scale adoption impact. It claims a rigorous design-rationale artifact with bounded technical validation.
+**Implementation evidence:** `pulse-vault/pulsevault/plugins/redis.js`, `pulse-vault/pulsevault/workers/transcode-worker.js`.
 
 ---
 
-## CHAPTER 6. CONCLUSION AND FUTURE WORK
+### 4.4 Decision C: Adaptive HLS + Tokenized Access
 
-### 6.1 Overview
+| Element      | Detail                                       |
+| ------------ | -------------------------------------------- |
+| Decision     | HLS with short-lived signed URLs             |
+| Alternatives | Public static media links; long-lived URLs   |
+| Criteria     | Bounded capability access + interoperability |
+| Trade-off    | Token issuance/validation overhead           |
 
-This thesis presented Pulse/PulseVault as a system-design artifact and documented the rationale and implementation of its core architecture.
-
-### 6.2 Summary of Contributions
-
-1. A literature- and standards-grounded architecture rationale for secure institutional short-form video systems.
-2. Implementation traceability across ingest, processing, delivery, and observability subsystems.
-3. A bounded validation framework suited to current time and scope constraints.
-
-### 6.3 Methodological and Systems Contributions
-
-Methodologically, the thesis demonstrates a defensible path for system-design dissertations where rigorous rationale and explicit non-claims are prioritized.
-
-Systemically, it provides an operational architecture pattern that can be extended in institutional environments requiring governance and secure media handling.
-
-### 6.4 Limitations
-
-- No broad empirical user adoption study in current scope.
-- No formal security proof or red-team evaluation.
-- Limited quantitative benchmarking depth.
-
-### 6.5 Future Work
-
-Future work should include:
-
-1. Full technical benchmarking under varied workloads and worker scaling scenarios.
-2. Optional IRB-approved user study for usability and adoption evidence.
-3. Extended governance features (multi-tenant controls, deeper compliance artifacts).
-4. Advanced retrieval/editing workflows (for example, semantic indexing and AI-assisted editing) after core operational maturity.
-
-### 6.6 Advisor-Driven Scope Clarification
-
-Per current advisor guidance, this thesis title and claim scope prioritize design and implementation. Evaluation-heavy claims are intentionally deferred unless backed by finalized empirical datasets.
+**Implementation evidence:** `pulse-vault/pulsevault/routes/media.js`.
 
 ---
 
-## REFERENCES (WORKING SET)
+### 4.5 Decision D: Gateway Trust-Zone Policy
 
-Alahmari, S., & Renaud, K. (2020). Implement a model for describing and maximising security knowledge sharing. *ICITST*.
+| Surface             | Control                              | Intended Effect        |
+| ------------------- | ------------------------------------ | ---------------------- |
+| `/uploads`          | Gateway forward + backend validation | Controlled ingest path |
+| `/media/sign`       | Restricted policy                    | Limit signing exposure |
+| `/media/videos/...` | Token + path checks                  | Bounded retrieval      |
 
-Bass, L., Clements, P., & Kazman, R. (2012). *Software architecture in practice* (3rd ed.). Addison-Wesley.
-
-Davenport, T. H., & Prusak, L. (1998). *Working knowledge*. Harvard Business School Press.
-
-Google. (2016). *Site reliability engineering*. O'Reilly.
-
-Hardt, D. (Ed.). (2012). RFC 6749: OAuth 2.0 authorization framework. IETF.
-
-Hevner, A. R., March, S. T., Park, J., & Ram, S. (2004). Design science in information systems research. *MIS Quarterly*.
-
-Johnson, D. (2013). Mobile support in CSCW applications and groupware development frameworks. *iJIM*.
-
-Kruchten, P. (1995). The 4+1 view model of architecture. *IEEE Software*.
-
-Kumar, A., et al. (2024). Video-based approaches in health education: A systematic review and meta-analysis. *Scientific Reports*.
-
-Lodderstedt, T., Bradley, J., Labunets, A., & Fett, D. (2025). RFC 9700: Best current practice for OAuth 2.0 security. IETF.
-
-Marron, J. (2024). NIST SP 800-66 Rev. 2. NIST.
-
-Mayer, R. E. (2005). Cognitive theory of multimedia learning. In *The Cambridge handbook of multimedia learning*.
-
-Mayer, R. E. (2009). *Multimedia learning* (2nd ed.). Cambridge University Press.
-
-Nonaka, I. (1994). A dynamic theory of organizational knowledge creation. *Organization Science*.
-
-Pantos, R., & May, W. (2017). RFC 8216: HTTP live streaming. IETF.
-
-Prometheus Authors. (n.d.). *Prometheus documentation*.
-
-Rajendran, P. T., Creusy, K., & Garnes, V. (2024). Shorts on the rise. *arXiv*.
-
-tus.io contributors. (2016-present). *Resumable upload protocol 1.0.0*.
-
-U.S. Department of Health and Human Services. (n.d.). *HIPAA Security Rule summary*.
+**Implementation evidence:** `pulse-vault/nginx/conf.d/pulsevault-locations.conf`.
 
 ---
 
-## APPENDIX A. FIGURE PLAN (WORKING)
+### 4.6 Decision E/F/G (Storage, Audit, Mobile Drafts)
 
-1. End-to-end architecture diagram.
-2. Upload and finalize sequence.
-3. Transcode worker lifecycle.
-4. Signed URL validation flow.
-5. Gateway trust-zone routing.
-6. Observability data paths.
+- **E (Metadata durability):** temp write -> fsync -> atomic rename -> fsync parent dir.  
+  Evidence: `pulse-vault/pulsevault/lib/metadata-writer.js`.
+- **F (Tamper-evident audit):** hash-chained append-only entries with verification routine.  
+  Evidence: `pulse-vault/pulsevault/lib/audit-logger.js`.
+- **G (Mobile segment workflow):** non-destructive segment capture/edit, draft persistence, resumable upload/finalize.  
+  Evidence: `app/(camera)/shorts.tsx`, `utils/draftStorage.ts`, `utils/tusUpload.ts`.
 
-## APPENDIX B. DESIGN DECISION LOG (WORKING)
+---
 
-- D1 Resumable ingest
-- D2 Explicit finalize
-- D3 Async transcode queue
-- D4 HLS adaptive delivery
-- D5 Tokenized media access
-- D6 OAuth-aligned identity
-- D7 Observability-first operations
-- D8 Disk-first metadata integrity
-- D9 Tamper-evident audit logging
+## Visual Walkthrough (Images)
 
+### Mobile App
+
+![Pulse home drafts](../appstore_screenshots/mobile_home_drafts.png)
+_Home screen: persisted drafts and quick actions preserve workflow continuity._
+
+![Pulse capture idle](../appstore_screenshots/mobile_capture_idle.png)
+_Capture idle baseline before active recording._
+
+![Pulse capture recording](../appstore_screenshots/mobile_capture_recording.png)
+_Active recording controls for segmented authoring._
+
+![Segment editor two](../appstore_screenshots/mobile_edit_segments_two.png)
+_Segment editing view with ordered non-destructive controls._
+
+![Segment editor three](../appstore_screenshots/mobile_edit_segments_three.png)
+_Extended segment list/edit state in the draft workflow._
+
+![Trim segment](../appstore_screenshots/mobile_trim_segment.png)
+_Trim boundary adjustment before merge/export._
+
+![Preview finalize](../appstore_screenshots/mobile_preview_finalize.png)
+_Preview/finalize boundary before commit/upload._
+
+![Upload destination unselected](../appstore_screenshots/mobile_upload_destination_unselected.png)
+_Upload flow before vault destination binding._
+
+![Upload destination selected](../appstore_screenshots/mobile_upload_destination_selected.png)
+_Destination selected; upload action enabled._
+
+### PulseVault Web
+
+![PulseVault QR setup](../appstore_screenshots/pulsevault_upload_qr_setup.png)
+_QR setup binds mobile ingest sessions to vault context._
+
+![PulseVault dashboard feed](../appstore_screenshots/pulsevault_dashboard_feed.png)
+_Authenticated feed and playback context._
+
+![PulseVault admin API keys](../appstore_screenshots/pulsevault_admin_api_keys.png)
+_API key lifecycle controls for external integrations._
+
+---
+
+## Bounded Validation Snapshot (Chapter 4.10)
+
+### Upload/Finalize
+
+| Check                   | Expected                    | Observed | Notes |
+| ----------------------- | --------------------------- | -------- | ----- |
+| Upload session creation | Session ID issued           | [fill]   |       |
+| Chunk patch acceptance  | Offset advances             | [fill]   |       |
+| Finalize transition     | Uploaded metadata committed | [fill]   |       |
+
+### Transcode Lifecycle
+
+| Check             | Expected                       | Observed | Notes |
+| ----------------- | ------------------------------ | -------- | ----- |
+| Queue dequeue     | Job consumed by worker         | [fill]   |       |
+| Rendition outputs | Playlists + segments generated | [fill]   |       |
+| Metadata update   | Transcoded fields written      | [fill]   |       |
+
+### Token/Access Control
+
+| Check                 | Expected | Observed | Notes |
+| --------------------- | -------- | -------- | ----- |
+| Expired token request | Denied   | [fill]   |       |
+| Tampered signature    | Denied   | [fill]   |       |
+| Valid token path      | Served   | [fill]   |       |
+
+### Observability Availability
+
+| Check               | Expected                        | Observed | Notes |
+| ------------------- | ------------------------------- | -------- | ----- |
+| `/metrics` exposure | Scrape-ready endpoint           | [fill]   |       |
+| Log emission        | Access/upload/transcode entries | [fill]   |       |
+| Dashboard pipeline  | Metric/log ingestion available  | [fill]   |       |
+
+---
+
+## CHAPTER 5. DISCUSSION AND IMPLICATIONS (Quick)
+
+### Objective-Level Takeaways
+
+- Architecture coherence achieved through explicit subsystem boundaries.
+- Rationale quality improved by alternatives + trade-off documentation.
+- Traceability achieved but requires maintenance to avoid drift.
+- Validation is intentionally bounded; not equivalent to broad outcome proof.
+
+### Threats to Validity
+
+- Single deployment profile/codebase.
+- Limited benchmark depth.
+- No finalized human-subject evidence in core claims.
+
+### Practical Implications
+
+- Suitable blueprint for secure institutional procedural media workflows.
+- Finalize boundaries and tokenized delivery are governance control points.
+- Observability should be deployment-critical from day one.
+
+---
+
+## CHAPTER 6. CONCLUSION AND FUTURE WORK (Quick)
+
+### Main Contributions
+
+1. Standards-grounded architecture rationale.
+2. Implementation traceability across ingest/process/delivery/observability.
+3. Bounded validation protocol aligned to current scope.
+
+### Limitations
+
+- No broad adoption study.
+- No formal red-team/security proof.
+- Limited quantitative benchmarking.
+
+### Future Work
+
+1. Throughput and failure benchmarking campaigns.
+2. Optional IRB-approved usability/adoption studies.
+3. Multi-tenant governance and deeper compliance artifacts.
+4. Advanced retrieval/editing (e.g., semantic indexing, AI-assisted workflows).
+
+---
+
+## Proven vs Deferred (At a Glance)
+
+| Claim Category                     | Status                | Basis                                  |
+| ---------------------------------- | --------------------- | -------------------------------------- |
+| Architecture coherence + rationale | Established           | Decision records + standards alignment |
+| Implementation traceability        | Established           | Route/worker/library evidence mapping  |
+| Technical correctness pathways     | Established (bounded) | Scenario validation checks             |
+| User adoption impact               | Deferred              | Needs empirical studies                |
+| Large-scale performance envelope   | Deferred              | Needs benchmark campaigns              |
+
+---
+
+## Working Reference Set (Condensed)
+
+- Bass, Clements, and Kazman (2012), _Software Architecture in Practice_.
+- Davenport and Prusak (1998), _Working Knowledge_.
+- Hevner et al. (2004), design science in information systems.
+- Nonaka (1994), organizational knowledge creation.
+- Mayer (2005, 2009), multimedia learning.
+- RFC 6749 (OAuth 2.0), RFC 9700 (OAuth 2.0 security BCP), RFC 8216 (HLS).
+- tus protocol 1.0.0.
+- NIST SP 800-66r2; HHS HIPAA Security Rule summary.
+- Google SRE (2016); Prometheus docs.
