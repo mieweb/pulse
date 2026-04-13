@@ -2,7 +2,7 @@
 
 Date: 2026-04-09  
 Owner: Priyam More  
-Status: Active execution context for dissertation drafting
+Status: Active execution context for thesis finalization and professor re-review
 
 ## 1) Context Captured from Planning Chat
 
@@ -170,8 +170,25 @@ Control: increase evidence artifacts (tables/figures/appendices) instead of dupl
 
 ## 10) Immediate Next Action List
 
-1. Build `CLAIM_TO_CITATION_MATRIX.md` from verified core sources.
-2. Draft final mirror chapter headings and subsection tree.
-3. Start rewriting main draft in 6-chapter mirror form.
-4. Keep this file updated as execution context in each major milestone.
+1. Fill `\approvedby{...}` in `PurdueThesis/ch-front.tex` after program-office confirmation.
+2. Add runtime evidence for all validation families (upload/finalize, transcode, token/access, observability) and cross-link in Chapter 4 + appendices.
+3. Capture pending QR/deeplink scan-result screenshots and ops screenshots (metrics/log/audit).
+4. Prepare one-page "what changed" summary and chapter-wise delta summary for professor review.
+5. Add a one-page Claim/Evidence/Non-Claim matrix and targeted 3-question feedback block for committee responses.
+6. Keep this file updated as execution context at each milestone.
+
+## 11) Professor Re-Review Submission Readiness
+
+### 11.1 Mandatory Before Sending
+
+- Complete manual-only fields required by Purdue (`\approvedby{...}` if required).
+- Ensure evidence packet includes runtime artifacts, not only code-inspection statements.
+- Confirm screenshot catalog and Chapter 4 references are synchronized after adding new evidence.
+
+### 11.2 Recommended Strengthening Additions
+
+- 1-page "Claim vs Evidence vs Non-Claim" matrix.
+- Runtime evidence mini-pack (3-5 representative snippets).
+- 1-page "Known limits + deferred empirical plan" handout.
+- Targeted feedback prompt with three specific professor questions.
 

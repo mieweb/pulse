@@ -1,72 +1,52 @@
-# Your Manual TODO (Figures, Screenshots, Final Finish)
-
-This checklist is for items only you can supply manually (screenshots, deployment evidence, committee fields, and final polish artifacts).
+# Remaining Manual TODO (For Professor Review)
 
 ## 1) Title and Front Matter
 
-- [x] Confirm final title everywhere:
-  - dissertation draft title page
-  - `PurdueThesis/thesis.tex` `\ZZtitle`
-  - PDF metadata title
-- [x] Fill committee names/departments/advisor fields.
-- [x] Finalize graduation month/year and any campus/program details.
+- [ ] Fill `\approvedby{...}` in `PurdueThesis/ch-front.tex` if your program office requires a specific Form 9 thesis head name.
 
-## 2) Chapter 4 Evidence Inserts (high priority)
+## 2) Chapter 4 Validation Evidence (highest priority)
 
-- [ ] Fill all `[fill]` cells in validation tables (upload, transcode, token, observability).
-- [ ] Add run logs/screenshots proving each check.
-- [ ] Add one short narrative paragraph under each result table:
-  - what passed
-  - what failed/limited
-  - what is deferred
+- [ ] Add runtime evidence for **all** validation families:
+  - upload/finalize runtime logs + screenshot evidence,
+  - transcode lifecycle runtime logs + screenshot evidence,
+  - token/access-control negative/positive check evidence,
+  - observability evidence (metrics, logs, audit chain examples).
+- [ ] Add one short interpretation paragraph under each validation family:
+  - what passed,
+  - what is bounded/limited,
+  - what is explicitly deferred.
+- [ ] Sync runtime evidence references between:
+  - `PurdueThesis/ch-system-design-validation.tex`,
+  - `PurdueThesis/ap-validation-evidence-packet.tex`,
+  - `PurdueThesis/ap-screenshot-catalog.tex` (if new images are added).
 
-## 3) Figures to Insert (status updated)
+## 3) Remaining Figures/Screenshots
 
-- [x] Mobile app screenshots:
-  - capture flow
-  - segment edit/reorder
-  - upload state
-- [x] PulseVault website screenshots:
-  - auth/login
-  - upload/dashboard
-  - playback views
 - [ ] QR/deeplink flow screenshots:
-  - generated QR (done)
-  - app scan result
-  - tokenized upload initiation (done)
+  - app scan result.
 - [ ] Ops screenshots:
-  - metrics endpoint (or dashboard panels)
-  - logs/audit examples
+  - metrics endpoint (or dashboard panels),
+  - logs/audit examples.
 
-Notes:
-- Replaced older app/iPad screenshot set with current UI screenshots.
-- Added renamed current assets to `appstore_screenshots` and synced to
-  `PurdueThesis/graphics/appstore_screenshots`.
-- Updated Chapter 4 and screenshot catalog to reference the new files.
-
-## 4) Table and Figure Numbering Pass
-
-- [x] Ensure each figure/table is referenced in prose before/near placement.
-- [x] Keep caption style consistent (short title + analytic takeaway).
-- [x] Verify no orphan figures/tables without interpretation text.
-
-## 5) References and Citation Integrity
-
-- [x] Replace working references block with final bibliography list.
-- [x] Ensure all in-text citations appear in references and vice versa.
-- [x] Remove weak/context-only sources from load-bearing arguments.
-
-## 6) Purdue Finish Pass
-
-- [x] Ensure lists (TOC, tables, figures, abbreviations) compile cleanly.
-- [x] Confirm appendix order and labels.
-- [x] Final PDF margin, heading, and spacing checks per Purdue template.
-
-## 7) Advisor-Review Packet
+## 4) Advisor-Review Packet
 
 - [ ] Prepare one 1-page “what changed” summary:
-  - removed evaluation from title
-  - scope bounded to design + implementation + minimal validation
-  - future work carries full empirical evaluation
+  - removed evaluation from title,
+  - scope bounded to design + implementation + minimal validation,
+  - future work carries full empirical evaluation.
 - [ ] Send chapter-wise delta summary and request targeted feedback.
+
+## 5) Additions to Strengthen Professor Review
+
+- [ ] Add a 1-page "Claim vs Evidence vs Non-Claim" matrix for quick committee scanning.
+- [ ] Prepare a runtime evidence mini-pack (3-5 snippets/screenshots) mirroring bounded validation tables.
+- [ ] Draft a short "Known limits + deferred empirical plan" handout.
+- [ ] Include a targeted feedback block with 3 specific review questions for professors.
+
+## 6) Manual-Only Items
+
+- [ ] Confirm exact `\approvedby{...}` value with your program office and enter the official name.
+- [ ] Capture environment-specific runtime screenshots/logs from your real deployment/test runs.
+- [ ] Verify confidential/sensitive operational data is redacted before sharing evidence with professors.
+- [ ] Send the email/review packet to professors and collect targeted feedback responses.
 
