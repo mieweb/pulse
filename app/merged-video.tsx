@@ -27,9 +27,10 @@ import { DraftStorage } from "@/utils/draftStorage";
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function MergedVideoScreen() {
-  const { videoUri, draftId } = useLocalSearchParams<{
+  const { videoUri, draftId, videoid } = useLocalSearchParams<{
     videoUri: string;
     draftId: string;
+    videoid?: string;
   }>();
   const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
@@ -219,7 +220,8 @@ export default function MergedVideoScreen() {
         filename,
         (progress) => setUploadProgress(progress.percentage),
         draftId,
-        configOverride
+        configOverride,
+        videoid,
       );
 
       Alert.alert(

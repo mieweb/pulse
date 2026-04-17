@@ -16,7 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function PreviewNewScreen() {
-  const { draftId } = useLocalSearchParams<{ draftId: string }>();
+  const { draftId, videoid } = useLocalSearchParams<{ draftId: string; videoid?: string }>();
   const insets = useSafeAreaInsets();
 
   const [draft, setDraft] = useState<any>(null);
@@ -106,7 +106,7 @@ export default function PreviewNewScreen() {
     if (mergedVideoUri && draftId) {
       router.push({
         pathname: "/merged-video",
-        params: { videoUri: mergedVideoUri, draftId: draftId },
+        params: { videoUri: mergedVideoUri, draftId, ...(videoid && { videoid }) },
       });
     }
   }, [mergedVideoUri, draftId]);

@@ -54,17 +54,17 @@ export default function RootLayout() {
       }
 
       if (mode !== "upload") return;
-      const draftId = search.get("draftId");
-      const hasValidDraftId = draftId && isUUIDv4(draftId);
-      if (hasValidDraftId && server && token) {
+      const videoid = search.get("videoid");
+      const hasValidVideoid = videoid && isUUIDv4(videoid);
+      if (hasValidVideoid && server && token) {
         try {
-          await storeUploadConfigForDraft(draftId, server, token);
+          await storeUploadConfigForDraft(videoid, server, token);
         } catch (e) {
           console.warn("[Deeplink] Failed to store upload config:", e);
         }
         router.replace({
           pathname: "/(camera)/shorts",
-          params: { mode: "upload", draftId, server, token },
+          params: { mode: "upload", draftId: videoid, videoid, server, token },
         });
       } else {
         router.replace({
