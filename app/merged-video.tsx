@@ -167,7 +167,7 @@ export default function MergedVideoScreen() {
       return;
     }
 
-    let configOverride: { server: string; token: string } | undefined;
+    let configOverride: { server: string; token?: string } | undefined;
     if (hasUploadConfig) {
       const config = await getUploadConfigForDraft(draftId);
       if (!config) {
@@ -182,7 +182,7 @@ export default function MergedVideoScreen() {
     } else if (selectedDestination) {
       configOverride = {
         server: selectedDestination.server,
-        token: selectedDestination.token,
+        ...(selectedDestination.token && { token: selectedDestination.token }),
       };
     } else {
       Alert.alert(

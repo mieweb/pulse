@@ -16,7 +16,7 @@ export interface UploadResult {
 /** When using a saved destination (long-lived token), app sends draftId in finalize body. */
 export interface UploadConfigOverride {
   server: string;
-  token: string;
+  token?: string;
 }
 
 /**
@@ -34,7 +34,7 @@ export async function uploadVideo(
   console.log(`[TUS Upload] Starting upload process for: ${filename}`);
   console.log(`[TUS Upload] Video URI: ${videoUri}`);
 
-  let config: { server: string; token: string } | null;
+  let config: { server: string; token?: string } | null;
   if (configOverride) {
     config = configOverride;
   } else {

@@ -32,9 +32,7 @@ export default function Index() {
   const hasValidVideoid = params.videoid && isUUIDv4(params.videoid);
   const serverNotSetupForUpload =
     params.serverNotSetupForUpload === "true" ||
-    (params.mode === "upload" &&
-      (params.server != null || params.token != null) &&
-      !hasValidVideoid);
+    (params.mode === "upload" && params.server != null && !hasValidVideoid);
 
   // Debug logging for deeplink parameters
   console.log("🔗 Deeplink params:", params);
@@ -44,13 +42,12 @@ export default function Index() {
     if (
       params.mode === "configure_destination" &&
       params.server &&
-      params.token &&
       !hasRedirected
     ) {
       setHasRedirected(true);
       addDestination(
         params.server,
-        params.token,
+        params.token ?? undefined,
         params.name ?? undefined
       ).then(() => {
         router.replace({
@@ -74,14 +71,13 @@ export default function Index() {
       if (
         params.mode === "upload" &&
         hasValidVideoid &&
-        params.server &&
-        params.token
+        params.server
       ) {
         try {
           await storeUploadConfigForDraft(
             params.videoid!,
             params.server,
-            params.token
+            params.token ?? undefined
           );
           console.log("✅ Stored upload config for videoid", params.videoid);
         } catch (error) {
@@ -96,7 +92,7 @@ export default function Index() {
               draftId: params.videoid,
               videoid: params.videoid,
               server: params.server,
-              token: params.token,
+              ...(params.token && { token: params.token }),
             },
           });
         }

@@ -70,10 +70,10 @@ export default function ShortsScreen() {
   const serverNotSetupForUpload = useLocalSearchParams<{ serverNotSetupForUpload?: string }>().serverNotSetupForUpload === "true";
   React.useEffect(() => {
     const storeConfig = async () => {
-      if (server && token && draftId) {
+      if (server && draftId) {
         try {
           const { storeUploadConfigForDraft } = await import("@/utils/uploadConfig");
-          await storeUploadConfigForDraft(draftId, server, token);
+          await storeUploadConfigForDraft(draftId, server, token ?? undefined);
           console.log("✅ Stored upload config for draft", draftId);
         } catch (error) {
           console.error("❌ Failed to store upload config:", error);
