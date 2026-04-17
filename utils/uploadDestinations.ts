@@ -7,7 +7,7 @@ export interface UploadDestination {
   id: string;
   name: string;
   server: string;
-  token: string;
+  token?: string;
   expiresAt: string;
 }
 
@@ -35,7 +35,7 @@ export async function getAllDestinations(): Promise<UploadDestination[]> {
 /** Add or update by normalized server (no duplicates by server). */
 export async function addDestination(
   server: string,
-  token: string,
+  token?: string,
   name?: string
 ): Promise<void> {
   const normalized = normalizeServerUrl(server);
@@ -43,12 +43,12 @@ export async function addDestination(
   const existing = list.find(
     (d) => normalizeServerUrl(d.server) === normalized
   );
-  const expiresAt = parseExpiresAtFromToken(token);
+  const expiresAt = token ? parseExpiresAtFromToken(token) : null;
   const newDest: UploadDestination = {
     id: existing?.id ?? Crypto.randomUUID(),
     name: name?.trim() || normalized,
     server: normalized,
-    token,
+    ...(token ? { token } : {}),
     expiresAt: expiresAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
   };
   const rest = list.filter((d) => normalizeServerUrl(d.server) !== normalized);

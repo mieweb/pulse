@@ -4,25 +4,24 @@ const UPLOAD_CONFIG_PREFIX = "upload_config_";
 
 export interface UploadConfig {
   server: string;
-  token: string;
+  token?: string;
 }
 
 /**
  * Store upload config for a specific draft (from QR scan with draftId).
  * Each draft has its own server URL (e.g. Pulse Vault vs Pulse Clip).
- * Upload mode requires a draftId in the QR code.
+ * Upload mode requires a draftId in the QR code. Token is optional — when
+ * present it is forwarded as a Bearer auth header on uploads.
  */
 export async function storeUploadConfigForDraft(
   draftId: string,
   server: string,
-  token: string
+  token?: string
 ): Promise<void> {
   try {
     const key = UPLOAD_CONFIG_PREFIX + draftId;
-    await AsyncStorage.setItem(
-      key,
-      JSON.stringify({ server, token })
-    );
+    const payload: UploadConfig = token ? { server, token } : { server };
+    await AsyncStorage.setItem(key, JSON.stringify(payload));
     console.log("[UploadConfig] Stored config for draft:", draftId);
   } catch (error) {
     console.error("[UploadConfig] Error storing upload config for draft:", error);
@@ -42,8 +41,10 @@ export async function getUploadConfigForDraft(
     const raw = await AsyncStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { server?: string; token?: string };
-    if (parsed?.server && parsed?.token) {
-      return { server: parsed.server, token: parsed.token };
+    if (parsed?.server) {
+      return parsed.token
+        ? { server: parsed.server, token: parsed.token }
+        : { server: parsed.server };
     }
     return null;
   } catch (error) {
@@ -68,8 +69,13 @@ export async function getUploadConfigsForDraftIds(
       if (value) {
         try {
           const parsed = JSON.parse(value) as { server?: string; token?: string };
-          if (parsed?.server && parsed?.token) {
-            map.set(draftIds[i], { server: parsed.server, token: parsed.token });
+          if (parsed?.server) {
+            map.set(
+              draftIds[i],
+              parsed.token
+                ? { server: parsed.server, token: parsed.token }
+                : { server: parsed.server }
+            );
           }
         } catch {
           // skip invalid entry
