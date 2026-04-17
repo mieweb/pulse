@@ -22,7 +22,6 @@ import {
   getAllDestinations,
   type UploadDestination,
 } from "@/utils/uploadDestinations";
-import { DraftStorage } from "@/utils/draftStorage";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -38,7 +37,6 @@ export default function MergedVideoScreen() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hasUploadConfig, setHasUploadConfig] = useState(false);
-  const [isUploadModeDraft, setIsUploadModeDraft] = useState(false);
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [destinations, setDestinations] = useState<UploadDestination[]>([]);
   const [selectedDestination, setSelectedDestination] =
@@ -91,21 +89,6 @@ export default function MergedVideoScreen() {
     const checkUploadConfig = async () => {
       const config = draftId ? await getUploadConfigForDraft(draftId) : null;
       setHasUploadConfig(!!config);
-
-      if (draftId) {
-        try {
-          const draft = await DraftStorage.getDraftById(draftId, "upload") ||
-                       await DraftStorage.getDraftById(draftId, "camera");
-          if (draft) {
-            setIsUploadModeDraft(draft.mode === "upload");
-          }
-        } catch (error) {
-          console.error("[MergedVideo] Failed to check draft mode:", error);
-          setIsUploadModeDraft(false);
-        }
-      } else {
-        setIsUploadModeDraft(false);
-      }
     };
     checkUploadConfig();
   }, [draftId]);

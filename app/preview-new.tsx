@@ -109,7 +109,7 @@ export default function PreviewNewScreen() {
         params: { videoUri: mergedVideoUri, draftId, ...(videoid && { videoid }) },
       });
     }
-  }, [mergedVideoUri, draftId]);
+  }, [mergedVideoUri, draftId, videoid]);
 
   const handleConcatenate = async (draftToMerge?: any) => {
     if (!draftId) return;
