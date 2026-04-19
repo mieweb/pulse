@@ -20,7 +20,7 @@ const isUUIDv4 = (uuid: string) => {
 export default function Index() {
   const params = useLocalSearchParams<{
     mode?: string;
-    draftId?: string;
+    videoid?: string;
     server?: string;
     token?: string;
     name?: string;
@@ -29,12 +29,10 @@ export default function Index() {
   const router = useRouter();
   const [hasRedirected, setHasRedirected] = useState(false);
 
-  const hasValidDraftId = params.draftId && isUUIDv4(params.draftId);
+  const hasValidVideoid = params.videoid && isUUIDv4(params.videoid);
   const serverNotSetupForUpload =
     params.serverNotSetupForUpload === "true" ||
-    (params.mode === "upload" &&
-      (params.server != null || params.token != null) &&
-      !hasValidDraftId);
+    (params.mode === "upload" && params.server != null && !hasValidVideoid);
 
   // Debug logging for deeplink parameters
   console.log("🔗 Deeplink params:", params);
@@ -44,13 +42,12 @@ export default function Index() {
     if (
       params.mode === "configure_destination" &&
       params.server &&
-      params.token &&
       !hasRedirected
     ) {
       setHasRedirected(true);
       addDestination(
         params.server,
-        params.token,
+        params.token ?? undefined,
         params.name ?? undefined
       ).then(() => {
         router.replace({
@@ -68,22 +65,21 @@ export default function Index() {
     router,
   ]);
 
-  // When we have a valid draftId: store config and redirect to shorts
+  // upload mode: store config keyed by videoid (doubles as draftId) and open camera
   useEffect(() => {
     const handleDeeplink = async () => {
       if (
         params.mode === "upload" &&
-        hasValidDraftId &&
-        params.server &&
-        params.token
+        hasValidVideoid &&
+        params.server
       ) {
         try {
           await storeUploadConfigForDraft(
-            params.draftId!,
+            params.videoid!,
             params.server,
-            params.token
+            params.token ?? undefined
           );
-          console.log("✅ Stored upload config for draft", params.draftId);
+          console.log("✅ Stored upload config for videoid", params.videoid);
         } catch (error) {
           console.error("❌ Failed to store upload config:", error);
         }
@@ -93,9 +89,10 @@ export default function Index() {
             pathname: "/(camera)/shorts",
             params: {
               mode: "upload",
-              draftId: params.draftId,
+              draftId: params.videoid,
+              videoid: params.videoid,
               server: params.server,
-              token: params.token,
+              ...(params.token && { token: params.token }),
             },
           });
         }
@@ -105,15 +102,15 @@ export default function Index() {
     handleDeeplink();
   }, [
     params.mode,
-    params.draftId,
+    params.videoid,
     params.server,
     params.token,
-    hasValidDraftId,
+    hasValidVideoid,
     router,
     hasRedirected,
   ]);
 
-  // Server not set up for upload (e.g. Pulse Clip QR with no draftId): show message here
+  // Server not set up for upload (e.g. upload QR with no videoid): show message here
   if (serverNotSetupForUpload) {
     return (
       <View style={styles.container}>
@@ -132,7 +129,7 @@ export default function Index() {
     );
   }
 
-  // Valid upload with draftId: show loading until redirect
+  // Valid upload with videoid: show loading until redirect
   if (params.mode === "upload") {
     return (
       <View style={styles.container}>

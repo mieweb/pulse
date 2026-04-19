@@ -10,7 +10,6 @@ import { useFirstTimeOpen } from "@/hooks/useFirstTimeOpen";
 import AntDesign from "@expo/vector-icons/AntDesign";
 import Entypo from "@expo/vector-icons/Entypo";
 import FontAwesome5 from "@expo/vector-icons/FontAwesome5";
-import Ionicons from "@expo/vector-icons/Ionicons";
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
