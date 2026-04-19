@@ -22,14 +22,14 @@ import {
   getAllDestinations,
   type UploadDestination,
 } from "@/utils/uploadDestinations";
-import { DraftStorage } from "@/utils/draftStorage";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function MergedVideoScreen() {
-  const { videoUri, draftId } = useLocalSearchParams<{
+  const { videoUri, draftId, videoid } = useLocalSearchParams<{
     videoUri: string;
     draftId: string;
+    videoid?: string;
   }>();
   const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
@@ -37,7 +37,6 @@ export default function MergedVideoScreen() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hasUploadConfig, setHasUploadConfig] = useState(false);
-  const [isUploadModeDraft, setIsUploadModeDraft] = useState(false);
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [destinations, setDestinations] = useState<UploadDestination[]>([]);
   const [selectedDestination, setSelectedDestination] =
@@ -90,21 +89,6 @@ export default function MergedVideoScreen() {
     const checkUploadConfig = async () => {
       const config = draftId ? await getUploadConfigForDraft(draftId) : null;
       setHasUploadConfig(!!config);
-
-      if (draftId) {
-        try {
-          const draft = await DraftStorage.getDraftById(draftId, "upload") ||
-                       await DraftStorage.getDraftById(draftId, "camera");
-          if (draft) {
-            setIsUploadModeDraft(draft.mode === "upload");
-          }
-        } catch (error) {
-          console.error("[MergedVideo] Failed to check draft mode:", error);
-          setIsUploadModeDraft(false);
-        }
-      } else {
-        setIsUploadModeDraft(false);
-      }
     };
     checkUploadConfig();
   }, [draftId]);
@@ -183,7 +167,7 @@ export default function MergedVideoScreen() {
       return;
     }
 
-    let configOverride: { server: string; token: string } | undefined;
+    let configOverride: { server: string; token?: string } | undefined;
     if (hasUploadConfig) {
       const config = await getUploadConfigForDraft(draftId);
       if (!config) {
@@ -198,7 +182,7 @@ export default function MergedVideoScreen() {
     } else if (selectedDestination) {
       configOverride = {
         server: selectedDestination.server,
-        token: selectedDestination.token,
+        ...(selectedDestination.token && { token: selectedDestination.token }),
       };
     } else {
       Alert.alert(
@@ -219,7 +203,8 @@ export default function MergedVideoScreen() {
         filename,
         (progress) => setUploadProgress(progress.percentage),
         draftId,
-        configOverride
+        configOverride,
+        videoid,
       );
 
       Alert.alert(

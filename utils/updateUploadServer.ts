@@ -17,7 +17,7 @@ export async function updateUploadServerUrl(
     throw new Error("Server not set up for upload.");
   }
 
-  await storeUploadConfigForDraft(draftId, newServerUrl, config.token);
+  await storeUploadConfigForDraft(draftId, newServerUrl, config.token ?? undefined);
   console.log("[UploadConfig] Updated server URL for draft:", draftId);
 }
 

@@ -4,8 +4,7 @@ import {
   ThemeProvider,
 } from "@react-navigation/native";
 import { useFonts } from "expo-font";
-import { useRouter } from "expo-router";
-import { Stack } from "expo-router";
+import { useRouter , Stack } from "expo-router";
 import * as Linking from "expo-linking";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
@@ -39,9 +38,9 @@ export default function RootLayout() {
       const token = search.get("token");
       const name = search.get("name");
 
-      if (mode === "configure_destination" && server && token) {
+      if (mode === "configure_destination" && server) {
         try {
-          await addDestination(server, token, name ?? undefined);
+          await addDestination(server, token ?? undefined, name ?? undefined);
           console.log("[Deeplink] Added upload destination:", server);
         } catch (e) {
           console.warn("[Deeplink] Failed to add destination:", e);
@@ -54,17 +53,23 @@ export default function RootLayout() {
       }
 
       if (mode !== "upload") return;
-      const draftId = search.get("draftId");
-      const hasValidDraftId = draftId && isUUIDv4(draftId);
-      if (hasValidDraftId && server && token) {
+      const videoid = search.get("videoid");
+      const hasValidVideoid = videoid && isUUIDv4(videoid);
+      if (hasValidVideoid && server) {
         try {
-          await storeUploadConfigForDraft(draftId, server, token);
+          await storeUploadConfigForDraft(videoid, server, token ?? undefined);
         } catch (e) {
           console.warn("[Deeplink] Failed to store upload config:", e);
         }
         router.replace({
           pathname: "/(camera)/shorts",
-          params: { mode: "upload", draftId, server, token },
+          params: {
+            mode: "upload",
+            draftId: videoid,
+            videoid,
+            server,
+            ...(token && { token }),
+          },
         });
       } else {
         router.replace({
@@ -95,8 +100,8 @@ export default function RootLayout() {
         const server = search.get("server");
         const token = search.get("token");
         const name = search.get("name");
-        if (server && token) {
-          addDestination(server, token, name ?? undefined).then(() => {
+        if (server) {
+          addDestination(server, token ?? undefined, name ?? undefined).then(() => {
             if (!cancelled) {
               router.replace({
                 pathname: "/(tabs)/profile",
