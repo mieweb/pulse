@@ -1,8 +1,0 @@
-[submodule "pulse-desktop"]
-	path = pulse-desktop
-	url = https://github.com/mieweb/pulse-desktop
-	branch = main
-[submodule "pulse-vault"]
-	path = pulse-vault
-	url = https://github.com/mieweb/PulseVault.git
-	branch = main
