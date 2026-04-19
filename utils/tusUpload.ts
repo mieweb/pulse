@@ -11,13 +11,12 @@ export interface UploadResult {
   videoId: string;
   status: string;
   size: number;
-  checksum: string;
 }
 
 /** When using a saved destination (long-lived token), app sends draftId in finalize body. */
 export interface UploadConfigOverride {
   server: string;
-  token: string;
+  token?: string;
 }
 
 /**
@@ -29,19 +28,15 @@ export async function uploadVideo(
   filename: string,
   onProgress?: (progress: UploadProgress) => void,
   draftId?: string,
-  configOverride?: UploadConfigOverride
+  configOverride?: UploadConfigOverride,
+  preAssignedVideoid?: string,
 ): Promise<UploadResult> {
   console.log(`[TUS Upload] Starting upload process for: ${filename}`);
   console.log(`[TUS Upload] Video URI: ${videoUri}`);
 
-  let config: { server: string; token: string } | null;
-  let sendDraftIdInBody = false;
+  let config: { server: string; token?: string } | null;
   if (configOverride) {
     config = configOverride;
-    sendDraftIdInBody = true;
-    if (!draftId) {
-      throw new Error("Draft ID is required when using a configured destination.");
-    }
   } else {
     if (!draftId) {
       throw new Error("Server not set up for upload.");
@@ -55,6 +50,10 @@ export async function uploadVideo(
 
   let { server, token } = config;
   console.log(`[TUS Upload] Config loaded - Server: ${server}, Token: ${token ? 'present' : 'missing'}`);
+
+  const authHeaders: Record<string, string> = token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
 
   // Detect if we're on a physical device and server is localhost
   // Try to auto-fix by replacing localhost with a common local IP pattern
@@ -94,21 +93,53 @@ export async function uploadVideo(
     throw new Error("Video file is empty");
   }
 
-  // Step 1: Create upload session
-  console.log(`[TUS Upload] Step 3: Creating upload session...`);
-  console.log(`[TUS Upload] POST ${normalizedServer}/uploads`);
-  console.log(`[TUS Upload] Headers: Upload-Length=${fileSize}, Tus-Resumable=1.0.0`);
-  
+  // Step 1: Get a videoid — use the pre-assigned one from the deep link if
+  // present, otherwise call /reserve so the server assigns one.
+  let videoid: string;
+  if (preAssignedVideoid) {
+    videoid = preAssignedVideoid;
+    console.log(`[TUS Upload] Using pre-assigned videoid from deep link: ${videoid}`);
+  } else {
+    console.log(`[TUS Upload] Step 3a: Reserving videoid from server...`);
+    try {
+      const reserveRes = await fetch(`${normalizedServer}/reserve`, {
+        method: "POST",
+        headers: { ...authHeaders },
+      });
+      if (!reserveRes.ok) {
+        throw new Error(`Reserve failed: ${reserveRes.status} ${reserveRes.statusText}`);
+      }
+      const { videoid: id } = await reserveRes.json();
+      if (!id || typeof id !== "string") {
+        throw new Error("Server did not return a videoid");
+      }
+      videoid = id;
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+    console.log(`[TUS Upload] videoid: ${videoid}`);
+  }
+
+  // Step 3: Create upload session (standard TUS with Upload-Metadata)
+  console.log(`[TUS Upload] Step 3b: Creating TUS upload session...`);
+  console.log(`[TUS Upload] POST ${normalizedServer}/upload`);
+  console.log(`[TUS Upload] Headers: Upload-Length=${fileSize}, Tus-Resumable=1.0.0, Upload-Metadata=videoid+filename`);
+
   const createUploadStartTime = Date.now();
   let createUploadResponse: Response;
   try {
     createUploadResponse = await fetch(
-      `${normalizedServer}/uploads`,
+      `${normalizedServer}/upload`,
       {
         method: "POST",
         headers: {
+          ...authHeaders,
           "Upload-Length": fileSize.toString(),
           "Tus-Resumable": "1.0.0",
+          "Upload-Metadata": [
+            `videoid ${btoa(videoid)}`,
+            `filename ${btoa(filename)}`,
+          ].join(","),
         },
       }
     );
@@ -152,7 +183,7 @@ export async function uploadVideo(
     throw new Error("No upload location returned from server");
   }
 
-  const uploadId = location.split("/uploads/").pop() || location;
+  const uploadId = location.split("/upload/").pop() || location;
   // Handle both absolute and relative Location headers
   let uploadUrl: string;
   if (location.startsWith("http")) {
@@ -182,7 +213,7 @@ export async function uploadVideo(
     }
   } else {
     // Relative URL - prepend server
-    uploadUrl = `${normalizedServer}${location.startsWith("/") ? location : `/uploads/${uploadId}`}`;
+    uploadUrl = `${normalizedServer}${location.startsWith("/") ? location : `/upload/${uploadId}`}`;
   }
   console.log(`[TUS Upload] Final upload URL: ${uploadUrl}`);
 
@@ -242,6 +273,7 @@ export async function uploadVideo(
         uploadResponse = await fetch(uploadUrl, {
           method: "PATCH",
           headers: {
+            ...authHeaders,
             "Content-Type": "application/offset+octet-stream",
             "Upload-Offset": offset.toString(),
             "Tus-Resumable": "1.0.0",
@@ -308,47 +340,12 @@ export async function uploadVideo(
     console.log(`[TUS Upload] Progress: ${bytesUploaded}/${fileSize} (${progressPercent}%) - Chunk ${chunkNumber}/${totalChunks} complete`);
   }
 
-  console.log(`[TUS Upload] All chunks uploaded successfully. Upload ID: ${uploadId}`);
-
-  // Step 3: Finalize upload
-  console.log(`[TUS Upload] Step 5: Finalizing upload...`);
-  console.log(`[TUS Upload] POST ${normalizedServer}/uploads/finalize`);
-  console.log(`[TUS Upload] Finalize payload: uploadId=${uploadId}, filename=${filename}`);
-  
-  const finalizeStartTime = Date.now();
-  const finalizeBody: Record<string, unknown> = {
-    uploadId,
-    filename,
-    userId: "anonymous",
-    uploadToken: token,
-  };
-  if (sendDraftIdInBody && draftId) {
-    finalizeBody.draftId = draftId;
-  }
-  const finalizeResponse = await fetch(`${normalizedServer}/uploads/finalize`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Upload-Token": token,
-    },
-    body: JSON.stringify(finalizeBody),
-  });
-
-  const finalizeDuration = Date.now() - finalizeStartTime;
-  console.log(`[TUS Upload] Finalize response received in ${finalizeDuration}ms`);
-  console.log(`[TUS Upload] Finalize status: ${finalizeResponse.status} ${finalizeResponse.statusText}`);
-
-  if (!finalizeResponse.ok) {
-    const errorText = await finalizeResponse.text();
-    console.error(`[TUS Upload] Finalize failed - Status: ${finalizeResponse.status}, Error: ${errorText}`);
-    throw new Error(
-      `Failed to finalize upload: ${finalizeResponse.statusText} - ${errorText}`
-    );
-  }
-
-  const result = await finalizeResponse.json();
-  console.log(`[TUS Upload] Finalized successfully: ${result.videoId}`);
+  console.log(`[TUS Upload] All chunks uploaded successfully. videoid: ${videoid}`);
   console.log(`[TUS Upload] Upload process completed successfully!`);
-  return result;
+  return {
+    videoId: videoid,
+    status: "complete",
+    size: fileSize,
+  };
 }
 

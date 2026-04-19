@@ -55,11 +55,12 @@ import Animated, {
  * - Time selector for recording duration
  */
 export default function ShortsScreen() {
-  const { draftId, mode, server, token } = useLocalSearchParams<{
+  const { draftId, mode, server, token, videoid } = useLocalSearchParams<{
     draftId?: string;
     mode?: string;
     server?: string;
     token?: string;
+    videoid?: string;
   }>();
   const draftMode = (mode === "upload" ? "upload" : "camera") as
     | "camera"
@@ -69,10 +70,10 @@ export default function ShortsScreen() {
   const serverNotSetupForUpload = useLocalSearchParams<{ serverNotSetupForUpload?: string }>().serverNotSetupForUpload === "true";
   React.useEffect(() => {
     const storeConfig = async () => {
-      if (server && token && draftId) {
+      if (server && draftId) {
         try {
           const { storeUploadConfigForDraft } = await import("@/utils/uploadConfig");
-          await storeUploadConfigForDraft(draftId, server, token);
+          await storeUploadConfigForDraft(draftId, server, token ?? undefined);
           console.log("✅ Stored upload config for draft", draftId);
         } catch (error) {
           console.error("❌ Failed to store upload config:", error);
@@ -370,7 +371,7 @@ export default function ShortsScreen() {
       }
       router.push({
         pathname: "/preview-new",
-        params: { draftId: currentDraftId },
+        params: { draftId: currentDraftId, ...(videoid && { videoid }) },
       });
     }
   };
