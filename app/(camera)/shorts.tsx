@@ -14,6 +14,7 @@ import UndoSegmentButton from "@/components/UndoSegmentButton";
 import * as ImagePicker from "expo-image-picker";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { useDraftManager } from "@/hooks/useDraftManager";
+import { useAudioSession } from "@/hooks/useAudioSession";
 import { useVideoStabilization } from "@/hooks/useVideoStabilization";
 import { useCameraFacing } from "@/hooks/useCameraFacing";
 import {
@@ -191,7 +192,9 @@ export default function ShortsScreen() {
     0
   );
 
-  const handleRecordingStart = (
+  const { activateRecordingSession, deactivateRecordingSession } = useAudioSession();
+
+  const handleRecordingStart = async (
     mode: "tap" | "hold",
     remainingTime: number
   ) => {
@@ -202,6 +205,7 @@ export default function ShortsScreen() {
     // Only set isHoldRecording for hold mode
     isHoldRecording.value = mode === "hold";
     recordingModeShared.value = mode;
+    await activateRecordingSession();
   };
 
   const handleRecordingProgress = (
@@ -218,6 +222,9 @@ export default function ShortsScreen() {
   ) => {
     setActiveRecordingDurationSeconds(0);
     setIsRecording(false);
+
+    // Release microphone and let background apps resume audio.
+    deactivateRecordingSession();
 
     // Reset shared values and screen touch state
     isHoldRecording.value = false;
@@ -284,7 +291,14 @@ export default function ShortsScreen() {
         setCameraKey(prev => prev + 1);
         needsCameraRemountRef.current = false;
       }
-      
+
+      // Claim audio focus as soon as the camera screen mounts.
+      // On Android this calls AudioManager.requestAudioFocus(AUDIOFOCUS_GAIN)
+      // which stops Spotify / podcasts / etc. BEFORE the user taps Record.
+      // This avoids a race condition where recordAsync() would start before
+      // the async setIsAudioActiveAsync(true) had completed.
+      // activateRecordingSession();
+
       const reloadDraft = async () => {
         const draftToReload = draftId || currentDraftId;
         if (draftToReload) {
@@ -310,7 +324,13 @@ export default function ShortsScreen() {
         }
       };
       reloadDraft();
-    }, [draftId, currentDraftId, setRecordingSegments, maxDurationLimitSeconds])
+
+      // Ensure clean audio state when the user leaves the camera screen
+      // (e.g. navigated away mid-session or app backgrounded during recording).
+      return () => {
+        deactivateRecordingSession();
+      };
+    }, [draftId, currentDraftId, setRecordingSegments, maxDurationLimitSeconds, deactivateRecordingSession])
   );
 
   const handleTimeSelect = (newDurationLimitSeconds: number) => {

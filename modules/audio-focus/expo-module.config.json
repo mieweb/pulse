@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["AudioFocusModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.audiofocus.AudioFocusModule"]
+  }
+}
