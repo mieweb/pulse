@@ -181,4 +181,6 @@ Built on [React Native](https://reactnative.dev/), [Expo](https://expo.dev/), na
 
 ## License
 
-[MIT](LICENSE)
+Source Available — see [LICENSE](LICENSE).
+
+Free for non-commercial use (with attribution, and derivative works must be distributed under an OSI-approved open source license with source available). Commercial use requires a separate license from Medical Informatics Engineering, LLC. — contact https://www.mieweb.com or helpdesk@mieweb.com.
