@@ -38,6 +38,7 @@ import {
   Gesture,
   GestureDetector,
 } from "react-native-gesture-handler";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   runOnJS,
   useSharedValue,
@@ -55,6 +56,7 @@ import Animated, {
  * - Time selector for recording duration
  */
 export default function ShortsScreen() {
+  const insets = useSafeAreaInsets();
   const { draftId, mode, server, token, videoid } = useLocalSearchParams<{
     draftId?: string;
     mode?: string;
@@ -662,6 +664,7 @@ export default function ShortsScreen() {
             onButtonTouchStart={handleButtonTouchStart}
             onButtonTouchEnd={handleButtonTouchEnd}
             screenTouchActive={screenTouchActive}
+            style={{ bottom: 60 + insets.bottom }}
           />
         </Animated.View>
       </GestureDetector>
@@ -679,7 +682,7 @@ export default function ShortsScreen() {
       {/* Video Library Button */}
       {!isRecording && (
         <TouchableOpacity
-          style={styles.videoLibraryButton}
+          style={[styles.videoLibraryButton, { bottom: 40 + insets.bottom }]}
           onPress={handleAddVideoFromLibrary}
           activeOpacity={0.7}
         >
@@ -695,16 +698,16 @@ export default function ShortsScreen() {
         ))}
 
       {recordingSegments.length > 0 && !isRecording && (
-        <UndoSegmentButton onUndoSegment={handleUndoSegmentWrapper} />
+        <UndoSegmentButton onUndoSegment={handleUndoSegmentWrapper} style={{ bottom: 40 + insets.bottom }} />
       )}
 
       {redoStack.length > 0 && !isRecording && (
-        <RedoSegmentButton onRedoSegment={handleRedoSegmentWrapper} />
+        <RedoSegmentButton onRedoSegment={handleRedoSegmentWrapper} style={{ bottom: 40 + insets.bottom }} />
       )}
 
       {recordingSegments.length > 0 && currentDraftId && !isRecording && (
         <TouchableOpacity
-          style={styles.previewButton}
+          style={[styles.previewButton, { bottom: 40 + insets.bottom }]}
           onPress={handlePreview}
         >
           <MaterialIcons name="done" size={26} color="black" />
