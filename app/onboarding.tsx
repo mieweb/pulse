@@ -1,8 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useEffect } from "react";
-import { StyleSheet, TouchableOpacity } from "react-native";
+import { ScrollView, StyleSheet, TouchableOpacity } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -43,36 +44,80 @@ export default function OnboardingScreen() {
   return (
     <ThemedView style={styles.view}>
       {renderLogo()}
-      <ThemedView style={styles.contentContainer}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
+      >
         <ThemedView style={styles.welcomeContainer}>
           <ThemedText type="title" style={styles.welcomeText}>
             Welcome to Pulse
           </ThemedText>
           <ThemedText style={styles.welcomeSubtext}>
-            Secure institutional knowledge sharing through video
+            Record, edit, and share institutional knowledge — on your own infrastructure
           </ThemedText>
         </ThemedView>
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Hold to Record</ThemedText>
-          <ThemedText>
-            Hold the record button to capture video segments. Set duration
-            limits from 15s to 3 minutes.
-          </ThemedText>
+
+        <ThemedView style={styles.featureCard}>
+          <ThemedView style={styles.iconContainer}>
+            <MaterialIcons name="videocam" size={22} color={Colors.light.appPrimary} />
+          </ThemedView>
+          <ThemedView style={styles.featureText}>
+            <ThemedText type="subtitle">Tap or Hold to Record</ThemedText>
+            <ThemedText style={styles.featureDescription}>
+              Tap for a single clip or hold to record continuously. Set duration limits from 15 s to 3 min.
+            </ThemedText>
+          </ThemedView>
         </ThemedView>
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Drag & Drop Reordering</ThemedText>
-          <ThemedText>
-            Reorder your video segments with intuitive drag & drop interface for
-            perfect content flow.
-          </ThemedText>
+
+        <ThemedView style={styles.featureCard}>
+          <ThemedView style={styles.iconContainer}>
+            <MaterialIcons name="reorder" size={22} color={Colors.light.appPrimary} />
+          </ThemedView>
+          <ThemedView style={styles.featureText}>
+            <ThemedText type="subtitle">Edit & Reorder</ThemedText>
+            <ThemedText style={styles.featureDescription}>
+              Drag-and-drop segments into any order, trim in/out points per clip, and undo/redo across sessions.
+            </ThemedText>
+          </ThemedView>
         </ThemedView>
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Smart Draft System</ThemedText>
-          <ThemedText>
-            Auto-save your work with intelligent draft management.
-          </ThemedText>
+
+        <ThemedView style={styles.featureCard}>
+          <ThemedView style={styles.iconContainer}>
+            <MaterialIcons name="photo-library" size={22} color={Colors.light.appPrimary} />
+          </ThemedView>
+          <ThemedView style={styles.featureText}>
+            <ThemedText type="subtitle">Import from Library</ThemedText>
+            <ThemedText style={styles.featureDescription}>
+              Mix new recordings with existing clips from your photo library.
+            </ThemedText>
+          </ThemedView>
         </ThemedView>
-      </ThemedView>
+
+        <ThemedView style={styles.featureCard}>
+          <ThemedView style={styles.iconContainer}>
+            <MaterialIcons name="save" size={22} color={Colors.light.appPrimary} />
+          </ThemedView>
+          <ThemedView style={styles.featureText}>
+            <ThemedText type="subtitle">Auto-saved Drafts</ThemedText>
+            <ThemedText style={styles.featureDescription}>
+              Work saves automatically — pick up exactly where you left off.
+            </ThemedText>
+          </ThemedView>
+        </ThemedView>
+
+        <ThemedView style={styles.featureCard}>
+          <ThemedView style={styles.iconContainer}>
+            <MaterialIcons name="cloud-upload" size={22} color={Colors.light.appPrimary} />
+          </ThemedView>
+          <ThemedView style={styles.featureText}>
+            <ThemedText type="subtitle">Upload to Your Server</ThemedText>
+            <ThemedText style={styles.featureDescription}>
+              Resumable TUS uploads direct to your organization's own PulseVault instance.
+            </ThemedText>
+          </ThemedView>
+        </ThemedView>
+      </ScrollView>
       <ThemedView style={styles.bottomContainer}>
         <ThemedView style={styles.poweredByContainer}>
           <ThemedText style={styles.poweredByText}>Powered by</ThemedText>
@@ -111,18 +156,40 @@ const styles = StyleSheet.create({
     marginTop: "15%",
     marginBottom: "5%",
   },
-  contentContainer: {
+  scrollView: {
     flex: 1,
+  },
+  contentContainer: {
     paddingBottom: 20,
     marginTop: 20,
   },
-  stepContainer: {
-    gap: 4,
-    marginBottom: 4,
-    paddingHorizontal: 24,
-    padding: 10,
+  featureCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+    marginBottom: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderRadius: 12,
     marginHorizontal: 16,
+  },
+  iconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "rgba(240, 30, 33, 0.1)",
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+  featureText: {
+    flex: 1,
+    gap: 4,
+  },
+  featureDescription: {
+    fontSize: 14,
+    opacity: 0.75,
+    lineHeight: 20,
   },
   getStartedButton: {
     marginHorizontal: 24,
