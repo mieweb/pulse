@@ -49,6 +49,10 @@ jobs:
       - name: Prebuild iOS project
         run: npx expo prebuild --clean
 
+      - name: Set iOS deployment target for pods
+        run: |
+          node -e "const fs=require('fs'); const p='ios/Podfile.properties.json'; const d=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{}; d['ios.deploymentTarget']='15.5'; fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n'); console.log('Configured ios.deploymentTarget=15.5 in ' + p);"
+
       - name: Install iOS dependencies
         run: |
           cd ios

@@ -44,6 +44,9 @@ export default function TimeSelectorButton({
     <>
       <TouchableOpacity
         style={styles.selectorButton}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityLabel="Select recording time"
         onPress={() => setIsModalVisible(true)}
       >
         <ThemedText style={styles.selectorText}>
@@ -90,12 +93,19 @@ export default function TimeSelectorButton({
 
 const styles = StyleSheet.create({
   selectorButton: {
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    backgroundColor: "rgba(0, 0, 0, 0.78)",
     width: 40,
     height: 40,
     borderRadius: 25,
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 255, 255, 0.65)",
     justifyContent: "center",
     alignItems: "center",
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
   },
   selectorText: {
     color: "#ffffff",

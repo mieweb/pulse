@@ -7,12 +7,18 @@ import { useFonts } from "expo-font";
 import { useRouter , Stack } from "expo-router";
 import * as Linking from "expo-linking";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
 import { PermissionMonitor } from "@/components/PermissionMonitor";
+import { ReportIssueFab } from "@/components/ReportIssueFab";
+import { ReportIssueModal } from "@/components/ReportIssueModal";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import {
+  BUG_REPORT_NOTIFICATION_OPEN_ACTION,
+  openBugReportNotificationUrl,
+} from "@/utils/localNotification";
 import { storeUploadConfigForDraft } from "@/utils/uploadConfig";
 import { addDestination } from "@/utils/uploadDestinations";
 
@@ -22,6 +28,7 @@ const isUUIDv4 = (uuid: string) =>
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const router = useRouter();
+  const [isReportIssueModalVisible, setIsReportIssueModalVisible] = useState(false);
   const [loaded] = useFonts({
     "Roboto-Regular": require("../assets/fonts/Roboto-Regular.ttf"),
     "Roboto-Bold": require("../assets/fonts/Roboto-Bold.ttf"),
@@ -117,6 +124,56 @@ export default function RootLayout() {
     };
   }, [router]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let subscription: { remove: () => void } | null = null;
+
+    const setupNotifications = async () => {
+      const Notifications = await import("expo-notifications");
+
+      const handleResponse = async (response: {
+        actionIdentifier: string;
+        notification: {
+          request: {
+            content: {
+              data?: {
+                issueUrl?: string | null;
+              };
+            };
+          };
+        };
+      }) => {
+        if (cancelled) return;
+
+        const issueUrl = response.notification.request.content.data?.issueUrl;
+        if (!issueUrl) return;
+
+        if (
+          response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER ||
+          response.actionIdentifier === BUG_REPORT_NOTIFICATION_OPEN_ACTION
+        ) {
+          await openBugReportNotificationUrl(issueUrl);
+        }
+      };
+
+      subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+        void handleResponse(response);
+      });
+
+      const lastResponse = await Notifications.getLastNotificationResponseAsync();
+      if (lastResponse) {
+        await handleResponse(lastResponse as never);
+      }
+    };
+
+    void setupNotifications();
+
+    return () => {
+      cancelled = true;
+      subscription?.remove();
+    };
+  }, []);
+
   if (!loaded) {
     // Async font loading only occurs in development.
     return null;
@@ -189,6 +246,11 @@ export default function RootLayout() {
           />
         </Stack>
         <StatusBar style="auto" />
+        <ReportIssueFab onPress={() => setIsReportIssueModalVisible(true)} />
+        <ReportIssueModal
+          visible={isReportIssueModalVisible}
+          onClose={() => setIsReportIssueModalVisible(false)}
+        />
         <PermissionMonitor />
       </ThemeProvider>
     </GestureHandlerRootView>

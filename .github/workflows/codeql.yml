@@ -112,6 +112,11 @@ jobs:
         echo "Prebuilding iOS project..."
         npx expo prebuild --platform ios --clean --no-install
 
+    - name: Set iOS deployment target for pods
+      if: matrix.language == 'swift'
+      run: |
+        node -e "const fs=require('fs'); const p='ios/Podfile.properties.json'; const d=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{}; d['ios.deploymentTarget']='15.5'; fs.writeFileSync(p, JSON.stringify(d, null, 2) + '\n'); console.log('Configured ios.deploymentTarget=15.5 in ' + p);"
+
     - name: Install iOS dependencies
       if: matrix.language == 'swift'
       run: |
@@ -166,14 +171,25 @@ jobs:
       run: |
         echo "Attempting fallback iOS build with minimal configuration..."
         cd ios
-        
-        # Try a minimal build using the same approach as main.yml
-          xcodebuild -workspace pulse.xcworkspace \
-            -scheme pulse \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone SE (3rd generation),OS=18.2' \
-            build-for-testing
+
+        # Guard against missing workspace when pod install failed earlier.
+        if [ ! -d "pulse.xcworkspace" ]; then
+          echo "pulse.xcworkspace is missing; retrying pod install before fallback build..."
+          pod install --repo-update
+        fi
+
+        if [ ! -d "pulse.xcworkspace" ]; then
+          echo "❌ pulse.xcworkspace still missing after pod install. Fallback build cannot continue."
+          exit 1
+        fi
+
+        # Try a minimal build using the same approach as main.yml.
+        xcodebuild -workspace pulse.xcworkspace \
+          -scheme pulse \
+          -configuration Debug \
+          -sdk iphonesimulator \
+          -destination 'platform=iOS Simulator,name=iPhone SE (3rd generation),OS=18.2' \
+          build-for-testing
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
