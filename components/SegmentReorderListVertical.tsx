@@ -8,8 +8,8 @@ import {
   View,
   TouchableOpacity,
   Image,
-  ScrollView,
 } from "react-native";
+import Animated, { useAnimatedRef } from "react-native-reanimated";
 import { router } from "expo-router";
 import Sortable from "react-native-sortables";
 
@@ -155,6 +155,7 @@ export default function SegmentReorderListVertical({
 }: SegmentReorderListVerticalProps) {
   const [reorderedSegments, setReorderedSegments] =
     useState<Segment[]>(segments);
+  const scrollableRef = useAnimatedRef<Animated.ScrollView>();
 
   // Update reorderedSegments when segments prop changes (e.g., after trim points are updated)
   useEffect(() => {
@@ -238,13 +239,15 @@ export default function SegmentReorderListVertical({
       </View>
 
       {/* Sortable List */}
-      <ScrollView
+      <Animated.ScrollView
+        ref={scrollableRef}
         style={styles.sortableContainer}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
         <Sortable.Grid
           data={reorderedSegments}
+          scrollableRef={scrollableRef}
           renderItem={({ item, index }) => (
             <SegmentItem
               item={item}
@@ -259,7 +262,7 @@ export default function SegmentReorderListVertical({
             handleOrderChange(data);
           }}
         />
-      </ScrollView>
+      </Animated.ScrollView>
 
     </View>
   );
