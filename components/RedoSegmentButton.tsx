@@ -5,15 +5,17 @@ import { StyleSheet, TouchableOpacity } from "react-native";
 interface RedoSegmentButtonProps {
   onRedoSegment: () => void;
   disabled?: boolean;
+  style?: object;
 }
 
 export default function RedoSegmentButton({
   onRedoSegment,
   disabled = false,
+  style,
 }: RedoSegmentButtonProps) {
   return (
     <TouchableOpacity
-      style={[styles.redoButton, disabled && styles.disabled]}
+      style={[styles.redoButton, disabled && styles.disabled, style]}
       onPress={onRedoSegment}
       disabled={disabled}
     >

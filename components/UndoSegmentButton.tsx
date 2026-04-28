@@ -5,15 +5,17 @@ import { StyleSheet, TouchableOpacity } from "react-native";
 interface UndoSegmentButtonProps {
   onUndoSegment: () => void;
   disabled?: boolean;
+  style?: object;
 }
 
 export default function UndoSegmentButton({
   onUndoSegment,
   disabled = false,
+  style,
 }: UndoSegmentButtonProps) {
   return (
     <TouchableOpacity
-      style={[styles.undoButton, disabled && styles.disabled]}
+      style={[styles.undoButton, disabled && styles.disabled, style]}
       onPress={onUndoSegment}
       disabled={disabled}
     >
