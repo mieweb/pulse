@@ -113,7 +113,7 @@ export default function OnboardingScreen() {
           <ThemedView style={styles.featureText}>
             <ThemedText type="subtitle">Upload to Your Server</ThemedText>
             <ThemedText style={styles.featureDescription}>
-              Resumable TUS uploads direct to your organization's own PulseVault instance.
+              Resumable TUS uploads direct to your organization&apos;s own PulseVault instance.
             </ThemedText>
           </ThemedView>
         </ThemedView>
