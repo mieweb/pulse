@@ -177,6 +177,7 @@ export default function MergedVideoScreen() {
 
     let configOverride: { server: string; token?: string } | undefined;
     let serverUrl = "";
+    let uploadToken: string | undefined;
     if (hasUploadConfig) {
       const config = await getUploadConfigForDraft(draftId);
       if (!config) {
@@ -189,12 +190,14 @@ export default function MergedVideoScreen() {
       }
       configOverride = undefined;
       serverUrl = config.server;
+      uploadToken = config.token;
     } else if (selectedDestination) {
       configOverride = {
         server: selectedDestination.server,
         ...(selectedDestination.token && { token: selectedDestination.token }),
       };
       serverUrl = selectedDestination.server;
+      uploadToken = selectedDestination.token;
     } else {
       Alert.alert(
         "Choose a destination",
@@ -219,7 +222,10 @@ export default function MergedVideoScreen() {
       );
 
       const normalizedServerUrl = serverUrl.replace(/\/$/, "");
-      const watchUrl = `${normalizedServerUrl}/${result.videoId}`;
+      const baseUrl = `${normalizedServerUrl}/${result.videoId}`;
+      const watchUrl = uploadToken
+        ? `${baseUrl}?token=${encodeURIComponent(uploadToken)}`
+        : baseUrl;
       setSuccessModal({ videoId: result.videoId, size: result.size, url: watchUrl });
     } catch (error) {
       console.error("[Upload] Upload failed:", error);
