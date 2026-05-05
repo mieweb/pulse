@@ -1,0 +1,4 @@
+[submodule "PulseVault"]
+	path = PulseVault
+	url = https://github.com/mieweb/PulseVault
+	branch = main

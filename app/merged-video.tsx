@@ -8,6 +8,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
+  Modal,
+  Pressable,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -41,6 +44,11 @@ export default function MergedVideoScreen() {
   const [destinations, setDestinations] = useState<UploadDestination[]>([]);
   const [selectedDestination, setSelectedDestination] =
     useState<UploadDestination | null>(null);
+  const [successModal, setSuccessModal] = useState<{
+    videoId: string;
+    size: number;
+    url: string;
+  } | null>(null);
 
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = false;
@@ -168,6 +176,8 @@ export default function MergedVideoScreen() {
     }
 
     let configOverride: { server: string; token?: string } | undefined;
+    let serverUrl = "";
+    let uploadToken: string | undefined;
     if (hasUploadConfig) {
       const config = await getUploadConfigForDraft(draftId);
       if (!config) {
@@ -179,11 +189,15 @@ export default function MergedVideoScreen() {
         return;
       }
       configOverride = undefined;
+      serverUrl = config.server;
+      uploadToken = config.token;
     } else if (selectedDestination) {
       configOverride = {
         server: selectedDestination.server,
         ...(selectedDestination.token && { token: selectedDestination.token }),
       };
+      serverUrl = selectedDestination.server;
+      uploadToken = selectedDestination.token;
     } else {
       Alert.alert(
         "Choose a destination",
@@ -207,19 +221,12 @@ export default function MergedVideoScreen() {
         videoid,
       );
 
-      Alert.alert(
-        "Upload Successful",
-        `Video uploaded successfully!\n\nVideo ID: ${result.videoId}\nSize: ${(result.size / 1024 / 1024).toFixed(2)} MB`,
-        [
-          {
-            text: "OK",
-            onPress: () => {
-              // Navigate back or to success screen
-              router.back();
-            },
-          },
-        ]
-      );
+      const normalizedServerUrl = serverUrl.replace(/\/$/, "");
+      const baseUrl = `${normalizedServerUrl}/${result.videoId}`;
+      const watchUrl = uploadToken
+        ? `${baseUrl}?token=${encodeURIComponent(uploadToken)}`
+        : baseUrl;
+      setSuccessModal({ videoId: result.videoId, size: result.size, url: watchUrl });
     } catch (error) {
       console.error("[Upload] Upload failed:", error);
       const errorMessage =
@@ -469,6 +476,62 @@ export default function MergedVideoScreen() {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Upload Success Modal */}
+      <Modal
+        visible={successModal !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setSuccessModal(null);
+          router.dismissAll();
+        }}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => {
+            setSuccessModal(null);
+            router.dismissAll();
+          }}
+        >
+          <Pressable style={styles.modalCard} onPress={() => {}}
+          >
+            <MaterialIcons name="check-circle" size={52} color="#30d158" style={styles.modalIcon} />
+            <ThemedText style={styles.modalTitle}>Upload Successful</ThemedText>
+            <ThemedText style={styles.modalBody}>
+              Video uploaded successfully!
+            </ThemedText>
+            <ThemedText style={styles.modalDetail} numberOfLines={2} selectable>
+              {successModal?.videoId}
+            </ThemedText>
+            <ThemedText style={styles.modalDetail}>
+              {successModal ? `${(successModal.size / 1024 / 1024).toFixed(2)} MB` : ""}
+            </ThemedText>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonPrimary]}
+                onPress={() => successModal && Linking.openURL(successModal.url)}
+                activeOpacity={0.8}
+              >
+                <MaterialIcons name="open-in-browser" size={18} color="#ffffff" />
+                <ThemedText style={styles.modalButtonText}>Open Video</ThemedText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonSecondary]}
+                onPress={() => {
+                  setSuccessModal(null);
+                  router.dismissAll();
+                }}
+                activeOpacity={0.8}
+              >
+                <ThemedText style={[styles.modalButtonText, styles.modalButtonTextDone]}>Done</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ThemedView>
   );
 }
@@ -713,5 +776,71 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     zIndex: 1001,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: "#1c1c1e",
+    borderRadius: 20,
+    padding: 28,
+    width: "100%",
+    maxWidth: 380,
+    alignItems: "center",
+  },
+  modalIcon: {
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#ffffff",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  modalBody: {
+    fontSize: 15,
+    color: "#ebebf5cc",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  modalDetail: {
+    fontSize: 13,
+    color: "#8e8e93",
+    textAlign: "center",
+    marginBottom: 4,
+  },
+  modalButtons: {
+    flexDirection: "column",
+    gap: 12,
+    marginTop: 20,
+    width: "100%",
+  },
+  modalButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  modalButtonPrimary: {
+    backgroundColor: "#0A84FF",
+  },
+  modalButtonSecondary: {
+    backgroundColor: "#2c2c2e",
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#ffffff",
+  },
+  modalButtonTextDone: {
+    color: "#ebebf5",
   },
 });
