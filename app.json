@@ -2,7 +2,7 @@
   "expo": {
     "name": "pulse",
     "slug": "pulse",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "orientation": "portrait",
     "icon": "./assets/images/pulse-logo.png",
     "scheme": "pulsecam",
@@ -71,9 +71,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "5f42c4ab-daf7-489a-918e-a893e453486b"
+        "projectId": "0e92935b-0b37-44d3-9364-18ad3e40e66d"
       }
     },
-    "owner": "morepriyam"
+    "owner": "adithya_sn"
   }
 }
