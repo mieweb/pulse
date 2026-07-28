@@ -566,6 +566,32 @@ describe('uploadViaTus', () => {
     expect(Buffer.from(b64, 'base64').toString('utf8')).toBe(title);
   });
 
+  it('omits the name (does not throw) when the title is a malformed surrogate', async () => {
+    const { fetchImpl, calls } = createFetchStub({
+      POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
+      HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '1' } })],
+    });
+    const { uploadChunk } = createChunkStub([]);
+    // A lone high surrogate (e.g. a title pasted truncated mid-emoji) would make
+    // encodeURIComponent throw; the upload must still succeed, just without name.
+    await expect(
+      uploadViaTus({
+        server: SERVER,
+        token: null,
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        name: 'oops \uD83D',
+        file: fakeFile(1) as never,
+        fetchImpl,
+        uploadChunk,
+      }),
+    ).resolves.toBeDefined();
+    const createCall = calls.find((c) => c.init?.method === 'POST');
+    const metadata = (createCall?.init?.headers as Record<string, string>)['Upload-Metadata'];
+    expect(metadata.split(',').some((p) => p.trim().startsWith('name '))).toBe(false);
+  });
+
   it('rejects a Location header that redirects to a different origin than the paired server', async () => {
     // A malicious or compromised paired server could otherwise redirect every
     // subsequent HEAD/PATCH/DELETE (each carrying the bearer capability

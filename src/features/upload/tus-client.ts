@@ -114,13 +114,23 @@ function base64Encode(value: string): string {
 
 /**
  * UTF-8-safe base64 for free-form values (the draft `name`, which can carry
- * accents or emoji). `btoa` alone is Latin-1 and throws / corrupts on any
- * code point > 0xFF, so first percent-escape to the value's UTF-8 bytes and
- * collapse those to a byte string `btoa` accepts. Uses only Hermes-guaranteed
- * globals (`encodeURIComponent`/`btoa`) — no Buffer or TextEncoder dependency.
+ * accents or emoji). `btoa` alone is Latin-1 and corrupts any code point
+ * > 0xFF, so first percent-escape to the value's UTF-8 bytes and collapse those
+ * to a byte string `btoa` accepts. Uses only Hermes-guaranteed globals
+ * (`encodeURIComponent`/`btoa`) — no Buffer or TextEncoder dependency.
+ *
+ * Returns `null` for a malformed title: a lone surrogate (e.g. a value pasted
+ * truncated mid-emoji) makes `encodeURIComponent` throw. The caller then omits
+ * the optional `name` rather than failing the whole upload over one field.
  */
-function base64EncodeUtf8(value: string): string {
-  const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, hex) =>
+function base64EncodeUtf8(value: string): string | null {
+  let escaped: string;
+  try {
+    escaped = encodeURIComponent(value);
+  } catch {
+    return null;
+  }
+  const bytes = escaped.replace(/%([0-9A-F]{2})/g, (_, hex) =>
     String.fromCharCode(parseInt(hex, 16)),
   );
   return btoa(bytes);
@@ -141,8 +151,12 @@ function buildUploadMetadata(opts: {
   ];
   if (opts.relatedTo) parts.push(`relatedTo ${base64Encode(opts.relatedTo)}`);
   if (opts.checksum) parts.push(`checksum ${base64Encode(opts.checksum)}`);
-  // Free-form title → UTF-8-safe encoder. Sent only on the session anchor.
-  if (opts.name) parts.push(`name ${base64EncodeUtf8(opts.name)}`);
+  // Free-form title → UTF-8-safe encoder. Sent only on the session anchor;
+  // omitted if the title can't be encoded (a malformed surrogate).
+  if (opts.name) {
+    const encodedName = base64EncodeUtf8(opts.name);
+    if (encodedName) parts.push(`name ${encodedName}`);
+  }
   return parts.join(',');
 }
 
