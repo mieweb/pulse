@@ -49,6 +49,8 @@ export type TusUploadOptions = {
   relatedTo?: string;
   /** `<algorithm>:<hex digest>` of the finished file, verified by the server if it supports checksums. */
   checksum?: string;
+  /** Free-form display title for the artifact (the draft name). Sent only on the session anchor. */
+  name?: string;
   file: File;
   /** A previously-created upload's resource URL, to resume instead of creating a new one. */
   resourceUrl?: string | null;
@@ -110,12 +112,27 @@ function base64Encode(value: string): string {
   return btoa(value);
 }
 
+/**
+ * UTF-8-safe base64 for free-form values (the draft `name`, which can carry
+ * accents or emoji). `btoa` alone is Latin-1 and throws / corrupts on any
+ * code point > 0xFF, so first percent-escape to the value's UTF-8 bytes and
+ * collapse those to a byte string `btoa` accepts. Uses only Hermes-guaranteed
+ * globals (`encodeURIComponent`/`btoa`) — no Buffer or TextEncoder dependency.
+ */
+function base64EncodeUtf8(value: string): string {
+  const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, hex) =>
+    String.fromCharCode(parseInt(hex, 16)),
+  );
+  return btoa(bytes);
+}
+
 function buildUploadMetadata(opts: {
   artifactId: string;
   filename: string;
   kind: ArtifactKind;
   relatedTo?: string;
   checksum?: string;
+  name?: string;
 }): string {
   const parts = [
     `artifactId ${base64Encode(opts.artifactId)}`,
@@ -124,6 +141,8 @@ function buildUploadMetadata(opts: {
   ];
   if (opts.relatedTo) parts.push(`relatedTo ${base64Encode(opts.relatedTo)}`);
   if (opts.checksum) parts.push(`checksum ${base64Encode(opts.checksum)}`);
+  // Free-form title → UTF-8-safe encoder. Sent only on the session anchor.
+  if (opts.name) parts.push(`name ${base64EncodeUtf8(opts.name)}`);
   return parts.join(',');
 }
 
