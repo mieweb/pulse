@@ -53,6 +53,15 @@ const TARGETS = [
     canvas: { w: 1080, h: 1920 },
     screenRadius: 0.06,
   },
+  {
+    // Apple requires at least one 13" iPad screenshot when the app supports tablets.
+    // Reuses the iPhone captures on the iPad canvas (2048x2732, 12.9/13" portrait spec).
+    name: 'appstore-ipad',
+    src: path.join(ROOT, '..', 'ios'),
+    out: path.join(ROOT, '..', 'store', 'appstore-ipad'),
+    canvas: { w: 2048, h: 2732 },
+    screenRadius: 0.105,
+  },
 ];
 
 const BG_TOP = '#101014';
