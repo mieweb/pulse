@@ -1,15 +1,16 @@
 {
-  "name": "frame",
+  "name": "pulse-screenshot-frame",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "description": "Store-ready screenshot framing for Pulse (App Store / Play Store marketing sets)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
   },
-  "keywords": [],
-  "author": "",
+  "scripts": {
+    "frame": "node frame.mjs"
+  },
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "sharp": "^0.35.3"
   }

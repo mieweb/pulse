@@ -34,10 +34,12 @@ same 13-shot run sheet and shared `01-…13-` naming.
 
 ## Regenerating the framed sets
 
+Requires Node >= 20.9.0 (needed by `sharp`).
+
 ```sh
 cd screenshots/frame
-npm install
-node frame.mjs
+npm ci
+npm run frame
 ```
 
 The script composites each raw capture into a generic rounded-corner bezel with

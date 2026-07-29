@@ -117,6 +117,9 @@ async function frameOne(srcFile, target) {
   const fontSize = Math.round(canvas.w * 0.058);
   const bezelPad = Math.round(canvas.w * BEZEL_PAD_FRAC);
   const meta = await sharp(srcFile).metadata();
+  if (!meta.width || !meta.height) {
+    throw new Error(`could not read dimensions of ${srcFile} — file may be corrupt or unsupported`);
+  }
   const aspect = meta.width / meta.height;
 
   // Layout: caption band up top, whole device fully visible below it — sized by the
