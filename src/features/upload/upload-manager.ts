@@ -20,6 +20,7 @@ import { getDraftToken } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
+import { ensureUploadContract } from '@/utils/ensure-upload-contract';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { effFile } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
@@ -578,6 +579,26 @@ class BackgroundUploadManager {
   private async uploadMerged(session: UploadSession, signal: AbortSignal): Promise<string> {
     const { draftId, destination, segments, merged } = session;
     if (!merged) throw new Error('Export is not ready yet');
+
+    // Bring the video into the upload contract (H.264 / <=1920 long edge / <=5 Mbps / AAC) before
+    // anything reads its bytes. A compliant file costs one probe and is returned untouched; only a
+    // breach pays for a re-encode. This is the gate, NOT the export step: Share and Save-to-Photos
+    // read `state.outputPath` directly and must keep full capture quality — only what leaves the
+    // device for a browser to play is constrained.
+    const contract = await ensureUploadContract(merged.path);
+    if (contract.changed) {
+      // Persist the conditioned path so an after-kill resume re-uploads the SAME bytes. Without
+      // this, resume would re-encode from the original and a TUS PATCH could continue a transfer
+      // with bytes from a different encode. (Re-running the gate on an already-conditioned file is
+      // a no-op passthrough, so this is a cost saving as well as a correctness one.)
+      merged.path = contract.path;
+      await setUploadMerged(draftId, merged);
+    }
+    if (contract.failure) {
+      // Fail open, loudly: the upload proceeds with the original bytes, but it is not silent.
+      console.warn(`[contract] uploading unconditioned video for ${draftId}: ${contract.failure}`);
+    }
+
     // merged.path is a bare filesystem path on Android (RNVT) — normalize to a file:// URI or the
     // File API rejects it outright ("URI is not absolute").
     const file = new File(toFileUri(merged.path));
@@ -652,7 +673,13 @@ class BackgroundUploadManager {
     const result = await this.uploadOne(
       draftId,
       destination,
-      { artifactId: destination.artifactId, filename: `${draftId}.mp4`, kind: 'video', name: draftName, file },
+      {
+        artifactId: destination.artifactId,
+        filename: `${draftId}.mp4`,
+        kind: 'video',
+        name: draftName,
+        file,
+      },
       destination.resourceUrl,
       checksum,
       signal,

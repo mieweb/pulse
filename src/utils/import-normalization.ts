@@ -45,7 +45,7 @@ export const NORMALIZE_MAX_BITRATE = 8_000_000;
  * are re-encoded once at import time rather than leaking into merged artifacts. */
 const NATIVE_VIDEO_CODECS = new Set(['h264']);
 /** HDR transfer functions: HLG (iPhone camera default) and PQ (HDR10 / Dolby Vision 8.x). */
-const HDR_TRANSFERS = new Set(['arib-std-b67', 'smpte2084']);
+export const HDR_TRANSFERS = new Set(['arib-std-b67', 'smpte2084']);
 
 export type ImportDecision =
   | { action: 'passthrough' }
@@ -56,17 +56,17 @@ export type ImportDecision =
  * suffix (yuv420p10le, p010le, ...) — matching the suffix rather than a bare `includes('10')`
  * keeps 8-bit chroma-subsampling names like `yuv410p` from being misclassified.
  */
-function is10Bit(pixelFormat: string): boolean {
+export function is10Bit(pixelFormat: string): boolean {
   return /10(le|be)?$/.test(pixelFormat);
 }
 
 /** Effective fps for the decision: average when known (catches VFR), else nominal. */
-function effectiveFps(probe: VideoProbeResult): number {
+export function effectiveFps(probe: VideoProbeResult): number {
   return probe.averageFps > 0 ? probe.averageFps : probe.nominalFps;
 }
 
 /** Display (post-rotation) dimensions: a 90/270 rotation swaps coded width/height. */
-function displaySize(probe: VideoProbeResult): { width: number; height: number } {
+export function displaySize(probe: VideoProbeResult): { width: number; height: number } {
   const swapped = probe.rotation % 180 !== 0;
   return {
     width: swapped ? probe.height : probe.width,

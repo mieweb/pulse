@@ -276,9 +276,20 @@ export default function RecorderScreen() {
   }, [device]);
 
   // Pinned 1080p output + 30fps so every recorded clip is format-uniform (fast-path merge).
+  //
+  // `resolutionBias` FIRST, deliberately. VisionCamera picks the capture format by scoring every
+  // format against a weighted list of constraints — weight is `count - index`, so earlier entries
+  // outrank later ones — and it auto-appends one `{ resolutionBias: output }` per output, in the
+  // order the outputs are given. `<Camera>` puts its own preview output ahead of ours, and the
+  // preview asks for a format at least as large as the SCREEN. Every modern iPhone screen is taller
+  // than 1920px, so 1080p could never satisfy the preview and the vote elected 4K: clips shipped at
+  // 3840x2160 / ~23 Mbps while `useVideoOutput` below asked for 1080p / 5 Mbps. VisionCamera 5.2.0
+  // rescored that case so 1080p wins on its own, but only by ~13% on the largest screens — naming
+  // the video output's bias explicitly, at the top of the list, turns a margin into a mandate.
+  // See `logNegotiatedResolution` in use-recorder.ts for the runtime check that this held.
   const constraints = useMemo<Constraint[]>(
-    () => [{ videoStabilizationMode: stabilization }, { fps: 30 }],
-    [stabilization],
+    () => [{ resolutionBias: videoOutput }, { videoStabilizationMode: stabilization }, { fps: 30 }],
+    [stabilization, videoOutput],
   );
   const outputs = useMemo(() => [videoOutput], [videoOutput]);
 
