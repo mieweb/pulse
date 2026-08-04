@@ -86,8 +86,10 @@ export function useRecorder(initialDraftId?: string) {
 
   // VisionCamera records to a file via a per-recording `Recorder` created from this output. The
   // output is also handed to `<Camera outputs={[videoOutput]}>` in recorder.tsx. Pinned to 1080p;
-  // the codec stays on VisionCamera's default (HEVC on modern devices) so every clip is
-  // format-uniform and exports on the merge engine's zero-re-encode fast path. `fileType: 'mp4'`
+  // the codec is forced to H.264 below (see the setOutputSettings effect) so every clip is
+  // format-uniform, exports on the merge engine's zero-re-encode fast path, AND plays in every
+  // browser — VisionCamera's device default is HEVC on modern iPhones, which Firefox never
+  // decodes and Chrome usually can't without hardware support. `fileType: 'mp4'`
   // makes iOS write a true MP4 container (Android always does) — segments are persisted and
   // uploaded as `{segmentId}.mp4`, so the bytes now match the extension end to end instead of
   // QuickTime bytes under an .mp4 name.
@@ -101,6 +103,24 @@ export function useRecorder(initialDraftId?: string) {
     enableAudio: micEnabled,
     fileType: 'mp4',
   });
+
+  // Force H.264 (iOS only — Android's CameraX camcorder profiles are already AVC, and its
+  // setOutputSettings is a native no-op). Applied once per output *instance*: the enableAudio
+  // flip above rebuilds the output, silently reverting the codec to the HEVC default, so this
+  // re-applies whenever the identity changes. Gated on cameraReady && !isRecording because
+  // mutating the settings of a session that is actively capturing is what crashed the recorder
+  // historically; setOutputSettings preserves the bitrate configured above (it only swaps the
+  // codec key). Failure is non-fatal — worst case that clip records HEVC, exactly today's
+  // behavior, and the merge engine still handles it.
+  const h264OutputRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !cameraReady || isRecording) return;
+    if (h264OutputRef.current === videoOutput) return;
+    h264OutputRef.current = videoOutput;
+    videoOutput.setOutputSettings({ codec: 'h264' }).catch((e: unknown) => {
+      console.warn('Failed to force H.264 on the video output; clip may record as HEVC', e);
+    });
+  }, [videoOutput, cameraReady, isRecording]);
 
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
 

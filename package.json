@@ -50,7 +50,7 @@
     "react-native-screens": "4.25.2",
     "react-native-sortables": "^1.10.0",
     "react-native-svg": "15.15.4",
-    "react-native-video-trim": "git+https://github.com/morepriyam/react-native-video-trim.git#2a06098e160b4bb822bcfcecf867cffb0cf158ed",
+    "react-native-video-trim": "git+https://github.com/morepriyam/react-native-video-trim.git#1728f23d5bd64a8fedc6cad0054c8ea5fbc961b4",
     "react-native-vision-camera": "^5.2.0",
     "react-native-vision-camera-worklets": "^5.2.0",
     "react-native-web": "~0.21.0",
@@ -67,6 +67,7 @@
     "eslint-config-expo": "~57.0.0",
     "eslint-config-prettier": "^10.1.8",
     "jest": "~29.7.0",
+    "patch-package": "^8.0.1",
     "prettier": "^3.8.3",
     "typescript": "~6.0.3"
   },
@@ -89,7 +90,8 @@
     "lint": "expo lint",
     "test": "jest",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "postinstall": "patch-package"
   },
   "private": true
 }

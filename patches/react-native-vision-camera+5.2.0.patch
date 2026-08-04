@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-vision-camera/ios/Hybrid Objects/Recording/HybridFrameRecorder.swift b/node_modules/react-native-vision-camera/ios/Hybrid Objects/Recording/HybridFrameRecorder.swift
+index 14eca90..637baae 100644
+--- a/node_modules/react-native-vision-camera/ios/Hybrid Objects/Recording/HybridFrameRecorder.swift	
++++ b/node_modules/react-native-vision-camera/ios/Hybrid Objects/Recording/HybridFrameRecorder.swift	
+@@ -48,7 +48,7 @@ final class HybridFrameRecorder: HybridRecorderSpec {
+     self.masterClock = masterClock
+     self.fileURL = try URL.createTempURL(fileType: fileType.toUTType())
+     self.assetWriter = try AVAssetWriter(outputURL: fileURL, fileType: fileType.toAVFileType())
+-    self.assetWriter.shouldOptimizeForNetworkUse = false
++    self.assetWriter.shouldOptimizeForNetworkUse = true
+     self.queue = DispatchQueue(
+       label: "com.margelo.camera.recorder",
+       qos: .utility
