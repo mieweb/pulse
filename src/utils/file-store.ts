@@ -5,14 +5,14 @@ import { Directory, File, Paths } from 'expo-file-system';
 // between launches without invalidating references (§2.2).
 //   drafts/{draftId}/segments/{segmentId}.mp4               — pristine original
 //   drafts/{draftId}/segments/{segmentId}.edited.{rev}.mp4  — re-encoded editor output
+//   drafts/{draftId}/upload/{segmentId}.mp4                 — upload-contract copy (see uploadDir)
 
 /**
  * Normalize a bare filesystem path to a `file://` URI. `merge()` / `getFrameAt` / the camera hand
  * back bare paths, but expo's `File`, expo-video, whisper, sharing, etc. all want a URI. A value
  * that already has a scheme is returned unchanged.
  */
-export const toFileUri = (path: string): string =>
-  path.startsWith('/') ? `file://${path}` : path;
+export const toFileUri = (path: string): string => (path.startsWith('/') ? `file://${path}` : path);
 
 export function segmentRelPath(draftId: string, segmentId: string): string {
   return `drafts/${draftId}/segments/${segmentId}.mp4`;
@@ -53,6 +53,27 @@ function segmentsDir(draftId: string): Directory {
   const dir = new Directory(Paths.document, 'drafts', draftId, 'segments');
   dir.create({ intermediates: true, idempotent: true });
   return dir;
+}
+
+/**
+ * The draft's conditioned-upload dir, creating it (and any missing parents) if needed.
+ *
+ * A STABLE location inside the draft's own directory, not a cache temp name. Segment uploads
+ * resume byte-wise (TUS HEAD + PATCH), so a resumed run must re-send the exact bytes it started
+ * with — re-encoding on resume would splice a second encode into a half-finished transfer. A
+ * fixed path means the conditioned file is found and reused instead. Living under
+ * `drafts/{draftId}/` means `deleteDraftDir` reclaims it with the draft, and it sits beside
+ * `segments/` rather than inside it so it can never be mistaken for a clip.
+ */
+function uploadDir(draftId: string): Directory {
+  const dir = new Directory(Paths.document, 'drafts', draftId, 'upload');
+  dir.create({ intermediates: true, idempotent: true });
+  return dir;
+}
+
+/** The on-disk conditioned upload copy for a clip, creating the upload dir if needed. */
+export function uploadDest(draftId: string, segmentId: string): File {
+  return new File(uploadDir(draftId), `${segmentId}.mp4`);
 }
 
 /** The on-disk pristine segment file for a draft, creating the segments dir if needed. */

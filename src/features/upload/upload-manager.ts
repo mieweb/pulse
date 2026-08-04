@@ -20,7 +20,7 @@ import { getDraftToken } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
-import { ensureUploadContract } from '@/utils/ensure-upload-contract';
+import { ensureUploadContract, ensureUploadContractCached } from '@/utils/ensure-upload-contract';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { effFile } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
@@ -766,7 +766,20 @@ class BackgroundUploadManager {
 
     for (const [index, segment] of segments.entries()) {
       reportClip(index + 1, index);
-      const file = new File(absolutize(effFile(segment)));
+      // Same contract as the merged unit. `uploadUnit` is chosen by the DESTINATION SERVER, not
+      // by us, so leaving this path ungated would silently disable the contract for any server
+      // that asks for segments — the protection would look present and not run.
+      const contract = await ensureUploadContractCached(
+        absolutize(effFile(segment)),
+        draftId,
+        segment.id,
+      );
+      if (contract.failure) {
+        console.warn(
+          `[contract] uploading unconditioned clip ${segment.id} for ${draftId}: ${contract.failure}`,
+        );
+      }
+      const file = new File(toFileUri(contract.path));
       const checksum = await md5Checksum(file);
 
       const videoKey = `${segment.id}:video` as const;
