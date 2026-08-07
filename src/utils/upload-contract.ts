@@ -43,10 +43,18 @@ import { displaySize, effectiveFps, HDR_TRANSFERS, is10Bit } from './import-norm
  * - **The bitrate ceiling is tighter** — an upload is streamed over a phone network,
  *   not read off local flash.
  *
- * Faststart is deliberately absent from the decision below: `moov` placement is not
- * visible in a `probeVideo()` result. It is guaranteed on the writing side instead —
- * the export/merge/compress paths emit it — because a file that is otherwise compliant
- * should not be re-encoded just to move its index.
+ * Faststart is absent from the decision below because `moov` placement is not visible in
+ * a `probeVideo()` result — but it is still part of the contract, and it is still
+ * enforced. `ensureUploadContract` checks it separately by reading the file's box headers
+ * and remuxing (stream-copy, not transcode) when the index is at the tail. Keeping it out
+ * of this function is what lets the function stay pure and testable on a probe alone.
+ *
+ * That split matters more than it looks. The merge/compress paths emit `+faststart`, so
+ * for a long time the only files that missed it were also breaching the codec or bitrate
+ * rules, and the re-encode below moved their index as a side effect. Fixing the recorder
+ * (mieweb/pulse#143) removed the breach and would have removed the accident with it,
+ * leaving single-clip drafts and segment uploads — the two paths that skip the merge
+ * engine entirely — shipping `moov`-at-end with nothing client-side to catch it.
  */
 
 /** Long-edge cap. A 1080p long edge is 4x fewer pixels than 4K — the single biggest win. */

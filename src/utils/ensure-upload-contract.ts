@@ -1,8 +1,12 @@
 import { File } from 'expo-file-system';
 import { compress, probeVideo } from 'react-native-video-trim';
 
+import { hasFaststart } from './faststart';
 import { toFileUri, uploadDest } from './file-store';
 import { decideUploadContract } from './upload-contract';
+
+/** Reported when a file is compliant in every respect except its `moov` placement. */
+const FASTSTART_REASON = 'moov atom at the end of the file';
 
 /**
  * What conditioning did to a file on its way to being uploaded.
@@ -64,6 +68,43 @@ export async function ensureUploadContract(path: string): Promise<ContractResult
 
   const decision = decideUploadContract(probe);
   if (decision.action === 'passthrough') {
+    // Compliant on everything a probe can see. `moov` placement is the one part of the
+    // contract that is invisible to `probeVideo`, so it is checked separately, by reading
+    // the box headers (see faststart.ts).
+    //
+    // This is not a corner case: the two paths that skip the merge engine — a single-clip
+    // draft and every segment upload — hand us a raw AVCaptureMovieFileOutput file, and that
+    // API cannot write faststart at all. Those files used to be re-encoded here anyway,
+    // because they also breached the codec and bitrate rules, so their `moov` got moved to
+    // the front as a side effect. Now that the recorder pins H.264 and the 5 Mbps bitrate
+    // actually lands (mieweb/pulse#143), they arrive otherwise compliant and would sail
+    // through with the index still at the tail.
+    //
+    // Only an explicit `false` triggers work. `null` means the scan could not tell, and
+    // guessing there would cost a re-encode on every upload forever.
+    if (hasFaststart(uri) === false) {
+      // Stream-copies the video track and re-encodes only the audio, with `+faststart` on
+      // the output — roughly the cost of a file copy, not of a transcode.
+      const remuxed = await compress(uri, { copyVideo: true, outputExt: 'mp4' }).catch(
+        (e: unknown) => {
+          console.warn('[contract] faststart remux failed; uploading the original', e);
+          return null;
+        },
+      );
+      if (!remuxed) {
+        return {
+          path: uri,
+          changed: false,
+          reasons: [FASTSTART_REASON],
+          failure: `could not remux for faststart (${FASTSTART_REASON})`,
+        };
+      }
+      return {
+        path: toFileUri(remuxed.outputPath),
+        changed: true,
+        reasons: [FASTSTART_REASON],
+      };
+    }
     return { path: uri, changed: false, reasons: [] };
   }
 

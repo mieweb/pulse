@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { compress, probeVideo, type VideoProbeResult } from 'react-native-video-trim';
 
 import { ensureUploadContract } from './ensure-upload-contract';
+import { hasFaststart } from './faststart';
 
 // `jest.mock` is hoisted above these imports by babel-plugin-jest-hoist, so the factories run
 // first and the imports above resolve to the doubles below. The mock functions are created
@@ -19,7 +20,11 @@ jest.mock('react-native-video-trim', () => ({
   probeVideo: jest.fn(),
   compress: jest.fn(),
 }));
+// The scanner has its own tests against synthetic box layouts (faststart.test.ts); here we
+// only care what the gate DOES with each of its three answers.
+jest.mock('./faststart', () => ({ hasFaststart: jest.fn() }));
 
+const mockHasFaststart = hasFaststart as jest.MockedFunction<typeof hasFaststart>;
 const mockProbeVideo = probeVideo as jest.MockedFunction<typeof probeVideo>;
 const mockCompress = compress as unknown as jest.MockedFunction<
   (p: string, o: unknown) => Promise<{ outputPath: string }>
@@ -58,6 +63,9 @@ describe('ensureUploadContract — path normalisation', () => {
   beforeEach(() => {
     mockProbeVideo.mockReset();
     mockCompress.mockReset();
+    // These cases are about path handling, so keep faststart out of the picture.
+    mockHasFaststart.mockReset();
+    mockHasFaststart.mockReturnValue(true);
   });
 
   it('probes a bare Android path as a file:// URI', async () => {
@@ -98,5 +106,96 @@ describe('ensureUploadContract — path normalisation', () => {
     const r = await ensureUploadContract('/data/d.mp4');
     expect(r.changed).toBe(false);
     expect(r.path).toBeTruthy();
+  });
+});
+
+/**
+ * `moov` placement is the one contract term a probe cannot see, so it is enforced here rather
+ * than in `decideUploadContract`. It only bites on files that skip the merge engine — a
+ * single-clip draft and every segment upload — which are raw AVCaptureMovieFileOutput files
+ * and therefore always index-at-the-tail. Before the recorder pinned H.264 they were re-encoded
+ * anyway for breaching codec/bitrate, and got faststart as a side effect; now they are otherwise
+ * compliant, so without this they would upload with the index still at the end.
+ */
+describe('ensureUploadContract — faststart', () => {
+  beforeEach(() => {
+    mockProbeVideo.mockReset();
+    mockCompress.mockReset();
+    mockHasFaststart.mockReset();
+    mockProbeVideo.mockResolvedValue(compliant());
+  });
+
+  it('remuxes a compliant clip whose moov is at the end', async () => {
+    mockHasFaststart.mockReturnValue(false);
+    mockCompress.mockResolvedValue({ outputPath: '/cache/remuxed.mp4' });
+
+    const r = await ensureUploadContract('file:///doc/segments/s.mp4');
+
+    expect(r.changed).toBe(true);
+    expect(r.path).toBe('file:///cache/remuxed.mp4');
+    expect(r.reasons).toEqual(['moov atom at the end of the file']);
+  });
+
+  it('stream-copies the video rather than transcoding it', async () => {
+    mockHasFaststart.mockReturnValue(false);
+    mockCompress.mockResolvedValue({ outputPath: '/cache/remuxed.mp4' });
+
+    await ensureUploadContract('file:///doc/segments/s.mp4');
+
+    // copyVideo maps to `-c:v copy` in the fork, which also applies `+faststart` to the
+    // output. Re-encoding here would spend a quality generation to move four bytes.
+    expect(mockCompress).toHaveBeenCalledWith(
+      'file:///doc/segments/s.mp4',
+      expect.objectContaining({ copyVideo: true, outputExt: 'mp4' }),
+    );
+    const options = mockCompress.mock.calls[0][1] as Record<string, unknown>;
+    expect(options.bitrate).toBeUndefined();
+    expect(options.width).toBeUndefined();
+    expect(options.height).toBeUndefined();
+  });
+
+  it('leaves a merged clip that already has faststart completely alone', async () => {
+    mockHasFaststart.mockReturnValue(true);
+
+    const r = await ensureUploadContract('file:///cache/merged.mp4');
+
+    expect(r.changed).toBe(false);
+    expect(r.reasons).toEqual([]);
+    expect(mockCompress).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the scan cannot tell', async () => {
+    // A short read or an unrecognised container. Guessing would mean a needless re-encode on
+    // every upload, which is worse than the stall it would be avoiding.
+    mockHasFaststart.mockReturnValue(null);
+
+    const r = await ensureUploadContract('file:///cache/odd.mp4');
+
+    expect(r.changed).toBe(false);
+    expect(mockCompress).not.toHaveBeenCalled();
+  });
+
+  it('fails open loudly when the remux itself fails', async () => {
+    mockHasFaststart.mockReturnValue(false);
+    mockCompress.mockRejectedValue(new Error('ffmpeg exploded'));
+
+    const r = await ensureUploadContract('file:///doc/segments/s.mp4');
+
+    expect(r.changed).toBe(false);
+    expect(r.path).toBe('file:///doc/segments/s.mp4');
+    expect(r.failure).toBeTruthy();
+  });
+
+  it('does not double-handle a clip that is already being re-encoded', async () => {
+    // A breaching file goes down the normalize path, and compress() writes faststart there
+    // too — so the scan must not add a second pass on top.
+    mockProbeVideo.mockResolvedValue(compliant({ videoCodec: 'hevc' }));
+    mockHasFaststart.mockReturnValue(false);
+    mockCompress.mockResolvedValue({ outputPath: '/cache/out.mp4' });
+
+    const r = await ensureUploadContract('file:///doc/segments/s.mp4');
+
+    expect(mockCompress).toHaveBeenCalledTimes(1);
+    expect(r.reasons).toEqual(['video codec hevc']);
   });
 });
