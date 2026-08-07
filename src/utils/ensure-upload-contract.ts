@@ -11,7 +11,11 @@ import { decideUploadContract } from './upload-contract';
  * or a failed encode degrades to "upload the original", never to "upload nothing".
  */
 export type ContractResult = {
-  /** The file to upload: the conditioned copy, or the input when nothing was needed. */
+  /**
+   * The file to upload: the conditioned copy, or the input when nothing was needed. Always a
+   * `file://` URI — callers hand it straight to Expo `File`, and the merged unit's input is a
+   * bare path on Android.
+   */
   path: string;
   /** True when `path` differs from the input. */
   changed: boolean;
@@ -41,20 +45,29 @@ export type ContractResult = {
  * than absorbed.
  */
 export async function ensureUploadContract(path: string): Promise<ContractResult> {
-  const probe = await probeVideo(path).catch((e: unknown) => {
+  // The merged unit arrives as a BARE filesystem path on Android (react-native-video-trim
+  // returns one, and `uploadMerged` documents it at the `new File(toFileUri(merged.path))`
+  // call one step later). `probeVideo`/`compress` want a file:// URI, so a bare path throws —
+  // and the catch below turns that into "upload the original". The gate would therefore fail
+  // open on EVERY Android merged upload: present in the code, never actually enforcing.
+  // `toFileUri` is a no-op on input that is already a URI, so the iOS/segment paths are
+  // unchanged (`absolutize` already yields a URI).
+  const uri = toFileUri(path);
+
+  const probe = await probeVideo(uri).catch((e: unknown) => {
     console.warn('[contract] probe failed; uploading the original', e);
     return null;
   });
   if (!probe) {
-    return { path, changed: false, reasons: [], failure: 'could not probe the file' };
+    return { path: uri, changed: false, reasons: [], failure: 'could not probe the file' };
   }
 
   const decision = decideUploadContract(probe);
   if (decision.action === 'passthrough') {
-    return { path, changed: false, reasons: [] };
+    return { path: uri, changed: false, reasons: [] };
   }
 
-  const result = await compress(path, { ...decision.options, outputExt: 'mp4' }).catch(
+  const result = await compress(uri, { ...decision.options, outputExt: 'mp4' }).catch(
     (e: unknown) => {
       console.warn('[contract] re-encode failed; uploading the original', decision.reasons, e);
       return null;
@@ -62,14 +75,14 @@ export async function ensureUploadContract(path: string): Promise<ContractResult
   );
   if (!result) {
     return {
-      path,
+      path: uri,
       changed: false,
       reasons: decision.reasons,
       failure: `could not re-encode (${decision.reasons.join(', ')})`,
     };
   }
 
-  return { path: result.outputPath, changed: true, reasons: decision.reasons };
+  return { path: toFileUri(result.outputPath), changed: true, reasons: decision.reasons };
 }
 
 /**
