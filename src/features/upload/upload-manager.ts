@@ -20,7 +20,7 @@ import { getDraftToken } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
-import { ensureUploadContract, ensureUploadContractCached } from '@/utils/ensure-upload-contract';
+import { ensureUploadContract, ensureUploadContractCached } from './ensure-upload-contract';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { effFile } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';

@@ -1,6 +1,6 @@
 import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim';
 
-import { displaySize, effectiveFps, HDR_TRANSFERS, is10Bit } from './import-normalization';
+import { displaySize, effectiveFps, HDR_TRANSFERS, is10Bit } from '@/utils/probe';
 
 /**
  * The upload contract (§ playback).

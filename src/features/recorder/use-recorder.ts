@@ -33,7 +33,7 @@ import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
 import { useCallState } from './use-call-state';
 
-import { UPLOAD_MAX_LONG_EDGE } from '@/utils/upload-contract';
+import { UPLOAD_MAX_LONG_EDGE } from '@/features/upload/upload-contract';
 
 /**
  * Report what the camera session ACTUALLY negotiated, and shout if it isn't what we asked for.

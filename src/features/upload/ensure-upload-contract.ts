@@ -1,8 +1,9 @@
 import { File } from 'expo-file-system';
 import { compress, probeVideo } from 'react-native-video-trim';
 
+import { toFileUri, uploadDest } from '@/utils/file-store';
+
 import { hasFaststart } from './faststart';
-import { toFileUri, uploadDest } from './file-store';
 import { decideUploadContract } from './upload-contract';
 
 /** Reported when a file is compliant in every respect except its `moov` placement. */
