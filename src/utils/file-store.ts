@@ -71,9 +71,17 @@ function uploadDir(draftId: string): Directory {
   return dir;
 }
 
-/** The on-disk conditioned upload copy for a clip, creating the upload dir if needed. */
-export function uploadDest(draftId: string, segmentId: string): File {
-  return new File(uploadDir(draftId), `${segmentId}.mp4`);
+/**
+ * The on-disk conditioned upload copy for a clip's SOURCE file, creating the upload dir if
+ * needed. Keyed by the source's basename, not the segment id: a destructive edit swaps the
+ * clip's effective file to `{segmentId}.edited.{rev}.mp4` while the id stays put, so an
+ * id-keyed cache would keep serving the conditioned copy of the pre-edit bytes. The basename
+ * carries the revision, so an edit naturally misses the cache and conditions the new bytes.
+ * (The superseded copy lingers until `deleteDraftDir` reclaims the draft — bounded, one file
+ * per destructive edit, and never re-uploaded because nothing references its name anymore.)
+ */
+export function uploadDest(draftId: string, sourceName: string): File {
+  return new File(uploadDir(draftId), sourceName);
 }
 
 /** The on-disk pristine segment file for a draft, creating the segments dir if needed. */

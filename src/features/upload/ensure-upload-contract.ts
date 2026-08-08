@@ -145,7 +145,12 @@ export async function ensureUploadContractCached(
   draftId: string,
   segmentId: string,
 ): Promise<ContractResult> {
-  const dest = uploadDest(draftId, segmentId);
+  // The cache key is the source's BASENAME, not the segment id. `effFile` swaps to
+  // `{segmentId}.edited.{rev}.mp4` on a destructive edit while the id stays the same, so an
+  // id-keyed cache would return the conditioned copy of the pre-edit clip and upload the wrong
+  // bytes. The basename encodes the revision, so edited bytes miss the cache and re-condition.
+  const sourceName = sourcePath.split('/').pop() || `${segmentId}.mp4`;
+  const dest = uploadDest(draftId, sourceName);
   if (dest.exists && (dest.size ?? 0) > 0) {
     // Already conditioned on an earlier attempt — reuse verbatim.
     return { path: dest.uri, changed: true, reasons: [] };
