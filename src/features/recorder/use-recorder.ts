@@ -33,6 +33,35 @@ import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
 import { useCallState } from './use-call-state';
 
+import { UPLOAD_MAX_LONG_EDGE } from '@/features/upload/upload-contract';
+
+/**
+ * Report what the camera session ACTUALLY negotiated, and shout if it isn't what we asked for.
+ *
+ * `targetResolution` on the video output is a bias in a weighted vote across all outputs, not a
+ * setting — the preview output's preference outranked it and every clip came out 4K while the
+ * config said 1080p, silently, for weeks. The failure mode of a lost vote is indistinguishable
+ * from success unless something looks. This looks.
+ *
+ * Cheap (one property read on session start) and non-fatal by design: a device that can only
+ * offer something larger should still record, it just shouldn't do so unnoticed.
+ */
+function logNegotiatedResolution(output: {
+  currentResolution?: { width: number; height: number };
+}) {
+  const size = output.currentResolution;
+  if (!size) return;
+  const longEdge = Math.max(size.width, size.height);
+  if (longEdge > UPLOAD_MAX_LONG_EDGE) {
+    console.warn(
+      `[recorder] capture format negotiated to ${size.width}x${size.height}, above the ${UPLOAD_MAX_LONG_EDGE} ` +
+        `long-edge target — clips will be re-encoded before upload. Check the resolutionBias constraint order.`,
+    );
+    return;
+  }
+  console.log(`[recorder] capture format: ${size.width}x${size.height}`);
+}
+
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
 // Android only cycles through the modes it can actually honor. The union type keeps 'cinematic'
 // on both platforms so persisted iOS prefs and shared UI maps still typecheck.
@@ -422,7 +451,13 @@ export function useRecorder(initialDraftId?: string) {
       if (probe) {
         const decision = decideImport(probe);
         if (decision.action === 'normalize') {
-          const normalized = await compress(picked.uri, decision.options).catch(() => null);
+          const normalized = await compress(picked.uri, decision.options).catch((e: unknown) => {
+            // Falling back to the original bytes is the right call — a failed normalize should not
+            // block the import — but it must not be SILENT. This is how a 4K HDR master enters a
+            // draft looking exactly like a clip that was normalized successfully.
+            console.warn('[import] normalize failed; importing the original', decision.reasons, e);
+            return null;
+          });
           if (normalized) {
             normalizedPath = normalized.outputPath;
             sourceUri = normalized.outputPath;
@@ -529,7 +564,11 @@ export function useRecorder(initialDraftId?: string) {
     callActive,
     appActive,
     reportMicPriorityError,
-    onCameraReady: () => setCameraReady(true),
+    onCameraReady: () => {
+      // The session has started, so the output is attached and its negotiated format is readable.
+      logNegotiatedResolution(videoOutput);
+      setCameraReady(true);
+    },
     toggleRecording,
     finalizeRecording,
     importClip: () => void importClip(),
