@@ -101,10 +101,16 @@ export function useRecorder(initialDraftId?: string) {
   // the mic into a call that began in the background.
   const { callActive, appActive, reportMicPriorityError } = useCallState();
 
-  // The mic config the session SHOULD have. `cameraReady` gates it so a cold open comes up
-  // video-only first (call detection lands before the mic is ever requested); dropped while a call
-  // holds the mic (`callActive`) or the user muted, so that clip has no audio track.
-  const micWanted = cameraReady && !muted && !callActive;
+  // The mic config the session SHOULD have: dropped while a call holds the mic (`callActive`)
+  // or the user muted, so that clip has no audio track. Deliberately NOT gated on cameraReady:
+  // call state is read synchronously at first render (useCallState's initializer), so the mic
+  // can attach from the session's FIRST configure. Gating on cameraReady made every cold open
+  // come up video-only and then rebuild the output audio-ful at `onStarted` — a second full
+  // session reconfigure ~25ms after the first preview frame, i.e. a visible flash on every
+  // open (and two extra rebuilds on every camera flip). The '!pri' -11800 recovery path
+  // (reportMicPriorityError) remains the backstop for the rare cold open that races an
+  // in-progress call the synchronous snapshot missed.
+  const micWanted = !muted && !callActive;
   // Freeze the mic config for the duration of a recording: an enableAudio change rebuilds the video
   // output, which tears down the in-flight recorder before it can finalize — dropping the clip. We
   // hold the value captured while idle and only let it change once recording stops, so a call
@@ -135,20 +141,23 @@ export function useRecorder(initialDraftId?: string) {
   });
 
   // Force H.264 (iOS only — Android's CameraX camcorder profiles are already AVC, and its
-  // setOutputSettings is a native no-op). Applied once per output *instance*: the enableAudio
-  // flip above rebuilds the output, silently reverting the codec to the HEVC default, so this
-  // re-applies whenever the identity changes. Gated on cameraReady && !isRecording because
+  // setOutputSettings is a native no-op). Natively the codec is applied PER-CONNECTION
+  // (output.setOutputSettings(settings, for: connection)), and a connection is torn down and
+  // re-formed whenever the session reconfigures — an enableAudio output rebuild, or a camera
+  // flip swapping the device input. So the pin is re-applied once per *connection epoch*:
+  // `onConfigured` (VisionCamera's "connections are formed" hook, wired in recorder.tsx) bumps
+  // the epoch AFTER the new connection exists, which is the only ordering that can't lose the
+  // pin to a reconfigure that lands later. Gated on cameraReady && !isRecording because
   // mutating the settings of a session that is actively capturing is what crashed the recorder
-  // historically; running post-ready also means the connection exists, unlike the configure-time
-  // bitrate path above. setOutputSettings preserves whatever compression settings are present
+  // historically. setOutputSettings preserves whatever compression settings are present
   // (it only swaps the codec key). Failure is non-fatal — worst case that clip records HEVC,
   // exactly today's behavior, and the merge engine still handles it.
   // The ref is committed only when the native call RESOLVES: setOutputSettings runs on the
-  // output's own queue and throws while the rebuilt output is not yet connected — the session
-  // reconfigure that attaches it runs on a different queue, so on every enableAudio rebuild the
-  // first attempt can race it and reject. Committing eagerly would let that rejection
-  // permanently pin the instance to HEVC; instead a short bounded retry rides out the
-  // reconfigure window, and the effect cleanup cancels retries if a recording starts.
+  // output's own queue and throws while a rebuilt output is not yet connected — the session
+  // reconfigure that attaches it runs on a different queue, so the first attempt can race it
+  // and reject. Committing eagerly would let that rejection permanently pin the epoch to HEVC;
+  // instead a short bounded retry rides out the reconfigure window, and the effect cleanup
+  // cancels retries if a recording starts or another reconfigure supersedes this epoch.
   // A pin that is still in flight when recording starts cannot corrupt the capture:
   // setOutputSettings and createRecorder both run on the output's own serial queue
   // (Promise.parallel(queue) in HybridCameraVideoOutput), so the mutation and the recorder
@@ -157,17 +166,19 @@ export function useRecorder(initialDraftId?: string) {
   // NOTE: raw per-clip files are still written moov-at-end — AVCaptureMovieFileOutput (what
   // createRecorder actually wraps) has no faststart API, so faststart for uploads is owned by
   // the merge/export layer (fork's +faststart), the upload gate (#142), and the server backstop.
-  const h264OutputRef = useRef<typeof videoOutput | null>(null);
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
+  const h264PinnedRef = useRef<{ output: typeof videoOutput; epoch: number } | null>(null);
   useEffect(() => {
     if (Platform.OS !== 'ios' || !cameraReady || isRecording) return;
     const output = videoOutput;
-    if (h264OutputRef.current === output) return;
+    const pinned = h264PinnedRef.current;
+    if (pinned && pinned.output === output && pinned.epoch === connectionEpoch) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const attempt = (retriesLeft: number) => {
       output.setOutputSettings({ codec: 'h264' }).then(
         () => {
-          if (!cancelled) h264OutputRef.current = output;
+          if (!cancelled) h264PinnedRef.current = { output, epoch: connectionEpoch };
         },
         (e: unknown) => {
           if (cancelled) return;
@@ -186,7 +197,7 @@ export function useRecorder(initialDraftId?: string) {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [videoOutput, cameraReady, isRecording]);
+  }, [videoOutput, cameraReady, isRecording, connectionEpoch]);
 
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
 
@@ -529,10 +540,19 @@ export function useRecorder(initialDraftId?: string) {
   }
 
   function flipCamera() {
-    // Re-gate zoom/torch until the flipped session has started (`onStarted` refires per device
-    // bind). Without this, torchMode lands on the outgoing camera mid-rebind — on Android that
-    // throws IllegalStateException("No flash unit") when the front camera is still bound.
-    setCameraReady(false);
+    // Re-gate zoom/torch until the flipped session has started — ANDROID ONLY. The reset exists
+    // for CameraX: torchMode landing on the outgoing camera mid-rebind throws
+    // IllegalStateException("No flash unit") when the torch-less front camera is still bound,
+    // and CameraX re-fires `onStarted` per device bind so the gate re-arms (verified in #133).
+    // On iOS the flip is an input swap inside beginConfiguration/commitConfiguration on a
+    // RUNNING session — didStartRunningNotification never fires, so `onStarted` never re-fires
+    // and a reset here would stick cameraReady=false forever, permanently disabling the record
+    // gestures. (Before the mic un-gating in #150 this was masked: the flip rebuilt the video
+    // output via micWanted, which restarted the session and re-armed the gate by accident.)
+    // iOS also doesn't need the gate: its zoom/torch props bind ungated (see recorder.tsx).
+    // Matched to 'android' explicitly (not "everything but iOS") — the guard exists for
+    // CameraX, and any other platform would inherit iOS's stuck-gate failure mode instead.
+    if (Platform.OS === 'android') setCameraReady(false);
     setFacing((prev) => {
       const next = prev === 'back' ? 'front' : 'back';
       if (next === 'front') setTorch(false);
@@ -569,6 +589,11 @@ export function useRecorder(initialDraftId?: string) {
       logNegotiatedResolution(videoOutput);
       setCameraReady(true);
     },
+    // Wire to <Camera onConfigured>: fires whenever the session's connections are (re)formed —
+    // cold open, enableAudio output rebuild, camera flip. Bumping the epoch re-arms the H.264
+    // pin for the NEW video connection (the codec is applied per-connection natively, so it
+    // dies with the old one on every reconfigure).
+    onSessionConfigured: () => setConnectionEpoch((prev) => prev + 1),
     toggleRecording,
     finalizeRecording,
     importClip: () => void importClip(),
