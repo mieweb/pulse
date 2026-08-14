@@ -12,6 +12,7 @@ import {
 } from 'react-native-vision-camera';
 
 import { ThemedView } from '@/components/themed-view';
+import { GlassPill } from '@/components/glass-pill';
 import { Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { CloseButton } from '@/features/recorder/close-button';
@@ -444,7 +445,9 @@ export default function RecorderScreen() {
             { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
           ]}>
           <CloseButton onPress={handleClose} overVideo />
-          <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
+          <GlassPill style={styles.timerPill}>
+            <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
+          </GlassPill>
           {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
           <View style={styles.topBarSpacer} />
         </View>
@@ -585,15 +588,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  // Shape only — GlassPill owns the surface; ties the top bar to the glass close button.
+  timerPill: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 4,
+    borderRadius: 14,
+  },
   timerText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
   },
   topBarSpacer: { width: 40 },
   previewArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },
