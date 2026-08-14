@@ -100,6 +100,9 @@ function Bar({
   const restoreOffset = useRef<number | null>(null);
   const stickToEnd = useRef(false);
   useEffect(() => {
+    // Preview opened before a pending scroll-to-newest ran — drop it; playhead-follow owns
+    // the scroll now, and a stale flag would otherwise fire on a LATER content-size change.
+    if (cursor) stickToEnd.current = false;
     if (segments.length < prevCount.current) restoreOffset.current = scrollOffset.value;
     else if (segments.length > prevCount.current && !cursor) stickToEnd.current = true;
     prevCount.current = segments.length;
@@ -166,7 +169,9 @@ function Bar({
                 scrollRef.current?.scrollTo({ x: target, animated: false });
               }
               // Honor a pending scroll-to-newest now that the added thumb has been measured.
-              if (stickToEnd.current) {
+              // Re-checked against cursor: the native event can land before the effect above
+              // has cleared a stale flag on a just-opened preview.
+              if (stickToEnd.current && !cursor) {
                 stickToEnd.current = false;
                 scrollRef.current?.scrollToEnd({ animated: true });
               }
