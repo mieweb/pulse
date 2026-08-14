@@ -2,6 +2,7 @@ import { useEvent } from 'expo';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Icon, type IconName } from '@/components/icon';
+import { GlassPill } from '@/components/glass-pill';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -334,9 +335,9 @@ function Editor({
           </View>
           {!isPlaying && (
             <View style={styles.playOverlay} pointerEvents="none">
-              <View style={[styles.playBadge, mode === 'text' && styles.playBadgeCompact]}>
+              <GlassPill style={[styles.playBadge, mode === 'text' && styles.playBadgeCompact]}>
                 <Icon name="play.fill" size={mode === 'text' ? 15 : 22} tintColor="#fff" />
-              </View>
+              </GlassPill>
             </View>
           )}
         </Pressable>
@@ -513,11 +514,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Shape only — GlassPill owns the surface. paddingLeft optically centers the ▶ glyph.
   playBadge: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: 'rgba(0,0,0,0.45)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingLeft: 3,
