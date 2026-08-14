@@ -16,6 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import Sortable from 'react-native-sortables';
 
+import { GlassPill } from '@/components/glass-pill';
 import { Accent, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
 import { useThumbnail } from '@/hooks/use-thumbnail';
@@ -23,6 +24,7 @@ import { formatDurationPadded } from '@/utils/format';
 import { effMs } from '@/utils/segment-window';
 import { PlayheadCursor, type Cursor } from './playhead-cursor';
 import {
+  BADGE_SIZE,
   POP_LANE,
   RECORD_BAR_GAP,
   RECORD_BUTTON_SIZE,
@@ -39,10 +41,6 @@ import {
 const TRASH_SIZE = 56;
 // Nudge the trash below the record button's exact center so it clears the preview modal.
 const TRASH_DROP_OFFSET = 18;
-// Badge pill diameter — it doubles as the drag handle's visible affordance, so it's sized
-// generously. Half of it rides above the thumb's top edge; POP_LANE (the vertical breathing
-// room inside the scroll frame) must be at least BADGE_SIZE / 2.
-const BADGE_SIZE = 18;
 
 type Props = {
   segments: Segment[];
@@ -132,6 +130,10 @@ function Bar({
     // as it's dragged up to the trash. Enabled by default.
     <Sortable.PortalProvider>
       <View style={styles.bar}>
+        {/* Glass surface as a passive background LAYER, not a container — the Sortable grid,
+            ScrollView, and playhead keep their exact hierarchy (and gesture/portal behavior)
+            above it. pointerEvents="none" so it can never intercept a touch. */}
+        <GlassPill style={styles.barSurface} pointerEvents="none" />
         {/* Trash drop target — above the bar, fades in during a drag. pointerEvents="none" so it
             never intercepts touches; it's purely a drop zone hit-tested from the drag position. */}
         <View style={styles.trashWrap} pointerEvents="none">
@@ -141,7 +143,7 @@ function Bar({
         </View>
 
         <View
-          style={[styles.viewport, cursor && styles.viewportScrub]}
+          style={styles.viewport}
           onLayout={(e) => {
             viewportW.value = e.nativeEvent.layout.width;
           }}>
@@ -326,9 +328,23 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     marginHorizontal: Spacing.three,
     paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.two,
+    // The viewport carries the SCRUB_LANE below the thumbs; mirroring the whole lane as
+    // top padding (with no extra base padding — POP_LANE already provides breathing room)
+    // keeps the thumbs dead-center in the slimmest symmetric bar.
+    paddingTop: SCRUB_LANE,
+    paddingBottom: 0,
     borderRadius: Spacing.three,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  // The bar's glass background (dark-scrim fallback via GlassPill) — fills the bar behind
+  // its content and carries the rounding.
+  barSurface: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: Spacing.three,
+    overflow: 'hidden',
   },
   trashWrap: {
     position: 'absolute',
@@ -351,11 +367,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  viewport: { flex: 1, overflow: 'hidden' },
-  // Lane below the thumbs the playhead knob hangs into — only needed while previewing (when a
-  // cursor is present). In record mode it would just add dead space below the bar and push the
-  // thumbs above the export button's centerline, so it's applied conditionally.
-  viewportScrub: { paddingBottom: SCRUB_LANE },
+  // The scrub lane (the strip below the thumbs the playhead knob hangs into) is reserved
+  // permanently, not just while previewing — adding it only with the cursor grew the bar
+  // and visibly bumped it upward every time a preview opened.
+  viewport: { flex: 1, overflow: 'hidden', paddingBottom: SCRUB_LANE },
   content: {
     alignItems: 'center',
     paddingLeft: SCRUB_INSET,
@@ -453,5 +468,8 @@ const styles = StyleSheet.create({
     backgroundColor: Accent,
     alignItems: 'center',
     justifyContent: 'center',
+    // The viewport reserves SCRUB_LANE below the thumbs, floating them above the bar's
+    // centerline — match it so the button's center stays on the thumbs' center.
+    marginBottom: SCRUB_LANE,
   },
 });

@@ -35,8 +35,12 @@ function resolveActiveIndex(
 
 /**
  * In-recorder preview state: drives one `expo-video` player across a draft's segments
- * (sequential playback of each clip's effective file — edited if present, else original),
- * tracks the active clip, the source playhead, and a draft-global playhead for the bar cursor.
+ * (each clip's effective file — edited if present, else original), tracks the active clip,
+ * the source playhead, and a draft-global playhead for the bar cursor.
+ *
+ * Playback scope: a tapped segment plays only itself and parks at its end ('single');
+ * the ▶ / surface tap plays through from the playhead to the draft's end, as do bar
+ * scrubs ('all').
  *
  * `anchorId` is the tapped segment that opened the preview — `null` means preview closed;
  * the hook stays mounted with a stopped, unloaded player.
@@ -72,6 +76,11 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
   const swapInFlightRef = useRef(false);
   // Whether the next readyToPlay should start playback (set when auto-advancing).
   const wantPlayRef = useRef(false);
+  // Playback scope: 'single' parks at the current clip's end and never advances (a tapped
+  // segment plays only itself); 'all' walks clip to clip through the draft (the ▶ / surface
+  // tap, and scrubs — resuming after either plays through rather than dying at the next
+  // boundary). Held in a ref: playback events read it, nothing renders from it.
+  const scopeRef = useRef<'single' | 'all'>('single');
   // The file the player has been given (set at load *initiation* so decisions made while a
   // load is still in flight compare against the incoming file, not the outgoing one).
   const loadedFileRef = useRef<string | null>(null);
@@ -85,7 +94,11 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
   // on the opening commit. Tapping another thumb mid-preview (selectSegment) arms the
   // same intent itself — a tap always means "play this clip".
   useEffect(() => {
-    if (anchorId != null) wantPlayRef.current = true;
+    if (anchorId != null) {
+      wantPlayRef.current = true;
+      // A tap-open plays just the tapped clip; the ▶ / surface tap widens the scope.
+      scopeRef.current = 'single';
+    }
   }, [anchorId]);
 
   // Playback and the cursor act on this row.
@@ -223,14 +236,28 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
     setPositionMs(Math.round(currentTime * 1000));
   });
 
-  // Clip ran out — move on (or park at the draft's end).
+  // Clip ran out — in 'single' scope park at ITS end; otherwise move on (or park at the
+  // draft's end). Parking mirrors advance()'s end-of-draft branch (pause AT the out-point,
+  // togglePlay's end check handles continuing), but lands 1ms shy of it: at exactly outMs
+  // the draft-global position IS the boundary, which indexAtGlobalMs/msToPx resolve to the
+  // NEXT segment at fraction 0 — the bar knob visibly hopped onto the next thumb's left
+  // edge. 1ms back keeps the knob (and any late timeUpdate) inside the played clip, and is
+  // still deep within END_EPSILON_MS so ▶ treats it as "at the end".
   useEventListener(player, 'playToEnd', () => {
     if (!active || swapInFlightRef.current || advancingRef.current) return;
+    if (scopeRef.current === 'single') {
+      const parkMs = Math.max(inMs(active), outMs(active) - 1);
+      player.pause();
+      player.currentTime = parkMs / 1000;
+      setPositionMs(parkMs);
+      return;
+    }
     advance();
   });
 
   /** Make a clip the active one (thumb tap while previewing); plays from its in-point —
-   *  same as tapping a thumb from the recorder, so a tap ALWAYS means "play this clip". */
+   *  same as tapping a thumb from the recorder, so a tap ALWAYS means "play this clip",
+   *  and ONLY this clip: a tap narrows the scope to 'single' (#166). */
   const selectSegment = useCallback(
     (id: string) => {
       // Stale tap — the row vanished (e.g. deleted) between render and gesture delivery.
@@ -239,6 +266,7 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       // unexpectedly starting playback of a clip the user never tapped.
       const target = segments.find((s) => s.id === id);
       if (!target) return;
+      scopeRef.current = 'single';
       pendingSeekRef.current = null;
       // Pausing also silences the outgoing clip's event stream during the swap.
       player.pause();
@@ -280,15 +308,36 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       player.pause();
       return;
     }
+    // The ▶ / surface tap always means "play THROUGH from here" (#165) — it widens the
+    // scope so playback continues clip to clip even after a single-clip (thumb tap) play.
+    scopeRef.current = 'all';
     if (active) {
       // Read the live position imperatively — keeping positionMs out of the deps keeps
       // this callback's identity stable across the 4Hz playhead updates.
       const ms = Math.round(player.currentTime * 1000);
-      if (ms >= outMs(active) - END_EPSILON_MS) player.currentTime = inMs(active) / 1000;
+      if (ms >= outMs(active) - END_EPSILON_MS) {
+        // Parked at this clip's end: continue into the next playable clip, or — at the
+        // draft's end — wrap to the first (a play tap at the very end means "replay").
+        const next =
+          segments.slice(activeIndex + 1).find((s) => effMs(s) > 0) ??
+          segments.find((s) => effMs(s) > 0);
+        if (next && next.id !== activeId) {
+          wantPlayRef.current = true;
+          pendingSeekRef.current = null;
+          // Land the position on the incoming clip's in-point in the same render as the
+          // selection (same stale-position jump as advance() otherwise).
+          setPositionMs(inMs(next));
+          setSelectedId(next.id);
+          return;
+        }
+        // This is the only playable clip — restart it in place.
+        player.currentTime = inMs(active) / 1000;
+        setPositionMs(inMs(active));
+      }
     }
     advancingRef.current = false;
     player.play();
-  }, [player, active]);
+  }, [player, active, activeId, activeIndex, segments]);
 
   /** Seek to a draft-global offset (bar-cursor scrub); swaps the loaded clip when crossed. */
   const seekToGlobalMs = useCallback(
@@ -297,6 +346,9 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       if (player.playing) player.pause();
       // Scrubbing always lands paused — even when it interrupts an in-flight auto-advance.
       wantPlayRef.current = false;
+      // Scrubbing engages the draft-global timeline, so resuming plays THROUGH — stopping
+      // dead at the next clip boundary after a scrub would read as broken.
+      scopeRef.current = 'all';
       const clamped = clamp(g, 0, totalMs - 1);
       const i = indexAtGlobalMs(segments, offsets, clamped);
       if (i < 0) return;
