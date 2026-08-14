@@ -89,16 +89,21 @@ function Bar({
   // index-based (i * STEP), independent of viewport width, so widening mid-drag is reorder-safe.
   const [dragActive, setDragActive] = useState(false);
 
-  // Preserve the user's place when a clip is removed: a length DECREASE captures the current
-  // offset (the effect runs before the shrunken content re-lays out and snaps the scroll), and
-  // onContentSizeChange restores it clamped to the new content width. A length increase (new
-  // recording) deliberately does nothing — the bar never yanks away from where the user was.
+  // Length-change reactions, mutually exclusive by direction (reorder never changes length):
+  // — DECREASE (delete): preserve the user's place. Capture the current offset (the effect
+  //   runs before the shrunken content re-lays out and snaps the scroll) and restore it in
+  //   onContentSizeChange, clamped to the new content width.
+  // — INCREASE (new recording or library import): scroll the new clip into view (#167).
+  //   Record mode only — while previewing, the playhead-follow owns the scroll. Deferred to
+  //   onContentSizeChange so the added thumb has laid out before the scrollToEnd.
   const prevCount = useRef(segments.length);
   const restoreOffset = useRef<number | null>(null);
+  const stickToEnd = useRef(false);
   useEffect(() => {
     if (segments.length < prevCount.current) restoreOffset.current = scrollOffset.value;
+    else if (segments.length > prevCount.current && !cursor) stickToEnd.current = true;
     prevCount.current = segments.length;
-  }, [segments.length, scrollOffset]);
+  }, [segments.length, scrollOffset, cursor]);
 
   // Drag-to-trash. The trash floats above the bar, shown only while dragging; dropping a clip
   // on it deletes that clip — otherwise the drag just reorders. Hit-testing is done from the
@@ -159,6 +164,11 @@ function Bar({
                 const target = Math.min(restoreOffset.current, Math.max(0, w - viewportW.value));
                 restoreOffset.current = null;
                 scrollRef.current?.scrollTo({ x: target, animated: false });
+              }
+              // Honor a pending scroll-to-newest now that the added thumb has been measured.
+              if (stickToEnd.current) {
+                stickToEnd.current = false;
+                scrollRef.current?.scrollToEnd({ animated: true });
               }
             }}>
             <Sortable.Grid
