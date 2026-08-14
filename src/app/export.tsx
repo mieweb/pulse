@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { GlassPill } from '@/components/glass-pill';
 import { CloseButton } from '@/features/recorder/close-button';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -605,33 +606,35 @@ function MergedPreview({
         </View>
         {!isPlaying && (
           <View style={styles.playOverlay} pointerEvents="none">
-            <View style={styles.playBadge}>
-              <Icon name="play.fill" size={24} tintColor="#fff" />
-            </View>
+            <GlassPill style={styles.playBadge}>
+              <Icon name="play.fill" size={28} tintColor="#fff" />
+            </GlassPill>
           </View>
         )}
         <View style={styles.metaRow} pointerEvents="none">
-          <View style={styles.metaPill}>
+          <GlassPill style={styles.metaPill}>
             <ThemedText style={styles.metaText}>{meta}</ThemedText>
-          </View>
+          </GlassPill>
         </View>
       </Pressable>
 
       {working && (
-        <View style={styles.captionBadge} pointerEvents="none">
+        <GlassPill style={[styles.captionBadge, styles.captionSurface]} pointerEvents="none">
           <ActivityIndicator size="small" color="#fff" />
-        </View>
+        </GlassPill>
       )}
       {actionable && (
         <Pressable
           onPress={captionStatus === 'no-model' ? onAddCaptions : onEditCaptions}
-          hitSlop={8}
+          hitSlop={4}
           accessibilityRole="button"
           accessibilityLabel={
             captionStatus === 'ready' && lines.length > 0 ? 'Edit captions' : 'Add captions'
           }
           style={styles.captionBadge}>
-          <Icon name="captions.bubble" size={16} weight="semibold" tintColor="#fff" />
+          <GlassPill style={styles.captionSurface}>
+            <Icon name="captions.bubble" size={20} weight="semibold" tintColor="#fff" />
+          </GlassPill>
         </Pressable>
       )}
     </View>
@@ -661,11 +664,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Shape only — GlassPill owns the surface (Liquid Glass on iOS 26+, dark scrim fallback).
+  // Matches the recorder preview card's ▶; paddingLeft optically centers the glyph.
   playBadge: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
     paddingLeft: 4,
@@ -694,7 +698,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two,
     paddingVertical: 4,
     borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.55)',
   },
   metaText: {
     color: '#fff',
@@ -704,15 +707,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   // Small tappable badge in the top-right of the merged preview — edit/add captions, or a
-  // spinner while transcribing/downloading. White glyph on a translucent scrim over the video.
+  // spinner while transcribing/downloading. Placement here; the glass surface (sized to a
+  // 48pt effective target with hitSlop, like the recorder preview card's badges) is split
+  // out so the Pressable variant can own the position while GlassPill owns the surface.
   captionBadge: {
     position: 'absolute',
     top: Spacing.two,
     right: Spacing.two,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  captionSurface: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
