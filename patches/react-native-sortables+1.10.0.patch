@@ -1,0 +1,438 @@
+diff --git a/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v2.test.ts b/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v2.test.ts
+index 2143f65..d05f3a4 100644
+--- a/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v2.test.ts
++++ b/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v2.test.ts
+@@ -22,6 +22,7 @@ jest.mock('react-native-gesture-handler', () => {
+       gesture[method] = jest.fn(() => gesture);
+     }
+     for (const method of [
++      'onFinalize',
+       'onTouchesCancelled',
+       'onTouchesDown',
+       'onTouchesMove',
+@@ -68,6 +69,7 @@ const mocked = Gesture as unknown as {
+ };
+ 
+ const dragCallbacks: ManualGestureCallbacks = {
++  onFinalize: jest.fn(),
+   onTouchesCancelled: jest.fn(),
+   onTouchesDown: jest.fn(),
+   onTouchesMove: jest.fn(),
+@@ -196,3 +198,10 @@ it('groups recognizers simultaneously when gestureMode is simultaneous', () => {
+   expect(mocked.Exclusive).not.toHaveBeenCalled();
+   expect(mocked.Simultaneous).toHaveBeenCalledTimes(2);
+ });
++
++it('also cleans up through onFinalize, which covers terminal states the touch callbacks miss', () => {
++  renderHook(() => useDragGesture(dragCallbacks, []));
++
++  const manual = mocked.Manual.mock.results[0]!.value as MockGesture;
++  expect(manual.handlers.onFinalize).toBe(dragCallbacks.onFinalize);
++});
+diff --git a/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v2.ts b/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v2.ts
+index 4844656..f66c4ff 100644
+--- a/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v2.ts
++++ b/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v2.ts
+@@ -17,7 +17,8 @@ const useDragGesture: GestureHandlerAdapter['useDragGesture'] = (
+         .onTouchesDown(callbacks.onTouchesDown)
+         .onTouchesMove(callbacks.onTouchesMove)
+         .onTouchesCancelled(callbacks.onTouchesCancelled)
+-        .onTouchesUp(callbacks.onTouchesUp),
++        .onTouchesUp(callbacks.onTouchesUp)
++        .onFinalize(callbacks.onFinalize),
+     // The dependency list is owned by the caller (useItemPanGesture).
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+     deps
+diff --git a/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v3.test.ts b/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v3.test.ts
+index 11f60da..f8bdbc3 100644
+--- a/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v3.test.ts
++++ b/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v3.test.ts
+@@ -44,6 +44,7 @@ const mocked = GestureHandler as unknown as {
+ const useManualGesture = mocked.useManualGesture;
+ 
+ const callbacks: ManualGestureCallbacks = {
++  onFinalize: jest.fn(),
+   onTouchesCancelled: jest.fn(),
+   onTouchesDown: jest.fn(),
+   onTouchesMove: jest.fn(),
+@@ -173,3 +174,37 @@ it('returns the bare touch tracker when only touch callbacks are set (no recogni
+   expect(useManualGesture).toHaveBeenCalledTimes(1);
+   expect(mocked.useSimultaneousGestures).not.toHaveBeenCalled();
+ });
++
++it('also cleans up through onFinalize, which covers terminal states the touch callbacks miss', () => {
++  renderHook(() => useDragGesture(callbacks, []));
++
++  const [config] = useManualGesture.mock.calls[0] as [Record<string, unknown>];
++  expect(typeof config.onFinalize).toBe('function');
++  (config.onFinalize as () => void)();
++  expect(callbacks.onFinalize).toHaveBeenCalled();
++});
++
++it('pushes the same config object on re-render, so the native handler is configured once', () => {
++  const { rerender } = renderHook(() => useDragGesture(callbacks, []));
++  rerender();
++  rerender();
++
++  expect(useManualGesture).toHaveBeenCalledTimes(3);
++  const configs = useManualGesture.mock.calls.map(
++    call => (call as [Record<string, unknown>])[0]
++  );
++  expect(configs[1]).toBe(configs[0]);
++  expect(configs[2]).toBe(configs[0]);
++});
++
++it('pushes a new config when the caller deps change', () => {
++  let dep = 'a';
++  const { rerender } = renderHook(() => useDragGesture(callbacks, [dep]));
++  dep = 'b';
++  rerender();
++
++  const configs = useManualGesture.mock.calls.map(
++    call => (call as [Record<string, unknown>])[0]
++  );
++  expect(configs[1]).not.toBe(configs[0]);
++});
+diff --git a/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v3.ts b/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v3.ts
+index 3510e58..cb0b602 100644
+--- a/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v3.ts
++++ b/node_modules/react-native-sortables/src/integrations/gesture-handler/adapters/v3.ts
+@@ -1,4 +1,8 @@
+-import type { ManualGestureConfig } from 'react-native-gesture-handler';
++import { useMemo } from 'react';
++import type {
++  GestureTouchEvent,
++  ManualGestureConfig
++} from 'react-native-gesture-handler';
+ import * as GestureHandler from 'react-native-gesture-handler';
+ import type { SharedValue } from 'react-native-reanimated';
+ 
+@@ -44,45 +48,60 @@ function createControl(
+   };
+ }
+ 
+-// v3 hooks re-apply config every render, so the caller's `deps` are unused.
+-const useDragGesture: GestureHandlerAdapter['useDragGesture'] = callbacks => {
++// Re-applying a config natively resets it first, which briefly drops
++// `needsPointerData` and can swallow a touch event of a drag in progress.
++const useDragGesture: GestureHandlerAdapter['useDragGesture'] = (
++  callbacks,
++  deps
++) => {
+   const pendingActivation = useMutableValue(false);
+ 
+-  return useManualGesture({
+-    onTouchesCancel: event => {
+-      'worklet';
+-      callbacks.onTouchesCancelled(
+-        event,
+-        createControl(event.handlerTag, pendingActivation)
+-      );
+-    },
+-    onTouchesDown: event => {
+-      'worklet';
+-      pendingActivation.value = false;
+-      callbacks.onTouchesDown(
+-        event,
+-        createControl(event.handlerTag, pendingActivation)
+-      );
+-    },
+-    onTouchesMove: event => {
+-      'worklet';
+-      if (pendingActivation.value) {
++  const config = useMemo(
++    () => ({
++      onFinalize: () => {
++        'worklet';
++        callbacks.onFinalize();
++      },
++      onTouchesCancel: (event: GestureTouchEvent) => {
++        'worklet';
++        callbacks.onTouchesCancelled(
++          event,
++          createControl(event.handlerTag, pendingActivation)
++        );
++      },
++      onTouchesDown: (event: GestureTouchEvent) => {
++        'worklet';
+         pendingActivation.value = false;
+-        GestureStateManager.activate(event.handlerTag);
++        callbacks.onTouchesDown(
++          event,
++          createControl(event.handlerTag, pendingActivation)
++        );
++      },
++      onTouchesMove: (event: GestureTouchEvent) => {
++        'worklet';
++        if (pendingActivation.value) {
++          pendingActivation.value = false;
++          GestureStateManager.activate(event.handlerTag);
++        }
++        callbacks.onTouchesMove(
++          event,
++          createControl(event.handlerTag, pendingActivation)
++        );
++      },
++      onTouchesUp: (event: GestureTouchEvent) => {
++        'worklet';
++        callbacks.onTouchesUp(
++          event,
++          createControl(event.handlerTag, pendingActivation)
++        );
+       }
+-      callbacks.onTouchesMove(
+-        event,
+-        createControl(event.handlerTag, pendingActivation)
+-      );
+-    },
+-    onTouchesUp: event => {
+-      'worklet';
+-      callbacks.onTouchesUp(
+-        event,
+-        createControl(event.handlerTag, pendingActivation)
+-      );
+-    }
+-  });
++    }),
++    // The dependency list is owned by the caller (useItemPanGesture).
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++    deps
++  );
++
++  return useManualGesture(config);
+ };
+ 
+ // Only the handlers that are passed create a gesture (and a native handler), so
+diff --git a/node_modules/react-native-sortables/src/integrations/gesture-handler/index.ts b/node_modules/react-native-sortables/src/integrations/gesture-handler/index.ts
+index ca69979..6faaaed 100644
+--- a/node_modules/react-native-sortables/src/integrations/gesture-handler/index.ts
++++ b/node_modules/react-native-sortables/src/integrations/gesture-handler/index.ts
+@@ -17,6 +17,7 @@ export const useTouchableGesture = adapter.useTouchableGesture;
+ export { SortableGestureDetectorView } from './detector';
+ export type {
+   GestureTouchEvent,
++  ManualGestureCallbacks,
+   ManualGestureControl,
+   SortableGesture,
+   TouchableGestureConfig,
+diff --git a/node_modules/react-native-sortables/src/integrations/gesture-handler/types.ts b/node_modules/react-native-sortables/src/integrations/gesture-handler/types.ts
+index 0aeecb9..cf182a7 100644
+--- a/node_modules/react-native-sortables/src/integrations/gesture-handler/types.ts
++++ b/node_modules/react-native-sortables/src/integrations/gesture-handler/types.ts
+@@ -18,6 +18,9 @@ export type ManualGestureControl = {
+ };
+ 
+ export type ManualGestureCallbacks = {
++  // Not a teardown hook: a handler detached mid-gesture reaches no terminal
++  // state and emits nothing.
++  onFinalize: () => void;
+   onTouchesCancelled: (
+     event: GestureTouchEvent,
+     control: ManualGestureControl
+diff --git a/node_modules/react-native-sortables/src/providers/shared/DragProvider.ts b/node_modules/react-native-sortables/src/providers/shared/DragProvider.ts
+index 3dbaf7d..c156a74 100644
+--- a/node_modules/react-native-sortables/src/providers/shared/DragProvider.ts
++++ b/node_modules/react-native-sortables/src/providers/shared/DragProvider.ts
+@@ -46,10 +46,12 @@ type StateContextType = {
+   dragStartTouchPosition: null | Vector;
+   dragStartIndex: number;
+   activationTimeoutId: number;
++  activationTimeoutKey: null | string;
+ };
+ 
+ const INITIAL_STATE: StateContextType = {
+   activationTimeoutId: -1,
++  activationTimeoutKey: null,
+   dragStartIndex: -1,
+   dragStartItemTouchOffset: null,
+   dragStartTouchPosition: null,
+@@ -377,6 +379,28 @@ const { DragProvider, useDragContext } = createProvider('Drag')<
+     ]
+   );
+ 
++  const discardAbandonedDrag = useCallback(
++    (activationAnimationProgress: SharedValue<number>) => {
++      'worklet';
++      clearAnimatedTimeout(context.value.activationTimeoutId);
++      context.value.activationTimeoutKey = null;
++      activeItemKey.value = null;
++      activationState.value = DragActivationState.INACTIVE;
++      activeItemDropped.value = true;
++      activationAnimationProgress.value = 0;
++      activeAnimationProgress.value = 0;
++      inactiveAnimationProgress.value = 0;
++    },
++    [
++      activationState,
++      activeAnimationProgress,
++      activeItemDropped,
++      activeItemKey,
++      context,
++      inactiveAnimationProgress
++    ]
++  );
++
+   const handleTouchStart = useCallback(
+     (
+       e: GestureTouchEvent,
+@@ -387,6 +411,27 @@ const { DragProvider, useDragContext } = createProvider('Drag')<
+     ) => {
+       'worklet';
+       const touch = e.allTouches[0];
++
++      if (activeItemKey.value === key) {
++        // The drag belongs to a previous mount, so nothing else will clear it.
++        if (activationAnimationProgress.value === 0) {
++          discardAbandonedDrag(activationAnimationProgress);
++        } else {
++          // Not a new press, and failing here would kill the drag.
++          return;
++        }
++      }
++
++      // Nothing is left to animate this progress down.
++      const isProgressOutlivingItsDrag =
++        activeItemKey.value === null &&
++        activeItemDropped.value &&
++        activationAnimationProgress.value > 0;
++
++      if (isProgressOutlivingItsDrag) {
++        discardAbandonedDrag(activationAnimationProgress);
++      }
++
+       if (
+         !touch ||
+         // Sorting is disabled
+@@ -406,14 +451,19 @@ const { DragProvider, useDragContext } = createProvider('Drag')<
+       currentTouch.value = touch;
+       activationState.value = DragActivationState.TOUCHED;
+ 
++      // A re-registering handler replays onTouchesDown for the finger already
++      // down, and re-arming would push activation further away forever.
++      if (ctx.activationTimeoutKey === key) {
++        return;
++      }
++
+       clearAnimatedTimeout(ctx.activationTimeoutId);
++      ctx.activationTimeoutKey = key;
+ 
+       // Start handling touch after a delay to prevent accidental activation
+       // e.g. while scrolling the ScrollView
+       ctx.activationTimeoutId = setAnimatedTimeout(() => {
+-        if (!usesAbsoluteLayout.value) {
+-          return;
+-        }
++        ctx.activationTimeoutKey = null;
+ 
+         const itemPosition = itemLayoutPositions.value[key];
+         const itemDimensions = getItemDimensions(
+@@ -422,7 +472,8 @@ const { DragProvider, useDragContext } = createProvider('Drag')<
+           itemHeights.value
+         );
+ 
+-        if (!itemPosition || !itemDimensions) {
++        if (!usesAbsoluteLayout.value || !itemPosition || !itemDimensions) {
++          fail();
+           return;
+         }
+ 
+@@ -437,10 +488,12 @@ const { DragProvider, useDragContext } = createProvider('Drag')<
+       }, dragActivationDelay.value);
+     },
+     [
++      activeItemDropped,
+       activeItemKey,
+       activationState,
+       context,
+       currentTouch,
++      discardAbandonedDrag,
+       dragActivationDelay,
+       handleDragStart,
+       itemHeights,
+@@ -507,18 +560,26 @@ const { DragProvider, useDragContext } = createProvider('Drag')<
+   const handleDragEnd = useCallback(
+     (key: string, activationAnimationProgress: SharedValue<number>) => {
+       'worklet';
+-      if (activeItemKey.value && activeItemKey.value !== key) {
++      const ctx = context.value;
++      // Only the pressed item may cancel its own pending activation, or any
++      // sibling ending its gesture silently revokes it.
++      const ownsPendingActivation = ctx.activationTimeoutKey === key;
++      const endsActiveDrag = activeItemKey.value === key;
++
++      if (!ownsPendingActivation && !endsActiveDrag) {
+         return;
+       }
+ 
+-      const ctx = context.value;
+-      clearAnimatedTimeout(ctx.activationTimeoutId);
++      if (ownsPendingActivation) {
++        clearAnimatedTimeout(ctx.activationTimeoutId);
++        ctx.activationTimeoutKey = null;
++      }
+ 
+       ctx.touchStartTouch = null;
+       currentTouch.value = null;
+       activationState.value = DragActivationState.INACTIVE;
+ 
+-      if (activeItemKey.value === null) {
++      if (!endsActiveDrag) {
+         return;
+       }
+       if (activeHandleMeasurements) {
+diff --git a/node_modules/react-native-sortables/src/providers/shared/hooks/useItemPanGesture.ts b/node_modules/react-native-sortables/src/providers/shared/hooks/useItemPanGesture.ts
+index 7aa4c06..3f6d011 100644
+--- a/node_modules/react-native-sortables/src/providers/shared/hooks/useItemPanGesture.ts
++++ b/node_modules/react-native-sortables/src/providers/shared/hooks/useItemPanGesture.ts
+@@ -1,5 +1,7 @@
++import { useMemo } from 'react';
+ import type { SharedValue } from 'react-native-reanimated';
+ 
++import type { ManualGestureCallbacks } from '../../../integrations/gesture-handler';
+ import { useDragGesture } from '../../../integrations/gesture-handler';
+ import { useDragContext } from '../DragProvider';
+ 
+@@ -10,8 +12,22 @@ export default function useItemPanGesture(
+   const { handleDragEnd, handleTouchesMove, handleTouchStart } =
+     useDragContext();
+ 
+-  return useDragGesture(
+-    {
++  const deps = [
++    handleDragEnd,
++    handleTouchStart,
++    handleTouchesMove,
++    key,
++    activationAnimationProgress
++  ];
++
++  const callbacks = useMemo<ManualGestureCallbacks>(
++    () => ({
++      // A touch that ends before the item activates never reaches onFinalize,
++      // so the touch callbacks below repeat this cleanup.
++      onFinalize: () => {
++        'worklet';
++        handleDragEnd(key, activationAnimationProgress);
++      },
+       onTouchesCancelled: (_event, control) => {
+         'worklet';
+         handleDragEnd(key, activationAnimationProgress);
+@@ -36,13 +52,10 @@ export default function useItemPanGesture(
+         handleDragEnd(key, activationAnimationProgress);
+         control.end();
+       }
+-    },
+-    [
+-      handleDragEnd,
+-      handleTouchStart,
+-      handleTouchesMove,
+-      key,
+-      activationAnimationProgress
+-    ]
++    }),
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++    deps
+   );
++
++  return useDragGesture(callbacks, deps);
+ }
