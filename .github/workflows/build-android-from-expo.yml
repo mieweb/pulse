@@ -43,6 +43,11 @@ permissions:
 
 jobs:
   android:
+    # Serialize runs: versionCode ordering relies on run numbers, so a later
+    # run must never publish before an earlier one still in flight.
+    concurrency:
+      group: ${{ github.workflow }}-android
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       # ── Checkout, JDK, Node, JS deps ──────────────────────────────────────
