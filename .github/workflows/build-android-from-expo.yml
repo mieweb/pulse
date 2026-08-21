@@ -77,8 +77,19 @@ jobs:
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('app.json','utf8'));j.expo.android=j.expo.android||{};j.expo.android.versionCode=(j.expo.android.versionCode||0)+Number(process.env.GITHUB_RUN_NUMBER);fs.writeFileSync('app.json',JSON.stringify(j,null,2));console.log('Android versionCode =',j.expo.android.versionCode);"
 
       # ── Regenerate native android/ from app.json ──────────────────────────
+      # CI=1 (set by GitHub Actions) makes the CLI non-interactive.
       - name: Expo prebuild (android)
-        run: npx expo prebuild --clean --platform android --non-interactive
+        run: npx expo prebuild --clean --platform android
+
+      # ── Raise the Gradle JVM heap ──────────────────────────────────────────
+      # The Expo template caps Gradle at -Xmx2048m, which can OOM the daemon
+      # during the R8-minified release build. Prebuild regenerates
+      # gradle.properties every run, so patch it here.
+      - name: Raise Gradle JVM heap
+        run: |
+          sed -i.bak 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g/' android/gradle.properties
+          rm -f android/gradle.properties.bak
+          grep "^org.gradle.jvmargs" android/gradle.properties
 
       # ── Build + sign the release bundle ───────────────────────────────────
       - name: Build & sign Android bundle
