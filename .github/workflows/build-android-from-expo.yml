@@ -1,0 +1,124 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Android Expo Build & Upload
+#
+# Android twin of build-ios-from-expo.yml. Composes mieweb/actions building
+# blocks (pinned to v2.3.0):
+#   checkout + Node + JS deps → stamp versionCode → expo prebuild (android)
+#   → build-sign-android (direct-keystore) → publish-android-to-play
+#
+# Signing mode: direct-keystore
+#   You supply the upload keystore (.jks) and its credentials as secrets.
+#   Gradle signs the release bundle with injected signing properties — no
+#   fastlane match, no keystore committed to the repo.
+#
+# Required org/repo secrets:
+#   ANDROID_KEYSTORE_BASE64    base64 of the upload keystore (.jks)
+#   ANDROID_KEYSTORE_PASSWORD  keystore password
+#   ANDROID_KEY_ALIAS          signing key alias inside the keystore
+#   ANDROID_KEY_PASSWORD       password of that key
+#   PLAY_JSON_KEY_BASE64       base64 of the Google Play service-account JSON
+#                              (only needed when uploading to Google Play)
+#
+# NOTE: the very FIRST bundle for a new Play Console app must be uploaded
+# manually through the Play Console UI; the API (and therefore this workflow)
+# can only publish once the app record exists with an initial upload.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Android Expo Build & Upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_to_play:
+        description: "Upload the build to Google Play"
+        type: boolean
+        default: true
+      track:
+        description: "Google Play track"
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    # Serialize runs: versionCode ordering relies on run numbers, so a later
+    # run must never publish before an earlier one still in flight.
+    concurrency:
+      group: ${{ github.workflow }}-android
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      # ── Checkout, JDK, Node, JS deps ──────────────────────────────────────
+      # prepare-expo-env is macOS-only (it selects Xcode), so set up directly.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      # ── Give every CI build a unique, increasing versionCode ──────────────
+      # Base versionCode from app.json + per-workflow run number keeps the
+      # value monotonically increasing and above any previous manual upload.
+      - name: Stamp versionCode
+        run: |
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('app.json','utf8'));j.expo.android=j.expo.android||{};j.expo.android.versionCode=(j.expo.android.versionCode||0)+Number(process.env.GITHUB_RUN_NUMBER);fs.writeFileSync('app.json',JSON.stringify(j,null,2));console.log('Android versionCode =',j.expo.android.versionCode);"
+
+      # ── Regenerate native android/ from app.json ──────────────────────────
+      # CI=1 (set by GitHub Actions) makes the CLI non-interactive.
+      - name: Expo prebuild (android)
+        run: npx expo prebuild --clean --platform android
+
+      # ── Raise the Gradle JVM heap ──────────────────────────────────────────
+      # The Expo template caps Gradle at -Xmx2048m, which can OOM the daemon
+      # during the R8-minified release build. Prebuild regenerates
+      # gradle.properties every run, so patch it here.
+      - name: Raise Gradle JVM heap
+        run: |
+          sed -i.bak 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g/' android/gradle.properties
+          rm -f android/gradle.properties.bak
+          grep "^org.gradle.jvmargs" android/gradle.properties
+
+      # ── Build + sign the release bundle ───────────────────────────────────
+      - name: Build & sign Android bundle
+        id: build
+        uses: mieweb/actions/build-sign-android@360fec8818c88cc06f1e3a997b227daba34aa1a3 # v2.3.0
+        with:
+          signing_method:    direct-keystore
+          app_identifier:    com.mieweb.pulse
+          android_build_dir: android
+          build_type:        bundle
+          keystore_base64:   ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          keystore_password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          key_alias:         ${{ secrets.ANDROID_KEY_ALIAS }}
+          key_password:      ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      # ── Keep the signed bundle as a run artifact ──────────────────────────
+      - name: Upload signed bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-android-release
+          path: ${{ steps.build.outputs.signed_artifact_path }}
+          if-no-files-found: error
+
+      # ── Publish to Google Play ────────────────────────────────────────────
+      - name: Publish to Google Play
+        if: inputs.upload_to_play
+        uses: mieweb/actions/publish-android-to-play@360fec8818c88cc06f1e3a997b227daba34aa1a3 # v2.3.0
+        with:
+          signed_artifact_path: ${{ steps.build.outputs.signed_artifact_path }}
+          play_json_key_base64: ${{ secrets.PLAY_JSON_KEY_BASE64 }}
+          package_name:         com.mieweb.pulse
+          track:                ${{ inputs.track }}
