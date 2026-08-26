@@ -24,7 +24,15 @@ import { Accent } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
 import { segmentOffsets } from '@/utils/segment-window';
 import { msToPx, pxToMs } from './track-mapping';
-import { KNOB, POP_LANE, SCRUB_INSET, STEP, THUMB_HEIGHT, THUMB_WIDTH } from './track-metrics';
+import {
+  BADGE_SIZE,
+  KNOB,
+  POP_LANE,
+  SCRUB_INSET,
+  STEP,
+  THUMB_HEIGHT,
+  THUMB_WIDTH,
+} from './track-metrics';
 
 /** Max rate at which a knob drag issues player seeks (the knob itself moves every frame). */
 const SCRUB_INTERVAL_MS = 80;
@@ -267,14 +275,16 @@ const styles = StyleSheet.create({
   },
   cursorLine: {
     width: 2,
-    // Runs the thumb's full height plus a short tail below it, so the knob riding the line's
-    // end hangs clear of the thumbnail (into SCRUB_LANE) instead of overlapping its bottom.
-    height: THUMB_HEIGHT + 5,
+    // Runs from just below the ordinal pill's dip into the thumb (the cursor is a sibling
+    // drawn OVER the ScrollView, so a line starting at the thumb's top edge struck through
+    // the numbers) down to a short tail below the thumb, so the knob riding the line's end
+    // hangs clear of the thumbnail (into SCRUB_LANE) instead of overlapping its bottom.
+    height: THUMB_HEIGHT + 5 - BADGE_SIZE / 2,
     borderRadius: 1,
     backgroundColor: '#fff',
-    // The thumbs sit POP_LANE below the scroll-frame top (the badge-pill lane); match it so
-    // the line starts on the thumb's top edge.
-    marginTop: POP_LANE,
+    // The thumbs sit POP_LANE below the scroll-frame top (the badge-pill lane); the pill
+    // then dips BADGE_SIZE/2 into the thumb — start the line under both.
+    marginTop: POP_LANE + BADGE_SIZE / 2,
   },
   cursorKnob: {
     width: KNOB,

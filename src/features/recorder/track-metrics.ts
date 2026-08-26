@@ -13,9 +13,17 @@ export const RECORD_BUTTON_SIZE = 76;
 export const RECORD_BAR_GAP = Spacing.three;
 /** Horizontal rhythm of the track: one thumb + the grid's column gap. */
 export const STEP = THUMB_WIDTH + TRACK_GAP;
-/** Extra lane below the thumbs the cursor knob hangs into (keeps it off taps/✕/drag). */
-export const SCRUB_LANE = 16;
+/** Extra lane below the thumbs the cursor knob hangs into (keeps it off taps/✕/drag). The
+ *  knob visibly overhangs the scroll frame by ~4pt; the rest is finger headroom for its
+ *  hitSlop. Also the bar's top padding (see segment-bar): the lane is bottom-only, so the
+ *  bar mirrors it on top to keep the thumbs visually centered. */
+export const SCRUB_LANE = 12;
 export const KNOB = 14;
+/** Ordinal badge-pill diameter — it doubles as the drag handle's visible affordance, so it's
+ *  sized generously. Half of it rides above the thumb's top edge; POP_LANE (the vertical
+ *  breathing room inside the scroll frame) must be at least BADGE_SIZE / 2. Shared with the
+ *  playhead cursor so its line can start below the pill instead of striking through it. */
+export const BADGE_SIZE = 18;
 /** Left inset of the track content so the playhead knob at globalMs=0 (centered on the line at
  *  the first thumb's left edge) isn't clipped by the viewport's overflow:hidden. The cursor adds
  *  the same inset to its x so the line stays aligned with the thumbnails. */
