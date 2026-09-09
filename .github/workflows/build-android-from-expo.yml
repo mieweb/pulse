@@ -2,7 +2,7 @@
 # Android Expo Build & Upload
 #
 # Android twin of build-ios-from-expo.yml. Composes mieweb/actions building
-# blocks (pinned to v2.3.0):
+# blocks (pinned to v2.3.1):
 #   checkout + Node + JS deps → stamp versionCode → expo prebuild (android)
 #   → build-sign-android (direct-keystore) → publish-android-to-play
 #
@@ -94,7 +94,7 @@ jobs:
       # ── Build + sign the release bundle ───────────────────────────────────
       - name: Build & sign Android bundle
         id: build
-        uses: mieweb/actions/build-sign-android@360fec8818c88cc06f1e3a997b227daba34aa1a3 # v2.3.0
+        uses: mieweb/actions/build-sign-android@61db81e727847e112ae5af71a8c9b8bf62b1f4cb # v2.3.1
         with:
           signing_method:    direct-keystore
           app_identifier:    com.mieweb.pulse
@@ -116,7 +116,7 @@ jobs:
       # ── Publish to Google Play ────────────────────────────────────────────
       - name: Publish to Google Play
         if: inputs.upload_to_play
-        uses: mieweb/actions/publish-android-to-play@360fec8818c88cc06f1e3a997b227daba34aa1a3 # v2.3.0
+        uses: mieweb/actions/publish-android-to-play@61db81e727847e112ae5af71a8c9b8bf62b1f4cb # v2.3.1
         with:
           signed_artifact_path: ${{ steps.build.outputs.signed_artifact_path }}
           play_json_key_base64: ${{ secrets.GOOGLE_PLAY_JSON_KEY_BASE64 }}
