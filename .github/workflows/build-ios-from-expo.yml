@@ -61,8 +61,9 @@ jobs:
       - name: Use distribution signing identity
         run: |
           PBX=$(ls ios/*.xcodeproj/project.pbxproj | head -1)
-          sed -i '' 's/"iPhone Developer"/"iPhone Distribution"/g' "$PBX"
-          grep -n "CODE_SIGN_IDENTITY" "$PBX"
+          # Only touch CODE_SIGN_IDENTITY lines (plain or [sdk=iphoneos*] form).
+          sed -i '' -E '/CODE_SIGN_IDENTITY/ s/"iPhone Developer"/"iPhone Distribution"/' "$PBX"
+          grep -n "CODE_SIGN_IDENTITY" "$PBX" || echo "::warning::no CODE_SIGN_IDENTITY entries found in $PBX"
 
       # ── pod install + sign + archive + upload ─────────────────────────────
       - name: Build & upload iOS to TestFlight
