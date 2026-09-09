@@ -27,6 +27,10 @@ on:
         description: "Upload the build to TestFlight"
         type: boolean
         default: true
+      match_readonly:
+        description: "Keep match read-only. Turn off once to let match create the App Store profile for a bundle ID that is not in the signing repo yet, then leave it on."
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -79,6 +83,7 @@ jobs:
           apple_team_id:                 ${{ secrets.APPLE_TEAM_ID }}
           match_git_basic_authorization: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
           match_password:                ${{ secrets.MATCH_PASSWORD }}
+          match_readonly:                ${{ inputs.match_readonly }}
           apple_api_key_id:              ${{ secrets.APPLE_API_KEY_ID }}
           apple_api_issuer_id:           ${{ secrets.APPLE_API_ISSUER_ID }}
           apple_api_key_p8_base64:       ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
