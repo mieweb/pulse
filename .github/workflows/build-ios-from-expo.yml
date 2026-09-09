@@ -1,25 +1,22 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # iOS Expo Build & Upload
 #
-# Composes mieweb/actions building blocks (pinned to v2.2.4) instead of the
-# turnkey reusable workflow, so we can sign WITHOUT fastlane match:
-#   prepare-expo-env → stamp build number → expo prebuild → pod install
-#   → sign-archive-upload-ios (secrets) → upload to TestFlight
+# Composes mieweb/actions building blocks (pinned to v2.3.0):
+#   prepare-expo-env → stamp build number → expo prebuild
+#   → sign-archive-upload-ios (match) → upload to TestFlight
 #
-# Signing mode: secrets
-#   You supply BOTH the distribution certificate (.p12) and the matching App
-#   Store provisioning profile (.mobileprovision) as secrets. The profile must
-#   include the cert in the .p12 — generate them as a pair. No API fetch, no
-#   readonly limitation.
+# Signing mode: match
+#   The distribution certificate and the App Store profile for com.mieweb.pulse
+#   live in the org's private fastlane match repo. CI fetches them read-only;
+#   nothing app-specific is stored here beyond the six secrets below.
 #
-# Required org/repo secrets:
-#   APPLE_TEAM_ID                    Apple Developer Team ID  (= X5873NL7XM)
-#   APPLE_API_KEY_ID                 App Store Connect API key ID (TestFlight upload)
-#   APPLE_API_ISSUER_ID              App Store Connect issuer ID
-#   APPLE_API_KEY_P8_BASE64          base64 of the .p8 API key
-#   IOS_DIST_CERT_P12_BASE64         base64 of the distribution cert (.p12)
-#   IOS_DIST_CERT_PASSWORD           password set when exporting the .p12
-#   IOS_PROVISIONING_PROFILE_BASE64  base64 of the App Store .mobileprovision
+# Required repo secrets (same names as mieweb_auth_app):
+#   APPLE_TEAM_ID                  Apple Developer Team ID (= X5873NL7XM)
+#   APPLE_API_KEY_ID               App Store Connect API key ID (TestFlight upload)
+#   APPLE_API_ISSUER_ID            App Store Connect issuer ID
+#   APPLE_API_KEY_P8_BASE64        base64 of the .p8 API key
+#   MATCH_GIT_BASIC_AUTHORIZATION  base64 user:token for the match signing repo
+#   MATCH_PASSWORD                 passphrase that decrypts the match repo
 # ─────────────────────────────────────────────────────────────────────────────
 name: iOS Expo Build & Upload
 
@@ -40,7 +37,7 @@ jobs:
     steps:
       # ── Checkout, Xcode, Node, JS deps ────────────────────────────────────
       - name: Setup Expo environment
-        uses: mieweb/actions/prepare-expo-env@cf09c85fd27cbe235184539df1b421a5c50b0ec7 # v2.2.4
+        uses: mieweb/actions/prepare-expo-env@360fec8818c88cc06f1e3a997b227daba34aa1a3 # v2.3.0
         with:
           package_manager: npm
           node_version: "20"
@@ -54,54 +51,37 @@ jobs:
       - name: Expo prebuild (ios)
         run: npx expo prebuild --clean --platform ios --non-interactive
 
-      # ── Force the distribution signing identity ───────────────────────────
-      # expo prebuild writes CODE_SIGN_IDENTITY = "Apple Development" into the
-      # generated project. The signing action forces manual signing with a
-      # distribution profile but does NOT override the identity, so a Release
-      # archive looks for a development cert (which we don't have) and fails
-      # with: No signing certificate "iOS Development" found.
-      # Rewrite the identity to match the distribution cert in our .p12.
-      - name: Force distribution signing identity
-        env:
-          P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
-          P12_PW:     ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+      # ── Use a distribution identity for the archive ───────────────────────
+      # expo prebuild writes CODE_SIGN_IDENTITY = "iPhone Developer". The
+      # signing action switches the project to manual signing with the match
+      # App Store profile but leaves the identity alone, so a Release archive
+      # would look for a development cert and fail. "iPhone Distribution" is
+      # the generic identity Xcode resolves to either an "iPhone Distribution"
+      # or an "Apple Distribution" certificate, whichever match provides.
+      - name: Use distribution signing identity
         run: |
-          set -e
-          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
-          SUBJ=$(openssl pkcs12 -in "$RUNNER_TEMP/dist.p12" -clcerts -nokeys \
-                   -passin pass:"$P12_PW" 2>/dev/null \
-                 | openssl x509 -noout -subject 2>/dev/null || true)
-          rm -f "$RUNNER_TEMP/dist.p12"
-          echo "Distribution cert subject: ${SUBJ:-<unreadable>}"
-          # Pick the generic identity that matches the cert type. A cert created
-          # as "iOS Distribution (App Store & Ad Hoc)" has CN "iPhone Distribution: …";
-          # the newer "Apple Distribution" option has CN "Apple Distribution: …".
-          if echo "$SUBJ" | grep -q "Apple Distribution"; then
-            IDENTITY="Apple Distribution"
-          else
-            IDENTITY="iPhone Distribution"
+          PBX=$(ls ios/*.xcodeproj/project.pbxproj 2>/dev/null | head -1)
+          if [ -z "$PBX" ]; then
+            echo "::error::no ios/*.xcodeproj/project.pbxproj found after expo prebuild"
+            exit 1
           fi
-          echo "Setting CODE_SIGN_IDENTITY = $IDENTITY"
-          PBX=$(ls ios/*.xcodeproj/project.pbxproj | head -1)
-          sed -i.bak "s/CODE_SIGN_IDENTITY = \"[^\"]*\"/CODE_SIGN_IDENTITY = \"$IDENTITY\"/g" "$PBX"
-          sed -i.bak2 "s/\"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]\" = \"[^\"]*\"/\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"$IDENTITY\"/g" "$PBX"
-          rm -f "$PBX.bak" "$PBX.bak2"
-          echo "Resulting CODE_SIGN_IDENTITY entries:"
-          grep -n "CODE_SIGN_IDENTITY" "$PBX" || echo "::warning::no CODE_SIGN_IDENTITY entries found to patch"
+          # Only touch CODE_SIGN_IDENTITY lines (plain or [sdk=iphoneos*] form).
+          # Expo templates have written either "iPhone Developer" or "Apple Development".
+          sed -i '' -E '/CODE_SIGN_IDENTITY/ s/"(iPhone Developer|Apple Development)"/"iPhone Distribution"/' "$PBX"
+          grep -n "CODE_SIGN_IDENTITY" "$PBX" || echo "::warning::no CODE_SIGN_IDENTITY entries found in $PBX"
 
       # ── pod install + sign + archive + upload ─────────────────────────────
       - name: Build & upload iOS to TestFlight
-        uses: mieweb/actions/sign-archive-upload-ios@cf09c85fd27cbe235184539df1b421a5c50b0ec7 # v2.2.4
+        uses: mieweb/actions/sign-archive-upload-ios@360fec8818c88cc06f1e3a997b227daba34aa1a3 # v2.3.0
         with:
-          signing_mode:            secrets
-          app_identifier:          com.mieweb.pulse
-          apple_team_id:           ${{ secrets.APPLE_TEAM_ID }}
-          apple_api_key_id:        ${{ secrets.APPLE_API_KEY_ID }}
-          apple_api_issuer_id:     ${{ secrets.APPLE_API_ISSUER_ID }}
-          apple_api_key_p8_base64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
-          ios_cert_p12_base64:     ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
-          ios_cert_password:       ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-          ios_prov_profile_base64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-          ios_build_dir:           ios
-          run_pod_install:         "true"
-          upload_to_testflight:    ${{ inputs.upload_to_testflight }}
+          signing_mode:                  match
+          app_identifier:                com.mieweb.pulse
+          apple_team_id:                 ${{ secrets.APPLE_TEAM_ID }}
+          match_git_basic_authorization: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          match_password:                ${{ secrets.MATCH_PASSWORD }}
+          apple_api_key_id:              ${{ secrets.APPLE_API_KEY_ID }}
+          apple_api_issuer_id:           ${{ secrets.APPLE_API_ISSUER_ID }}
+          apple_api_key_p8_base64:       ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          ios_build_dir:                 ios
+          run_pod_install:               "true"
+          upload_to_testflight:          ${{ inputs.upload_to_testflight }}
