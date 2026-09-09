@@ -76,7 +76,7 @@ jobs:
 
       # ── pod install + sign + archive + upload ─────────────────────────────
       - name: Build & upload iOS to TestFlight
-        uses: mieweb/actions/sign-archive-upload-ios@360fec8818c88cc06f1e3a997b227daba34aa1a3 # v2.3.0
+        uses: mieweb/actions/sign-archive-upload-ios@2266e73b4a56e733fca3b6ddf348b2f754eacf68 # fix/match-readonly-before-setup-ci (mieweb/actions#17); return to a tag once merged
         with:
           signing_mode:                  match
           app_identifier:                com.mieweb.pulse
