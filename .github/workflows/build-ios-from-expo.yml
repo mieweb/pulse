@@ -60,9 +60,14 @@ jobs:
       # or an "Apple Distribution" certificate, whichever match provides.
       - name: Use distribution signing identity
         run: |
-          PBX=$(ls ios/*.xcodeproj/project.pbxproj | head -1)
+          PBX=$(ls ios/*.xcodeproj/project.pbxproj 2>/dev/null | head -1)
+          if [ -z "$PBX" ]; then
+            echo "::error::no ios/*.xcodeproj/project.pbxproj found after expo prebuild"
+            exit 1
+          fi
           # Only touch CODE_SIGN_IDENTITY lines (plain or [sdk=iphoneos*] form).
-          sed -i '' -E '/CODE_SIGN_IDENTITY/ s/"iPhone Developer"/"iPhone Distribution"/' "$PBX"
+          # Expo templates have written either "iPhone Developer" or "Apple Development".
+          sed -i '' -E '/CODE_SIGN_IDENTITY/ s/"(iPhone Developer|Apple Development)"/"iPhone Distribution"/' "$PBX"
           grep -n "CODE_SIGN_IDENTITY" "$PBX" || echo "::warning::no CODE_SIGN_IDENTITY entries found in $PBX"
 
       # ── pod install + sign + archive + upload ─────────────────────────────
