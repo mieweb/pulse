@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # iOS Expo Build & Upload
 #
-# Composes mieweb/actions building blocks (pinned to v2.3.0):
+# Composes mieweb/actions building blocks (pinned to v2.3.1):
 #   prepare-expo-env → stamp build number → expo prebuild
 #   → sign-archive-upload-ios (match) → upload to TestFlight
 #
@@ -41,7 +41,7 @@ jobs:
     steps:
       # ── Checkout, Xcode, Node, JS deps ────────────────────────────────────
       - name: Setup Expo environment
-        uses: mieweb/actions/prepare-expo-env@360fec8818c88cc06f1e3a997b227daba34aa1a3 # v2.3.0
+        uses: mieweb/actions/prepare-expo-env@61db81e727847e112ae5af71a8c9b8bf62b1f4cb # v2.3.1
         with:
           package_manager: npm
           node_version: "20"
@@ -76,7 +76,7 @@ jobs:
 
       # ── pod install + sign + archive + upload ─────────────────────────────
       - name: Build & upload iOS to TestFlight
-        uses: mieweb/actions/sign-archive-upload-ios@2266e73b4a56e733fca3b6ddf348b2f754eacf68 # fix/match-readonly-before-setup-ci (mieweb/actions#17); return to a tag once merged
+        uses: mieweb/actions/sign-archive-upload-ios@61db81e727847e112ae5af71a8c9b8bf62b1f4cb # v2.3.1
         with:
           signing_mode:                  match
           app_identifier:                com.mieweb.pulse
