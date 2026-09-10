@@ -1,5 +1,6 @@
 import { Icon } from '@/components/icon';
 import { useEvent } from 'expo';
+import { Image as ExpoImage } from 'expo-image';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -49,9 +50,10 @@ type Props = {
  * RENDERED frames, so rotation is already applied. The player's own `videoTrack.size` can't be
  * used: on iOS it's AVFoundation's un-rotated naturalSize, which reports portrait recordings
  * as landscape. Holds the last known ratio across clip switches so the frame doesn't flicker
- * to full-bleed while the next thumbnail resolves.
+ * to full-bleed while the next thumbnail resolves. Also hands back the thumbnail itself —
+ * the stage uses the same frame as a loading cover over the video.
  */
-function useVideoAspect(segment: Segment): number | null {
+function useVideoAspect(segment: Segment) {
   const thumb = useThumbnail(segment.thumbnail, segment.editedFilename ?? segment.originalFilename);
   // Persisted jpeg thumbs need an async size read; the legacy VideoThumbnail fallback
   // carries width/height and is derived directly below. Keyed on the URI STRING — the hook
@@ -73,9 +75,11 @@ function useVideoAspect(segment: Segment): number | null {
       alive = false;
     };
   }, [thumbUri]);
-  if (thumb && !('uri' in thumb) && thumb.width > 0 && thumb.height > 0)
-    return thumb.width / thumb.height;
-  return uriAr;
+  const legacyAr =
+    thumb && !('uri' in thumb) && thumb.width > 0 && thumb.height > 0
+      ? thumb.width / thumb.height
+      : null;
+  return { aspect: legacyAr ?? uriAr, thumb };
 }
 
 /**
@@ -100,9 +104,15 @@ export function PreviewModal({
   onTrim,
   onDelete,
 }: Props) {
-  const aspect = useVideoAspect(segment);
+  const { aspect, thumb } = useVideoAspect(segment);
   const theme = useTheme();
   const mode = useThemeMode();
+  // The VideoView is TRANSPARENT until the player paints its first frame, so on open the
+  // themed backdrop showed through the empty frame until the load finished. The clip's
+  // thumbnail covers that window (it IS the first frame, so the video takes over seamlessly);
+  // onFirstFrameRender drops it — but only once the fitted mount has painted, so the
+  // fill→fitted key remount can't blank the stage after an early uncover.
+  const [videoUp, setVideoUp] = useState(false);
   // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
   // not playing). Gating on !isPlaying alone flashed the badge through every clip switch:
   // selectSegment pauses for the swap, so the badge blinked for the load's duration.
@@ -160,7 +170,14 @@ export function PreviewModal({
         accessibilityRole="button"
         accessibilityLabel={isPlaying ? 'Pause' : 'Play'}>
         <View
-          style={[styles.frame, { borderColor: FRAME_BORDER[mode] }, frameSize ?? styles.frameFill]}
+          style={[
+            styles.frame,
+            { borderColor: FRAME_BORDER[mode] },
+            // Until the aspect is known the frame is a full-stage fallback whose rect is
+            // unrelated to the video — drawing its border flashed a giant empty rectangle
+            // on open, so the border waits for the fitted size.
+            frameSize ?? [styles.frameFill, styles.frameNoBorder],
+          ]}
           pointerEvents="none">
           {/* Thumbnail-derived ARs are pixel-rounded (≤192×256 jpegs), so a contain-fit can
               leak ~1% letterbox slivers inside the frame — they read as a fat border on the
@@ -175,7 +192,17 @@ export function PreviewModal({
             player={player}
             contentFit={frameSize ? 'cover' : 'contain'}
             nativeControls={false}
+            onFirstFrameRender={() => {
+              if (frameSize) setVideoUp(true);
+            }}
           />
+          {!videoUp && thumb && (
+            <ExpoImage
+              source={thumb}
+              style={StyleSheet.absoluteFill}
+              contentFit={frameSize ? 'cover' : 'contain'}
+            />
+          )}
           {/* Scale-only animations on both badges: their GlassPills are UIVisualEffectViews,
               and ANY ancestor alpha < 1 (an opacity fade) renders the glass flat or not at
               all — transforms are the glass-safe way to animate them. */}
@@ -257,6 +284,7 @@ const styles = StyleSheet.create({
   },
   // Until the aspect/layout is known, fill the stage (the video letterboxes inside).
   frameFill: { alignSelf: 'stretch', flex: 1 },
+  frameNoBorder: { borderWidth: 0 },
   playOverlay: {
     position: 'absolute',
     top: 0,
