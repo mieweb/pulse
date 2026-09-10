@@ -2,13 +2,12 @@ import { Icon } from '@/components/icon';
 import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { formatDurationPadded } from '@/utils/format';
 
 // Action badge diameter. With hitSlop 4 the effective tap target is 48pt (≥ the 44pt HIG
 // minimum); the ✂ and 🗑 badges sit a full Spacing.five apart so their hit areas can't overlap.
@@ -28,9 +27,6 @@ type Props = {
   isPlaying: boolean;
   /** True while the bar playhead is being dragged — suppresses the play badge. */
   scrubbing?: boolean;
-  // Draft-global playhead position and total, for the time readout pill.
-  positionMs: number;
-  totalMs: number;
   onTogglePlay: () => void;
   onTrim: () => void;
   onDelete: () => void;
@@ -40,8 +36,9 @@ type Props = {
  * Full-bleed preview stage over the recorder — fills the area between the top bar and the
  * segment bar on a themed backdrop (the recorder covers the paused camera with the theme
  * background). Plays the draft through one shared player; tap toggles play, ✂ opens the RNVT
- * editor for the active clip, 🗑 deletes — both in a row below the video. Closing lives in the
- * recorder's top bar, so there's exactly one ✕ on screen. The video renders full-bleed:
+ * editor for the active clip, 🗑 deletes — both in a row below the video. Closing and the
+ * position / total readout live in the recorder's top bar, so nothing floats over the video.
+ * The video renders full-bleed:
  * `contentFit="contain"` letterboxes into the themed backdrop and lets the native player
  * honor each clip's rotation matrix (portrait upright) — sizing off iOS `videoTrack.size`
  * is untrustworthy (un-rotated naturalSize). No captions here — transcription now happens
@@ -51,8 +48,6 @@ export function PreviewModal({
   player,
   isPlaying,
   scrubbing = false,
-  positionMs,
-  totalMs,
   onTogglePlay,
   onTrim,
   onDelete,
@@ -137,15 +132,6 @@ export function PreviewModal({
               </GlassPill>
             </Animated.View>
           )}
-          <View style={styles.timeRow} pointerEvents="none">
-            {/* Mode-aware scrim like the action badges — contain-fit letterboxing can put the
-                pill on the flat backdrop, where glass has nothing to refract. */}
-            <View style={[styles.timePill, ControlScrim[mode]]}>
-              <Text style={styles.timeText}>
-                {formatDurationPadded(positionMs)} / {formatDurationPadded(totalMs)}
-              </Text>
-            </View>
-          </View>
         </View>
       </Pressable>
 
@@ -223,27 +209,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.five,
     paddingVertical: Spacing.two,
-  },
-  timeRow: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: Spacing.two,
-    alignItems: 'center',
-  },
-  // Scrim-backed shape, matching the action badges below; hairline edge shows in dark mode
-  // (ControlScrim.light keeps it transparent).
-  timePill: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  timeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-    letterSpacing: 0.3,
   },
 });

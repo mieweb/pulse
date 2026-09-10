@@ -13,7 +13,7 @@ import {
 
 import { ThemedView } from '@/components/themed-view';
 import { GlassPill } from '@/components/glass-pill';
-import { Spacing } from '@/constants/theme';
+import { ControlScrim, Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { CloseButton } from '@/features/recorder/close-button';
 import { ImportButton } from '@/features/recorder/import-button';
@@ -35,7 +35,7 @@ import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDurationPadded } from '@/utils/format';
 import { closeToHome } from '@/utils/navigation';
 
@@ -56,6 +56,7 @@ const PREVIEW_CLOSE_SETTLE_MS = 50;
 export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
+  const mode = useThemeMode();
   const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
   const permissions = useRecorderPermissions();
   const {
@@ -466,17 +467,22 @@ export default function RecorderScreen() {
             overVideo={!previewing}
             label={previewing ? 'Close preview' : 'Close recorder'}
           />
-          {/* The running total is redundant while previewing — the preview's own pill shows
-              position / total. */}
-          {!previewing && (
-            <>
-              <GlassPill style={styles.timerPill}>
-                <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
-              </GlassPill>
-              {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
-              <View style={styles.topBarSpacer} />
-            </>
+          {/* Record mode shows the running total (glass, over live camera); previewing shows
+              the draft-global position / total on the mode-aware scrim — same chrome as the
+              ✕ beside it, since glass has nothing to refract on the themed backdrop. */}
+          {previewing ? (
+            <View style={[styles.timerPill, styles.previewTimerPill, ControlScrim[mode]]}>
+              <Text style={styles.timerText}>
+                {formatDurationPadded(preview.globalMs)} / {formatDurationPadded(preview.totalMs)}
+              </Text>
+            </View>
+          ) : (
+            <GlassPill style={styles.timerPill}>
+              <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
+            </GlassPill>
           )}
+          {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
+          <View style={styles.topBarSpacer} />
         </View>
 
         {/* Hidden entirely while previewing — every control is inert then, and a rail of
@@ -505,8 +511,6 @@ export default function RecorderScreen() {
               player={preview.player}
               isPlaying={preview.isPlaying}
               scrubbing={scrubbing}
-              positionMs={preview.globalMs}
-              totalMs={preview.totalMs}
               onTogglePlay={preview.togglePlay}
               onTrim={() => {
                 const seg = preview.active;
@@ -623,6 +627,8 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
   },
+  // Scrim variant for preview mode — hairline edge shows in dark mode (light stays transparent).
+  previewTimerPill: { borderWidth: StyleSheet.hairlineWidth },
   topBarSpacer: { width: 40 },
   // The preview stage stretches to fill the space between the top bar and the segment bar,
   // so the video can size itself to whatever screen it's on.
