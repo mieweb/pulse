@@ -504,7 +504,6 @@ export default function RecorderScreen() {
             <PreviewModal
               player={preview.player}
               isPlaying={preview.isPlaying}
-              segment={preview.active}
               scrubbing={scrubbing}
               positionMs={preview.globalMs}
               totalMs={preview.totalMs}

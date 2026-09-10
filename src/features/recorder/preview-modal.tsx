@@ -1,15 +1,13 @@
 import { Icon } from '@/components/icon';
 import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Spacing } from '@/constants/theme';
-import type { Segment } from '@/db/schema';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatDurationPadded } from '@/utils/format';
 
 // Action badge diameter. With hitSlop 4 the effective tap target is 48pt (≥ the 44pt HIG
@@ -28,8 +26,6 @@ const PAUSE_FLASH_HOLD_MS = 600;
 type Props = {
   player: VideoPlayer;
   isPlaying: boolean;
-  /** The active clip — its thumbnail provides the displayed aspect ratio for the frame. */
-  segment: Segment;
   /** True while the bar playhead is being dragged — suppresses the play badge. */
   scrubbing?: boolean;
   // Draft-global playhead position and total, for the time readout pill.
@@ -41,55 +37,19 @@ type Props = {
 };
 
 /**
- * The displayed aspect ratio of a clip, read from its first-frame thumbnail — thumbnails are
- * RENDERED frames, so rotation is already applied. The player's own `videoTrack.size` can't be
- * used: on iOS it's AVFoundation's un-rotated naturalSize, which reports portrait recordings
- * as landscape. Holds the last known ratio across clip switches so the frame doesn't flicker
- * to full-bleed while the next thumbnail resolves.
- */
-function useVideoAspect(segment: Segment): number | null {
-  const thumb = useThumbnail(segment.thumbnail, segment.editedFilename ?? segment.originalFilename);
-  // Persisted jpeg thumbs need an async size read; the legacy VideoThumbnail fallback
-  // carries width/height and is derived directly below. Keyed on the URI STRING — the hook
-  // returns a fresh { uri } object each render, and the preview re-renders at the playhead's
-  // cadence, so an object dep would re-run getSize several times a second.
-  const thumbUri = thumb && 'uri' in thumb ? thumb.uri : null;
-  const [uriAr, setUriAr] = useState<number | null>(null);
-  useEffect(() => {
-    if (!thumbUri) return;
-    let alive = true;
-    Image.getSize(
-      thumbUri,
-      (w, h) => {
-        if (alive && w > 0 && h > 0) setUriAr(w / h);
-      },
-      () => {},
-    );
-    return () => {
-      alive = false;
-    };
-  }, [thumbUri]);
-  const legacyAr =
-    thumb && !('uri' in thumb) && thumb.width > 0 && thumb.height > 0
-      ? thumb.width / thumb.height
-      : null;
-  return legacyAr ?? uriAr;
-}
-
-/**
  * Full-bleed preview stage over the recorder — fills the area between the top bar and the
  * segment bar on a themed backdrop (the recorder covers the paused camera with the theme
  * background). Plays the draft through one shared player; tap toggles play, ✂ opens the RNVT
  * editor for the active clip, 🗑 deletes — both in a row below the video. Closing lives in the
- * recorder's top bar, so there's exactly one ✕ on screen. The video renders in a rect sized
- * to its true display aspect (from the clip thumbnail); `contentFit="contain"` lets the
- * native player honor each clip's rotation matrix (portrait upright). No captions here —
- * transcription now happens once on the merged video at export time.
+ * recorder's top bar, so there's exactly one ✕ on screen. The video renders full-bleed:
+ * `contentFit="contain"` letterboxes into the themed backdrop and lets the native player
+ * honor each clip's rotation matrix (portrait upright) — sizing off iOS `videoTrack.size`
+ * is untrustworthy (un-rotated naturalSize). No captions here — transcription now happens
+ * once on the merged video at export time.
  */
 export function PreviewModal({
   player,
   isPlaying,
-  segment,
   scrubbing = false,
   positionMs,
   totalMs,
@@ -97,7 +57,6 @@ export function PreviewModal({
   onTrim,
   onDelete,
 }: Props) {
-  const aspect = useVideoAspect(segment);
   const theme = useTheme();
   const mode = useThemeMode();
   // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
@@ -135,14 +94,6 @@ export function PreviewModal({
     const timer = setTimeout(() => setPauseFlash(false), PAUSE_FLASH_HOLD_MS);
     return () => clearTimeout(timer);
   }, [pauseFlash]);
-  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
-  // The frame hugs the video exactly: the clip's display aspect fitted into the measured
-  // stage box. Null (no layout / no thumbnail yet) falls back to filling the stage.
-  const frameSize = useMemo(() => {
-    if (!box || !aspect) return null;
-    const w = Math.min(box.w, box.h * aspect);
-    return { width: w, height: w / aspect };
-  }, [box, aspect]);
 
   return (
     <View style={[styles.stage, { backgroundColor: theme.background }]}>
@@ -153,21 +104,13 @@ export function PreviewModal({
           setPauseFlash(!isPlaying);
           onTogglePlay();
         }}
-        onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
         accessibilityRole="button"
         accessibilityLabel={isPlaying ? 'Pause' : 'Play'}>
-        <View style={frameSize ?? styles.frameFill} pointerEvents="none">
-          {/* Thumbnail-derived ARs are pixel-rounded (≤192×256 jpegs), so a contain-fit can
-              leak ~1% letterbox slivers at the rect's edges. Cover crops that mismatch
-              imperceptibly instead. The full-stage fallback keeps contain: there the rect's
-              AR is unrelated to the video's. Keyed so the fit flip REMOUNTS the view —
-              mutating contentFit animates the native layer's gravity change (an unwanted
-              zoom); the flip only happens once, inside the initial load window. */}
+        <View style={styles.fill} pointerEvents="none">
           <VideoView
-            key={frameSize ? 'fitted' : 'fill'}
             style={StyleSheet.absoluteFill}
             player={player}
-            contentFit={frameSize ? 'cover' : 'contain'}
+            contentFit="contain"
             nativeControls={false}
           />
           {/* Scale-only animations on both badges: their GlassPills are UIVisualEffectViews,
@@ -195,11 +138,13 @@ export function PreviewModal({
             </Animated.View>
           )}
           <View style={styles.timeRow} pointerEvents="none">
-            <GlassPill style={styles.timePill}>
+            {/* Mode-aware scrim like the action badges — contain-fit letterboxing can put the
+                pill on the flat backdrop, where glass has nothing to refract. */}
+            <View style={[styles.timePill, ControlScrim[mode]]}>
               <Text style={styles.timeText}>
                 {formatDurationPadded(positionMs)} / {formatDurationPadded(totalMs)}
               </Text>
-            </GlassPill>
+            </View>
           </View>
         </View>
       </Pressable>
@@ -235,17 +180,14 @@ const styles = StyleSheet.create({
     flex: 1,
     alignSelf: 'stretch',
   },
-  // Measured box the video rect centers in; margins keep it off screen edges and give it
-  // breathing room from the top-bar ✕ and the action row.
+  // Full-bleed video area; margins keep it off screen edges and give it breathing room from
+  // the top-bar ✕ and the action row.
   surface: {
     flex: 1,
     marginHorizontal: Spacing.two,
     marginVertical: Spacing.two,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  // Until the aspect/layout is known, fill the stage (the video letterboxes inside).
-  frameFill: { alignSelf: 'stretch', flex: 1 },
+  fill: { flex: 1 },
   playOverlay: {
     position: 'absolute',
     top: 0,
@@ -289,11 +231,13 @@ const styles = StyleSheet.create({
     bottom: Spacing.two,
     alignItems: 'center',
   },
-  // Shape only — GlassPill owns the surface, same as the badges above.
+  // Scrim-backed shape, matching the action badges below; hairline edge shows in dark mode
+  // (ControlScrim.light keeps it transparent).
   timePill: {
     paddingHorizontal: Spacing.two,
     paddingVertical: 4,
     borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   timeText: {
     color: '#fff',
