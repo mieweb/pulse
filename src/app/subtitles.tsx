@@ -543,8 +543,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',
-    height: 48,
-    borderRadius: 12,
+    height: 52,
+    borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
   },
 });

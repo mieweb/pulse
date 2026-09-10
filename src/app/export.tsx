@@ -746,7 +746,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   pressed: { opacity: 0.85 },
-  disabled: { opacity: 0.5 },
+  disabled: { opacity: 0.35 },
   // Upload-complete prompt (the custom modal replacing the old Alert).
   promptBackdrop: {
     flex: 1,

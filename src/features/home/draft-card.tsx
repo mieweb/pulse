@@ -83,9 +83,10 @@ export function DraftCard({
       style={({ pressed }) => [
         styles.card,
         {
-          backgroundColor: theme.backgroundElement,
+          // Rows highlight by fill swap (action-menu rows, home header buttons), not by dimming.
+          backgroundColor:
+            pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
           borderColor: theme.border,
-          opacity: pressed && !editing ? 0.6 : 1,
         },
       ]}>
       <View
@@ -169,7 +170,7 @@ export function DraftCard({
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel="Draft options"
-            style={({ pressed }) => [styles.more, { opacity: pressed ? 0.5 : 1 }]}>
+            style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]}>
             <Icon name="ellipsis" size={18} tintColor={theme.textSecondary} />
           </Pressable>
         )
