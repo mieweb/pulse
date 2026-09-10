@@ -25,10 +25,6 @@ const PARK_BADGE_DELAY_MS = 150;
 // How long the transient ⏸ flash holds after playback starts before its fade-out begins.
 const PAUSE_FLASH_HOLD_MS = 600;
 
-// Frame outline per mode — stronger than theme.border so the video edge reads clearly
-// against the flat backdrop (dark footage in dark mode especially).
-const FRAME_BORDER = { light: 'rgba(0,0,0,0.3)', dark: 'rgba(255,255,255,0.3)' } as const;
-
 type Props = {
   player: VideoPlayer;
   isPlaying: boolean;
@@ -85,11 +81,10 @@ function useVideoAspect(segment: Segment): number | null {
  * segment bar on a themed backdrop (the recorder covers the paused camera with the theme
  * background). Plays the draft through one shared player; tap toggles play, ✂ opens the RNVT
  * editor for the active clip, 🗑 deletes — both in a row below the video. Closing lives in the
- * recorder's top bar, so there's exactly one ✕ on screen. The video renders inside a
- * hairline frame sized to its true display aspect (from the clip thumbnail) so black footage
- * stays visible against the backdrop; `contentFit="contain"` lets the native player honor
- * each clip's rotation matrix (portrait upright). No captions here — transcription now
- * happens once on the merged video at export time.
+ * recorder's top bar, so there's exactly one ✕ on screen. The video renders in a rect sized
+ * to its true display aspect (from the clip thumbnail); `contentFit="contain"` lets the
+ * native player honor each clip's rotation matrix (portrait upright). No captions here —
+ * transcription now happens once on the merged video at export time.
  */
 export function PreviewModal({
   player,
@@ -161,16 +156,13 @@ export function PreviewModal({
         onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
         accessibilityRole="button"
         accessibilityLabel={isPlaying ? 'Pause' : 'Play'}>
-        <View
-          style={[styles.frame, { borderColor: FRAME_BORDER[mode] }, frameSize ?? styles.frameFill]}
-          pointerEvents="none">
+        <View style={frameSize ?? styles.frameFill} pointerEvents="none">
           {/* Thumbnail-derived ARs are pixel-rounded (≤192×256 jpegs), so a contain-fit can
-              leak ~1% letterbox slivers inside the frame — they read as a fat border on the
-              light backdrop. Cover crops that mismatch imperceptibly instead. The full-stage
-              fallback keeps contain: there the frame AR is unrelated to the video's. Keyed
-              so the fit flip REMOUNTS the view — mutating contentFit animates the native
-              layer's gravity change (an unwanted zoom); the flip only happens once, inside
-              the initial load window. */}
+              leak ~1% letterbox slivers at the rect's edges. Cover crops that mismatch
+              imperceptibly instead. The full-stage fallback keeps contain: there the rect's
+              AR is unrelated to the video's. Keyed so the fit flip REMOUNTS the view —
+              mutating contentFit animates the native layer's gravity change (an unwanted
+              zoom); the flip only happens once, inside the initial load window. */}
           <VideoView
             key={frameSize ? 'fitted' : 'fill'}
             style={StyleSheet.absoluteFill}
@@ -243,7 +235,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignSelf: 'stretch',
   },
-  // Measured box the frame centers in; margins keep the frame off screen edges and give it
+  // Measured box the video rect centers in; margins keep it off screen edges and give it
   // breathing room from the top-bar ✕ and the action row.
   surface: {
     flex: 1,
@@ -252,15 +244,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Square frame hugging the video rect (no rounding — the app doesn't round video surfaces)
-  // so footage matching the backdrop stays legible; border color per mode (see FRAME_BORDER).
-  frame: {
-    borderWidth: 1,
-  },
-  // Until the aspect/layout is known, fill the stage (the video letterboxes inside) with no
-  // border — the fallback rect is unrelated to the video, so outlining it flashes a giant
-  // empty rectangle on open.
-  frameFill: { alignSelf: 'stretch', flex: 1, borderWidth: 0 },
+  // Until the aspect/layout is known, fill the stage (the video letterboxes inside).
+  frameFill: { alignSelf: 'stretch', flex: 1 },
   playOverlay: {
     position: 'absolute',
     top: 0,
