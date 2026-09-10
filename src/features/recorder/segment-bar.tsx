@@ -17,8 +17,9 @@ import Animated, {
 import Sortable from 'react-native-sortables';
 
 import { GlassPill } from '@/components/glass-pill';
-import { Accent, Spacing } from '@/constants/theme';
+import { Accent, ControlScrim, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
+import { useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatDurationPadded } from '@/utils/format';
 import { effMs } from '@/utils/segment-window';
@@ -70,6 +71,7 @@ function Bar({
   onNext,
   cursor,
 }: Props) {
+  const mode = useThemeMode();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   // Owned here (not in PlayheadCursor) so the offset is already tracked when the cursor
   // mounts on a bar the user scrolled before opening the preview.
@@ -138,8 +140,17 @@ function Bar({
       <View style={styles.bar}>
         {/* Glass surface as a passive background LAYER, not a container — the Sortable grid,
             ScrollView, and playhead keep their exact hierarchy (and gesture/portal behavior)
-            above it. pointerEvents="none" so it can never intercept a touch. */}
-        <GlassPill style={styles.barSurface} pointerEvents="none" />
+            above it. pointerEvents="none" so it can never intercept a touch. Glass only over
+            the live camera; on the preview's themed backdrop it swaps to the same mode-aware
+            scrim as the ✕/✂/🗑 controls, so the whole chrome reads as one family. */}
+        {cursor ? (
+          <View
+            style={[styles.barSurface, styles.barSurfaceScrim, ControlScrim[mode]]}
+            pointerEvents="none"
+          />
+        ) : (
+          <GlassPill style={styles.barSurface} pointerEvents="none" />
+        )}
         {/* Trash drop target — above the bar, fades in during a drag. pointerEvents="none" so it
             never intercepts touches; it's purely a drop zone hit-tested from the drag position.
             Hidden while previewing: it would float over the full-bleed video stage, and the
@@ -359,6 +370,7 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     overflow: 'hidden',
   },
+  barSurfaceScrim: { borderWidth: StyleSheet.hairlineWidth },
   trashWrap: {
     position: 'absolute',
     // Vertically: align the trash's CENTER with the record button's center. The record

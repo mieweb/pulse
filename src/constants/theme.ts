@@ -65,6 +65,17 @@ export const Colors = {
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
+/**
+ * Translucent fill for round control chrome on THEMED backgrounds (not over live video —
+ * that's GlassPill's job). A dark scrim disappears on dark mode's black background, so each
+ * mode gets its own fill; the dark fill adds a hairline edge for a crisp outline. Glyphs on
+ * top stay white in both modes.
+ */
+export const ControlScrim = {
+  light: { backgroundColor: 'rgba(0,0,0,0.35)', borderColor: 'transparent' },
+  dark: { backgroundColor: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.25)' },
+} as const;
+
 export const Fonts = Platform.select({
   ios: {
     sans: 'system-ui',

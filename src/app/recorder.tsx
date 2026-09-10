@@ -35,6 +35,7 @@ import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
+import { useTheme } from '@/hooks/use-theme';
 import { formatDurationPadded } from '@/utils/format';
 import { closeToHome } from '@/utils/navigation';
 
@@ -54,6 +55,7 @@ const PREVIEW_CLOSE_SETTLE_MS = 50;
 
 export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
   const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
   const permissions = useRecorderPermissions();
   const {
@@ -439,8 +441,11 @@ export default function RecorderScreen() {
       <Animated.View pointerEvents="none" style={[styles.reticle, reticleStyle]} />
 
       {/* The paused camera keeps its last frame on screen (VisionCamera pauses in place) —
-          black it out while previewing so the stale frame can't show around the video. */}
-      {previewing && <View style={[StyleSheet.absoluteFill, styles.blackout]} />}
+          cover it with the THEMED background while previewing so the stale frame can't show
+          around the video and the preview follows light/dark mode. */}
+      {previewing && (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.background }]} />
+      )}
 
       <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="box-none">
         <View
@@ -449,8 +454,13 @@ export default function RecorderScreen() {
             { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
           ]}>
           {/* One ✕ per mode: in record mode it exits the recorder; while previewing it closes
-              the preview (the modal has no ✕ of its own, so the corner never doubles up). */}
-          <CloseButton onPress={previewing ? () => setPreviewId(null) : handleClose} overVideo />
+              the preview (the modal has no ✕ of its own, so the corner never doubles up).
+              Glass only over the live camera — the preview's themed backdrop gets the scrim
+              variant (dark-pinned glass goes invisible on a light background). */}
+          <CloseButton
+            onPress={previewing ? () => setPreviewId(null) : handleClose}
+            overVideo={!previewing}
+          />
           {/* The running total is redundant while previewing — the preview's own pill shows
               position / total. */}
           {!previewing && (
@@ -489,6 +499,7 @@ export default function RecorderScreen() {
             <PreviewModal
               player={preview.player}
               isPlaying={preview.isPlaying}
+              segment={preview.active}
               positionMs={preview.globalMs}
               totalMs={preview.totalMs}
               onTogglePlay={preview.togglePlay}
@@ -607,7 +618,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   topBarSpacer: { width: 40 },
-  blackout: { backgroundColor: '#000' },
   // The preview stage stretches to fill the space between the top bar and the segment bar,
   // so the video can size itself to whatever screen it's on.
   previewArea: { flex: 1, alignSelf: 'stretch' },
