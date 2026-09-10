@@ -286,7 +286,7 @@ export default function HomeScreen() {
                 tintColor={theme.text}
               />
               <ThemedText type="smallBold" style={styles.headerButtonLabel}>
-                {themePref === 'system' ? 'Auto' : themeMode === 'dark' ? 'Dark' : 'Light'}
+                {themePref === 'system' ? 'System' : themeMode === 'dark' ? 'Dark' : 'Light'}
               </ThemedText>
             </Pressable>
           </View>
