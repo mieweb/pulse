@@ -44,7 +44,11 @@ export function PreviewModal({
 }: Props) {
   return (
     <View style={styles.stage}>
-      <Pressable style={styles.surface} onPress={onTogglePlay} accessibilityLabel="Toggle playback">
+      <Pressable
+        style={styles.surface}
+        onPress={onTogglePlay}
+        accessibilityRole="button"
+        accessibilityLabel="Toggle playback">
         <VideoView
           style={StyleSheet.absoluteFill}
           player={player}
