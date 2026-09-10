@@ -113,27 +113,19 @@ export function PreviewModal({
             contentFit="contain"
             nativeControls={false}
           />
-          {/* Scale-only animations on both badges: their GlassPills are UIVisualEffectViews,
-              and ANY ancestor alpha < 1 (an opacity fade) renders the glass flat or not at
-              all — transforms are the glass-safe way to animate them. */}
-          {showPlay && (
-            <Animated.View
-              style={styles.playOverlay}
-              pointerEvents="none"
-              entering={ZoomIn.duration(150)}>
-              <GlassPill style={styles.playBadge}>
-                <Icon name="play.fill" size={28} tintColor="#fff" />
-              </GlassPill>
-            </Animated.View>
-          )}
-          {pauseFlash && (
+          {/* ONE badge for ▶ and ⏸ — the glyph swaps in place so a play tap doesn't unmount
+              one glass pill and zoom in a fresh one. ⏸ wins while both states overlap (the
+              tap→playingChange gap). Scale-only animation: the GlassPill is a
+              UIVisualEffectView, and ANY ancestor alpha < 1 renders the glass flat or not at
+              all. The ⏸ exit is slower — it's the tail of the flash's ~1s arc. */}
+          {(showPlay || pauseFlash) && (
             <Animated.View
               style={styles.playOverlay}
               pointerEvents="none"
               entering={ZoomIn.duration(150)}
-              exiting={ZoomOut.duration(350)}>
-              <GlassPill style={[styles.playBadge, styles.pauseBadge]}>
-                <Icon name="pause.fill" size={28} tintColor="#fff" />
+              exiting={ZoomOut.duration(pauseFlash ? 350 : 150)}>
+              <GlassPill style={[styles.playBadge, pauseFlash && styles.pauseBadge]}>
+                <Icon name={pauseFlash ? 'pause.fill' : 'play.fill'} size={28} tintColor="#fff" />
               </GlassPill>
             </Animated.View>
           )}
