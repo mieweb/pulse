@@ -1,6 +1,5 @@
 import { Icon } from '@/components/icon';
 import { useEvent } from 'expo';
-import { Image as ExpoImage } from 'expo-image';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -50,10 +49,9 @@ type Props = {
  * RENDERED frames, so rotation is already applied. The player's own `videoTrack.size` can't be
  * used: on iOS it's AVFoundation's un-rotated naturalSize, which reports portrait recordings
  * as landscape. Holds the last known ratio across clip switches so the frame doesn't flicker
- * to full-bleed while the next thumbnail resolves. Also hands back the thumbnail itself —
- * the stage uses the same frame as a loading cover over the video.
+ * to full-bleed while the next thumbnail resolves.
  */
-function useVideoAspect(segment: Segment) {
+function useVideoAspect(segment: Segment): number | null {
   const thumb = useThumbnail(segment.thumbnail, segment.editedFilename ?? segment.originalFilename);
   // Persisted jpeg thumbs need an async size read; the legacy VideoThumbnail fallback
   // carries width/height and is derived directly below. Keyed on the URI STRING — the hook
@@ -79,7 +77,7 @@ function useVideoAspect(segment: Segment) {
     thumb && !('uri' in thumb) && thumb.width > 0 && thumb.height > 0
       ? thumb.width / thumb.height
       : null;
-  return { aspect: legacyAr ?? uriAr, thumb };
+  return legacyAr ?? uriAr;
 }
 
 /**
@@ -104,7 +102,7 @@ export function PreviewModal({
   onTrim,
   onDelete,
 }: Props) {
-  const { aspect, thumb } = useVideoAspect(segment);
+  const aspect = useVideoAspect(segment);
   const theme = useTheme();
   const mode = useThemeMode();
   // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
@@ -166,17 +164,6 @@ export function PreviewModal({
         <View
           style={[styles.frame, { borderColor: FRAME_BORDER[mode] }, frameSize ?? styles.frameFill]}
           pointerEvents="none">
-          {/* The VideoView is transparent until the player paints, so the clip's first-frame
-              thumbnail sits permanently underneath — it shows through while the video loads
-              (and across the fill→fitted remount below) and is covered the instant real
-              frames exist. Same fit as the video, so the handoff is seamless. */}
-          {thumb && (
-            <ExpoImage
-              source={thumb}
-              style={StyleSheet.absoluteFill}
-              contentFit={frameSize ? 'cover' : 'contain'}
-            />
-          )}
           {/* Thumbnail-derived ARs are pixel-rounded (≤192×256 jpegs), so a contain-fit can
               leak ~1% letterbox slivers inside the frame — they read as a fat border on the
               light backdrop. Cover crops that mismatch imperceptibly instead. The full-stage
