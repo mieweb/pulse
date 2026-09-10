@@ -336,7 +336,14 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       }
     }
     advancingRef.current = false;
-    player.play();
+    // Arm rather than raw play(): play() on a loading item is dropped (e.g. the active clip
+    // is mid-reload after an edit), which ate the tap — statusChange consumes the intent
+    // once the item is ready, same as selectSegment's same-clip path.
+    wantPlayRef.current = true;
+    if (player.status === 'readyToPlay') {
+      wantPlayRef.current = false;
+      player.play();
+    }
   }, [player, active, activeId, activeIndex, segments]);
 
   /** Seek to a draft-global offset (bar-cursor scrub); swaps the loaded clip when crossed. */

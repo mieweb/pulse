@@ -1,4 +1,5 @@
 import { Icon } from '@/components/icon';
+import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -14,6 +15,10 @@ import { formatDurationPadded } from '@/utils/format';
 // minimum); the ✂ and 🗑 badges sit a full Spacing.five apart so their hit areas can't overlap.
 const BADGE_SIZE = 40;
 const BADGE_HIT_SLOP = 4;
+
+// Frame outline per mode — stronger than theme.border so the video edge reads clearly
+// against the flat backdrop (dark footage in dark mode especially).
+const FRAME_BORDER = { light: 'rgba(0,0,0,0.3)', dark: 'rgba(255,255,255,0.3)' } as const;
 
 type Props = {
   player: VideoPlayer;
@@ -83,6 +88,10 @@ export function PreviewModal({
   const aspect = useVideoAspect(segment);
   const theme = useTheme();
   const mode = useThemeMode();
+  // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
+  // not playing). Gating on !isPlaying alone flashed the badge through every clip switch:
+  // selectSegment pauses for the swap, so the badge blinked for the load's duration.
+  const { status } = useEvent(player, 'statusChange', { status: player.status });
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   // The frame hugs the video exactly: the clip's display aspect fitted into the measured
   // stage box. Null (no layout / no thumbnail yet) falls back to filling the stage.
@@ -99,17 +108,25 @@ export function PreviewModal({
         onPress={onTogglePlay}
         onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
         accessibilityRole="button"
-        accessibilityLabel="Toggle playback">
+        accessibilityLabel={isPlaying ? 'Pause' : 'Play'}>
         <View
-          style={[styles.frame, { borderColor: theme.border }, frameSize ?? styles.frameFill]}
+          style={[styles.frame, { borderColor: FRAME_BORDER[mode] }, frameSize ?? styles.frameFill]}
           pointerEvents="none">
+          {/* Thumbnail-derived ARs are pixel-rounded (≤192×256 jpegs), so a contain-fit can
+              leak ~1% letterbox slivers inside the frame — they read as a fat border on the
+              light backdrop. Cover crops that mismatch imperceptibly instead. The full-stage
+              fallback keeps contain: there the frame AR is unrelated to the video's. Keyed
+              so the fit flip REMOUNTS the view — mutating contentFit animates the native
+              layer's gravity change (an unwanted zoom); the flip only happens once, inside
+              the initial load window. */}
           <VideoView
+            key={frameSize ? 'fitted' : 'fill'}
             style={StyleSheet.absoluteFill}
             player={player}
-            contentFit="contain"
+            contentFit={frameSize ? 'cover' : 'contain'}
             nativeControls={false}
           />
-          {!isPlaying && (
+          {!isPlaying && status === 'readyToPlay' && (
             <View style={styles.playOverlay} pointerEvents="none">
               <GlassPill style={styles.playBadge}>
                 <Icon name="play.fill" size={28} tintColor="#fff" />
@@ -157,19 +174,19 @@ const styles = StyleSheet.create({
     flex: 1,
     alignSelf: 'stretch',
   },
-  // Measured box the frame centers in; small side margins keep the frame off screen edges.
+  // Measured box the frame centers in; margins keep the frame off screen edges and give it
+  // breathing room from the top-bar ✕ and the action row.
   surface: {
     flex: 1,
     marginHorizontal: Spacing.two,
+    marginVertical: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Hairline frame hugging the video rect so black footage stays legible against the
-  // themed backdrop; border color comes from the theme (see render).
+  // Square frame hugging the video rect (no rounding — the app doesn't round video surfaces)
+  // so footage matching the backdrop stays legible; border color per mode (see FRAME_BORDER).
   frame: {
-    borderRadius: Spacing.three,
-    overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
   },
   // Until the aspect/layout is known, fill the stage (the video letterboxes inside).
   frameFill: { alignSelf: 'stretch', flex: 1 },
