@@ -406,7 +406,10 @@ function Editor({
           <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.two }]}>
             <Pressable
               onPress={onAddCue}
-              style={[styles.footerBtn, { backgroundColor: theme.backgroundElement }]}>
+              style={[
+                styles.footerBtn,
+                { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+              ]}>
               <Icon name="plus" size={16} tintColor={theme.text} />
               <ThemedText>Add cue</ThemedText>
             </Pressable>
@@ -458,7 +461,7 @@ function HeaderBtn({
       accessibilityValue={valueText != null ? { text: valueText } : undefined}
       style={[
         styles.headerBtn,
-        { backgroundColor: theme.backgroundElement },
+        { backgroundColor: theme.backgroundElement, borderColor: theme.border },
         disabled && styles.headerBtnDisabled,
       ]}>
       <Icon name={name} size={15} tintColor={tintColor ?? theme.text} />
@@ -491,6 +494,7 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -539,7 +543,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',
-    height: 48,
-    borderRadius: 12,
+    height: 52,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
   },
 });

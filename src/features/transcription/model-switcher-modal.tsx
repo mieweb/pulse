@@ -143,7 +143,11 @@ export function ModelSwitcherModal({
           </View>
 
           {busy && (
-            <View style={[styles.status, { backgroundColor: onSheetSurface }]}>
+            <View
+              style={[
+                styles.status,
+                { backgroundColor: onSheetSurface, borderColor: theme.border },
+              ]}>
               <ActivityIndicator size="small" color={theme.accent} />
               <ThemedText type="small" themeColor="textSecondary">
                 {busy}
@@ -180,7 +184,7 @@ export function ModelSwitcherModal({
                   style={[
                     styles.row,
                     { borderColor: theme.border, backgroundColor: onSheetSurface },
-                    active && { borderColor: theme.accent },
+                    active && [styles.rowActive, { borderColor: theme.accent }],
                   ]}>
                   <View style={styles.rowText}>
                     <View style={styles.rowTitle}>
@@ -243,6 +247,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     padding: Spacing.three,
     borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   list: { maxHeight: 360 },
   listContent: { gap: Spacing.two },
@@ -252,9 +257,16 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     padding: Spacing.three,
     borderRadius: 12,
-    borderWidth: 1,
+    // Hairline at rest; the active row upgrades to a 1.5pt accent ring (same as cue-row).
+    borderWidth: StyleSheet.hairlineWidth,
   },
   rowText: { flex: 1, gap: 2 },
+  // Padding gives back the ring's extra border width so the row's outer size (and the
+  // list rhythm) doesn't shift on selection.
+  rowActive: {
+    borderWidth: 1.5,
+    padding: Spacing.three - (1.5 - StyleSheet.hairlineWidth),
+  },
   rowTitle: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.two, flexWrap: 'wrap' },
   delete: {
     flexDirection: 'row',

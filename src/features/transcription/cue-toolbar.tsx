@@ -32,7 +32,8 @@ export function CueToolbar({
 }) {
   const canSplit = posCs > cue.t0 + MIN_DUR_CS && posCs < cue.t1 - MIN_DUR_CS;
   const load = cueLoad(cue);
-  const labelColor = load === 'bad' ? Accent : load === 'warn' ? theme.warning : theme.textSecondary;
+  const labelColor =
+    load === 'bad' ? Accent : load === 'warn' ? theme.warning : theme.textSecondary;
 
   return (
     <View style={styles.strip}>
@@ -40,9 +41,27 @@ export function CueToolbar({
         {fine(cue.t0)} – {fine(cue.t1)}
       </ThemedText>
       <View style={styles.tools}>
-        <ToolBtn name="scissors" label="Split at playhead" theme={theme} disabled={!canSplit} onPress={onSplit} />
-        <ToolBtn name="arrow.triangle.merge" label="Merge with next" theme={theme} disabled={!canMerge} onPress={onMerge} />
-        <ToolBtn name="trash" label="Delete caption" theme={theme} onPress={onDelete} tint={Accent} />
+        <ToolBtn
+          name="scissors"
+          label="Split at playhead"
+          theme={theme}
+          disabled={!canSplit}
+          onPress={onSplit}
+        />
+        <ToolBtn
+          name="arrow.triangle.merge"
+          label="Merge with next"
+          theme={theme}
+          disabled={!canMerge}
+          onPress={onMerge}
+        />
+        <ToolBtn
+          name="trash"
+          label="Delete caption"
+          theme={theme}
+          onPress={onDelete}
+          tint={Accent}
+        />
       </View>
     </View>
   );
@@ -71,7 +90,11 @@ function ToolBtn({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !!disabled }}
-      style={[styles.toolBtn, { backgroundColor: theme.backgroundElement }, disabled && styles.toolDisabled]}>
+      style={[
+        styles.toolBtn,
+        { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+        disabled && styles.toolDisabled,
+      ]}>
       <Icon name={name} size={14} tintColor={tint ?? theme.text} />
     </Pressable>
   );
@@ -92,6 +115,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },

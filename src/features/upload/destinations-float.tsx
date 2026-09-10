@@ -53,6 +53,7 @@ export function DestinationsFloat() {
           styles.pill,
           {
             backgroundColor: theme.backgroundElement,
+            borderColor: theme.border,
             bottom: insets.bottom + Spacing.four,
             opacity: pressed ? 0.85 : 1,
           },
@@ -96,7 +97,10 @@ export function DestinationsFloat() {
                 return (
                   <View
                     key={d.id}
-                    style={[styles.row, { backgroundColor: theme.backgroundElement }]}>
+                    style={[
+                      styles.row,
+                      { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                    ]}>
                     <View style={styles.rowText}>
                       <View style={styles.rowHeader}>
                         <ThemedText type="smallBold" numberOfLines={1} style={styles.rowHost}>
@@ -137,6 +141,7 @@ const styles = StyleSheet.create({
     height: 44,
     paddingHorizontal: Spacing.three,
     borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -160,7 +165,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
     padding: Spacing.three,
-    borderRadius: 14,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   rowText: { flex: 1, gap: Spacing.half },
   rowHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },

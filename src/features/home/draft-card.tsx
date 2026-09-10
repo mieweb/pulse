@@ -82,7 +82,12 @@ export function DraftCard({
       onLongPress={selectionMode ? undefined : onLongPress}
       style={({ pressed }) => [
         styles.card,
-        { backgroundColor: theme.backgroundElement, opacity: pressed && !editing ? 0.6 : 1 },
+        {
+          // Rows highlight by fill swap (action-menu rows, home header buttons), not by dimming.
+          backgroundColor:
+            pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
+          borderColor: theme.border,
+        },
       ]}>
       <View
         style={[
@@ -165,7 +170,7 @@ export function DraftCard({
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel="Draft options"
-            style={({ pressed }) => [styles.more, { opacity: pressed ? 0.5 : 1 }]}>
+            style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]}>
             <Icon name="ellipsis" size={18} tintColor={theme.textSecondary} />
           </Pressable>
         )
@@ -237,6 +242,7 @@ const styles = StyleSheet.create({
     padding: Spacing.two,
     paddingRight: Spacing.three,
     borderRadius: Spacing.three,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   thumb: {
     width: 44,

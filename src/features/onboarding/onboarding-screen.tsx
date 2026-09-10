@@ -110,7 +110,11 @@ export function OnboardingScreen() {
             {item.image ? (
               <Image source={item.image} style={styles.logo} contentFit="contain" />
             ) : (
-              <View style={[styles.iconCard, { backgroundColor: theme.backgroundElement }]}>
+              <View
+                style={[
+                  styles.iconCard,
+                  { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                ]}>
                 <Icon name={item.symbol ?? 'sparkles'} size={56} tintColor={theme.accent} />
               </View>
             )}
@@ -186,6 +190,7 @@ const styles = StyleSheet.create({
     width: 116,
     height: 116,
     borderRadius: 28,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -53,10 +53,13 @@ export const Colors = {
   dark: {
     text: '#ffffff', // Label / Primary
     background: '#000000', // Background / Primary (systemBackground)
-    backgroundElement: '#1C1C1E', // Background / Secondary (secondarySystemBackground)
-    backgroundSelected: '#2C2C2E', // System Gray 5
+    // Element fills use Apple's ELEVATED dark palette (one gray step up): the base
+    // secondarySystemBackground (#1C1C1E) is nearly invisible on the pure-black primary
+    // background, even with a hairline ring.
+    backgroundElement: '#2C2C2E', // Background / Secondary, elevated (System Gray 5)
+    backgroundSelected: '#3A3A3C', // System Gray 4
     textSecondary: 'rgba(235,235,245,0.7)', // Label / Secondary
-    border: '#38383A', // Separator / Opaque (opaqueSeparator)
+    border: '#48484A', // System Gray 3 — reads as an outline on the elevated fills
     accent: SystemColors.red.dark, // #FF4245
     warning: SystemColors.orange.dark, // #FF9230 — soft/at-risk states
     onAccent: '#ffffff',
