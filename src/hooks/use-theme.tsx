@@ -1,19 +1,22 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
 import { Colors } from '@/constants/theme';
-import { setThemePreference, themePreferenceQuery } from '@/db/settings';
+import { setThemePreference, themePreferenceQuery, type ThemePreference } from '@/db/settings';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 type ResolvedScheme = 'light' | 'dark';
 
-const ResolvedSchemeContext = createContext<ResolvedScheme | null>(null);
+type ThemeState = { resolved: ResolvedScheme; preference: ThemePreference };
+
+const ThemeStateContext = createContext<ThemeState | null>(null);
 
 /**
- * Resolves the effective light/dark mode once — the user's manual override (persisted via the
- * home screen's appearance switch) when one is set, else the OS color scheme — and exposes it
- * via context. `useColorScheme()` can return `null`/`undefined` (scheme not yet known) as well
- * as the literal `"unspecified"` (Android's Appearance API when the OS reports no preference) —
+ * Resolves the effective light/dark mode once — the user's stored preference (persisted via
+ * the home screen's appearance control) when it pins a mode, else the OS color scheme — and
+ * exposes it via context together with the raw preference ('system' follows the OS live).
+ * `useColorScheme()` can return `null`/`undefined` (scheme not yet known) as well as the
+ * literal `"unspecified"` (Android's Appearance API when the OS reports no preference) —
  * none of those are keys in `Colors`, so all three fall back to light.
  *
  * Mount once near the app root, INSIDE `MigrationGate`: the provider live-queries the
@@ -28,9 +31,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const { data } = useLiveQuery(themePreferenceQuery, []);
   const pref = data[0]?.value;
-  const resolved: ResolvedScheme = pref === 'light' || pref === 'dark' ? pref : osScheme;
+  // Anything that isn't an explicit pin — no row (fresh install / pre-'system' installs) or
+  // a stored 'system' — follows the OS, so 'system' is the default without a migration.
+  const preference: ThemePreference = pref === 'light' || pref === 'dark' ? pref : 'system';
+  const resolved: ResolvedScheme = preference === 'system' ? osScheme : preference;
+  // Memoized on the two scalars: context uses reference equality, and useTheme() consumers
+  // are hot leaf components — a fresh object per render (e.g. a live-query re-emit of the
+  // same value) would re-render them all for nothing.
+  const value = useMemo(() => ({ resolved, preference }), [resolved, preference]);
 
-  return <ResolvedSchemeContext.Provider value={resolved}>{children}</ResolvedSchemeContext.Provider>;
+  return <ThemeStateContext.Provider value={value}>{children}</ThemeStateContext.Provider>;
 }
 
 function useOsScheme(): ResolvedScheme {
@@ -44,9 +54,9 @@ function useOsScheme(): ResolvedScheme {
  * components deliberately follow the OS scheme instead.
  */
 function useResolvedScheme(): ResolvedScheme {
-  const fromContext = useContext(ResolvedSchemeContext);
+  const fromContext = useContext(ThemeStateContext);
   const osScheme = useOsScheme();
-  return fromContext ?? osScheme;
+  return fromContext?.resolved ?? osScheme;
 }
 
 /** The resolved light/dark mode (manual override, else OS scheme). Drives the navigation
@@ -59,9 +69,15 @@ export function useTheme() {
   return Colors[useResolvedScheme()];
 }
 
-/** The dark/light mode switch shown on the home screen header. */
+/** The three-state appearance control on the home header. `preference` is the stored choice
+ * ('system' follows the OS live); `mode` is what's actually rendering. Cycling order:
+ * System → Light → Dark → System. */
 export function useThemeToggle() {
+  const preference = useContext(ThemeStateContext)?.preference ?? 'system';
   const mode = useResolvedScheme();
-  const toggle = () => void setThemePreference(mode === 'dark' ? 'light' : 'dark');
-  return { mode, toggle };
+  const toggle = () =>
+    void setThemePreference(
+      preference === 'system' ? 'light' : preference === 'light' ? 'dark' : 'system',
+    );
+  return { preference, mode, toggle };
 }

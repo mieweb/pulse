@@ -13,7 +13,7 @@ const SELECTED_MODEL_KEY = 'transcription.model';
 /** Whether the first-run onboarding flow has been completed (or skipped). */
 const ONBOARDING_COMPLETE_KEY = 'onboarding.complete';
 
-/** Manual light/dark override for the app's appearance (unset = follow the OS scheme). */
+/** Appearance preference ('system' | 'light' | 'dark'); unset or 'system' = follow the OS. */
 const THEME_PREFERENCE_KEY = 'appearance.theme';
 
 /** Persisted recorder preferences (camera-wide, not per-draft). */
@@ -39,15 +39,15 @@ export async function setSelectedModel(id: string | null): Promise<void> {
     .onConflictDoUpdate({ target: settings.key, set: { value: id } });
 }
 
-export type ThemePreference = 'light' | 'dark';
+export type ThemePreference = 'system' | 'light' | 'dark';
 
-/** Live-queryable: the manual theme override, if the user has set one. */
+/** Live-queryable: the stored appearance preference, if the user has set one. */
 export const themePreferenceQuery = db
   .select({ value: settings.value })
   .from(settings)
   .where(eq(settings.key, THEME_PREFERENCE_KEY));
 
-/** Set the manual light/dark override, replacing whatever the OS scheme would otherwise pick. */
+/** Set the appearance preference; 'system' means follow the OS scheme. */
 export async function setThemePreference(pref: ThemePreference): Promise<void> {
   await setSetting(THEME_PREFERENCE_KEY, pref);
 }
