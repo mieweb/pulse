@@ -20,19 +20,10 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 
-import { Accent } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
 import { segmentOffsets } from '@/utils/segment-window';
 import { msToPx, pxToMs } from './track-mapping';
-import {
-  BADGE_SIZE,
-  KNOB,
-  POP_LANE,
-  SCRUB_INSET,
-  STEP,
-  THUMB_HEIGHT,
-  THUMB_WIDTH,
-} from './track-metrics';
+import { KNOB, SCRUB_INSET, STEP, THUMB_WIDTH } from './track-metrics';
 
 /** Max rate at which a knob drag issues player seeks (the knob itself moves every frame). */
 const SCRUB_INTERVAL_MS = 80;
@@ -257,9 +248,21 @@ export function PlayheadCursor({
 
   return (
     <Animated.View style={[styles.cursor, style]} pointerEvents="box-none">
-      <View style={styles.cursorLine} pointerEvents="none" />
       <GestureDetector gesture={pan}>
-        <View style={styles.cursorKnob} hitSlop={12} accessibilityLabel="Playhead" />
+        <View
+          style={styles.grabZone}
+          hitSlop={{ left: 10, right: 10 }}
+          accessibilityLabel="Playhead">
+          <View style={styles.tag}>
+            <View style={styles.gripTick} />
+            <View style={styles.gripTick} />
+          </View>
+          <View style={styles.cursorLine} />
+          <View style={styles.tag}>
+            <View style={styles.gripTick} />
+            <View style={styles.gripTick} />
+          </View>
+        </View>
       </GestureDetector>
     </Animated.View>
   );
@@ -273,26 +276,33 @@ const styles = StyleSheet.create({
     width: KNOB,
     alignItems: 'center',
   },
+  // Full-height grab zone — line + both end tags drag as one piece, so the playhead is
+  // grabbable anywhere along it (the zone sits over the thumbs; taps inside it scrub
+  // rather than select, same trade-off as the iOS Photos grabber). The 2pt inset keeps
+  // the tags a hair off the bar's rounded edges; the viewport's symmetric scrub lanes
+  // put the top tag above the number pills and the bottom tag below the thumbs.
+  grabZone: { flex: 1, alignItems: 'center', paddingVertical: 2 },
+  // Spans between the two tags: top tag rides the badge-pill lane, bottom tag the scrub lane.
   cursorLine: {
+    flex: 1,
     width: 2,
-    // Runs from just below the ordinal pill's dip into the thumb (the cursor is a sibling
-    // drawn OVER the ScrollView, so a line starting at the thumb's top edge struck through
-    // the numbers) down to a short tail below the thumb, so the knob riding the line's end
-    // hangs clear of the thumbnail (into SCRUB_LANE) instead of overlapping its bottom.
-    height: THUMB_HEIGHT + 5 - BADGE_SIZE / 2,
-    borderRadius: 1,
     backgroundColor: '#fff',
-    // The thumbs sit POP_LANE below the scroll-frame top (the badge-pill lane); the pill
-    // then dips BADGE_SIZE/2 into the thumb — start the line under both.
-    marginTop: POP_LANE + BADGE_SIZE / 2,
   },
-  cursorKnob: {
-    width: KNOB,
-    height: KNOB,
-    borderRadius: KNOB / 2,
-    marginTop: -KNOB / 2 + 2,
+  // Grip ticks inside each tag mark the draggable ends.
+  tag: {
+    width: 18,
+    height: 12,
+    borderRadius: 4,
     backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: Accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  gripTick: {
+    width: 1.5,
+    height: 6,
+    borderRadius: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
 });

@@ -343,11 +343,6 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     marginHorizontal: Spacing.three,
     paddingHorizontal: Spacing.two,
-    // The viewport carries the SCRUB_LANE below the thumbs; mirroring the whole lane as
-    // top padding (with no extra base padding — POP_LANE already provides breathing room)
-    // keeps the thumbs dead-center in the slimmest symmetric bar.
-    paddingTop: SCRUB_LANE,
-    paddingBottom: 0,
     borderRadius: Spacing.three,
   },
   // The bar's glass background (dark-scrim fallback via GlassPill) — fills the bar behind
@@ -382,10 +377,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // The scrub lane (the strip below the thumbs the playhead knob hangs into) is reserved
-  // permanently, not just while previewing — adding it only with the cursor grew the bar
-  // and visibly bumped it upward every time a preview opened.
-  viewport: { flex: 1, overflow: 'hidden', paddingBottom: SCRUB_LANE },
+  // The scrub lanes (the strips above/below the thumbs the playhead's grab tags ride in) are
+  // reserved permanently, not just while previewing — adding them only with the cursor grew
+  // the bar and visibly bumped it upward every time a preview opened. Both lanes live INSIDE
+  // the viewport (not as bar padding) so the playhead — an absolute child of the viewport,
+  // clipped by its overflow — can span them: top tag above the number pills, bottom tag
+  // below the thumbs, symmetric in the bar.
+  viewport: { flex: 1, overflow: 'hidden', paddingTop: SCRUB_LANE, paddingBottom: SCRUB_LANE },
   content: {
     alignItems: 'center',
     paddingLeft: SCRUB_INSET,
@@ -483,8 +481,7 @@ const styles = StyleSheet.create({
     backgroundColor: Accent,
     alignItems: 'center',
     justifyContent: 'center',
-    // The viewport reserves SCRUB_LANE below the thumbs, floating them above the bar's
-    // centerline — match it so the button's center stays on the thumbs' center.
-    marginBottom: SCRUB_LANE,
+    // The viewport's scrub lanes are symmetric (top + bottom), so the thumbs sit on the
+    // bar's centerline and the button centers naturally — no offset needed.
   },
 });
