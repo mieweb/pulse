@@ -54,13 +54,16 @@ type Props = {
 function useVideoAspect(segment: Segment): number | null {
   const thumb = useThumbnail(segment.thumbnail, segment.editedFilename ?? segment.originalFilename);
   // Persisted jpeg thumbs need an async size read; the legacy VideoThumbnail fallback
-  // carries width/height and is derived directly below.
+  // carries width/height and is derived directly below. Keyed on the URI STRING — the hook
+  // returns a fresh { uri } object each render, and the preview re-renders at the playhead's
+  // cadence, so an object dep would re-run getSize several times a second.
+  const thumbUri = thumb && 'uri' in thumb ? thumb.uri : null;
   const [uriAr, setUriAr] = useState<number | null>(null);
   useEffect(() => {
-    if (!thumb || !('uri' in thumb)) return;
+    if (!thumbUri) return;
     let alive = true;
     Image.getSize(
-      thumb.uri,
+      thumbUri,
       (w, h) => {
         if (alive && w > 0 && h > 0) setUriAr(w / h);
       },
@@ -69,7 +72,7 @@ function useVideoAspect(segment: Segment): number | null {
     return () => {
       alive = false;
     };
-  }, [thumb]);
+  }, [thumbUri]);
   if (thumb && !('uri' in thumb) && thumb.width > 0 && thumb.height > 0)
     return thumb.width / thumb.height;
   return uriAr;
