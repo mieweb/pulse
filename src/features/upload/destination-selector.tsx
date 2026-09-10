@@ -100,7 +100,13 @@ const styles = StyleSheet.create({
     // Hairline at rest; selection upgrades to the 2pt accent ring below.
     borderWidth: StyleSheet.hairlineWidth,
   },
-  chipSelected: { borderWidth: 2 },
+  // 2pt accent ring; padding gives back the extra border so the chip's outer size doesn't
+  // jitter the rail on selection.
+  chipSelected: {
+    borderWidth: 2,
+    paddingVertical: Spacing.two - (2 - StyleSheet.hairlineWidth),
+    paddingHorizontal: Spacing.three - (2 - StyleSheet.hairlineWidth),
+  },
   chipHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
   host: { flexShrink: 1 },
   chipMeta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },

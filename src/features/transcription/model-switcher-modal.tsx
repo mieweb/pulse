@@ -184,7 +184,7 @@ export function ModelSwitcherModal({
                   style={[
                     styles.row,
                     { borderColor: theme.border, backgroundColor: onSheetSurface },
-                    active && { borderColor: theme.accent, borderWidth: 1.5 },
+                    active && [styles.rowActive, { borderColor: theme.accent }],
                   ]}>
                   <View style={styles.rowText}>
                     <View style={styles.rowTitle}>
@@ -261,6 +261,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   rowText: { flex: 1, gap: 2 },
+  // Padding gives back the ring's extra border width so the row's outer size (and the
+  // list rhythm) doesn't shift on selection.
+  rowActive: {
+    borderWidth: 1.5,
+    padding: Spacing.three - (1.5 - StyleSheet.hairlineWidth),
+  },
   rowTitle: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.two, flexWrap: 'wrap' },
   delete: {
     flexDirection: 'row',
