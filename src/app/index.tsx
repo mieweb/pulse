@@ -48,8 +48,9 @@ export default function HomeScreen() {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const { busy, state: transferState, shareDrafts, importDrafts } = useDraftTransfer();
 
-  // Manual light/dark override, persisted so it survives restarts (see `useTheme`).
-  const { mode: themeMode, toggle: toggleTheme } = useThemeToggle();
+  // Appearance preference (system-follow / pinned light / pinned dark), persisted so it
+  // survives restarts (see `useTheme`).
+  const { preference: themePref, mode: themeMode, toggle: toggleTheme } = useThemeToggle();
 
   // Once the live query reflects the pending name, drop it so the DB value takes back over.
   if (
@@ -263,21 +264,29 @@ export default function HomeScreen() {
             <Pressable
               onPress={toggleTheme}
               hitSlop={12}
-              accessibilityRole="switch"
-              accessibilityLabel="Dark mode"
-              accessibilityHint="Switch between light and dark appearance"
-              accessibilityState={{ checked: themeMode === 'dark' }}
+              accessibilityRole="button"
+              accessibilityLabel="Appearance"
+              accessibilityHint="Cycles between system, light, and dark appearance"
+              accessibilityValue={{
+                text: themePref === 'system' ? `System (${themeMode})` : themePref,
+              }}
               style={({ pressed }) => [
                 styles.headerButton,
                 pressed && { backgroundColor: theme.backgroundElement },
               ]}>
               <Icon
-                name={themeMode === 'dark' ? 'moon.fill' : 'sun.max.fill'}
+                name={
+                  themePref === 'system'
+                    ? 'circle.lefthalf.filled'
+                    : themeMode === 'dark'
+                      ? 'moon.fill'
+                      : 'sun.max.fill'
+                }
                 size={20}
                 tintColor={theme.text}
               />
               <ThemedText type="smallBold" style={styles.headerButtonLabel}>
-                {themeMode === 'dark' ? 'Dark' : 'Light'}
+                {themePref === 'system' ? 'Auto' : themeMode === 'dark' ? 'Dark' : 'Light'}
               </ThemedText>
             </Pressable>
           </View>
