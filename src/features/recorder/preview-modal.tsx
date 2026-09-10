@@ -107,12 +107,6 @@ export function PreviewModal({
   const { aspect, thumb } = useVideoAspect(segment);
   const theme = useTheme();
   const mode = useThemeMode();
-  // The VideoView is TRANSPARENT until the player paints its first frame, so on open the
-  // themed backdrop showed through the empty frame until the load finished. The clip's
-  // thumbnail covers that window (it IS the first frame, so the video takes over seamlessly);
-  // onFirstFrameRender drops it — but only once the fitted mount has painted, so the
-  // fill→fitted key remount can't blank the stage after an early uncover.
-  const [videoUp, setVideoUp] = useState(false);
   // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
   // not playing). Gating on !isPlaying alone flashed the badge through every clip switch:
   // selectSegment pauses for the swap, so the badge blinked for the load's duration.
@@ -170,15 +164,19 @@ export function PreviewModal({
         accessibilityRole="button"
         accessibilityLabel={isPlaying ? 'Pause' : 'Play'}>
         <View
-          style={[
-            styles.frame,
-            { borderColor: FRAME_BORDER[mode] },
-            // Until the aspect is known the frame is a full-stage fallback whose rect is
-            // unrelated to the video — drawing its border flashed a giant empty rectangle
-            // on open, so the border waits for the fitted size.
-            frameSize ?? [styles.frameFill, styles.frameNoBorder],
-          ]}
+          style={[styles.frame, { borderColor: FRAME_BORDER[mode] }, frameSize ?? styles.frameFill]}
           pointerEvents="none">
+          {/* The VideoView is transparent until the player paints, so the clip's first-frame
+              thumbnail sits permanently underneath — it shows through while the video loads
+              (and across the fill→fitted remount below) and is covered the instant real
+              frames exist. Same fit as the video, so the handoff is seamless. */}
+          {thumb && (
+            <ExpoImage
+              source={thumb}
+              style={StyleSheet.absoluteFill}
+              contentFit={frameSize ? 'cover' : 'contain'}
+            />
+          )}
           {/* Thumbnail-derived ARs are pixel-rounded (≤192×256 jpegs), so a contain-fit can
               leak ~1% letterbox slivers inside the frame — they read as a fat border on the
               light backdrop. Cover crops that mismatch imperceptibly instead. The full-stage
@@ -192,17 +190,7 @@ export function PreviewModal({
             player={player}
             contentFit={frameSize ? 'cover' : 'contain'}
             nativeControls={false}
-            onFirstFrameRender={() => {
-              if (frameSize) setVideoUp(true);
-            }}
           />
-          {!videoUp && thumb && (
-            <ExpoImage
-              source={thumb}
-              style={StyleSheet.absoluteFill}
-              contentFit={frameSize ? 'cover' : 'contain'}
-            />
-          )}
           {/* Scale-only animations on both badges: their GlassPills are UIVisualEffectViews,
               and ANY ancestor alpha < 1 (an opacity fade) renders the glass flat or not at
               all — transforms are the glass-safe way to animate them. */}
@@ -282,9 +270,10 @@ const styles = StyleSheet.create({
   frame: {
     borderWidth: 1,
   },
-  // Until the aspect/layout is known, fill the stage (the video letterboxes inside).
-  frameFill: { alignSelf: 'stretch', flex: 1 },
-  frameNoBorder: { borderWidth: 0 },
+  // Until the aspect/layout is known, fill the stage (the video letterboxes inside) with no
+  // border — the fallback rect is unrelated to the video, so outlining it flashes a giant
+  // empty rectangle on open.
+  frameFill: { alignSelf: 'stretch', flex: 1, borderWidth: 0 },
   playOverlay: {
     position: 'absolute',
     top: 0,
