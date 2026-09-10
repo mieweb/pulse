@@ -3,6 +3,7 @@ import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Spacing } from '@/constants/theme';
@@ -16,6 +17,14 @@ import { formatDurationPadded } from '@/utils/format';
 const BADGE_SIZE = 40;
 const BADGE_HIT_SLOP = 4;
 
+// The ▶ badge appears only after playback has been parked this long. Clip switches and
+// auto-advance pass through short "parked" windows the status can't distinguish (the old
+// item's readyToPlay lingers a few frames until the next load flips it, and readyToPlay →
+// playingChange has its own gap) — gating on held-time hides all of them.
+const PARK_BADGE_DELAY_MS = 150;
+// How long the transient ⏸ flash holds after playback starts before its fade-out begins.
+const PAUSE_FLASH_HOLD_MS = 600;
+
 // Frame outline per mode — stronger than theme.border so the video edge reads clearly
 // against the flat backdrop (dark footage in dark mode especially).
 const FRAME_BORDER = { light: 'rgba(0,0,0,0.3)', dark: 'rgba(255,255,255,0.3)' } as const;
@@ -25,6 +34,8 @@ type Props = {
   isPlaying: boolean;
   /** The active clip — its thumbnail provides the displayed aspect ratio for the frame. */
   segment: Segment;
+  /** True while the bar playhead is being dragged — suppresses the play badge. */
+  scrubbing?: boolean;
   // Draft-global playhead position and total, for the time readout pill.
   positionMs: number;
   totalMs: number;
@@ -79,6 +90,7 @@ export function PreviewModal({
   player,
   isPlaying,
   segment,
+  scrubbing = false,
   positionMs,
   totalMs,
   onTogglePlay,
@@ -92,6 +104,37 @@ export function PreviewModal({
   // not playing). Gating on !isPlaying alone flashed the badge through every clip switch:
   // selectSegment pauses for the swap, so the badge blinked for the load's duration.
   const { status } = useEvent(player, 'statusChange', { status: player.status });
+  // Not parked while a scrub drag is in flight: boundary crossings load clips, and the
+  // status round-trips would blink the badge with every segment the finger crosses.
+  const parked = !isPlaying && status === 'readyToPlay' && !scrubbing;
+  // Render-phase reset + delayed set: the badge shows only once `parked` has HELD for the
+  // delay (see PARK_BADGE_DELAY_MS), so transient parked windows mid-swap never flash it.
+  const [showPlay, setShowPlay] = useState(parked);
+  const [prevParked, setPrevParked] = useState(parked);
+  if (prevParked !== parked) {
+    setPrevParked(parked);
+    if (!parked) setShowPlay(false);
+  }
+  useEffect(() => {
+    if (!parked) return;
+    const timer = setTimeout(() => setShowPlay(true), PARK_BADGE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [parked]);
+  // Transient ⏸ flash — fired ONLY by this surface's own play tap. Thumb taps and auto
+  // boundary advances must not flash it, so it's not derived from playingChange. Cleared by
+  // the hold timer (its exiting fade completes the ~1s arc) or instantly on pause, where the
+  // ▶ badge takes over as a crossfade.
+  const [pauseFlash, setPauseFlash] = useState(false);
+  const [prevPlaying, setPrevPlaying] = useState(isPlaying);
+  if (prevPlaying !== isPlaying) {
+    setPrevPlaying(isPlaying);
+    if (!isPlaying) setPauseFlash(false);
+  }
+  useEffect(() => {
+    if (!pauseFlash) return;
+    const timer = setTimeout(() => setPauseFlash(false), PAUSE_FLASH_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [pauseFlash]);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   // The frame hugs the video exactly: the clip's display aspect fitted into the measured
   // stage box. Null (no layout / no thumbnail yet) falls back to filling the stage.
@@ -105,7 +148,11 @@ export function PreviewModal({
     <View style={[styles.stage, { backgroundColor: theme.background }]}>
       <Pressable
         style={styles.surface}
-        onPress={onTogglePlay}
+        onPress={() => {
+          // Flash ⏸ only when this tap MEANS play; a pause tap hands over to the ▶ badge.
+          setPauseFlash(!isPlaying);
+          onTogglePlay();
+        }}
         onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
         accessibilityRole="button"
         accessibilityLabel={isPlaying ? 'Pause' : 'Play'}>
@@ -126,12 +173,26 @@ export function PreviewModal({
             contentFit={frameSize ? 'cover' : 'contain'}
             nativeControls={false}
           />
-          {!isPlaying && status === 'readyToPlay' && (
-            <View style={styles.playOverlay} pointerEvents="none">
+          {showPlay && (
+            <Animated.View
+              style={styles.playOverlay}
+              pointerEvents="none"
+              entering={FadeIn.duration(150)}>
               <GlassPill style={styles.playBadge}>
                 <Icon name="play.fill" size={28} tintColor="#fff" />
               </GlassPill>
-            </View>
+            </Animated.View>
+          )}
+          {pauseFlash && (
+            <Animated.View
+              style={styles.playOverlay}
+              pointerEvents="none"
+              entering={FadeIn.duration(150)}
+              exiting={FadeOut.duration(400)}>
+              <GlassPill style={[styles.playBadge, styles.pauseBadge]}>
+                <Icon name="pause.fill" size={28} tintColor="#fff" />
+              </GlassPill>
+            </Animated.View>
           )}
           <View style={styles.timeRow} pointerEvents="none">
             <GlassPill style={styles.timePill}>
@@ -208,6 +269,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingLeft: 4,
   },
+  // The ⏸ glyph is symmetric — undo the ▶ badge's optical nudge.
+  pauseBadge: { paddingLeft: 0 },
   // Badge shape — the action row pairs it with the mode-aware ControlScrim fill; the play
   // badge over the video keeps GlassPill.
   badge: {

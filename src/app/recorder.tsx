@@ -98,6 +98,10 @@ export default function RecorderScreen() {
   if (previewId != null && segments.length === 0) setPreviewId(null);
   const preview = usePreview(segments, previewId);
   const previewing = previewId != null;
+  // True while a finger is dragging the playhead — the preview suppresses its play badge
+  // then. Derived reset (not effect) so a preview closed mid-drag can't strand it true.
+  const [scrubbing, setScrubbing] = useState(false);
+  if (!previewing && scrubbing) setScrubbing(false);
 
   // Top running timer: always the live draft total — saved clips plus wall-clock while
   // recording. During preview the playhead position is shown inside the preview card instead.
@@ -501,6 +505,7 @@ export default function RecorderScreen() {
               player={preview.player}
               isPlaying={preview.isPlaying}
               segment={preview.active}
+              scrubbing={scrubbing}
               positionMs={preview.globalMs}
               totalMs={preview.totalMs}
               onTogglePlay={preview.togglePlay}
@@ -573,6 +578,7 @@ export default function RecorderScreen() {
                     activeId: preview.activeId,
                     globalMs: preview.globalMs,
                     onScrub: preview.seekToGlobalMs,
+                    onScrubbingChange: setScrubbing,
                   }
                 : undefined
             }

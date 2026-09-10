@@ -47,6 +47,10 @@ export type Cursor = {
   activeId: string | null;
   globalMs: number;
   onScrub: (globalMs: number) => void;
+  /** Fired true at finger-down on the playhead, false on release — lets the preview
+   *  suppress its play badge while a drag is in flight (boundary crossings otherwise
+   *  blink it via their transient clip loads). */
+  onScrubbingChange?: (scrubbing: boolean) => void;
 };
 
 /**
@@ -201,7 +205,7 @@ export function PlayheadCursor({
   // render — including mid-drag on the very gesture being processed. It only records finger state and
   // toggles the frame loop (which owns cursorX + the scroll during a scrub); the final settle seek is
   // flushed here so the end point is exact even if it lands between throttled frames.
-  const { onScrub } = cursor;
+  const { onScrub, onScrubbingChange } = cursor;
   const pan = useMemo(
     () =>
       Gesture.Pan()
@@ -210,6 +214,7 @@ export function PlayheadCursor({
         // by gesture-handler across platforms. Kept narrow so thumb taps beside the line land.
         .hitSlop({ left: 4, right: 4 })
         .onBegin(() => {
+          onScrubbingChange?.(true);
           draggingRef.current = true;
           cancelAnimation(cursorX);
           baseKnobScreen.value = cursorX.value - scrollOffset.value + SCRUB_INSET;
@@ -228,11 +233,13 @@ export function PlayheadCursor({
           scrubbing.value = false;
           autoScroll.setActive(false);
           draggingRef.current = false;
+          onScrubbingChange?.(false);
         }),
     [
       segments,
       offsets,
       onScrub,
+      onScrubbingChange,
       cursorX,
       scrollOffset,
       autoScroll,
