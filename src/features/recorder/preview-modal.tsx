@@ -3,7 +3,7 @@ import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Spacing } from '@/constants/theme';
@@ -125,8 +125,8 @@ export function PreviewModal({
   }, [parked]);
   // Transient ⏸ flash — fired ONLY by this surface's own play tap. Thumb taps and auto
   // boundary advances must not flash it, so it's not derived from playingChange. Cleared by
-  // the hold timer (its exiting fade completes the ~1s arc) or instantly on pause, where the
-  // ▶ badge takes over as a crossfade.
+  // the hold timer (its exiting zoom completes the ~1s arc) or instantly on pause, where the
+  // ▶ badge takes over.
   const [pauseFlash, setPauseFlash] = useState(false);
   const [prevPlaying, setPrevPlaying] = useState(isPlaying);
   if (prevPlaying !== isPlaying) {
@@ -176,11 +176,14 @@ export function PreviewModal({
             contentFit={frameSize ? 'cover' : 'contain'}
             nativeControls={false}
           />
+          {/* Scale-only animations on both badges: their GlassPills are UIVisualEffectViews,
+              and ANY ancestor alpha < 1 (an opacity fade) renders the glass flat or not at
+              all — transforms are the glass-safe way to animate them. */}
           {showPlay && (
             <Animated.View
               style={styles.playOverlay}
               pointerEvents="none"
-              entering={FadeIn.duration(150)}>
+              entering={ZoomIn.duration(150)}>
               <GlassPill style={styles.playBadge}>
                 <Icon name="play.fill" size={28} tintColor="#fff" />
               </GlassPill>
@@ -190,8 +193,8 @@ export function PreviewModal({
             <Animated.View
               style={styles.playOverlay}
               pointerEvents="none"
-              entering={FadeIn.duration(150)}
-              exiting={FadeOut.duration(400)}>
+              entering={ZoomIn.duration(150)}
+              exiting={ZoomOut.duration(350)}>
               <GlassPill style={[styles.playBadge, styles.pauseBadge]}>
                 <Icon name="pause.fill" size={28} tintColor="#fff" />
               </GlassPill>
