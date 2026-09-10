@@ -64,8 +64,9 @@ export function DestinationSelector({
               styles.chip,
               {
                 backgroundColor: theme.backgroundElement,
-                borderColor: selected ? theme.accent : 'transparent',
+                borderColor: selected ? theme.accent : theme.border,
               },
+              selected && styles.chipSelected,
               pressed && styles.pressed,
             ]}>
             <View style={styles.chipHeader}>
@@ -96,8 +97,10 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     paddingHorizontal: Spacing.three,
     borderRadius: 14,
-    borderWidth: 2,
+    // Hairline at rest; selection upgrades to the 2pt accent ring below.
+    borderWidth: StyleSheet.hairlineWidth,
   },
+  chipSelected: { borderWidth: 2 },
   chipHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
   host: { flexShrink: 1 },
   chipMeta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },

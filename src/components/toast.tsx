@@ -32,7 +32,11 @@ export function Toast({ message }: { message: string }) {
         styles.container,
         { top: insets.top + Spacing.two, opacity, transform: [{ translateY }] },
       ]}>
-      <Animated.View style={[styles.banner, { backgroundColor: theme.backgroundElement }]}>
+      <Animated.View
+        style={[
+          styles.banner,
+          { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+        ]}>
         <Icon name="checkmark.circle.fill" size={18} tintColor={theme.accent} />
         <ThemedText type="subheadline" style={styles.message} numberOfLines={2}>
           {message}
@@ -57,6 +61,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     paddingHorizontal: Spacing.three,
     borderRadius: 14,
+    // Hairline carries the separation in dark mode, where the black shadow is invisible.
+    borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',
     shadowOpacity: 0.15,
     shadowRadius: 8,

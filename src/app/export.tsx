@@ -92,14 +92,19 @@ export default function ExportScreen() {
   const photos = useSaveToPhotos();
   const docs = useSaveToDocuments();
   const theme = useTheme();
+  // Hairline ring for element-filled surfaces — the fill alone barely separates from the
+  // flat background in either mode.
+  const elementSurface = {
+    backgroundColor: theme.backgroundElement,
+    borderColor: theme.border,
+    borderWidth: StyleSheet.hairlineWidth,
+  } as const;
   const { showToast } = useToast();
 
   // Open the merged-video caption editor (only meaningful once the merge is done).
   const openCaptionEditor = () => {
     if (state.status !== 'done' || !draftId) return;
-    router.push(
-      `/subtitles?draftId=${draftId}&videoUri=${encodeURIComponent(state.outputPath)}`,
-    );
+    router.push(`/subtitles?draftId=${draftId}&videoUri=${encodeURIComponent(state.outputPath)}`);
   };
 
   // Merged-only: uploading the single video needs the merge done first (segmented uploads each clip
@@ -242,7 +247,7 @@ export default function ExportScreen() {
                 accessibilityState={{ disabled: busy, busy }}
                 style={({ pressed }) => [
                   styles.smallButton,
-                  { backgroundColor: theme.backgroundElement },
+                  elementSurface,
                   busy && styles.disabled,
                   pressed && styles.pressed,
                 ]}>
@@ -273,7 +278,7 @@ export default function ExportScreen() {
                 }}
                 style={({ pressed }) => [
                   styles.smallButton,
-                  { backgroundColor: theme.backgroundElement },
+                  elementSurface,
                   pressed && styles.pressed,
                 ]}>
                 {photos.status === 'saving' ? (
@@ -308,7 +313,7 @@ export default function ExportScreen() {
                 }}
                 style={({ pressed }) => [
                   styles.smallButton,
-                  { backgroundColor: theme.backgroundElement },
+                  elementSurface,
                   pressed && styles.pressed,
                 ]}>
                 {docs.status === 'saving' ? (
@@ -343,11 +348,7 @@ export default function ExportScreen() {
                 onPress={run}
                 accessibilityRole="button"
                 accessibilityLabel="Export a merged copy"
-                style={({ pressed }) => [
-                  styles.button,
-                  { backgroundColor: theme.backgroundElement },
-                  pressed && styles.pressed,
-                ]}>
+                style={({ pressed }) => [styles.button, elementSurface, pressed && styles.pressed]}>
                 <Icon name="film" size={18} tintColor={theme.text} />
                 <ThemedText>Export a merged copy</ThemedText>
               </Pressable>
@@ -393,12 +394,15 @@ export default function ExportScreen() {
           uState.status === 'error' ||
           (upload.destination && upload.destinationExpired)) && (
           <View style={styles.uploadSection}>
-            <ThemedText type="caption1" themeColor="textSecondary" style={styles.uploadSectionLabel}>
+            <ThemedText
+              type="caption1"
+              themeColor="textSecondary"
+              style={styles.uploadSectionLabel}>
               UPLOAD
             </ThemedText>
 
             {uState.status === 'uploading' ? (
-              <View style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+              <View style={[styles.button, elementSurface]}>
                 <ActivityIndicator color={theme.text} />
                 {/* Phase-aware label — names the step in flight (preparing, captions,
                     manifest, thumbnail, video, clip x of y) instead of sitting at a
@@ -422,14 +426,10 @@ export default function ExportScreen() {
                   // a small pill only when retrying can actually help. A non-retryable
                   // rejection is information, so nothing about it should look pressable.
                   <View
-                    style={[styles.errorBanner, { backgroundColor: theme.backgroundElement }]}
+                    style={[styles.errorBanner, elementSurface]}
                     accessibilityRole="alert"
                     accessibilityLabel={`${uState.retryable ? 'Upload failed' : 'Upload rejected by server'}. ${uState.reason}`}>
-                    <Icon
-                      name="exclamationmark.triangle.fill"
-                      size={16}
-                      tintColor={theme.accent}
-                    />
+                    <Icon name="exclamationmark.triangle.fill" size={16} tintColor={theme.accent} />
                     <View style={styles.errorBody}>
                       <ThemedText type="smallBold">
                         {uState.retryable ? 'Upload failed' : 'Rejected by server'}
@@ -457,31 +457,26 @@ export default function ExportScreen() {
                   </View>
                 )}
 
-                {upload.destinations.length > 0 ? (
-                  selectorAndUpload
-                ) : (
-                  upload.destination &&
-                  upload.destinationExpired && (
-                    <View style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
-                      <Icon
-                        name="exclamationmark.triangle.fill"
-                        size={18}
-                        tintColor={theme.textSecondary}
-                      />
-                      <ThemedText themeColor="textSecondary">Upload link expired</ThemedText>
-                    </View>
-                  )
-                )}
+                {upload.destinations.length > 0
+                  ? selectorAndUpload
+                  : upload.destination &&
+                    upload.destinationExpired && (
+                      <View style={[styles.button, elementSurface]}>
+                        <Icon
+                          name="exclamationmark.triangle.fill"
+                          size={18}
+                          tintColor={theme.textSecondary}
+                        />
+                        <ThemedText themeColor="textSecondary">Upload link expired</ThemedText>
+                      </View>
+                    )}
               </>
             )}
           </View>
         )}
       </View>
 
-      <ModelSwitcherModal
-        visible={modelSheetVisible}
-        onClose={() => setModelSheetVisible(false)}
-      />
+      <ModelSwitcherModal visible={modelSheetVisible} onClose={() => setModelSheetVisible(false)} />
 
       {/* Upload-complete prompt — see the comment block above `acknowledgeDone`. The
           `watchUrl` guard narrows it to a string for the handlers; `visible` still gates
@@ -520,7 +515,7 @@ export default function ExportScreen() {
                   accessibilityLabel="Copy link"
                   style={({ pressed }) => [
                     styles.promptButton,
-                    { backgroundColor: theme.backgroundElement },
+                    elementSurface,
                     pressed && styles.pressed,
                   ]}>
                   <Icon name="link" size={16} tintColor={theme.text} />

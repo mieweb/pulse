@@ -82,7 +82,11 @@ export function DraftCard({
       onLongPress={selectionMode ? undefined : onLongPress}
       style={({ pressed }) => [
         styles.card,
-        { backgroundColor: theme.backgroundElement, opacity: pressed && !editing ? 0.6 : 1 },
+        {
+          backgroundColor: theme.backgroundElement,
+          borderColor: theme.border,
+          opacity: pressed && !editing ? 0.6 : 1,
+        },
       ]}>
       <View
         style={[
@@ -237,6 +241,7 @@ const styles = StyleSheet.create({
     padding: Spacing.two,
     paddingRight: Spacing.three,
     borderRadius: Spacing.three,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   thumb: {
     width: 44,
