@@ -7,7 +7,7 @@ import { Spacing } from '@/constants/theme';
 import { formatDurationPadded } from '@/utils/format';
 
 // Action badge diameter. With hitSlop 4 the effective tap target is 48pt (≥ the 44pt HIG
-// minimum) while the ✂ and 🗑 hit areas — 8pt apart — still can't overlap.
+// minimum); the ✂ and 🗑 badges sit a full Spacing.five apart so their hit areas can't overlap.
 const BADGE_SIZE = 40;
 const BADGE_HIT_SLOP = 4;
 
@@ -18,17 +18,20 @@ type Props = {
   positionMs: number;
   totalMs: number;
   onTogglePlay: () => void;
-  onClose: () => void;
   onTrim: () => void;
   onDelete: () => void;
 };
 
 /**
- * Floating preview card over the recorder — the camera UI, record button, and segment bar
- * all stay visible around it. Plays the draft through one shared player; tap toggles play,
- * ✕ closes, ✂ opens the RNVT editor for the active clip, 🗑 deletes. `contentFit="contain"`
- * on black lets the native player honor each clip's rotation matrix (portrait upright).
- * No captions here — transcription now happens once on the merged video at export time.
+ * Full-bleed preview stage over the recorder — fills the area between the top bar and the
+ * segment bar on a black backdrop (the recorder blacks out the paused camera behind it).
+ * Plays the draft through one shared player; tap toggles play, ✂ opens the RNVT editor for
+ * the active clip, 🗑 deletes — both in a row below the video. Closing lives in the
+ * recorder's top bar, so there's exactly one ✕ on screen. `contentFit="contain"` sizes the
+ * video to the stage on ANY screen while preserving each clip's aspect ratio and letting the
+ * native player honor its rotation matrix (portrait upright); the letterboxing disappears
+ * into the black backdrop. No captions here — transcription now happens once on the merged
+ * video at export time.
  */
 export function PreviewModal({
   player,
@@ -36,12 +39,11 @@ export function PreviewModal({
   positionMs,
   totalMs,
   onTogglePlay,
-  onClose,
   onTrim,
   onDelete,
 }: Props) {
   return (
-    <View style={styles.card}>
+    <View style={styles.stage}>
       <Pressable style={styles.surface} onPress={onTogglePlay} accessibilityLabel="Toggle playback">
         <VideoView
           style={StyleSheet.absoluteFill}
@@ -56,60 +58,43 @@ export function PreviewModal({
             </GlassPill>
           </View>
         )}
+        <View style={styles.timeRow} pointerEvents="none">
+          <GlassPill style={styles.timePill}>
+            <Text style={styles.timeText}>
+              {formatDurationPadded(positionMs)} / {formatDurationPadded(totalMs)}
+            </Text>
+          </GlassPill>
+        </View>
       </Pressable>
 
-      <Pressable
-        onPress={onClose}
-        hitSlop={BADGE_HIT_SLOP}
-        accessibilityRole="button"
-        accessibilityLabel="Close preview"
-        style={styles.close}>
-        <GlassPill style={styles.badge}>
-          <Icon name="xmark" size={18} weight="semibold" tintColor="#fff" />
-        </GlassPill>
-      </Pressable>
-
-      <Pressable
-        onPress={onTrim}
-        hitSlop={BADGE_HIT_SLOP}
-        accessibilityRole="button"
-        accessibilityLabel="Edit clip"
-        style={styles.trim}>
-        <GlassPill style={styles.badge}>
-          <Icon name="scissors" size={20} weight="semibold" tintColor="#fff" />
-        </GlassPill>
-      </Pressable>
-
-      <Pressable
-        onPress={onDelete}
-        hitSlop={BADGE_HIT_SLOP}
-        accessibilityRole="button"
-        accessibilityLabel="Delete clip"
-        style={styles.delete}>
-        <GlassPill style={styles.badge}>
-          <Icon name="trash" size={20} weight="semibold" tintColor="#fff" />
-        </GlassPill>
-      </Pressable>
-
-      <View style={styles.timeRow} pointerEvents="none">
-        <GlassPill style={styles.timePill}>
-          <Text style={styles.timeText}>
-            {formatDurationPadded(positionMs)} / {formatDurationPadded(totalMs)}
-          </Text>
-        </GlassPill>
+      <View style={styles.actionRow}>
+        <Pressable
+          onPress={onTrim}
+          hitSlop={BADGE_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Edit clip">
+          <GlassPill style={styles.badge}>
+            <Icon name="scissors" size={20} weight="semibold" tintColor="#fff" />
+          </GlassPill>
+        </Pressable>
+        <Pressable
+          onPress={onDelete}
+          hitSlop={BADGE_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Delete clip">
+          <GlassPill style={styles.badge}>
+            <Icon name="trash" size={20} weight="semibold" tintColor="#fff" />
+          </GlassPill>
+        </Pressable>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    width: '72%',
-    aspectRatio: 9 / 16,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.35)',
+  stage: {
+    flex: 1,
+    alignSelf: 'stretch',
   },
   surface: { flex: 1 },
   playOverlay: {
@@ -131,7 +116,7 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
   },
   // Badge shape only — GlassPill owns the surface (Liquid Glass on iOS 26+, dark scrim
-  // fallback), so no backgroundColor here. Position lives on the wrapping Pressable.
+  // fallback), so no backgroundColor here.
   badge: {
     width: BADGE_SIZE,
     height: BADGE_SIZE,
@@ -139,21 +124,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  close: {
-    position: 'absolute',
-    top: Spacing.two,
-    left: Spacing.two,
-  },
-  delete: {
-    position: 'absolute',
-    top: Spacing.two,
-    right: Spacing.two,
-  },
-  // Left of the delete badge (one badge width + an 8pt gap).
-  trim: {
-    position: 'absolute',
-    top: Spacing.two,
-    right: Spacing.two + BADGE_SIZE + Spacing.two,
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: Spacing.five,
+    paddingVertical: Spacing.two,
   },
   timeRow: {
     position: 'absolute',

@@ -438,35 +438,51 @@ export default function RecorderScreen() {
       {/* Focus reticle — driven imperatively by onFocus; pointer-transparent. */}
       <Animated.View pointerEvents="none" style={[styles.reticle, reticleStyle]} />
 
+      {/* The paused camera keeps its last frame on screen (VisionCamera pauses in place) —
+          black it out while previewing so the stale frame can't show around the video. */}
+      {previewing && <View style={[StyleSheet.absoluteFill, styles.blackout]} />}
+
       <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="box-none">
         <View
           style={[
             styles.topBar,
             { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
           ]}>
-          <CloseButton onPress={handleClose} overVideo />
-          <GlassPill style={styles.timerPill}>
-            <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
-          </GlassPill>
-          {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
-          <View style={styles.topBarSpacer} />
+          {/* One ✕ per mode: in record mode it exits the recorder; while previewing it closes
+              the preview (the modal has no ✕ of its own, so the corner never doubles up). */}
+          <CloseButton onPress={previewing ? () => setPreviewId(null) : handleClose} overVideo />
+          {/* The running total is redundant while previewing — the preview's own pill shows
+              position / total. */}
+          {!previewing && (
+            <>
+              <GlassPill style={styles.timerPill}>
+                <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
+              </GlassPill>
+              {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
+              <View style={styles.topBarSpacer} />
+            </>
+          )}
         </View>
 
-        <CameraControls
-          facing={facing}
-          torch={torch}
-          stabilization={stabilization}
-          muted={muted}
-          callActive={callActive}
-          // Lock every camera control while a clip is recording — flip / torch / stabilization /
-          // mute can't change mid-clip (audio state is fixed at record start, and the others would
-          // disrupt or stop capture). Mirrors the lens selector, which is already locked here.
-          disabled={previewing || isRecording}
-          onFlip={flipCamera}
-          onToggleTorch={toggleTorch}
-          onCycleStabilization={cycleStabilization}
-          onToggleMute={toggleMute}
-        />
+        {/* Hidden entirely while previewing — every control is inert then, and a rail of
+            greyed-out buttons over the preview just reads as clutter. */}
+        {!previewing && (
+          <CameraControls
+            facing={facing}
+            torch={torch}
+            stabilization={stabilization}
+            muted={muted}
+            callActive={callActive}
+            // Lock every camera control while a clip is recording — flip / torch / stabilization /
+            // mute can't change mid-clip (audio state is fixed at record start, and the others would
+            // disrupt or stop capture). Mirrors the lens selector, which is already locked here.
+            disabled={isRecording}
+            onFlip={flipCamera}
+            onToggleTorch={toggleTorch}
+            onCycleStabilization={cycleStabilization}
+            onToggleMute={toggleMute}
+          />
+        )}
 
         {previewing && preview.active != null && (
           <View style={styles.previewArea} pointerEvents="box-none">
@@ -476,7 +492,6 @@ export default function RecorderScreen() {
               positionMs={preview.globalMs}
               totalMs={preview.totalMs}
               onTogglePlay={preview.togglePlay}
-              onClose={() => setPreviewId(null)}
               onTrim={() => {
                 const seg = preview.active;
                 if (!seg) return;
@@ -602,7 +617,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   topBarSpacer: { width: 40 },
-  previewArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  blackout: { backgroundColor: '#000' },
+  // The preview stage stretches to fill the space between the top bar and the segment bar,
+  // so the video can size itself to whatever screen it's on.
+  previewArea: { flex: 1, alignSelf: 'stretch' },
   bottom: { alignItems: 'center', gap: Spacing.three },
   // Full-width row; the record button is centered by the row itself, so its position can't
   // be disturbed by the + control.
