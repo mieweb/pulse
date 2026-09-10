@@ -206,6 +206,9 @@ export function PlayheadCursor({
     () =>
       Gesture.Pan()
         .runOnJS(true)
+        // Gesture-level hitSlop — the RN prop on the child View isn't honored consistently
+        // by gesture-handler across platforms. Kept narrow so thumb taps beside the line land.
+        .hitSlop({ left: 4, right: 4 })
         .onBegin(() => {
           draggingRef.current = true;
           cancelAnimation(cursorX);
@@ -249,7 +252,7 @@ export function PlayheadCursor({
   return (
     <Animated.View style={[styles.cursor, style]} pointerEvents="box-none">
       <GestureDetector gesture={pan}>
-        <View style={styles.grabZone} hitSlop={{ left: 4, right: 4 }} accessibilityLabel="Playhead">
+        <View style={styles.grabZone} accessibilityLabel="Playhead">
           <View style={styles.tag}>
             <View style={styles.gripTick} />
             <View style={styles.gripTick} />

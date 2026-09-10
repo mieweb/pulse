@@ -10,6 +10,7 @@ export function CloseButton({
   onPress,
   style,
   overVideo = false,
+  label = 'Close',
 }: {
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
@@ -21,6 +22,8 @@ export function CloseButton({
    * scrim instead (dark fill on light, light fill + hairline edge on dark).
    */
   overVideo?: boolean;
+  /** Screen-reader label — override when the ✕ means something more specific than "Close". */
+  label?: string;
 }) {
   const mode = useThemeMode();
   const inner = <Icon name="xmark" size={22} weight="semibold" tintColor="#fff" />;
@@ -29,7 +32,7 @@ export function CloseButton({
       onPress={onPress ?? closeToHome}
       hitSlop={8}
       accessibilityRole="button"
-      accessibilityLabel="Close"
+      accessibilityLabel={label}
       style={style}>
       {overVideo ? (
         <GlassPill style={styles.button}>{inner}</GlassPill>

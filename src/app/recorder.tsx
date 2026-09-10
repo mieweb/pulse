@@ -460,6 +460,7 @@ export default function RecorderScreen() {
           <CloseButton
             onPress={previewing ? () => setPreviewId(null) : handleClose}
             overVideo={!previewing}
+            label={previewing ? 'Close preview' : 'Close recorder'}
           />
           {/* The running total is redundant while previewing — the preview's own pill shows
               position / total. */}

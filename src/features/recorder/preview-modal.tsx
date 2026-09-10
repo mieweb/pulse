@@ -93,7 +93,7 @@ export function PreviewModal({
   }, [box, aspect]);
 
   return (
-    <View style={styles.stage}>
+    <View style={[styles.stage, { backgroundColor: theme.background }]}>
       <Pressable
         style={styles.surface}
         onPress={onTogglePlay}
