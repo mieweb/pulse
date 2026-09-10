@@ -51,11 +51,11 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
       },
       {
         icon: 'scissors',
-        text: 'Press and hold a clip to open its editor and trim the start and end.',
+        text: "Tap the scissors in a clip's preview to trim its start and end.",
       },
       {
         icon: 'line.3.horizontal',
-        text: 'Drag a clip by its grab strip to reorder your timeline.',
+        text: 'Press and hold a clip, then drag to reorder your timeline.',
       },
       { icon: 'trash', text: 'Drag a clip onto the trash to delete it from the segment bar.' },
       {

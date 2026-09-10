@@ -555,16 +555,6 @@ export default function RecorderScreen() {
               if (previewing) preview.selectSegment(id);
               else if (!isRecording) setPreviewId(id);
             }}
-            onEdit={(id) => {
-              // Hold a thumb → open the editor directly. Does NOT enter preview, so from the
-              // recorder it returns to the recorder; from preview it stays in preview
-              // (same as the ✂ button). Never opens preview as a side effect.
-              if (isRecording) return;
-              const seg = segments.find((s) => s.id === id);
-              if (!seg) return;
-              if (previewing) preview.pause();
-              openTrim(seg);
-            }}
             cursor={
               previewing
                 ? {

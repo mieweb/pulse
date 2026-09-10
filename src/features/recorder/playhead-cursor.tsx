@@ -249,10 +249,7 @@ export function PlayheadCursor({
   return (
     <Animated.View style={[styles.cursor, style]} pointerEvents="box-none">
       <GestureDetector gesture={pan}>
-        <View
-          style={styles.grabZone}
-          hitSlop={{ left: 10, right: 10 }}
-          accessibilityLabel="Playhead">
+        <View style={styles.grabZone} hitSlop={{ left: 4, right: 4 }} accessibilityLabel="Playhead">
           <View style={styles.tag}>
             <View style={styles.gripTick} />
             <View style={styles.gripTick} />
