@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
 import { Colors } from '@/constants/theme';
 import { setThemePreference, themePreferenceQuery, type ThemePreference } from '@/db/settings';
@@ -35,12 +35,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // a stored 'system' — follows the OS, so 'system' is the default without a migration.
   const preference: ThemePreference = pref === 'light' || pref === 'dark' ? pref : 'system';
   const resolved: ResolvedScheme = preference === 'system' ? osScheme : preference;
+  // Memoized on the two scalars: context uses reference equality, and useTheme() consumers
+  // are hot leaf components — a fresh object per render (e.g. a live-query re-emit of the
+  // same value) would re-render them all for nothing.
+  const value = useMemo(() => ({ resolved, preference }), [resolved, preference]);
 
-  return (
-    <ThemeStateContext.Provider value={{ resolved, preference }}>
-      {children}
-    </ThemeStateContext.Provider>
-  );
+  return <ThemeStateContext.Provider value={value}>{children}</ThemeStateContext.Provider>;
 }
 
 function useOsScheme(): ResolvedScheme {
