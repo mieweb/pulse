@@ -59,8 +59,12 @@ export function PreviewModal({
   // selectSegment pauses for the swap, so the badge blinked for the load's duration.
   const { status } = useEvent(player, 'statusChange', { status: player.status });
   // Not parked while a scrub drag is in flight: boundary crossings load clips, and the
-  // status round-trips would blink the badge with every segment the finger crosses.
-  const parked = !isPlaying && status === 'readyToPlay' && !scrubbing;
+  // status round-trips would blink the badge with every segment the finger crosses. Also
+  // not before the session's FIRST playback: a thumb tap auto-plays, but a cold load can
+  // sit readyToPlay-but-not-playing longer than the held-park delay — the badge flashed
+  // right before the video started. Until something has actually played, stay quiet.
+  const [everPlayed, setEverPlayed] = useState(isPlaying);
+  const parked = everPlayed && !isPlaying && status === 'readyToPlay' && !scrubbing;
   // Render-phase reset + delayed set: the badge shows only once `parked` has HELD for the
   // delay (see PARK_BADGE_DELAY_MS), so transient parked windows mid-swap never flash it.
   const [showPlay, setShowPlay] = useState(parked);
@@ -82,7 +86,8 @@ export function PreviewModal({
   const [prevPlaying, setPrevPlaying] = useState(isPlaying);
   if (prevPlaying !== isPlaying) {
     setPrevPlaying(isPlaying);
-    if (!isPlaying) setPauseFlash(false);
+    if (isPlaying) setEverPlayed(true);
+    else setPauseFlash(false);
   }
   useEffect(() => {
     if (!pauseFlash) return;
