@@ -13,7 +13,7 @@ import {
 
 import { ThemedView } from '@/components/themed-view';
 import { GlassPill } from '@/components/glass-pill';
-import { Spacing } from '@/constants/theme';
+import { ControlScrim, Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { CloseButton } from '@/features/recorder/close-button';
 import { ImportButton } from '@/features/recorder/import-button';
@@ -35,6 +35,7 @@ import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDurationPadded } from '@/utils/format';
 import { closeToHome } from '@/utils/navigation';
 
@@ -54,6 +55,8 @@ const PREVIEW_CLOSE_SETTLE_MS = 50;
 
 export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
+  const mode = useThemeMode();
   const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
   const permissions = useRecorderPermissions();
   const {
@@ -96,6 +99,10 @@ export default function RecorderScreen() {
   if (previewId != null && segments.length === 0) setPreviewId(null);
   const preview = usePreview(segments, previewId);
   const previewing = previewId != null;
+  // True while a finger is dragging the playhead — the preview suppresses its play badge
+  // then. Derived reset (not effect) so a preview closed mid-drag can't strand it true.
+  const [scrubbing, setScrubbing] = useState(false);
+  if (!previewing && scrubbing) setScrubbing(false);
 
   // Top running timer: always the live draft total — saved clips plus wall-clock while
   // recording. During preview the playhead position is shown inside the preview card instead.
@@ -438,45 +445,73 @@ export default function RecorderScreen() {
       {/* Focus reticle — driven imperatively by onFocus; pointer-transparent. */}
       <Animated.View pointerEvents="none" style={[styles.reticle, reticleStyle]} />
 
+      {/* The paused camera keeps its last frame on screen (VisionCamera pauses in place) —
+          cover it with the THEMED background while previewing so the stale frame can't show
+          around the video and the preview follows light/dark mode. */}
+      {previewing && (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.background }]} />
+      )}
+
       <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="box-none">
         <View
           style={[
             styles.topBar,
             { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
           ]}>
-          <CloseButton onPress={handleClose} overVideo />
-          <GlassPill style={styles.timerPill}>
-            <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
-          </GlassPill>
+          {/* One ✕ per mode: in record mode it exits the recorder; while previewing it closes
+              the preview (the modal has no ✕ of its own, so the corner never doubles up).
+              Glass only over the live camera — the preview's themed backdrop gets the scrim
+              variant (dark-pinned glass goes invisible on a light background). */}
+          <CloseButton
+            onPress={previewing ? () => setPreviewId(null) : handleClose}
+            overVideo={!previewing}
+            label={previewing ? 'Close preview' : 'Close recorder'}
+          />
+          {/* Record mode shows the running total (glass, over live camera); previewing shows
+              the draft-global position / total on the mode-aware scrim — same chrome as the
+              ✕ beside it, since glass has nothing to refract on the themed backdrop. */}
+          {previewing ? (
+            <View style={[styles.timerPill, styles.previewTimerPill, ControlScrim[mode]]}>
+              <Text style={styles.timerText}>
+                {formatDurationPadded(preview.globalMs)} / {formatDurationPadded(preview.totalMs)}
+              </Text>
+            </View>
+          ) : (
+            <GlassPill style={styles.timerPill}>
+              <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
+            </GlassPill>
+          )}
           {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
           <View style={styles.topBarSpacer} />
         </View>
 
-        <CameraControls
-          facing={facing}
-          torch={torch}
-          stabilization={stabilization}
-          muted={muted}
-          callActive={callActive}
-          // Lock every camera control while a clip is recording — flip / torch / stabilization /
-          // mute can't change mid-clip (audio state is fixed at record start, and the others would
-          // disrupt or stop capture). Mirrors the lens selector, which is already locked here.
-          disabled={previewing || isRecording}
-          onFlip={flipCamera}
-          onToggleTorch={toggleTorch}
-          onCycleStabilization={cycleStabilization}
-          onToggleMute={toggleMute}
-        />
+        {/* Hidden entirely while previewing — every control is inert then, and a rail of
+            greyed-out buttons over the preview just reads as clutter. */}
+        {!previewing && (
+          <CameraControls
+            facing={facing}
+            torch={torch}
+            stabilization={stabilization}
+            muted={muted}
+            callActive={callActive}
+            // Lock every camera control while a clip is recording — flip / torch / stabilization /
+            // mute can't change mid-clip (audio state is fixed at record start, and the others would
+            // disrupt or stop capture). Mirrors the lens selector, which is already locked here.
+            disabled={isRecording}
+            onFlip={flipCamera}
+            onToggleTorch={toggleTorch}
+            onCycleStabilization={cycleStabilization}
+            onToggleMute={toggleMute}
+          />
+        )}
 
         {previewing && preview.active != null && (
           <View style={styles.previewArea} pointerEvents="box-none">
             <PreviewModal
               player={preview.player}
               isPlaying={preview.isPlaying}
-              positionMs={preview.globalMs}
-              totalMs={preview.totalMs}
+              scrubbing={scrubbing}
               onTogglePlay={preview.togglePlay}
-              onClose={() => setPreviewId(null)}
               onTrim={() => {
                 const seg = preview.active;
                 if (!seg) return;
@@ -540,22 +575,13 @@ export default function RecorderScreen() {
               if (previewing) preview.selectSegment(id);
               else if (!isRecording) setPreviewId(id);
             }}
-            onEdit={(id) => {
-              // Hold a thumb → open the editor directly. Does NOT enter preview, so from the
-              // recorder it returns to the recorder; from preview it stays in preview
-              // (same as the ✂ button). Never opens preview as a side effect.
-              if (isRecording) return;
-              const seg = segments.find((s) => s.id === id);
-              if (!seg) return;
-              if (previewing) preview.pause();
-              openTrim(seg);
-            }}
             cursor={
               previewing
                 ? {
                     activeId: preview.activeId,
                     globalMs: preview.globalMs,
                     onScrub: preview.seekToGlobalMs,
+                    onScrubbingChange: setScrubbing,
                   }
                 : undefined
             }
@@ -601,8 +627,12 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
   },
+  // Scrim variant for preview mode — hairline edge shows in dark mode (light stays transparent).
+  previewTimerPill: { borderWidth: StyleSheet.hairlineWidth },
   topBarSpacer: { width: 40 },
-  previewArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  // The preview stage stretches to fill the space between the top bar and the segment bar,
+  // so the video can size itself to whatever screen it's on.
+  previewArea: { flex: 1, alignSelf: 'stretch' },
   bottom: { alignItems: 'center', gap: Spacing.three },
   // Full-width row; the record button is centered by the row itself, so its position can't
   // be disturbed by the + control.

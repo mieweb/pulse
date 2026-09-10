@@ -17,8 +17,9 @@ import Animated, {
 import Sortable from 'react-native-sortables';
 
 import { GlassPill } from '@/components/glass-pill';
-import { Accent, Spacing } from '@/constants/theme';
+import { Accent, ControlScrim, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
+import { useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatDurationPadded } from '@/utils/format';
 import { effMs } from '@/utils/segment-window';
@@ -47,7 +48,6 @@ type Props = {
   onReorder: (ids: string[]) => void;
   onDelete: (id: string) => void;
   onSelect: (id: string) => void;
-  onEdit: (id: string) => void;
   /** Fired true when a drag begins, false when it ends — lets the recorder hide its record
    *  button so the floating trash above the bar has clear space. */
   onDragActiveChange?: (active: boolean) => void;
@@ -67,11 +67,11 @@ function Bar({
   onReorder,
   onDelete,
   onSelect,
-  onEdit,
   onDragActiveChange,
   onNext,
   cursor,
 }: Props) {
+  const mode = useThemeMode();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   // Owned here (not in PlayheadCursor) so the offset is already tracked when the cursor
   // mounts on a bar the user scrolled before opening the preview.
@@ -140,15 +140,31 @@ function Bar({
       <View style={styles.bar}>
         {/* Glass surface as a passive background LAYER, not a container — the Sortable grid,
             ScrollView, and playhead keep their exact hierarchy (and gesture/portal behavior)
-            above it. pointerEvents="none" so it can never intercept a touch. */}
-        <GlassPill style={styles.barSurface} pointerEvents="none" />
+            above it. pointerEvents="none" so it can never intercept a touch. Glass only over
+            the live camera; on the preview's themed backdrop it swaps to the same mode-aware
+            scrim as the ✕/✂/🗑 controls, so the whole chrome reads as one family. */}
+        {cursor ? (
+          <View
+            style={[styles.barSurface, styles.barSurfaceScrim, ControlScrim[mode]]}
+            pointerEvents="none"
+          />
+        ) : (
+          <GlassPill style={styles.barSurface} pointerEvents="none" />
+        )}
         {/* Trash drop target — above the bar, fades in during a drag. pointerEvents="none" so it
-            never intercepts touches; it's purely a drop zone hit-tested from the drag position. */}
-        <View style={styles.trashWrap} pointerEvents="none">
-          <Animated.View ref={trashRef} onLayout={measureTrash} style={[styles.trash, trashStyle]}>
-            <Icon name="trash.fill" size={22} tintColor="#fff" />
-          </Animated.View>
-        </View>
+            never intercepts touches; it's purely a drop zone hit-tested from the drag position.
+            Hidden while previewing: it would float over the full-bleed video stage, and the
+            preview's own 🗑 covers deletion — drags are reorder-only there. */}
+        {!cursor && (
+          <View style={styles.trashWrap} pointerEvents="none">
+            <Animated.View
+              ref={trashRef}
+              onLayout={measureTrash}
+              style={[styles.trash, trashStyle]}>
+              <Icon name="trash.fill" size={22} tintColor="#fff" />
+            </Animated.View>
+          </View>
+        )}
 
         <View
           style={styles.viewport}
@@ -189,22 +205,23 @@ function Bar({
               // to open a gap, which made long bars feel like they scattered on pickup.
               // Note the semantics: dropping 1 on 5 exchanges them (2–4 stay put).
               strategy="swap"
-              // Reorder only from the numbered-pill handle — frees a plain hold on the thumb
-              // to mean "edit" without colliding with the grid's long-press-to-drag.
-              customHandle
               onDragStart={({ key }) => {
                 draggedKey.current = key;
                 overTrash.current = false;
                 over.value = 0;
-                vis.value = withTiming(1, { duration: 150 });
+                // No trash while previewing — the target isn't rendered (see above).
+                if (!cursor) {
+                  vis.value = withTiming(1, { duration: 150 });
+                  measureTrash();
+                }
                 dragScroll.value = true; // pause playhead-follow so it can't fight the grid autoscroll
                 setDragActive(true); // hide → so the viewport gets its space
-                measureTrash();
                 onDragActiveChange?.(true);
               }}
               onDragMove={({ touchData }) => {
                 const r = trashRect.current;
                 const inside =
+                  !cursor &&
                   !!r &&
                   touchData.absoluteX >= r.x &&
                   touchData.absoluteX <= r.x + r.w &&
@@ -232,7 +249,6 @@ function Bar({
                   segment={item}
                   active={cursor?.activeId === item.id}
                   onSelect={() => onSelect(item.id)}
-                  onEdit={() => onEdit(item.id)}
                 />
               )}
             />
@@ -271,12 +287,10 @@ function SegmentThumb({
   segment,
   active,
   onSelect,
-  onEdit,
 }: {
   segment: Segment;
   active: boolean;
   onSelect: () => void;
-  onEdit: () => void;
 }) {
   // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original) for legacy rows.
   const thumbnail = useThumbnail(
@@ -292,13 +306,14 @@ function SegmentThumb({
     // The clip under the playhead is marked by its border turning accent — no scale-up, so
     // the row stays visually still while the playhead moves across it.
     <View style={[styles.thumb, active && styles.thumbActive]}>
-      {/* tap = preview · hold = open editor (onLongPress) · drag the numbered pill = reorder
-          (drop on the trash to delete). Sortable.Touchable cooperates with the grid so a tap
-          can't fire after a drag. */}
+      {/* tap = preview · hold anywhere on the thumb = drag to reorder (drop on the trash to
+          delete) — the grid's default long-press activation, so the ENTIRE thumb is tappable
+          (the old pill-handle strip swallowed taps on the thumb's top third). Editing lives in
+          the preview's ✂. Sortable.Touchable cooperates with the grid so a tap can't fire
+          after a drag. */}
       <Sortable.Touchable
         onTap={onSelect}
-        onLongPress={onEdit}
-        accessibilityLabel="Preview clip (hold to edit)"
+        accessibilityLabel="Preview clip (hold to reorder)"
         style={styles.thumbTouch}>
         {thumbnail ? (
           <Image source={thumbnail} style={styles.thumbImage} contentFit="cover" />
@@ -318,19 +333,18 @@ function SegmentThumb({
         </View>
       )}
 
-      {/* Drag handle — the only reorder/drag activator (drag onto the trash to delete).
-          The visible affordance IS the clip's label: a pill straddling the thumb's top edge
-          (half out, half in), centered. The label is initialized to the clip's creation number
-          when it's recorded and never renumbered on reorder (deletes leave gaps), so "move 7
-          between 3 and 12" stays meaningful however the draft is shuffled. The handle's
-          touch area is the full-width top strip, not just the pill. */}
-      <Sortable.Handle style={styles.handle}>
+      {/* Clip label — a pill straddling the thumb's top edge (half out, half in), centered.
+          Pure decoration now (the whole thumb drags): pointerEvents none so it can never
+          swallow a tap. The label is initialized to the clip's creation number when it's
+          recorded and never renumbered on reorder (deletes leave gaps), so "move 7 between
+          3 and 12" stays meaningful however the draft is shuffled. */}
+      <View style={styles.badgeWrap} pointerEvents="none">
         <View style={styles.badge}>
           <Text style={styles.badgeText} numberOfLines={1}>
             {segment.label || '≡'}
           </Text>
         </View>
-      </Sortable.Handle>
+      </View>
     </View>
   );
 }
@@ -343,11 +357,6 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     marginHorizontal: Spacing.three,
     paddingHorizontal: Spacing.two,
-    // The viewport carries the SCRUB_LANE below the thumbs; mirroring the whole lane as
-    // top padding (with no extra base padding — POP_LANE already provides breathing room)
-    // keeps the thumbs dead-center in the slimmest symmetric bar.
-    paddingTop: SCRUB_LANE,
-    paddingBottom: 0,
     borderRadius: Spacing.three,
   },
   // The bar's glass background (dark-scrim fallback via GlassPill) — fills the bar behind
@@ -361,6 +370,7 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     overflow: 'hidden',
   },
+  barSurfaceScrim: { borderWidth: StyleSheet.hairlineWidth },
   trashWrap: {
     position: 'absolute',
     // Vertically: align the trash's CENTER with the record button's center. The record
@@ -382,10 +392,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // The scrub lane (the strip below the thumbs the playhead knob hangs into) is reserved
-  // permanently, not just while previewing — adding it only with the cursor grew the bar
-  // and visibly bumped it upward every time a preview opened.
-  viewport: { flex: 1, overflow: 'hidden', paddingBottom: SCRUB_LANE },
+  // The scrub lanes (the strips above/below the thumbs the playhead's grab tags ride in) are
+  // reserved permanently, not just while previewing — adding them only with the cursor grew
+  // the bar and visibly bumped it upward every time a preview opened. Both lanes live INSIDE
+  // the viewport (not as bar padding) so the playhead — an absolute child of the viewport,
+  // clipped by its overflow — can span them: top tag above the number pills, bottom tag
+  // below the thumbs, symmetric in the bar.
+  viewport: { flex: 1, overflow: 'hidden', paddingTop: SCRUB_LANE, paddingBottom: SCRUB_LANE },
   content: {
     alignItems: 'center',
     paddingLeft: SCRUB_INSET,
@@ -440,18 +453,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
-  // The drag handle: the pill is just the visible anchor — the actual grab area is this
-  // full-width strip reaching ~25pt into the thumb, comfortably bigger than the pill for
-  // less precise fingers. (No hitSlop prop on Sortable.Handle, and the pill half above the
-  // thumb's bounds is not hit-testable in RN, so the generosity has to live INSIDE the
-  // thumb.) The strip below the pill is invisible touch area; taps/holds on the thumb's
-  // lower two-thirds still reach the preview/edit touchable underneath.
-  handle: {
+  // Positions the label pill half above the thumb's top edge; decoration only (see JSX).
+  badgeWrap: {
     position: 'absolute',
     top: -BADGE_SIZE / 2,
     left: 0,
     right: 0,
-    height: BADGE_SIZE / 2 + 25,
     alignItems: 'center',
   },
   badge: {
@@ -483,8 +490,7 @@ const styles = StyleSheet.create({
     backgroundColor: Accent,
     alignItems: 'center',
     justifyContent: 'center',
-    // The viewport reserves SCRUB_LANE below the thumbs, floating them above the bar's
-    // centerline — match it so the button's center stays on the thumbs' center.
-    marginBottom: SCRUB_LANE,
+    // The viewport's scrub lanes are symmetric (top + bottom), so the thumbs sit on the
+    // bar's centerline and the button centers naturally — no offset needed.
   },
 });

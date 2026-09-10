@@ -1,117 +1,176 @@
 import { Icon } from '@/components/icon';
+import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
+import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
-import { Spacing } from '@/constants/theme';
-import { formatDurationPadded } from '@/utils/format';
+import { ControlScrim, Spacing } from '@/constants/theme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 
 // Action badge diameter. With hitSlop 4 the effective tap target is 48pt (≥ the 44pt HIG
-// minimum) while the ✂ and 🗑 hit areas — 8pt apart — still can't overlap.
+// minimum); the ✂ and 🗑 badges sit a full Spacing.five apart so their hit areas can't overlap.
 const BADGE_SIZE = 40;
 const BADGE_HIT_SLOP = 4;
+
+// The ▶ badge appears only after playback has been parked this long. Clip switches and
+// auto-advance pass through short "parked" windows the status can't distinguish (the old
+// item's readyToPlay lingers a few frames until the next load flips it, and readyToPlay →
+// playingChange has its own gap) — gating on held-time hides all of them.
+const PARK_BADGE_DELAY_MS = 150;
+// How long the transient ⏸ flash holds after playback starts before its fade-out begins.
+const PAUSE_FLASH_HOLD_MS = 600;
 
 type Props = {
   player: VideoPlayer;
   isPlaying: boolean;
-  // Draft-global playhead position and total, for the time readout pill.
-  positionMs: number;
-  totalMs: number;
+  /** True while the bar playhead is being dragged — suppresses the play badge. */
+  scrubbing?: boolean;
   onTogglePlay: () => void;
-  onClose: () => void;
   onTrim: () => void;
   onDelete: () => void;
 };
 
 /**
- * Floating preview card over the recorder — the camera UI, record button, and segment bar
- * all stay visible around it. Plays the draft through one shared player; tap toggles play,
- * ✕ closes, ✂ opens the RNVT editor for the active clip, 🗑 deletes. `contentFit="contain"`
- * on black lets the native player honor each clip's rotation matrix (portrait upright).
- * No captions here — transcription now happens once on the merged video at export time.
+ * Full-bleed preview stage over the recorder — fills the area between the top bar and the
+ * segment bar on a themed backdrop (the recorder covers the paused camera with the theme
+ * background). Plays the draft through one shared player; tap toggles play, ✂ opens the RNVT
+ * editor for the active clip, 🗑 deletes — both in a row below the video. Closing and the
+ * position / total readout live in the recorder's top bar, so nothing floats over the video.
+ * The video renders full-bleed:
+ * `contentFit="contain"` letterboxes into the themed backdrop and lets the native player
+ * honor each clip's rotation matrix (portrait upright) — sizing off iOS `videoTrack.size`
+ * is untrustworthy (un-rotated naturalSize). No captions here — transcription now happens
+ * once on the merged video at export time.
  */
 export function PreviewModal({
   player,
   isPlaying,
-  positionMs,
-  totalMs,
+  scrubbing = false,
   onTogglePlay,
-  onClose,
   onTrim,
   onDelete,
 }: Props) {
+  const theme = useTheme();
+  const mode = useThemeMode();
+  // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
+  // not playing). Gating on !isPlaying alone flashed the badge through every clip switch:
+  // selectSegment pauses for the swap, so the badge blinked for the load's duration.
+  const { status } = useEvent(player, 'statusChange', { status: player.status });
+  // Not parked while a scrub drag is in flight: boundary crossings load clips, and the
+  // status round-trips would blink the badge with every segment the finger crosses. Also
+  // not before the session's FIRST playback: a thumb tap auto-plays, but a cold load can
+  // sit readyToPlay-but-not-playing longer than the held-park delay — the badge flashed
+  // right before the video started. Until something has actually played, stay quiet.
+  const [everPlayed, setEverPlayed] = useState(isPlaying);
+  const parked = everPlayed && !isPlaying && status === 'readyToPlay' && !scrubbing;
+  // Render-phase reset + delayed set: the badge shows only once `parked` has HELD for the
+  // delay (see PARK_BADGE_DELAY_MS), so transient parked windows mid-swap never flash it.
+  const [showPlay, setShowPlay] = useState(parked);
+  const [prevParked, setPrevParked] = useState(parked);
+  if (prevParked !== parked) {
+    setPrevParked(parked);
+    if (!parked) setShowPlay(false);
+  }
+  useEffect(() => {
+    if (!parked) return;
+    const timer = setTimeout(() => setShowPlay(true), PARK_BADGE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [parked]);
+  // Transient ⏸ flash — fired ONLY by this surface's own play tap. Thumb taps and auto
+  // boundary advances must not flash it, so it's not derived from playingChange. Cleared by
+  // the hold timer (its exiting zoom completes the ~1s arc) or instantly on pause, where the
+  // ▶ badge takes over.
+  const [pauseFlash, setPauseFlash] = useState(false);
+  const [prevPlaying, setPrevPlaying] = useState(isPlaying);
+  if (prevPlaying !== isPlaying) {
+    setPrevPlaying(isPlaying);
+    if (isPlaying) setEverPlayed(true);
+    else setPauseFlash(false);
+  }
+  useEffect(() => {
+    if (!pauseFlash) return;
+    const timer = setTimeout(() => setPauseFlash(false), PAUSE_FLASH_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [pauseFlash]);
+
   return (
-    <View style={styles.card}>
-      <Pressable style={styles.surface} onPress={onTogglePlay} accessibilityLabel="Toggle playback">
-        <VideoView
-          style={StyleSheet.absoluteFill}
-          player={player}
-          contentFit="contain"
-          nativeControls={false}
-        />
-        {!isPlaying && (
-          <View style={styles.playOverlay} pointerEvents="none">
-            <GlassPill style={styles.playBadge}>
-              <Icon name="play.fill" size={28} tintColor="#fff" />
-            </GlassPill>
+    <View style={[styles.stage, { backgroundColor: theme.background }]}>
+      <Pressable
+        style={styles.surface}
+        onPress={() => {
+          // Flash ⏸ only when this tap MEANS play; a pause tap hands over to the ▶ badge.
+          setPauseFlash(!isPlaying);
+          onTogglePlay();
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={isPlaying ? 'Pause' : 'Play'}>
+        <View style={styles.fill} pointerEvents="none">
+          <VideoView
+            style={StyleSheet.absoluteFill}
+            player={player}
+            contentFit="contain"
+            nativeControls={false}
+          />
+          {/* ONE badge for ▶ and ⏸ — the glyph swaps in place so a play tap doesn't unmount
+              one glass pill and zoom in a fresh one. ⏸ wins while both states overlap (the
+              tap→playingChange gap). Scale-only animation: the GlassPill is a
+              UIVisualEffectView, and ANY ancestor alpha < 1 renders the glass flat or not at
+              all. The ⏸ exit is slower — it's the tail of the flash's ~1s arc. */}
+          {(showPlay || pauseFlash) && (
+            <Animated.View
+              style={styles.playOverlay}
+              pointerEvents="none"
+              entering={ZoomIn.duration(150)}
+              exiting={ZoomOut.duration(pauseFlash ? 350 : 150)}>
+              <GlassPill style={[styles.playBadge, pauseFlash && styles.pauseBadge]}>
+                <Icon name={pauseFlash ? 'pause.fill' : 'play.fill'} size={28} tintColor="#fff" />
+              </GlassPill>
+            </Animated.View>
+          )}
+        </View>
+      </Pressable>
+
+      <View style={styles.actionRow}>
+        <Pressable
+          onPress={onTrim}
+          hitSlop={BADGE_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Edit clip">
+          {/* Mode-aware scrim, not GlassPill: these sit on the THEMED backdrop, where glass
+              has nothing to refract and a fixed dark scrim vanishes in dark mode. */}
+          <View style={[styles.badge, ControlScrim[mode]]}>
+            <Icon name="scissors" size={20} weight="semibold" tintColor="#fff" />
           </View>
-        )}
-      </Pressable>
-
-      <Pressable
-        onPress={onClose}
-        hitSlop={BADGE_HIT_SLOP}
-        accessibilityRole="button"
-        accessibilityLabel="Close preview"
-        style={styles.close}>
-        <GlassPill style={styles.badge}>
-          <Icon name="xmark" size={18} weight="semibold" tintColor="#fff" />
-        </GlassPill>
-      </Pressable>
-
-      <Pressable
-        onPress={onTrim}
-        hitSlop={BADGE_HIT_SLOP}
-        accessibilityRole="button"
-        accessibilityLabel="Edit clip"
-        style={styles.trim}>
-        <GlassPill style={styles.badge}>
-          <Icon name="scissors" size={20} weight="semibold" tintColor="#fff" />
-        </GlassPill>
-      </Pressable>
-
-      <Pressable
-        onPress={onDelete}
-        hitSlop={BADGE_HIT_SLOP}
-        accessibilityRole="button"
-        accessibilityLabel="Delete clip"
-        style={styles.delete}>
-        <GlassPill style={styles.badge}>
-          <Icon name="trash" size={20} weight="semibold" tintColor="#fff" />
-        </GlassPill>
-      </Pressable>
-
-      <View style={styles.timeRow} pointerEvents="none">
-        <GlassPill style={styles.timePill}>
-          <Text style={styles.timeText}>
-            {formatDurationPadded(positionMs)} / {formatDurationPadded(totalMs)}
-          </Text>
-        </GlassPill>
+        </Pressable>
+        <Pressable
+          onPress={onDelete}
+          hitSlop={BADGE_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Delete clip">
+          <View style={[styles.badge, ControlScrim[mode]]}>
+            <Icon name="trash" size={20} weight="semibold" tintColor="#fff" />
+          </View>
+        </Pressable>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    width: '72%',
-    aspectRatio: 9 / 16,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.35)',
+  stage: {
+    flex: 1,
+    alignSelf: 'stretch',
   },
-  surface: { flex: 1 },
+  // Full-bleed video area; margins keep it off screen edges and give it breathing room from
+  // the top-bar ✕ and the action row.
+  surface: {
+    flex: 1,
+    marginHorizontal: Spacing.two,
+    marginVertical: Spacing.two,
+  },
+  fill: { flex: 1 },
   playOverlay: {
     position: 'absolute',
     top: 0,
@@ -130,49 +189,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingLeft: 4,
   },
-  // Badge shape only — GlassPill owns the surface (Liquid Glass on iOS 26+, dark scrim
-  // fallback), so no backgroundColor here. Position lives on the wrapping Pressable.
+  // The ⏸ glyph is symmetric — undo the ▶ badge's optical nudge.
+  pauseBadge: { paddingLeft: 0 },
+  // Badge shape — the action row pairs it with the mode-aware ControlScrim fill; the play
+  // badge over the video keeps GlassPill.
   badge: {
     width: BADGE_SIZE,
     height: BADGE_SIZE,
     borderRadius: BADGE_SIZE / 2,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  close: {
-    position: 'absolute',
-    top: Spacing.two,
-    left: Spacing.two,
-  },
-  delete: {
-    position: 'absolute',
-    top: Spacing.two,
-    right: Spacing.two,
-  },
-  // Left of the delete badge (one badge width + an 8pt gap).
-  trim: {
-    position: 'absolute',
-    top: Spacing.two,
-    right: Spacing.two + BADGE_SIZE + Spacing.two,
-  },
-  timeRow: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: Spacing.two,
-    alignItems: 'center',
-  },
-  // Shape only — GlassPill owns the surface, same as the badges above.
-  timePill: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  timeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-    letterSpacing: 0.3,
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: Spacing.five,
+    paddingVertical: Spacing.two,
   },
 });
