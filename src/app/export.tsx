@@ -212,7 +212,9 @@ export default function ExportScreen() {
         <CloseButton />
       </View>
 
-      <View style={styles.center}>
+      {/* Bottom padding tracks the home indicator instead of a fixed 64pt — the difference
+          goes to the preview (#196). */}
+      <View style={[styles.center, { paddingBottom: insets.bottom + Spacing.three }]}>
         {state.status === 'merging' && (
           <>
             <MergeProgressRing progress={state.progress} />
@@ -583,54 +585,69 @@ function MergedPreview({
   const actionable =
     captionStatus === 'ready' || captionStatus === 'no-model' || captionStatus === 'error';
 
-  return (
-    <View style={styles.previewCard}>
-      <Pressable
-        style={styles.previewSurface}
-        onPress={togglePlay}
-        accessibilityRole="button"
-        accessibilityLabel="Toggle playback">
-        <VideoView
-          style={StyleSheet.absoluteFill}
-          player={player}
-          contentFit="contain"
-          nativeControls={false}
-        />
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
-          <CaptionOverlay lines={lines} positionMs={positionMs} />
-        </View>
-        {!isPlaying && (
-          <View style={styles.playOverlay} pointerEvents="none">
-            <GlassPill style={styles.playBadge}>
-              <Icon name="play.fill" size={28} tintColor="#fff" />
-            </GlassPill>
-          </View>
-        )}
-        <View style={styles.metaRow} pointerEvents="none">
-          <GlassPill style={styles.metaPill}>
-            <ThemedText style={styles.metaText}>{meta}</ThemedText>
-          </GlassPill>
-        </View>
-      </Pressable>
+  // Largest 9:16 rect that fits the measured frame. Yoga can't express this — a max
+  // constraint on the aspect-derived axis clamps it without re-shrinking the defined one,
+  // which is exactly the off-ratio card #196 flags — so measure and do the math.
+  const [frame, setFrame] = useState<{ width: number; height: number } | null>(null);
+  const cardWidth = frame ? Math.min(frame.width, (frame.height * 9) / 16) : 0;
+  const cardHeight = (cardWidth * 16) / 9;
 
-      {working && (
-        <GlassPill style={[styles.captionBadge, styles.captionSurface]} pointerEvents="none">
-          <ActivityIndicator size="small" color="#fff" />
-        </GlassPill>
-      )}
-      {actionable && (
-        <Pressable
-          onPress={captionStatus === 'no-model' ? onAddCaptions : onEditCaptions}
-          hitSlop={4}
-          accessibilityRole="button"
-          accessibilityLabel={
-            captionStatus === 'ready' && lines.length > 0 ? 'Edit captions' : 'Add captions'
-          }
-          style={styles.captionBadge}>
-          <GlassPill style={styles.captionSurface}>
-            <Icon name="captions.bubble" size={20} weight="semibold" tintColor="#fff" />
-          </GlassPill>
-        </Pressable>
+  return (
+    <View
+      style={styles.previewFrame}
+      onLayout={({ nativeEvent: { layout } }) =>
+        setFrame({ width: layout.width, height: layout.height })
+      }>
+      {frame != null && (
+        <View style={[styles.previewCard, { width: cardWidth, height: cardHeight }]}>
+          <Pressable
+            style={styles.previewSurface}
+            onPress={togglePlay}
+            accessibilityRole="button"
+            accessibilityLabel="Toggle playback">
+            <VideoView
+              style={StyleSheet.absoluteFill}
+              player={player}
+              contentFit="contain"
+              nativeControls={false}
+            />
+            <View style={StyleSheet.absoluteFill} pointerEvents="none">
+              <CaptionOverlay lines={lines} positionMs={positionMs} />
+            </View>
+            {!isPlaying && (
+              <View style={styles.playOverlay} pointerEvents="none">
+                <GlassPill style={styles.playBadge}>
+                  <Icon name="play.fill" size={28} tintColor="#fff" />
+                </GlassPill>
+              </View>
+            )}
+            <View style={styles.metaRow} pointerEvents="none">
+              <GlassPill style={styles.metaPill}>
+                <ThemedText style={styles.metaText}>{meta}</ThemedText>
+              </GlassPill>
+            </View>
+          </Pressable>
+
+          {working && (
+            <GlassPill style={[styles.captionBadge, styles.captionSurface]} pointerEvents="none">
+              <ActivityIndicator size="small" color="#fff" />
+            </GlassPill>
+          )}
+          {actionable && (
+            <Pressable
+              onPress={captionStatus === 'no-model' ? onAddCaptions : onEditCaptions}
+              hitSlop={4}
+              accessibilityRole="button"
+              accessibilityLabel={
+                captionStatus === 'ready' && lines.length > 0 ? 'Edit captions' : 'Add captions'
+              }
+              style={styles.captionBadge}>
+              <GlassPill style={styles.captionSurface}>
+                <Icon name="captions.bubble" size={20} weight="semibold" tintColor="#fff" />
+              </GlassPill>
+            </Pressable>
+          )}
+        </View>
       )}
     </View>
   );
@@ -639,12 +656,17 @@ function MergedPreview({
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   header: { paddingHorizontal: Spacing.three },
+  // All the column height the rows below don't claim — the preview grows when the upload
+  // section is absent and adapts per screen instead of fixed 90%/66% caps (#196).
+  previewFrame: {
+    flex: 1,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   previewCard: {
-    width: '90%',
-    aspectRatio: 9 / 16,
-    // Cap height so the preview scales down on shorter screens instead of pushing the
-    // actions/upload section off the non-scrolling centered column.
-    maxHeight: '66%',
+    // Sized inline by MergedPreview to the largest 9:16 rect fitting previewFrame — exact
+    // ratio, so the contained video fills the card with no pillarboxing.
     overflow: 'hidden',
     backgroundColor: '#000',
     borderWidth: StyleSheet.hairlineWidth,
@@ -675,7 +697,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.two,
     paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.six,
+    // paddingBottom is inline — it tracks the safe-area inset.
   },
   title: { marginTop: Spacing.two },
   errorMessage: { textAlign: 'center' },
@@ -684,7 +706,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: Spacing.two,
-    marginTop: Spacing.three,
+    marginTop: Spacing.one,
   },
   previewSurface: { flex: 1 },
   // Clip-count · duration readout, bottom-center over the video.
@@ -726,7 +748,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     borderRadius: 17,
   },
-  uploadSection: { alignSelf: 'stretch', gap: Spacing.two, marginTop: Spacing.four },
+  uploadSection: { alignSelf: 'stretch', gap: Spacing.two, marginTop: Spacing.two },
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
