@@ -446,21 +446,25 @@ export function useRecorder(initialDraftId?: string) {
         return;
       }
 
-      // Normalize hostile imports before they enter the draft. A failed probe or a failed
-      // re-encode falls back to importing the original bytes — the merge engine's legacy
-      // re-encode path still handles them, just slower.
+      // Normalize hostile imports before they enter the draft — and fail CLOSED: stored
+      // segments are uploaded byte-for-byte by segment destinations, so a clip that can't be
+      // probed or conformed is rejected rather than persisted off-contract (portrait/H.264/AAC).
       let sourceUri = picked.uri;
       let normalizedPath: string | null = null;
       const probe = await probeVideo(picked.uri).catch(() => null);
-      if (probe) {
-        const decision = decideImport(probe);
-        if (decision.action === 'normalize') {
-          const normalized = await compress(picked.uri, decision.options).catch(() => null);
-          if (normalized) {
-            normalizedPath = normalized.outputPath;
-            sourceUri = normalized.outputPath;
-          }
+      if (!probe) {
+        Alert.alert('Import failed', 'Could not read that video’s format.');
+        return;
+      }
+      const decision = decideImport(probe);
+      if (decision.action === 'normalize') {
+        const normalized = await compress(picked.uri, decision.options).catch(() => null);
+        if (!normalized) {
+          Alert.alert('Import failed', 'Could not convert that video for the timeline.');
+          return;
         }
+        normalizedPath = normalized.outputPath;
+        sourceUri = normalized.outputPath;
       }
 
       const id = await ensureDraft();

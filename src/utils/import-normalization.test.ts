@@ -222,6 +222,20 @@ describe('decideImport edge cases beyond the corpus', () => {
     });
   });
 
+  it('on-canvas 31 fps is normalized (would round past the pinned 30 fps)', () => {
+    const d = decideImport(probe({ rotation: 90, nominalFps: 31, averageFps: 31 }));
+    expect(d.action).toBe('normalize');
+    if (d.action === 'normalize') {
+      expect(d.reasons.join('; ')).toContain('31 fps');
+    }
+  });
+
+  it('on-canvas 29.97 NTSC still passes through', () => {
+    expect(
+      decideImport(probe({ rotation: 90, nominalFps: 29.97, averageFps: 29.97 })),
+    ).toEqual({ action: 'passthrough' });
+  });
+
   it('unknown bitrate (probe -1) does not trigger the bitrate rule', () => {
     expect(decideImport(probe({ rotation: 90, bitrate: -1 }))).toEqual({ action: 'passthrough' });
   });

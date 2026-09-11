@@ -20,8 +20,8 @@ import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim'
  *   every segment UPLOAD are portrait reels by contract, so landscape/odd-size imports
  *   are scale-fit + letterboxed onto the canvas ONCE at import (WYSIWYG in the editor,
  *   portrait segments on segmented destinations, format-uniform import-only merges)
- * - frame rate > NORMALIZE_MAX_FPS — 60/120 fps sources (slo-mo, screen recordings) double+
- *   the merge re-encode cost; 29.97 NTSC passes untouched
+ * - frame rate > NORMALIZE_MAX_FPS — anything that would round past the pinned 30 fps
+ *   (VFR averages, 60/120 slo-mo, screen recordings); 29.97 NTSC passes untouched
  * - bitrate far above the recorder's own — e.g. raw 4K masters; bounded to the recorder rate
  * - non-AAC audio (Opus, etc.) — not MP4-muxable by stream copy; conformed audio-only with
  *   the video track untouched when the video is otherwise fine
@@ -35,8 +35,10 @@ import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim'
  * (reels contract; mirrors REELS_TARGET in use-export.ts). */
 export const CANVAS_WIDTH = 1080;
 export const CANVAS_HEIGHT = 1920;
-/** Frame-rate ceiling: passes 29.97/30 with margin, catches 40+ (VFR averages, 60, 120). */
-export const NORMALIZE_MAX_FPS = 33;
+/** Frame-rate ceiling aligned with the merge pin's rounding: the engine compares
+ * round(fps) against the pinned 30, so anything above 30.5 would mismatch and force a
+ * per-merge conform — normalize once at import instead. 29.97 NTSC still passes. */
+export const NORMALIZE_MAX_FPS = 30.5;
 /** Re-encode target: the recorder's own frame rate. */
 export const NORMALIZE_TARGET_FPS = 30;
 /** Re-encode target: the recorder's own bitrate (5 Mbps, see use-recorder.ts). */

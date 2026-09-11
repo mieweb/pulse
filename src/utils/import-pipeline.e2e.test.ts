@@ -203,43 +203,22 @@ function decodeFrame(file: string, t: number): { data: Buffer; width: number; he
 type Frame = { data: Buffer; width: number; height: number };
 type Box = { left: number; right: number; top: number; bottom: number }; // inclusive
 
-/**
- * Bounding box of non-black content. The canvas bake letterboxes/pillarboxes with pure
- * black bars, so the first/last non-black rows/columns recover the content rect (the
- * whole frame when there are no bars) — the burned-in bar/playhead live in CONTENT
- * coordinates, not canvas coordinates.
- */
-function contentBox(frame: Frame): Box {
-  const dark = (x: number, y: number) => {
-    const i = (y * frame.width + x) * 3;
-    return frame.data[i] < 28 && frame.data[i + 1] < 28 && frame.data[i + 2] < 28;
-  };
-  const samples = 32;
-  const rowDark = (y: number) => {
-    let n = 0;
-    for (let s = 0; s < samples; s++) {
-      const x = Math.round(((s + 0.5) / samples) * (frame.width - 1));
-      if (dark(x, y)) n++;
+/** True when ≥95% of a sampled grid in the region is near-black (letterbox padding). */
+function isBlackRegion(frame: Frame, x0: number, x1: number, y0: number, y1: number): boolean {
+  if (x1 < x0 || y1 < y0) return true;
+  const samples = 24;
+  let dark = 0;
+  let total = 0;
+  for (let sy = 0; sy < samples; sy++) {
+    const y = y0 + Math.round(((sy + 0.5) / samples) * (y1 - y0));
+    for (let sx = 0; sx < samples; sx++) {
+      const x = x0 + Math.round(((sx + 0.5) / samples) * (x1 - x0));
+      const i = (y * frame.width + x) * 3;
+      total++;
+      if (frame.data[i] < 28 && frame.data[i + 1] < 28 && frame.data[i + 2] < 28) dark++;
     }
-    return n / samples >= 0.97;
-  };
-  const colDark = (x: number) => {
-    let n = 0;
-    for (let s = 0; s < samples; s++) {
-      const y = Math.round(((s + 0.5) / samples) * (frame.height - 1));
-      if (dark(x, y)) n++;
-    }
-    return n / samples >= 0.97;
-  };
-  let top = 0;
-  while (top < frame.height - 1 && rowDark(top)) top++;
-  let bottom = frame.height - 1;
-  while (bottom > top && rowDark(bottom)) bottom--;
-  let left = 0;
-  while (left < frame.width - 1 && colDark(left)) left++;
-  let right = frame.width - 1;
-  while (right > left && colDark(right)) right--;
-  return { left, right, top, bottom };
+  }
+  return dark / total >= 0.95;
 }
 
 /**
@@ -432,14 +411,45 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
       for (const [name, output] of normalizedOutputs) {
         if (EXPECTED[name] === 'audio-only') continue; // video untouched by definition
         const dur = durationSec(output);
+        // Expected scale-fit rectangle from the SOURCE's display geometry — the detected
+        // content box must match it, or a stretched/unfitted output (box = full frame)
+        // would silently pass the bar checks below.
+        const src = probeLikeNative(path.join(FIXTURES_DIR, name));
+        const srcRot = src.rotation % 180 !== 0;
+        const dispW = srcRot ? src.height : src.width;
+        const dispH = srcRot ? src.width : src.height;
+        const fitScale = Math.min(CANVAS_WIDTH / dispW, CANVAS_HEIGHT / dispH);
+        const expW = dispW * fitScale;
+        const expH = dispH * fitScale;
         const fills: number[] = [];
         for (const frac of [0.25, 0.5, 0.8]) {
           const t = dur * frac;
           const frame = decodeFrame(output, t);
-          const box = contentBox(frame);
+          // Content box is COMPUTED from the source's expected scale-fit rect (centered on
+          // the canvas), never detected from pixels — and the padding outside it must be
+          // BLACK. A stretched/unfitted output puts content where the bars belong and fails
+          // here, and the burned-in bar checks below run against the true content rect.
+          const left = Math.round((frame.width - expW) / 2);
+          const top = Math.round((frame.height - expH) / 2);
+          const box: Box = {
+            left,
+            right: left + Math.round(expW) - 1,
+            top,
+            bottom: top + Math.round(expH) - 1,
+          };
+          const pad = 6; // stay clear of encode ringing at the content edge
+          const geo = `${name} @ ${frac}: rect=${Math.round(expW)}x${Math.round(expH)}`;
+          if (box.top > pad * 2) {
+            expect(`${geo} | top bar black: ${isBlackRegion(frame, 0, frame.width - 1, 0, box.top - pad)}`).toContain('| top bar black: true');
+            expect(`${geo} | bottom bar black: ${isBlackRegion(frame, 0, frame.width - 1, box.bottom + pad, frame.height - 1)}`).toContain('| bottom bar black: true');
+          }
+          if (box.left > pad * 2) {
+            expect(`${geo} | left bar black: ${isBlackRegion(frame, 0, box.left - pad, 0, frame.height - 1)}`).toContain('| left bar black: true');
+            expect(`${geo} | right bar black: ${isBlackRegion(frame, box.right + pad, frame.width - 1, 0, frame.height - 1)}`).toContain('| right bar black: true');
+          }
           // The full-content-height red playhead is the preferred timing reference (unique
           // color); the yellow bar must reach it along the CONTENT bottom (canvas bars
-          // excluded via contentBox). A mishandled rotation parks both on a side edge (no
+          // excluded via the computed fit rect). A mishandled rotation parks both on a side edge (no
           // red column, no bottom-row bar); broken timing drifts the reference. The 1–2 px
           // playhead can wash out entirely on heavy downscales (4K → 1080 canvas), so when
           // it's not found the bar's own fill edge is the timing reference instead.
