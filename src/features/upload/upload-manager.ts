@@ -5,6 +5,7 @@ import { getInfoAsync } from 'expo-file-system/legacy';
 import { deleteDestination, getDestinationIdByArtifactId } from '@/db/destinations';
 import {
   getDraftName,
+  getDraftUploadStatus,
   getResumableDrafts,
   getUploadArtifact,
   draftQuery,
@@ -266,6 +267,14 @@ class BackgroundUploadManager {
 
   /** Abort + server-cancel whatever's in flight for a draft, and drop it from the queue. */
   async cancel(draftId: string): Promise<void> {
+    // A COMPLETED upload has nothing to cancel — and resetting its row would strip the
+    // 'uploaded' marker that shields the finished server artifacts from the invalidation
+    // path (Home calls cancel() right before deleteDraft()). Only bail when nothing is
+    // actually live, so the reset keeps un-wedging genuinely stuck rows.
+    if (!this.sessions.has(draftId) && !this.controllers.has(draftId)) {
+      const status = await getDraftUploadStatus(draftId);
+      if (status === 'uploaded') return;
+    }
     this.controllers.get(draftId)?.abort();
     const session = this.sessions.get(draftId);
     // Target whatever's actually in flight — a sub-artifact may not be the session anchor —
@@ -509,6 +518,9 @@ class BackgroundUploadManager {
    * a missed DELETE surfaces as a visible retry failure (the documented un-wedge gap).
    */
   async invalidateForMutation(draftId: string): Promise<void> {
+    // Capture the in-flight resource BEFORE clearing the map — its URL may not have reached
+    // SQLite yet (the persistence callbacks are async), and it must still be cancelled.
+    const current = this.currentUpload.get(draftId)?.resourceUrl ?? null;
     this.controllers.get(draftId)?.abort();
     const session = this.sessions.get(draftId);
     this.sessions.delete(draftId);
@@ -517,10 +529,11 @@ class BackgroundUploadManager {
     this.currentUpload.delete(draftId);
     this.setLive(draftId, { status: 'idle' });
     // Capture the URLs before the caller wipes the rows.
-    const urls = await listUploadResumeUrls(draftId);
-    if (urls.length === 0) return;
+    const urls = new Set(await listUploadResumeUrls(draftId));
+    if (current) urls.add(current);
+    if (urls.size === 0) return;
     const token = session?.destination.token ?? (await getDraftToken(draftId));
-    void Promise.allSettled(urls.map((u) => this.transport.cancel(u, token)));
+    void Promise.allSettled([...urls].map((u) => this.transport.cancel(u, token)));
   }
 
   private async uploadOne(
@@ -614,6 +627,12 @@ class BackgroundUploadManager {
     if (out.exists) out.delete();
     const ok = await generateThumbnailFile(toFileUri(mergedPath), out.uri);
     return ok && out.exists ? out : null;
+  }
+
+  /** True while `session` still owns its draft's slot — persistence callbacks are gated on
+   * this so a run displaced by mutation invalidation can't write stale resume URLs back. */
+  private owns(draftId: string, session: UploadSession): boolean {
+    return this.sessions.get(draftId) === session;
   }
 
   private async uploadMerged(session: UploadSession, signal: AbortSignal): Promise<string> {
@@ -711,11 +730,17 @@ class BackgroundUploadManager {
       // Persist the video's resource URL the moment it's created (the merged anchor lives on the
       // draft row) so an app kill DURING the video transfer resumes via HEAD+PATCH rather than
       // re-creating the upload — which the server rejects as a duplicate reserve (409).
-      (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
+      // Ownership-gated: a displaced run must not resurrect resume state the invalidation wiped.
+      (url) => {
+        if (this.owns(draftId, session))
+          void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url });
+      },
     );
     // Re-persist after the video lands (same URL); the final 'uploaded' status write lives in
     // `runSession` (shared by both units), not here — see the comment there.
-    await setUploadProgress(draftId, { status: 'uploading', resourceUrl: result.resourceUrl });
+    if (this.owns(draftId, session)) {
+      await setUploadProgress(draftId, { status: 'uploading', resourceUrl: result.resourceUrl });
+    }
     return result.resourceUrl;
   }
 
@@ -774,8 +799,12 @@ class BackgroundUploadManager {
       signal,
       undefined,
       // The segment anchor is the ordering manifest; persist its URL on the draft row at creation
-      // so a kill mid-manifest resumes via HEAD instead of a 409-ing re-create.
-      (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
+      // so a kill mid-manifest resumes via HEAD instead of a 409-ing re-create. Ownership-gated
+      // (see uploadMerged).
+      (url) => {
+        if (this.owns(draftId, session))
+          void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url });
+      },
     );
 
     for (const [index, segment] of segments.entries()) {
@@ -826,17 +855,21 @@ class BackgroundUploadManager {
         signal,
         undefined,
         // Persist each clip's resource URL at creation so a kill mid-clip resumes via HEAD (409 on
-        // a re-create otherwise).
-        (url) =>
-          void upsertUploadArtifact(draftId, videoKey, {
-            artifactId: videoArtifactId,
-            resourceUrl: url,
-          }),
+        // a re-create otherwise). Ownership-gated (see uploadMerged).
+        (url) => {
+          if (this.owns(draftId, session))
+            void upsertUploadArtifact(draftId, videoKey, {
+              artifactId: videoArtifactId,
+              resourceUrl: url,
+            });
+        },
       );
-      await upsertUploadArtifact(draftId, videoKey, {
-        artifactId: videoArtifactId,
-        resourceUrl: videoResult.resourceUrl,
-      });
+      if (this.owns(draftId, session)) {
+        await upsertUploadArtifact(draftId, videoKey, {
+          artifactId: videoArtifactId,
+          resourceUrl: videoResult.resourceUrl,
+        });
+      }
 
       reportClip(Math.min(index + 2, total), index + 1);
     }

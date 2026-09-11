@@ -26,5 +26,13 @@ export async function conformToContract(uri: string): Promise<string | null> {
   const decision = decideImport(probe);
   if (decision.action === 'passthrough') return null;
   const result = await compress(uri, decision.options);
+  // Verify the conform actually landed on-contract: the pinned Android compress falls back to
+  // MPEG-4 / a capped long side when the H.264 hardware encoder fails to configure, and
+  // CompressResult carries no degraded flag. The output must satisfy the same policy this
+  // gate enforces — anything else fails closed rather than persisting/uploading it.
+  const verify = await probeVideo(result.outputPath);
+  if (!verify.hasVideo || decideImport(verify).action !== 'passthrough') {
+    throw new Error('Converted clip failed contract verification.');
+  }
   return result.outputPath;
 }

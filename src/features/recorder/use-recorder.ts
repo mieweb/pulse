@@ -3,7 +3,7 @@ import { launchImageLibraryAsync, UIImagePickerPreferredAssetRepresentationMode 
 import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
-import { isValidFile, compress, deleteFile, probeVideo } from 'react-native-video-trim';
+import { isValidFile, deleteFile } from 'react-native-video-trim';
 import {
   type CameraRef,
   CommonResolutions,
@@ -27,7 +27,7 @@ import {
   setSetting,
 } from '@/db/settings';
 import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
-import { decideImport } from '@/utils/import-normalization';
+import { conformToContract } from '@/utils/contract-gate';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
@@ -448,24 +448,17 @@ export function useRecorder(initialDraftId?: string) {
 
       // Normalize hostile imports before they enter the draft — and fail CLOSED: stored
       // segments are uploaded byte-for-byte by segment destinations, so a clip that can't be
-      // probed or conformed is rejected rather than persisted off-contract (portrait/H.264/AAC).
+      // probed or conformed (or whose conform fails output verification — e.g. an Android
+      // encoder fallback) is rejected rather than persisted off-contract.
       let sourceUri = picked.uri;
       let normalizedPath: string | null = null;
-      const probe = await probeVideo(picked.uri).catch(() => null);
-      if (!probe) {
-        Alert.alert('Import failed', 'Could not read that video’s format.');
+      try {
+        normalizedPath = await conformToContract(picked.uri);
+      } catch {
+        Alert.alert('Import failed', 'Could not convert that video for the timeline.');
         return;
       }
-      const decision = decideImport(probe);
-      if (decision.action === 'normalize') {
-        const normalized = await compress(picked.uri, decision.options).catch(() => null);
-        if (!normalized) {
-          Alert.alert('Import failed', 'Could not convert that video for the timeline.');
-          return;
-        }
-        normalizedPath = normalized.outputPath;
-        sourceUri = normalized.outputPath;
-      }
+      if (normalizedPath) sourceUri = normalizedPath;
 
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;

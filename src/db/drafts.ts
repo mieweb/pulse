@@ -96,6 +96,9 @@ export async function createDraft(): Promise<string> {
 }
 
 export async function addSegment(draftId: string, segment: NewSegment): Promise<void> {
+  // Adding a clip is a structural mutation like any other: a queued/running session snapshotted
+  // the old clip set (and manifest), so it must not finish and mark the grown draft uploaded.
+  await invalidateUploadResumeState(draftId);
   // Everything is read-then-write, so it all runs inside one transaction: the badge number
   // comes from the draft's monotonic `lastClipNumber` counter (bump + read back atomically;
   // never decremented, so deletes/renames can't cause reuse), and `order` is the next free
@@ -137,6 +140,15 @@ type UploadInvalidationHook = (draftId: string) => Promise<void>;
 let uploadInvalidationHook: UploadInvalidationHook | null = null;
 export function registerUploadInvalidationHook(hook: UploadInvalidationHook): void {
   uploadInvalidationHook = hook;
+}
+
+/** The draft's persisted upload status (null when unset / draft missing). */
+export async function getDraftUploadStatus(draftId: string): Promise<Draft['uploadStatus']> {
+  const [row] = await db
+    .select({ status: drafts.uploadStatus })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+  return row?.status ?? null;
 }
 
 /** Every persisted TUS resource URL for a draft (session anchor + sub-artifacts) — the set a
