@@ -76,6 +76,9 @@ export function useExport(segments: Segment[], options?: { auto?: boolean }) {
       try {
         const urls = files.map(absolutize);
         const result = await merge(urls, { outputExt: 'mp4', ...REELS_TARGET });
+        // Emergency encoder fallback missed the pin (Android broken-encoder devices) — the
+        // export is playable but off-contract; the vault's web-ready backstop owns the re-encode.
+        if (result.degraded) console.warn('[export] merged output is degraded (missed the reels pin)');
         if (current) {
           setState({ status: 'done', outputPath: result.outputPath, durationMs: result.duration });
         }
