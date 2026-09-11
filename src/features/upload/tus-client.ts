@@ -451,4 +451,13 @@ export async function cancelTusUpload(
     headers: { 'Tus-Resumable': TUS_VERSION, ...authHeaders(token) },
   });
   rejectRedirect(res);
+  // 404/410 = the resource is already gone, which is the cancel's goal state. Any other
+  // non-2xx means the reservation may still be live server-side — callers that plan to
+  // re-create under the same artifactId must not proceed as if it were freed (409).
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    throw new TusUploadError(`Cancel failed with HTTP ${res.status}`, {
+      retryable: res.status >= 500 || res.status === 429,
+      statusCode: res.status,
+    });
+  }
 }

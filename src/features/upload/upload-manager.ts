@@ -5,9 +5,12 @@ import { getInfoAsync } from 'expo-file-system/legacy';
 import { deleteDestination, getDestinationIdByArtifactId } from '@/db/destinations';
 import {
   getDraftName,
+  getDraftUploadStatus,
   getResumableDrafts,
   getUploadArtifact,
   draftQuery,
+  listUploadResumeUrls,
+  registerUploadInvalidationHook,
   segmentsForDraft,
   setCaptionsUploadStatus,
   setUploadMerged,
@@ -15,12 +18,13 @@ import {
   type UploadArtifactKey,
   upsertUploadArtifact,
 } from '@/db/drafts';
-import type { Draft } from '@/db/schema';
+import type { Draft, Segment } from '@/db/schema';
 import { getDraftToken } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
-import { absolutize, toFileUri } from '@/utils/file-store';
+import { conformToContract } from '@/utils/contract-gate';
+import { absolutize, toFileUri, uploadCopyRelPath } from '@/utils/file-store';
 import { effFile } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 
@@ -263,6 +267,14 @@ class BackgroundUploadManager {
 
   /** Abort + server-cancel whatever's in flight for a draft, and drop it from the queue. */
   async cancel(draftId: string): Promise<void> {
+    // A COMPLETED upload has nothing to cancel — and resetting its row would strip the
+    // 'uploaded' marker that shields the finished server artifacts from the invalidation
+    // path (Home calls cancel() right before deleteDraft()). Only bail when nothing is
+    // actually live, so the reset keeps un-wedging genuinely stuck rows.
+    if (!this.sessions.has(draftId) && !this.controllers.has(draftId)) {
+      const status = await getDraftUploadStatus(draftId);
+      if (status === 'uploaded') return;
+    }
     this.controllers.get(draftId)?.abort();
     const session = this.sessions.get(draftId);
     // Target whatever's actually in flight — a sub-artifact may not be the session anchor —
@@ -439,6 +451,11 @@ class BackgroundUploadManager {
         destination.uploadUnit === 'merged'
           ? await this.uploadMerged(session, controller.signal)
           : await this.uploadSegments(session, controller.signal);
+      // Displaced-run guard BEFORE any terminal write: if a mutation invalidation swapped this
+      // session out while the final transfer was resolving, resurrecting 'uploaded'/'done' here
+      // would stamp completion onto a draft whose content just changed — the invalidation owns
+      // all state from the moment it removed this run from the map.
+      if (this.sessions.get(draftId) !== session) return;
       // Persist completion here (not inside the per-unit methods) so BOTH branches settle the row
       // to 'uploaded'. Without this, a finished SEGMENT upload stayed 'uploading' and the resume
       // path re-drove it on every launch (and the home card showed a perpetual ring).
@@ -455,15 +472,23 @@ class BackgroundUploadManager {
       if (session.consumedDestinationId) {
         await deleteDestination(session.consumedDestinationId);
       }
-      this.sessions.delete(draftId);
-      this.failed.delete(draftId);
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        // Cancelled via cancel() — that path owns resetting status/live to idle; don't race it by
-        // overwriting with an error state or keeping the session around as "failed".
+      if (this.sessions.get(draftId) === session) {
         this.sessions.delete(draftId);
         this.failed.delete(draftId);
-      } else {
+      }
+    } catch (err) {
+      // Every branch below is identity-guarded: an invalidation/cancel may have cleared the
+      // maps AND a fresh session for the same draft may have been enqueued inside the abort
+      // window — a displaced run must neither tear down the fresh run's entries nor write
+      // its own terminal state over it.
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Cancelled via cancel()/invalidation — that path owns resetting status/live to idle;
+        // don't race it by overwriting with an error state or keeping the session as "failed".
+        if (this.sessions.get(draftId) === session) {
+          this.sessions.delete(draftId);
+          this.failed.delete(draftId);
+        }
+      } else if (this.sessions.get(draftId) === session) {
         const { reason, retryable } = describeError(err);
         this.setLive(draftId, {
           status: 'error',
@@ -477,9 +502,38 @@ class BackgroundUploadManager {
         this.failed.add(draftId);
       }
     } finally {
-      this.controllers.delete(draftId);
-      this.currentUpload.delete(draftId);
+      if (this.controllers.get(draftId) === controller) {
+        this.controllers.delete(draftId);
+        this.currentUpload.delete(draftId);
+      }
     }
+  }
+
+  /**
+   * A structural draft mutation is about to wipe this draft's upload resume state (see
+   * `registerUploadInvalidationHook`): abort anything in flight so a stale-snapshot session
+   * can't finish and write 'uploaded' onto the changed draft, and server-cancel every
+   * persisted TUS reservation so a fresh session's re-creates under the same artifactIds
+   * can't 409. The cancels are fire-and-forget — a UI edit must not block on the network;
+   * a missed DELETE surfaces as a visible retry failure (the documented un-wedge gap).
+   */
+  async invalidateForMutation(draftId: string): Promise<void> {
+    // Capture the in-flight resource BEFORE clearing the map — its URL may not have reached
+    // SQLite yet (the persistence callbacks are async), and it must still be cancelled.
+    const current = this.currentUpload.get(draftId)?.resourceUrl ?? null;
+    this.controllers.get(draftId)?.abort();
+    const session = this.sessions.get(draftId);
+    this.sessions.delete(draftId);
+    this.failed.delete(draftId);
+    this.controllers.delete(draftId);
+    this.currentUpload.delete(draftId);
+    this.setLive(draftId, { status: 'idle' });
+    // Capture the URLs before the caller wipes the rows.
+    const urls = new Set(await listUploadResumeUrls(draftId));
+    if (current) urls.add(current);
+    if (urls.size === 0) return;
+    const token = session?.destination.token ?? (await getDraftToken(draftId));
+    void Promise.allSettled([...urls].map((u) => this.transport.cancel(u, token)));
   }
 
   private async uploadOne(
@@ -573,6 +627,12 @@ class BackgroundUploadManager {
     if (out.exists) out.delete();
     const ok = await generateThumbnailFile(toFileUri(mergedPath), out.uri);
     return ok && out.exists ? out : null;
+  }
+
+  /** True while `session` still owns its draft's slot — persistence callbacks are gated on
+   * this so a run displaced by mutation invalidation can't write stale resume URLs back. */
+  private owns(draftId: string, session: UploadSession): boolean {
+    return this.sessions.get(draftId) === session;
   }
 
   private async uploadMerged(session: UploadSession, signal: AbortSignal): Promise<string> {
@@ -670,11 +730,17 @@ class BackgroundUploadManager {
       // Persist the video's resource URL the moment it's created (the merged anchor lives on the
       // draft row) so an app kill DURING the video transfer resumes via HEAD+PATCH rather than
       // re-creating the upload — which the server rejects as a duplicate reserve (409).
-      (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
+      // Ownership-gated: a displaced run must not resurrect resume state the invalidation wiped.
+      (url) => {
+        if (this.owns(draftId, session))
+          void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url });
+      },
     );
     // Re-persist after the video lands (same URL); the final 'uploaded' status write lives in
     // `runSession` (shared by both units), not here — see the comment there.
-    await setUploadProgress(draftId, { status: 'uploading', resourceUrl: result.resourceUrl });
+    if (this.owns(draftId, session)) {
+      await setUploadProgress(draftId, { status: 'uploading', resourceUrl: result.resourceUrl });
+    }
     return result.resourceUrl;
   }
 
@@ -733,18 +799,51 @@ class BackgroundUploadManager {
       signal,
       undefined,
       // The segment anchor is the ordering manifest; persist its URL on the draft row at creation
-      // so a kill mid-manifest resumes via HEAD instead of a 409-ing re-create.
-      (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
+      // so a kill mid-manifest resumes via HEAD instead of a 409-ing re-create. Ownership-gated
+      // (see uploadMerged).
+      (url) => {
+        if (this.owns(draftId, session))
+          void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url });
+      },
     );
 
     for (const [index, segment] of segments.entries()) {
       reportClip(index + 1, index);
-      const file = new File(absolutize(effFile(segment)));
-      const checksum = await md5Checksum(file);
-
       const videoKey = `${segment.id}:video` as const;
       const videoArtifactId = segmentArtifactIds.get(segment.id)!;
-      const existingVideo = await getUploadArtifact(draftId, videoKey);
+      let existingVideo = await getUploadArtifact(draftId, videoKey);
+      // Contract gate: segment uploads ship stored files byte-for-byte, and a file can predate
+      // the portrait/H.264/AAC contract (old drafts, legacy .pulse bundles, iOS codec-pin
+      // races). Off-contract clips are conformed into a stable path-keyed sibling so a
+      // kill-resume PATCHes identical bytes; conforming clips upload untouched. A clip that
+      // can't be probed/conformed fails the session (fail closed) via the normal error path.
+      // The callback runs when a FRESH conform happened, BEFORE the sibling lands on disk: any
+      // resource persisted at that point was created for the raw bytes — resuming it would
+      // PATCH conformed bytes onto the raw upload's offset/length (truncated or corrupt
+      // artifact). Cancel it server-side (TUS DELETE frees the reservation) and re-create under
+      // the SAME artifactId so the already-uploaded ordering manifest stays valid. The ordering
+      // is what makes this crash-safe: a kill before the sibling exists just re-runs the
+      // conform, so "sibling on disk" always implies "stale resource already invalidated".
+      const uploadRel = await this.ensureContractFile(segment, async () => {
+        // Ownership-gated like every persistence callback: a run displaced while the conform
+        // was awaiting must not cancel the replacement run's reservation or clear rows the
+        // invalidation already re-seeded.
+        if (!this.owns(draftId, session) || !existingVideo?.resourceUrl) return;
+        // Cancel failures PROPAGATE (unlike the user-cancel path): the sibling doesn't exist
+        // yet, so failing the session here just re-conforms and retries the cancel next run —
+        // whereas continuing past an unconfirmed DELETE would 409 the replacement create
+        // against the still-live reservation. "Already gone" (404/410) counts as success
+        // inside cancelTusUpload.
+        await this.transport.cancel(existingVideo.resourceUrl, destination.token);
+        if (!this.owns(draftId, session)) return;
+        await upsertUploadArtifact(draftId, videoKey, {
+          artifactId: videoArtifactId,
+          resourceUrl: null,
+        });
+        existingVideo = { artifactId: videoArtifactId, resourceUrl: null };
+      });
+      const file = new File(absolutize(uploadRel));
+      const checksum = await md5Checksum(file);
       const videoResult = await this.uploadOne(
         draftId,
         destination,
@@ -760,24 +859,55 @@ class BackgroundUploadManager {
         signal,
         undefined,
         // Persist each clip's resource URL at creation so a kill mid-clip resumes via HEAD (409 on
-        // a re-create otherwise).
-        (url) =>
-          void upsertUploadArtifact(draftId, videoKey, {
-            artifactId: videoArtifactId,
-            resourceUrl: url,
-          }),
+        // a re-create otherwise). Ownership-gated (see uploadMerged).
+        (url) => {
+          if (this.owns(draftId, session))
+            void upsertUploadArtifact(draftId, videoKey, {
+              artifactId: videoArtifactId,
+              resourceUrl: url,
+            });
+        },
       );
-      await upsertUploadArtifact(draftId, videoKey, {
-        artifactId: videoArtifactId,
-        resourceUrl: videoResult.resourceUrl,
-      });
+      if (this.owns(draftId, session)) {
+        await upsertUploadArtifact(draftId, videoKey, {
+          artifactId: videoArtifactId,
+          resourceUrl: videoResult.resourceUrl,
+        });
+      }
 
       reportClip(Math.min(index + 2, total), index + 1);
     }
 
     return result.resourceUrl;
   }
+
+  /**
+   * The segment file to upload: the stored file itself when it conforms to the reels contract,
+   * else a conformed copy at a stable sibling path (any extension → `….upload.mp4`, reused on
+   * resume — path-derived like every other derived artifact, so an edited revision gets its
+   * own copy, `deleteSegmentFile` sweeps the copy with its source, and draft deletion catches
+   * the rest). `onFreshConform` fires between a successful conform and the sibling's move into
+   * place — the crash-safe window for invalidating upload state tied to the raw bytes (a kill
+   * before the move leaves no sibling, so the next run simply conforms again).
+   */
+  private async ensureContractFile(
+    segment: Segment,
+    onFreshConform: () => Promise<void>,
+  ): Promise<string> {
+    const sourceRel = effFile(segment);
+    const conformedRel = uploadCopyRelPath(sourceRel);
+    if (new File(absolutize(conformedRel)).exists) return conformedRel;
+    const out = await conformToContract(absolutize(sourceRel));
+    if (out == null) return sourceRel;
+    await onFreshConform();
+    await new File(toFileUri(out)).move(new File(absolutize(conformedRel)));
+    return conformedRel;
+  }
 }
 
 /** The app-wide singleton. Imported by `upload-deep-link-provider` so it registers for the app's lifetime. */
 export const uploads = new BackgroundUploadManager();
+
+// Structural draft mutations (delete/edit/reset/reorder in db/drafts) invalidate upload resume
+// state through this hook — registered here so the db layer never imports the upload feature.
+registerUploadInvalidationHook((draftId) => uploads.invalidateForMutation(draftId));

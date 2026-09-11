@@ -107,10 +107,26 @@ export async function importTrimmedFile(
   return editedSegmentRelPath(draftId, segmentId, rev);
 }
 
+/**
+ * The upload contract gate's conformed copy of a clip file (final extension — any case,
+ * `.mov`/`.m4v` legacy included — replaced with `.upload.mp4`), written by
+ * `ensureContractFile` next to its source so kill-resume reuses identical bytes.
+ * Path-derived from the source (like edited thumbs), so it follows revisions automatically.
+ */
+export function uploadCopyRelPath(relPath: string): string {
+  return relPath.replace(/\.[^./]+$/, '') + '.upload.mp4';
+}
+
 /** Delete a clip file. Caller must ensure no other segment references it (splits can share a file). */
 export function deleteSegmentFile(relPath: string): void {
   const file = new File(absolutize(relPath));
   if (file.exists) file.delete();
+  // Sweep the upload gate's conformed sibling with its source — every lifecycle op
+  // (delete/re-edit/reset) routes through here, so the copy can never outlive the clip.
+  if (!relPath.endsWith('.upload.mp4')) {
+    const sibling = new File(absolutize(uploadCopyRelPath(relPath)));
+    if (sibling.exists) sibling.delete();
+  }
 }
 
 export function deleteDraftDir(draftId: string): void {

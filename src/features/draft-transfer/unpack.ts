@@ -2,11 +2,13 @@ import { File } from 'expo-file-system';
 import { strFromU8, unzipSync } from 'fflate';
 
 import { insertImportedDraft } from '@/db/drafts';
+import { conformToContract } from '@/utils/contract-gate';
 import {
   absolutize,
   deleteDraftDir,
   editedThumbRelPath,
   thumbRelPath,
+  toFileUri,
   writeEditedBytes,
   writeOriginalBytes,
 } from '@/utils/file-store';
@@ -86,6 +88,30 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         if (editedBytes) {
           editedFilename = writeEditedBytes(draftId, segmentId, editedBytes);
           editedDurationMs = seg.editedDurationMs ?? null;
+        }
+
+        // Enforce the portrait reels contract on foreign media: bundles from older installs
+        // can carry off-canvas / non-H.264 clips that segment uploads would ship byte-for-byte.
+        // Conform in place (before the thumbnail, so the cover reflects the stored pixels);
+        // a clip that can't be conformed is dropped like one missing from the archive.
+        try {
+          for (const rel of [originalFilename, editedFilename]) {
+            if (!rel) continue;
+            const conformed = await conformToContract(absolutize(rel));
+            if (conformed) {
+              const dest = new File(absolutize(rel));
+              dest.delete();
+              await new File(toFileUri(conformed)).move(dest);
+            }
+          }
+        } catch {
+          for (const rel of [originalFilename, editedFilename]) {
+            if (!rel) continue;
+            try {
+              new File(absolutize(rel)).delete();
+            } catch {}
+          }
+          continue;
         }
 
         // Thumbnails aren't shipped (deterministic derivatives) — regenerate the cover from the
