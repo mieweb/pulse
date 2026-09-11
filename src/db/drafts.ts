@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -127,19 +127,53 @@ export async function addSegment(draftId: string, segment: NewSegment): Promise<
 }
 
 /**
+ * Runtime hook the upload manager registers at startup (inverted dependency — this layer
+ * stays import-clean): invoked BEFORE a structural mutation wipes the SQLite resume state, so
+ * the manager can abort an in-flight session (a stale-snapshot run must not finish and write
+ * 'uploaded' onto the changed draft) and server-cancel persisted TUS reservations (a later
+ * retry re-creates under the same artifactIds — live reservations would 409).
+ */
+type UploadInvalidationHook = (draftId: string) => Promise<void>;
+let uploadInvalidationHook: UploadInvalidationHook | null = null;
+export function registerUploadInvalidationHook(hook: UploadInvalidationHook): void {
+  uploadInvalidationHook = hook;
+}
+
+/** Every persisted TUS resource URL for a draft (session anchor + sub-artifacts) — the set a
+ * mutation invalidation must server-cancel before the rows are wiped. */
+export async function listUploadResumeUrls(draftId: string): Promise<string[]> {
+  const [row] = await db
+    .select({ url: drafts.uploadResourceUrl })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+  const arts = await db
+    .select({ url: uploadArtifacts.resourceUrl })
+    .from(uploadArtifacts)
+    .where(eq(uploadArtifacts.draftId, draftId));
+  return [row?.url, ...arts.map((a) => a.url)].filter((u): u is string => !!u);
+}
+
+/**
  * A structural mutation (delete / destructive edit / edit reset / reorder) invalidates any
  * partial upload of this draft — same principle as the merged-transcript invalidation: the
- * bytes or ordering a resumed session would PATCH/reference no longer exist. Wipe the
- * sub-artifact resume state and reset progress so the next upload starts a fresh session
- * (the destination pairing itself survives). A COMPLETED upload's `uploaded` status is
- * left alone — it describes the artifact that was sent, not the draft's current state.
+ * bytes or ordering a resumed session would PATCH/reference no longer exist. The hook aborts
+ * anything in flight and cancels server reservations first (while the URLs are still
+ * readable), then the resume state is wiped so the next upload starts a fresh session (the
+ * destination pairing itself survives). A COMPLETED upload's `uploaded` status is left
+ * alone — it describes the artifact that was sent, not the draft's current state.
  */
 async function invalidateUploadResumeState(draftId: string): Promise<void> {
+  if (uploadInvalidationHook) await uploadInvalidationHook(draftId);
   await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
   await db
     .update(drafts)
     .set({ uploadResourceUrl: null, uploadStatus: null, uploadMergedPath: null, uploadMergedDurationMs: null })
-    .where(and(eq(drafts.id, draftId), ne(drafts.uploadStatus, 'uploaded')));
+    .where(
+      and(
+        eq(drafts.id, draftId),
+        or(ne(drafts.uploadStatus, 'uploaded'), isNull(drafts.uploadStatus)),
+      ),
+    );
 }
 
 /** Delete a segment and its clip file, unless a sibling segment still references the file. */

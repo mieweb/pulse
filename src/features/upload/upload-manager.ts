@@ -8,6 +8,8 @@ import {
   getResumableDrafts,
   getUploadArtifact,
   draftQuery,
+  listUploadResumeUrls,
+  registerUploadInvalidationHook,
   segmentsForDraft,
   setCaptionsUploadStatus,
   setUploadMerged,
@@ -483,6 +485,29 @@ class BackgroundUploadManager {
     }
   }
 
+  /**
+   * A structural draft mutation is about to wipe this draft's upload resume state (see
+   * `registerUploadInvalidationHook`): abort anything in flight so a stale-snapshot session
+   * can't finish and write 'uploaded' onto the changed draft, and server-cancel every
+   * persisted TUS reservation so a fresh session's re-creates under the same artifactIds
+   * can't 409. The cancels are fire-and-forget — a UI edit must not block on the network;
+   * a missed DELETE surfaces as a visible retry failure (the documented un-wedge gap).
+   */
+  async invalidateForMutation(draftId: string): Promise<void> {
+    this.controllers.get(draftId)?.abort();
+    const session = this.sessions.get(draftId);
+    this.sessions.delete(draftId);
+    this.failed.delete(draftId);
+    this.controllers.delete(draftId);
+    this.currentUpload.delete(draftId);
+    this.setLive(draftId, { status: 'idle' });
+    // Capture the URLs before the caller wipes the rows.
+    const urls = await listUploadResumeUrls(draftId);
+    if (urls.length === 0) return;
+    const token = session?.destination.token ?? (await getDraftToken(draftId));
+    void Promise.allSettled(urls.map((u) => this.transport.cancel(u, token)));
+  }
+
   private async uploadOne(
     draftId: string,
     destination: Destination,
@@ -830,3 +855,7 @@ class BackgroundUploadManager {
 
 /** The app-wide singleton. Imported by `upload-deep-link-provider` so it registers for the app's lifetime. */
 export const uploads = new BackgroundUploadManager();
+
+// Structural draft mutations (delete/edit/reset/reorder in db/drafts) invalidate upload resume
+// state through this hook — registered here so the db layer never imports the upload feature.
+registerUploadInvalidationHook((draftId) => uploads.invalidateForMutation(draftId));
