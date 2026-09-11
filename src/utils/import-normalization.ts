@@ -16,8 +16,10 @@ import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim'
  *   the merge engine's zero-re-encode fast path instead of a selective conform.
  * - 10-bit / HDR (HLG, PQ) — hardware H.264 encoders reject 10-bit input; SDR displays
  *   need the tone cast anyway once clips are mixed with SDR recordings
- * - display long edge > 1920 — 4K imports inflate every downstream artifact (merge output,
- *   upload) for no visible gain in a 1080p pipeline
+ * - display geometry off the app's fixed portrait canvas (1080×1920) — the export and
+ *   every segment UPLOAD are portrait reels by contract, so landscape/odd-size imports
+ *   are scale-fit + letterboxed onto the canvas ONCE at import (WYSIWYG in the editor,
+ *   portrait segments on segmented destinations, format-uniform import-only merges)
  * - frame rate > NORMALIZE_MAX_FPS — 60/120 fps sources (slo-mo, screen recordings) double+
  *   the merge re-encode cost; 29.97 NTSC passes untouched
  * - bitrate far above the recorder's own — e.g. raw 4K masters; bounded to the recorder rate
@@ -25,12 +27,14 @@ import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim'
  *   the video track untouched when the video is otherwise fine
  *
  * Everything else passes through byte-for-byte (Photos "Passthrough" export), keeping
- * imports instant and lossless. Small mismatches (odd resolutions, rotation, mono audio)
- * are the merge engine's selective-conform job, not the importer's.
+ * imports instant and lossless. Remaining small mismatches (coded-form differences, mono
+ * audio) are the merge engine's selective-conform job, not the importer's.
  */
 
-/** Long-edge cap matching the recorder's 1920x1080 output. */
-export const NORMALIZE_MAX_LONG_EDGE = 1920;
+/** The app's fixed portrait canvas — every stored segment displays exactly this
+ * (reels contract; mirrors REELS_TARGET in use-export.ts). */
+export const CANVAS_WIDTH = 1080;
+export const CANVAS_HEIGHT = 1920;
 /** Frame-rate ceiling: passes 29.97/30 with margin, catches 40+ (VFR averages, 60, 120). */
 export const NORMALIZE_MAX_FPS = 33;
 /** Re-encode target: the recorder's own frame rate. */
@@ -95,10 +99,9 @@ export function decideImport(probe: VideoProbeResult): ImportDecision {
   }
 
   const display = displaySize(probe);
-  const longEdge = Math.max(display.width, display.height);
-  const needsDownscale = longEdge > NORMALIZE_MAX_LONG_EDGE;
-  if (needsDownscale) {
-    reasons.push(`${display.width}x${display.height} exceeds ${NORMALIZE_MAX_LONG_EDGE}`);
+  const offCanvas = display.width !== CANVAS_WIDTH || display.height !== CANVAS_HEIGHT;
+  if (offCanvas) {
+    reasons.push(`${display.width}x${display.height} off the ${CANVAS_WIDTH}x${CANVAS_HEIGHT} canvas`);
   }
 
   const fps = effectiveFps(probe);
@@ -136,16 +139,13 @@ export function decideImport(probe: VideoProbeResult): ImportDecision {
     codec: 'h264',
     bitrate: NORMALIZE_TARGET_BITRATE,
     frameRate: NORMALIZE_TARGET_FPS,
+    // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to
+    // exactly CANVAS_WxH (post-autorotation). On-canvas sources scale as a no-op, so this
+    // costs nothing while guaranteeing every normalized import lands at 1080×1920.
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+    letterbox: true,
   };
-  if (needsDownscale) {
-    // FFmpeg auto-rotates before filters, so scale against display orientation:
-    // cap the long edge, let the short edge follow the aspect ratio (-2).
-    if (display.width >= display.height) {
-      options.width = NORMALIZE_MAX_LONG_EDGE;
-    } else {
-      options.height = NORMALIZE_MAX_LONG_EDGE;
-    }
-  }
 
   return { action: 'normalize', options, reasons };
 }

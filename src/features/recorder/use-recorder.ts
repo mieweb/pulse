@@ -403,8 +403,9 @@ export function useRecorder(initialDraftId?: string) {
 
   // Pick an existing device video (system picker — no permission prompt) and add it as a
   // segment, following the same persist path as a recording. Merge-friendly imports keep
-  // their original bytes (Passthrough); hostile ones (HDR/10-bit, >1080p, >30fps, exotic
-  // codecs, non-AAC audio) are normalized to the recorder's bounds first — the policy
+  // their original bytes (Passthrough); hostile ones (HDR/10-bit, off the portrait canvas,
+  // >30fps, exotic codecs, non-AAC audio) are normalized to the recorder's bounds — and
+  // baked onto the 1080×1920 canvas — first; the policy
   // lives in decideImport (§ imports). Format-mismatched-but-benign clips remain the
   // merge engine's selective path.
   async function importClip() {

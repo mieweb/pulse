@@ -3,9 +3,19 @@ import VideoTrim, { merge, type Spec } from 'react-native-video-trim';
 
 import type { Segment } from '@/db/schema';
 import { absolutize } from '@/utils/file-store';
-import { effFile, effMs, segmentSignature } from '@/utils/segment-window';
+import { effFile, segmentSignature } from '@/utils/segment-window';
 
 const Native = VideoTrim as Spec;
+
+// The app's export contract: reels-style portrait 1080×1920 H.264 30fps, on every platform.
+// Pinned so the canvas is never inferred from the clips — recorder clips and normalized imports
+// already match (lossless fast path); anything else (e.g. a landscape library import) conforms.
+const REELS_TARGET = {
+  targetWidth: 1080,
+  targetHeight: 1920,
+  targetFps: 30,
+  targetCodec: 'h264',
+} as const;
 
 export type ExportState =
   | { status: 'idle' }
@@ -15,9 +25,11 @@ export type ExportState =
 
 /**
  * Headless concat of a draft's clips into a single mp4 via react-native-video-trim's `merge()`
- * (passthrough join for uniform clips, selective outlier-conform for mixed, re-encode fallback).
- * Joins each clip's EFFECTIVE file (edited ?? original) in timeline order. A single-clip draft
- * skips the merge and exports that file directly (nothing to concatenate). The job re-runs only
+ * (passthrough join for uniform pin-matching clips, selective outlier-conform for mixed,
+ * re-encode fallback), always onto the pinned reels canvas (portrait 1080×1920 h264 — see
+ * REELS_TARGET). Joins each clip's EFFECTIVE file (edited ?? original) in timeline order.
+ * Single-clip drafts go through the engine too: a lone conforming clip is a near-free passthrough
+ * remux, a lone landscape import gets conformed to portrait like any outlier. The job re-runs only
  * when the clip set actually changes (keyed on a file signature, not array identity) or on `run`.
  *
  * `options.auto` (default `true`) controls whether the merge starts on mount. Pass `false` for a
@@ -52,7 +64,7 @@ export function useExport(segments: Segment[], options?: { auto?: boolean }) {
     let current = true;
 
     // Native emits normalized merge progress in [0,1]; reflect it into the loader. Subscribed for
-    // the lifetime of this run and torn down in cleanup (single-clip exports never emit).
+    // the lifetime of this run and torn down in cleanup.
     const sub = Native.onMergeProgress(({ progress }) => {
       if (current) setState({ status: 'merging', progress });
     });
@@ -63,10 +75,7 @@ export function useExport(segments: Segment[], options?: { auto?: boolean }) {
       if (current) setState({ status: 'merging', progress: 0 });
       try {
         const urls = files.map(absolutize);
-        const result =
-          urls.length === 1
-            ? { outputPath: urls[0], duration: effMs(segments[0]) }
-            : await merge(urls, { outputExt: 'mp4' });
+        const result = await merge(urls, { outputExt: 'mp4', ...REELS_TARGET });
         if (current) {
           setState({ status: 'done', outputPath: result.outputPath, durationMs: result.duration });
         }

@@ -29,7 +29,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim';
 
-import { decideImport, NORMALIZE_MAX_LONG_EDGE } from './import-normalization';
+import { CANVAS_HEIGHT, CANVAS_WIDTH, decideImport } from './import-normalization';
 
 const FIXTURES_DIR = process.env.PULSE_FIXTURES_DIR
   ? path.resolve(process.env.PULSE_FIXTURES_DIR)
@@ -141,14 +141,26 @@ function compressArgs(input: string, options: Partial<CompressOptions>, output: 
   const frameRate = options.frameRate ?? -1;
   const codec = options.codec ?? 'h264';
   const copyVideo = options.copyVideo ?? false;
+  const letterbox = options.letterbox ?? false;
 
   const cmds: string[] = ['-i', input];
   if (copyVideo) {
     cmds.push('-c:v', 'copy');
   } else {
     const vf: string[] = [];
-    if (width > 0 && height > 0) vf.push(`scale=${width}:${height}`);
-    else if (width > 0) vf.push(`scale=${width}:-2`);
+    if (width > 0 && height > 0) {
+      if (letterbox) {
+        const w = width & ~1;
+        const h = height & ~1;
+        vf.push(
+          `scale=${w}:${h}:force_original_aspect_ratio=decrease`,
+          `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2`,
+          'setsar=1',
+        );
+      } else {
+        vf.push(`scale=${width}:${height}`);
+      }
+    } else if (width > 0) vf.push(`scale=${width}:-2`);
     else if (height > 0) vf.push(`scale=-2:${height}`);
     vf.push('format=yuv420p');
     cmds.push('-vf', vf.join(','));
@@ -188,16 +200,60 @@ function decodeFrame(file: string, t: number): { data: Buffer; width: number; he
   return { data, width, height };
 }
 
+type Frame = { data: Buffer; width: number; height: number };
+type Box = { left: number; right: number; top: number; bottom: number }; // inclusive
+
 /**
- * Fraction of the frame width the yellow progress bar has filled. The bar is a SOLID
- * yellow band at the display bottom (make-import-fixtures.sh: 18 px at source scale,
+ * Bounding box of non-black content. The canvas bake letterboxes/pillarboxes with pure
+ * black bars, so the first/last non-black rows/columns recover the content rect (the
+ * whole frame when there are no bars) — the burned-in bar/playhead live in CONTENT
+ * coordinates, not canvas coordinates.
+ */
+function contentBox(frame: Frame): Box {
+  const dark = (x: number, y: number) => {
+    const i = (y * frame.width + x) * 3;
+    return frame.data[i] < 28 && frame.data[i + 1] < 28 && frame.data[i + 2] < 28;
+  };
+  const samples = 32;
+  const rowDark = (y: number) => {
+    let n = 0;
+    for (let s = 0; s < samples; s++) {
+      const x = Math.round(((s + 0.5) / samples) * (frame.width - 1));
+      if (dark(x, y)) n++;
+    }
+    return n / samples >= 0.97;
+  };
+  const colDark = (x: number) => {
+    let n = 0;
+    for (let s = 0; s < samples; s++) {
+      const y = Math.round(((s + 0.5) / samples) * (frame.height - 1));
+      if (dark(x, y)) n++;
+    }
+    return n / samples >= 0.97;
+  };
+  let top = 0;
+  while (top < frame.height - 1 && rowDark(top)) top++;
+  let bottom = frame.height - 1;
+  while (bottom > top && rowDark(bottom)) bottom--;
+  let left = 0;
+  while (left < frame.width - 1 && colDark(left)) left++;
+  let right = frame.width - 1;
+  while (right > left && colDark(right)) right--;
+  return { left, right, top, bottom };
+}
+
+/**
+ * Fraction of the CONTENT width the yellow progress bar has filled. The bar is a SOLID
+ * yellow band at the content bottom (make-import-fixtures.sh: 18 px at source scale,
  * filling left→right as t/duration, with a full-height red playhead at the fill edge).
  * Content right of the fill can be yellow-ish too (grass!), so the fill is measured as
- * the CONTIGUOUS run of yellow columns from x=0 — content patches don't start at the
- * left edge, and a mishandled rotation parks the bar on a side edge (run length ~0).
+ * the CONTIGUOUS run of yellow columns from the content's left edge — content patches
+ * don't start there, and a mishandled rotation parks the bar on a side edge (run ~0).
  */
-function progressBarFill(frame: { data: Buffer; width: number; height: number }): number {
-  const rows = Math.max(4, Math.round(frame.height * 0.008));
+function progressBarFill(frame: Frame, box: Box): number {
+  const boxH = box.bottom - box.top + 1;
+  const boxW = box.right - box.left + 1;
+  const rows = Math.max(4, Math.round(boxH * 0.008));
   const isYellow = (x: number, y: number) => {
     const i = (y * frame.width + x) * 3;
     return frame.data[i] > 190 && frame.data[i + 1] > 170 && frame.data[i + 2] < 120;
@@ -208,17 +264,17 @@ function progressBarFill(frame: { data: Buffer; width: number; height: number })
   };
   const colYellow = (x: number) => {
     let n = 0;
-    for (let y = frame.height - rows; y < frame.height; y++) if (isYellow(x, y)) n++;
+    for (let y = box.bottom - rows + 1; y <= box.bottom; y++) if (isYellow(x, y)) n++;
     return n / rows >= 0.6;
   };
   const colRed = (x: number) => {
     let n = 0;
-    for (let y = frame.height - rows; y < frame.height; y++) if (isRed(x, y)) n++;
+    for (let y = box.bottom - rows + 1; y <= box.bottom; y++) if (isRed(x, y)) n++;
     return n / rows >= 0.6;
   };
-  let x = 0;
-  let slack = Math.max(6, Math.round(frame.width * 0.008)); // encode ringing + playhead width
-  while (x < frame.width) {
+  let x = box.left;
+  let slack = Math.max(6, Math.round(boxW * 0.008)); // encode ringing + playhead width
+  while (x <= box.right) {
     if (colYellow(x) || colRed(x)) {
       x++;
       continue;
@@ -230,20 +286,21 @@ function progressBarFill(frame: { data: Buffer; width: number; height: number })
     }
     break;
   }
-  return x / frame.width;
+  return (x - box.left) / boxW;
 }
 
 /** True if the full-height red playhead column exists near x = fill edge. */
-function findPlayheadFill(frame: { data: Buffer; width: number; height: number }): number {
-  // The playhead is the only full-height red element: scan every column and return
+function findPlayheadFill(frame: Frame, box: Box): number {
+  // The playhead is the only full-content-height red element: scan every column and return
   // the fill fraction at the most red-saturated column, or -1 if none qualifies.
   const samples = 24;
+  const boxW = box.right - box.left + 1;
   let bestX = -1;
   let bestRows = 0;
-  for (let x = 0; x < frame.width; x++) {
+  for (let x = box.left; x <= box.right; x++) {
     let redRows = 0;
     for (let s = 0; s < samples; s++) {
-      const y = Math.round(((s + 0.5) / samples) * (frame.height - 1));
+      const y = box.top + Math.round(((s + 0.5) / samples) * (box.bottom - box.top));
       const i = (y * frame.width + x) * 3;
       if (frame.data[i] > 150 && frame.data[i + 1] < 110 && frame.data[i + 2] < 110) redRows++;
     }
@@ -252,7 +309,7 @@ function findPlayheadFill(frame: { data: Buffer; width: number; height: number }
       bestX = x;
     }
   }
-  return bestRows >= samples * 0.6 ? (bestX + 1) / frame.width : -1;
+  return bestRows >= samples * 0.6 ? (bestX + 1 - box.left) / boxW : -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +344,9 @@ function durationSec(file: string): number {
 // The corpus and its expected decisions (mirrors import-normalization.test.ts)
 // ---------------------------------------------------------------------------
 
+// Under the portrait-canvas policy only imports already displaying exactly 1080×1920
+// pass through; everything else is baked onto the canvas (letterboxed re-encode). The
+// corpus has no on-canvas non-AAC fixture, so audio-only is covered by the unit tests.
 const EXPECTED: Record<string, 'passthrough' | 'audio-only' | 're-encode'> = {
   'hdr-hlg-portrait-1080p-30-hevc10.mp4': 're-encode',
   'hdr-pq-landscape-4k-30-hevc10.mp4': 're-encode',
@@ -295,10 +355,10 @@ const EXPECTED: Record<string, 'passthrough' | 'audio-only' | 're-encode'> = {
   'slomo-portrait-1080p-120-h264.mp4': 're-encode',
   'screenrec-portrait-886x1920-60-h264.mp4': 're-encode',
   'vfr-portrait-1080p-h264.mp4': 're-encode',
-  'opus-landscape-1080p-30-h264.mp4': 'audio-only',
-  'whatsapp-848x464-30-h264-baseline.mp4': 'passthrough',
-  'ntsc-landscape-1080p-2997-h264.mp4': 'passthrough',
-  'square-720x720-30-h264.mp4': 'passthrough',
+  'opus-landscape-1080p-30-h264.mp4': 're-encode',
+  'whatsapp-848x464-30-h264-baseline.mp4': 're-encode',
+  'ntsc-landscape-1080p-2997-h264.mp4': 're-encode',
+  'square-720x720-30-h264.mp4': 're-encode',
   'mono44k-portrait-1080p-30-h264.mp4': 'passthrough',
 };
 
@@ -354,7 +414,10 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
         // behavior as the trim re-encode path. Players tone-map on display; tracked
         // as a fork follow-up (tone-cast to BT.709 on the compress re-encode path).
         expect(out.pixelFormat).toBe('yuv420p'); // 8-bit
-        expect(Math.max(out.width, out.height)).toBeLessThanOrEqual(NORMALIZE_MAX_LONG_EDGE);
+        // Every full re-encode is baked onto the exact portrait canvas, coded upright.
+        expect(out.width).toBe(CANVAS_WIDTH);
+        expect(out.height).toBe(CANVAS_HEIGHT);
+        expect(out.rotation).toBe(0);
         expect(out.nominalFps).toBeLessThanOrEqual(30.5);
         // -b:v is a target, not a hard cap; allow encoder overshoot headroom.
         expect(out.bitrate).toBeLessThanOrEqual(8_000_000);
@@ -373,12 +436,13 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
         for (const frac of [0.25, 0.5, 0.8]) {
           const t = dur * frac;
           const frame = decodeFrame(output, t);
-          // The full-height red playhead is the timing reference (unique color); the
-          // yellow bar must reach it along the display BOTTOM. A mishandled rotation
-          // parks both on a side edge (no full-height red column, no bottom-row bar);
-          // broken timing (e.g. bad PTS through fps resampling) drifts the playhead.
-          const playhead = findPlayheadFill(frame);
-          const fill = progressBarFill(frame);
+          const box = contentBox(frame);
+          // The full-content-height red playhead is the timing reference (unique color);
+          // the yellow bar must reach it along the CONTENT bottom (canvas bars excluded
+          // via contentBox). A mishandled rotation parks both on a side edge (no red
+          // column, no bottom-row bar); broken timing drifts the playhead.
+          const playhead = findPlayheadFill(frame, box);
+          const fill = progressBarFill(frame, box);
           const ctx = `${name} @ ${frac}: playhead=${playhead.toFixed(3)} fill=${fill.toFixed(3)}`;
           expect(`${ctx} | playhead found: ${playhead > 0}`).toContain('| playhead found: true');
           expect(`${ctx} | timing: ${Math.abs(playhead - frac) < 0.1}`).toContain('| timing: true');
