@@ -15,11 +15,12 @@ import {
   type UploadArtifactKey,
   upsertUploadArtifact,
 } from '@/db/drafts';
-import type { Draft } from '@/db/schema';
+import type { Draft, Segment } from '@/db/schema';
 import { getDraftToken } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
+import { conformToContract } from '@/utils/contract-gate';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { effFile } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
@@ -739,7 +740,13 @@ class BackgroundUploadManager {
 
     for (const [index, segment] of segments.entries()) {
       reportClip(index + 1, index);
-      const file = new File(absolutize(effFile(segment)));
+      // Contract gate: segment uploads ship stored files byte-for-byte, and a file can predate
+      // the portrait/H.264/AAC contract (old drafts, legacy .pulse bundles, iOS codec-pin
+      // races). Off-contract clips are conformed into a stable path-keyed sibling so a
+      // kill-resume PATCHes identical bytes; conforming clips upload untouched. A clip that
+      // can't be probed/conformed fails the session (fail closed) via the normal error path.
+      const uploadRel = await this.ensureContractFile(segment);
+      const file = new File(absolutize(uploadRel));
       const checksum = await md5Checksum(file);
 
       const videoKey = `${segment.id}:video` as const;
@@ -776,6 +783,22 @@ class BackgroundUploadManager {
     }
 
     return result.resourceUrl;
+  }
+
+  /**
+   * The segment file to upload: the stored file itself when it conforms to the reels contract,
+   * else a conformed copy at a stable sibling path (`….mp4` → `….upload.mp4`, reused on
+   * resume — path-derived like every other derived artifact, so an edited revision gets its
+   * own copy and draft deletion sweeps them with the dir).
+   */
+  private async ensureContractFile(segment: Segment): Promise<string> {
+    const sourceRel = effFile(segment);
+    const conformedRel = sourceRel.replace(/\.mp4$/, '.upload.mp4');
+    if (new File(absolutize(conformedRel)).exists) return conformedRel;
+    const out = await conformToContract(absolutize(sourceRel));
+    if (out == null) return sourceRel;
+    await new File(toFileUri(out)).move(new File(absolutize(conformedRel)));
+    return conformedRel;
   }
 }
 
