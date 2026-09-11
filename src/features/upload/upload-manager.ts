@@ -442,6 +442,11 @@ class BackgroundUploadManager {
         destination.uploadUnit === 'merged'
           ? await this.uploadMerged(session, controller.signal)
           : await this.uploadSegments(session, controller.signal);
+      // Displaced-run guard BEFORE any terminal write: if a mutation invalidation swapped this
+      // session out while the final transfer was resolving, resurrecting 'uploaded'/'done' here
+      // would stamp completion onto a draft whose content just changed — the invalidation owns
+      // all state from the moment it removed this run from the map.
+      if (this.sessions.get(draftId) !== session) return;
       // Persist completion here (not inside the per-unit methods) so BOTH branches settle the row
       // to 'uploaded'. Without this, a finished SEGMENT upload stayed 'uploading' and the resume
       // path re-drove it on every launch (and the home card showed a perpetual ring).

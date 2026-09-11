@@ -140,12 +140,15 @@ export function registerUploadInvalidationHook(hook: UploadInvalidationHook): vo
 }
 
 /** Every persisted TUS resource URL for a draft (session anchor + sub-artifacts) — the set a
- * mutation invalidation must server-cancel before the rows are wiped. */
+ * mutation invalidation must server-cancel before the rows are wiped. A COMPLETED upload's
+ * resources are finished server artifacts (feed content), not resumable TUS state — a local
+ * edit or draft deletion must never destroy them, so 'uploaded' drafts return nothing. */
 export async function listUploadResumeUrls(draftId: string): Promise<string[]> {
   const [row] = await db
-    .select({ url: drafts.uploadResourceUrl })
+    .select({ url: drafts.uploadResourceUrl, status: drafts.uploadStatus })
     .from(drafts)
     .where(eq(drafts.id, draftId));
+  if (row?.status === 'uploaded') return [];
   const arts = await db
     .select({ url: uploadArtifacts.resourceUrl })
     .from(uploadArtifacts)
