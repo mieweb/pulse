@@ -1,4 +1,4 @@
-import { asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -126,6 +126,22 @@ export async function addSegment(draftId: string, segment: NewSegment): Promise<
   });
 }
 
+/**
+ * A structural mutation (delete / destructive edit / edit reset / reorder) invalidates any
+ * partial upload of this draft — same principle as the merged-transcript invalidation: the
+ * bytes or ordering a resumed session would PATCH/reference no longer exist. Wipe the
+ * sub-artifact resume state and reset progress so the next upload starts a fresh session
+ * (the destination pairing itself survives). A COMPLETED upload's `uploaded` status is
+ * left alone — it describes the artifact that was sent, not the draft's current state.
+ */
+async function invalidateUploadResumeState(draftId: string): Promise<void> {
+  await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
+  await db
+    .update(drafts)
+    .set({ uploadResourceUrl: null, uploadStatus: null, uploadMergedPath: null, uploadMergedDurationMs: null })
+    .where(and(eq(drafts.id, draftId), ne(drafts.uploadStatus, 'uploaded')));
+}
+
 /** Delete a segment and its clip file, unless a sibling segment still references the file. */
 export async function deleteSegment(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
@@ -148,6 +164,7 @@ export async function deleteSegment(segmentId: string): Promise<void> {
   // fallback after a failed regeneration) — delete whatever the row actually references too.
   if (seg.thumbnail) deleteSegmentFile(seg.thumbnail);
 
+  await invalidateUploadResumeState(seg.draftId);
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
@@ -174,6 +191,7 @@ export async function setEdited(
     deleteSegmentFile(seg.editedFilename);
     if (ok) deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
   }
+  await invalidateUploadResumeState(seg.draftId);
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
@@ -196,6 +214,7 @@ export async function resetEdit(segmentId: string): Promise<void> {
   // The prior cover may be from an older revision than `editedFilename` (kept as a fallback
   // after a failed re-edit thumb generation) — drop it too, but never the fresh `thumbRel`.
   if (seg.thumbnail && seg.thumbnail !== thumbRel) deleteSegmentFile(seg.thumbnail);
+  await invalidateUploadResumeState(seg.draftId);
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
@@ -223,6 +242,10 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
       await tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId));
     }
   });
+  // Ordering is part of what a partial segmented upload already sent (the ordering manifest) —
+  // invalidate resume state like any other structural mutation.
+  const [row] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
+  if (row) await invalidateUploadResumeState(row.draftId);
 }
 
 export async function renameDraft(draftId: string, name: string | null): Promise<void> {
