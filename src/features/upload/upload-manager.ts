@@ -458,15 +458,23 @@ class BackgroundUploadManager {
       if (session.consumedDestinationId) {
         await deleteDestination(session.consumedDestinationId);
       }
-      this.sessions.delete(draftId);
-      this.failed.delete(draftId);
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        // Cancelled via cancel() — that path owns resetting status/live to idle; don't race it by
-        // overwriting with an error state or keeping the session around as "failed".
+      if (this.sessions.get(draftId) === session) {
         this.sessions.delete(draftId);
         this.failed.delete(draftId);
-      } else {
+      }
+    } catch (err) {
+      // Every branch below is identity-guarded: an invalidation/cancel may have cleared the
+      // maps AND a fresh session for the same draft may have been enqueued inside the abort
+      // window — a displaced run must neither tear down the fresh run's entries nor write
+      // its own terminal state over it.
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Cancelled via cancel()/invalidation — that path owns resetting status/live to idle;
+        // don't race it by overwriting with an error state or keeping the session as "failed".
+        if (this.sessions.get(draftId) === session) {
+          this.sessions.delete(draftId);
+          this.failed.delete(draftId);
+        }
+      } else if (this.sessions.get(draftId) === session) {
         const { reason, retryable } = describeError(err);
         this.setLive(draftId, {
           status: 'error',
@@ -480,8 +488,10 @@ class BackgroundUploadManager {
         this.failed.add(draftId);
       }
     } finally {
-      this.controllers.delete(draftId);
-      this.currentUpload.delete(draftId);
+      if (this.controllers.get(draftId) === controller) {
+        this.controllers.delete(draftId);
+        this.currentUpload.delete(draftId);
+      }
     }
   }
 
