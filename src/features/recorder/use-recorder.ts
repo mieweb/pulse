@@ -438,8 +438,8 @@ export function useRecorder(initialDraftId?: string) {
       setIsImporting(true);
 
       // Reject corrupt / zero-length picks before they enter the draft (one native probe,
-      // reused below for the duration). A thrown probe is non-fatal — fall through and let
-      // copy + getDurationMs decide.
+      // reused below for the duration). A thrown isValidFile probe is non-fatal — fall through;
+      // the contract probe below is the fail-closed one.
       const info = await isValidFile(picked.uri).catch(() => null);
       if (info && !info.isValid) {
         Alert.alert('Import failed', 'That file isn’t a supported video.');

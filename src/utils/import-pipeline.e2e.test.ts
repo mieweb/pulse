@@ -173,8 +173,36 @@ function compressArgs(input: string, options: Partial<CompressOptions>, output: 
   cmds.push('-c:a', 'aac');
   if ((options.audioSampleRate ?? -1) > 0) cmds.push('-ar', String(options.audioSampleRate));
   if ((options.audioChannels ?? -1) > 0) cmds.push('-ac', String(options.audioChannels));
+  // The fork appends faststart flags on every MP4-family output (copy and re-encode alike).
+  cmds.push('-movflags', '+faststart');
   cmds.push(output);
   return cmds;
+}
+
+/** True when the top-level `moov` box precedes `mdat` — the faststart/progressive invariant. */
+function isFaststart(file: string): boolean {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const header = Buffer.alloc(16);
+    let offset = 0;
+    let moov = -1;
+    let mdat = -1;
+    while (offset + 8 <= size) {
+      fs.readSync(fd, header, 0, 16, offset);
+      let boxSize: number = header.readUInt32BE(0);
+      const type = header.toString('ascii', 4, 8);
+      if (boxSize === 1) boxSize = Number(header.readBigUInt64BE(8));
+      else if (boxSize === 0) boxSize = size - offset;
+      if (type === 'moov' && moov < 0) moov = offset;
+      if (type === 'mdat' && mdat < 0) mdat = offset;
+      if ((moov >= 0 && mdat >= 0) || boxSize <= 0) break;
+      offset += boxSize;
+    }
+    return moov >= 0 && (mdat < 0 || moov < mdat);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +407,8 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
         // Audio-less sources stay audio-less — `-c:a aac` is a no-op with no input stream.
         const out = probeLikeNative(output);
         expect(out.audioCodec).toBe(probe.hasAudio ? 'aac' : '');
+        // Every normalized output (copy and re-encode alike) must be faststart.
+        expect(isFaststart(output)).toBe(true);
         if (expected === 'audio-only') {
           // Video track stream-copied byte-for-byte: same codec, geometry, timing.
           expect(out.videoCodec).toBe(probe.videoCodec);

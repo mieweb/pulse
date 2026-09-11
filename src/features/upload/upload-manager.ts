@@ -740,25 +740,23 @@ class BackgroundUploadManager {
 
     for (const [index, segment] of segments.entries()) {
       reportClip(index + 1, index);
+      const videoKey = `${segment.id}:video` as const;
+      const videoArtifactId = segmentArtifactIds.get(segment.id)!;
+      let existingVideo = await getUploadArtifact(draftId, videoKey);
       // Contract gate: segment uploads ship stored files byte-for-byte, and a file can predate
       // the portrait/H.264/AAC contract (old drafts, legacy .pulse bundles, iOS codec-pin
       // races). Off-contract clips are conformed into a stable path-keyed sibling so a
       // kill-resume PATCHes identical bytes; conforming clips upload untouched. A clip that
       // can't be probed/conformed fails the session (fail closed) via the normal error path.
-      const gated = await this.ensureContractFile(segment);
-      const file = new File(absolutize(gated.rel));
-      const checksum = await md5Checksum(file);
-
-      const videoKey = `${segment.id}:video` as const;
-      const videoArtifactId = segmentArtifactIds.get(segment.id)!;
-      let existingVideo = await getUploadArtifact(draftId, videoKey);
-      // A resource persisted BEFORE the gate first conformed this segment was created for the
-      // raw off-contract bytes — resuming it would PATCH conformed bytes onto the raw upload's
-      // offset/length (truncated or corrupt artifact). Cancel it server-side (TUS DELETE frees
-      // the reservation) and re-create under the SAME artifactId, so the already-uploaded
-      // ordering manifest stays valid. The cleared URL is persisted first so a kill between
-      // cancel and re-create can't resurrect the stale resource.
-      if (gated.freshlyConformed && existingVideo?.resourceUrl) {
+      // The callback runs when a FRESH conform happened, BEFORE the sibling lands on disk: any
+      // resource persisted at that point was created for the raw bytes — resuming it would
+      // PATCH conformed bytes onto the raw upload's offset/length (truncated or corrupt
+      // artifact). Cancel it server-side (TUS DELETE frees the reservation) and re-create under
+      // the SAME artifactId so the already-uploaded ordering manifest stays valid. The ordering
+      // is what makes this crash-safe: a kill before the sibling exists just re-runs the
+      // conform, so "sibling on disk" always implies "stale resource already invalidated".
+      const uploadRel = await this.ensureContractFile(segment, async () => {
+        if (!existingVideo?.resourceUrl) return;
         try {
           await this.transport.cancel(existingVideo.resourceUrl, destination.token);
         } catch {
@@ -769,7 +767,9 @@ class BackgroundUploadManager {
           resourceUrl: null,
         });
         existingVideo = { artifactId: videoArtifactId, resourceUrl: null };
-      }
+      });
+      const file = new File(absolutize(uploadRel));
+      const checksum = await md5Checksum(file);
       const videoResult = await this.uploadOne(
         draftId,
         destination,
@@ -805,25 +805,25 @@ class BackgroundUploadManager {
 
   /**
    * The segment file to upload: the stored file itself when it conforms to the reels contract,
-   * else a conformed copy at a stable sibling path (`….mp4` → `….upload.mp4`, reused on
+   * else a conformed copy at a stable sibling path (any extension → `….upload.mp4`, reused on
    * resume — path-derived like every other derived artifact, so an edited revision gets its
    * own copy, `deleteSegmentFile` sweeps the copy with its source, and draft deletion catches
-   * the rest). `freshlyConformed` marks the run that CREATED the sibling: any TUS resource
-   * persisted before it was created for the raw off-contract bytes and must not be resumed
-   * with the new ones.
+   * the rest). `onFreshConform` fires between a successful conform and the sibling's move into
+   * place — the crash-safe window for invalidating upload state tied to the raw bytes (a kill
+   * before the move leaves no sibling, so the next run simply conforms again).
    */
   private async ensureContractFile(
     segment: Segment,
-  ): Promise<{ rel: string; freshlyConformed: boolean }> {
+    onFreshConform: () => Promise<void>,
+  ): Promise<string> {
     const sourceRel = effFile(segment);
     const conformedRel = uploadCopyRelPath(sourceRel);
-    if (new File(absolutize(conformedRel)).exists) {
-      return { rel: conformedRel, freshlyConformed: false };
-    }
+    if (new File(absolutize(conformedRel)).exists) return conformedRel;
     const out = await conformToContract(absolutize(sourceRel));
-    if (out == null) return { rel: sourceRel, freshlyConformed: false };
+    if (out == null) return sourceRel;
+    await onFreshConform();
     await new File(toFileUri(out)).move(new File(absolutize(conformedRel)));
-    return { rel: conformedRel, freshlyConformed: true };
+    return conformedRel;
   }
 }
 

@@ -230,6 +230,11 @@ describe('decideImport edge cases beyond the corpus', () => {
     }
   });
 
+  it('exactly 30.5 fps rounds to 31 and is normalized (merge-pin rounding boundary)', () => {
+    const d = decideImport(probe({ rotation: 90, nominalFps: 30.5, averageFps: 30.5 }));
+    expect(d.action).toBe('normalize');
+  });
+
   it('on-canvas 29.97 NTSC still passes through', () => {
     expect(
       decideImport(probe({ rotation: 90, nominalFps: 29.97, averageFps: 29.97 })),

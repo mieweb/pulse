@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import VideoTrim, { merge, type Spec } from 'react-native-video-trim';
+import VideoTrim, { merge, probeVideo, type MergeResult, type Spec } from 'react-native-video-trim';
 
 import type { Segment } from '@/db/schema';
 import { absolutize } from '@/utils/file-store';
+import { decideImport } from '@/utils/import-normalization';
 import { effFile, segmentSignature } from '@/utils/segment-window';
 
 const Native = VideoTrim as Spec;
@@ -16,6 +17,20 @@ const REELS_TARGET = {
   targetFps: 30,
   targetCodec: 'h264',
 } as const;
+
+/**
+ * A single clip needs no merge when it already satisfies the contract (recorder clips and
+ * canvas-baked imports — the common case) — and skipping matters on Android, whose engine has
+ * no passthrough path and would re-encode the clip for nothing. Off-contract or unprobeable
+ * single clips still go through the pinned engine like any outlier.
+ */
+async function exportSingle(url: string): Promise<Pick<MergeResult, 'outputPath' | 'duration'>> {
+  const probe = await probeVideo(url).catch(() => null);
+  if (probe?.hasVideo && decideImport(probe).action === 'passthrough') {
+    return { outputPath: url, duration: probe.duration };
+  }
+  return merge([url], { outputExt: 'mp4', ...REELS_TARGET });
+}
 
 export type ExportState =
   | { status: 'idle' }
@@ -75,10 +90,14 @@ export function useExport(segments: Segment[], options?: { auto?: boolean }) {
       if (current) setState({ status: 'merging', progress: 0 });
       try {
         const urls = files.map(absolutize);
-        const result = await merge(urls, { outputExt: 'mp4', ...REELS_TARGET });
+        const result =
+          urls.length === 1
+            ? await exportSingle(urls[0])
+            : await merge(urls, { outputExt: 'mp4', ...REELS_TARGET });
         // Emergency encoder fallback missed the pin (Android broken-encoder devices) — the
         // export is playable but off-contract; the vault's web-ready backstop owns the re-encode.
-        if (result.degraded) console.warn('[export] merged output is degraded (missed the reels pin)');
+        if ('degraded' in result && result.degraded)
+          console.warn('[export] merged output is degraded (missed the reels pin)');
         if (current) {
           setState({ status: 'done', outputPath: result.outputPath, durationMs: result.duration });
         }
