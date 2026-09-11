@@ -21,7 +21,7 @@ import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
 import { conformToContract } from '@/utils/contract-gate';
-import { absolutize, toFileUri } from '@/utils/file-store';
+import { absolutize, toFileUri, uploadCopyRelPath } from '@/utils/file-store';
 import { effFile } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 
@@ -807,15 +807,16 @@ class BackgroundUploadManager {
    * The segment file to upload: the stored file itself when it conforms to the reels contract,
    * else a conformed copy at a stable sibling path (`….mp4` → `….upload.mp4`, reused on
    * resume — path-derived like every other derived artifact, so an edited revision gets its
-   * own copy and draft deletion sweeps them with the dir). `freshlyConformed` marks the run
-   * that CREATED the sibling: any TUS resource persisted before it was created for the raw
-   * off-contract bytes and must not be resumed with the new ones.
+   * own copy, `deleteSegmentFile` sweeps the copy with its source, and draft deletion catches
+   * the rest). `freshlyConformed` marks the run that CREATED the sibling: any TUS resource
+   * persisted before it was created for the raw off-contract bytes and must not be resumed
+   * with the new ones.
    */
   private async ensureContractFile(
     segment: Segment,
   ): Promise<{ rel: string; freshlyConformed: boolean }> {
     const sourceRel = effFile(segment);
-    const conformedRel = sourceRel.replace(/\.mp4$/, '.upload.mp4');
+    const conformedRel = uploadCopyRelPath(sourceRel);
     if (new File(absolutize(conformedRel)).exists) {
       return { rel: conformedRel, freshlyConformed: false };
     }
