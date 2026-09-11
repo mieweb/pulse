@@ -196,6 +196,10 @@ export async function deleteSegment(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
 
+  // Invalidate BEFORE the first structural/file mutation (like addSegment): a running upload
+  // finishing mid-delete would otherwise mark the shrunken draft 'uploaded' — a status the
+  // invalidation then deliberately preserves.
+  await invalidateUploadResumeState(seg.draftId);
   await db.delete(segments).where(eq(segments.id, segmentId));
 
   const [{ value: stillReferenced }] = await db
@@ -213,7 +217,6 @@ export async function deleteSegment(segmentId: string): Promise<void> {
   // fallback after a failed regeneration) — delete whatever the row actually references too.
   if (seg.thumbnail) deleteSegmentFile(seg.thumbnail);
 
-  await invalidateUploadResumeState(seg.draftId);
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
@@ -225,6 +228,8 @@ export async function setEdited(
 ): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
+  // Invalidate before the first mutation — see deleteSegment.
+  await invalidateUploadResumeState(seg.draftId);
   // Cover the edited file's first frame at its revision-paired thumb path (the pristine thumb
   // stays on disk untouched, ready for a reset).
   const thumbRel = editedThumbRelPath(editedFilename);
@@ -240,7 +245,6 @@ export async function setEdited(
     deleteSegmentFile(seg.editedFilename);
     if (ok) deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
   }
-  await invalidateUploadResumeState(seg.draftId);
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
@@ -248,6 +252,8 @@ export async function setEdited(
 export async function resetEdit(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
+  // Invalidate before the first mutation — see deleteSegment.
+  await invalidateUploadResumeState(seg.draftId);
   // Revert the cover to the pristine original's thumbnail.
   const thumbRel = thumbRelPath(seg.draftId, segmentId);
   const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(thumbRel));
@@ -263,13 +269,16 @@ export async function resetEdit(segmentId: string): Promise<void> {
   // The prior cover may be from an older revision than `editedFilename` (kept as a fallback
   // after a failed re-edit thumb generation) — drop it too, but never the fresh `thumbRel`.
   if (seg.thumbnail && seg.thumbnail !== thumbRel) deleteSegmentFile(seg.thumbnail);
-  await invalidateUploadResumeState(seg.draftId);
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
 /** Persist a new clip ordering (ids in target order) for a single draft. */
 export async function reorderSegments(orderedIds: string[]): Promise<void> {
   if (orderedIds.length === 0) return;
+  // Ordering is part of what a partial segmented upload already sent (the ordering manifest) —
+  // invalidate before renumbering, like every other structural mutation.
+  const [target] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
+  if (target) await invalidateUploadResumeState(target.draftId);
   await db.transaction(async (tx) => {
     // Two passes: SQLite checks UNIQUE per statement, so renumbering in place would collide
     // with rows still holding their old slot. Park all rows on distinct negatives first,
@@ -291,10 +300,6 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
       await tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId));
     }
   });
-  // Ordering is part of what a partial segmented upload already sent (the ordering manifest) —
-  // invalidate resume state like any other structural mutation.
-  const [row] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
-  if (row) await invalidateUploadResumeState(row.draftId);
 }
 
 export async function renameDraft(draftId: string, name: string | null): Promise<void> {

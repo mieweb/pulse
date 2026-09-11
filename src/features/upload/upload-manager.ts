@@ -825,13 +825,17 @@ class BackgroundUploadManager {
       // is what makes this crash-safe: a kill before the sibling exists just re-runs the
       // conform, so "sibling on disk" always implies "stale resource already invalidated".
       const uploadRel = await this.ensureContractFile(segment, async () => {
-        if (!existingVideo?.resourceUrl) return;
+        // Ownership-gated like every persistence callback: a run displaced while the conform
+        // was awaiting must not cancel the replacement run's reservation or clear rows the
+        // invalidation already re-seeded.
+        if (!this.owns(draftId, session) || !existingVideo?.resourceUrl) return;
         // Cancel failures PROPAGATE (unlike the user-cancel path): the sibling doesn't exist
         // yet, so failing the session here just re-conforms and retries the cancel next run —
         // whereas continuing past an unconfirmed DELETE would 409 the replacement create
         // against the still-live reservation. "Already gone" (404/410) counts as success
         // inside cancelTusUpload.
         await this.transport.cancel(existingVideo.resourceUrl, destination.token);
+        if (!this.owns(draftId, session)) return;
         await upsertUploadArtifact(draftId, videoKey, {
           artifactId: videoArtifactId,
           resourceUrl: null,
