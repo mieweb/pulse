@@ -757,11 +757,12 @@ class BackgroundUploadManager {
       // conform, so "sibling on disk" always implies "stale resource already invalidated".
       const uploadRel = await this.ensureContractFile(segment, async () => {
         if (!existingVideo?.resourceUrl) return;
-        try {
-          await this.transport.cancel(existingVideo.resourceUrl, destination.token);
-        } catch {
-          // Already gone / network blip — creating the replacement is what matters.
-        }
+        // Cancel failures PROPAGATE (unlike the user-cancel path): the sibling doesn't exist
+        // yet, so failing the session here just re-conforms and retries the cancel next run —
+        // whereas continuing past an unconfirmed DELETE would 409 the replacement create
+        // against the still-live reservation. "Already gone" (404/410) counts as success
+        // inside cancelTusUpload.
+        await this.transport.cancel(existingVideo.resourceUrl, destination.token);
         await upsertUploadArtifact(draftId, videoKey, {
           artifactId: videoArtifactId,
           resourceUrl: null,
