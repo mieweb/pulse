@@ -745,13 +745,31 @@ class BackgroundUploadManager {
       // races). Off-contract clips are conformed into a stable path-keyed sibling so a
       // kill-resume PATCHes identical bytes; conforming clips upload untouched. A clip that
       // can't be probed/conformed fails the session (fail closed) via the normal error path.
-      const uploadRel = await this.ensureContractFile(segment);
-      const file = new File(absolutize(uploadRel));
+      const gated = await this.ensureContractFile(segment);
+      const file = new File(absolutize(gated.rel));
       const checksum = await md5Checksum(file);
 
       const videoKey = `${segment.id}:video` as const;
       const videoArtifactId = segmentArtifactIds.get(segment.id)!;
-      const existingVideo = await getUploadArtifact(draftId, videoKey);
+      let existingVideo = await getUploadArtifact(draftId, videoKey);
+      // A resource persisted BEFORE the gate first conformed this segment was created for the
+      // raw off-contract bytes — resuming it would PATCH conformed bytes onto the raw upload's
+      // offset/length (truncated or corrupt artifact). Cancel it server-side (TUS DELETE frees
+      // the reservation) and re-create under the SAME artifactId, so the already-uploaded
+      // ordering manifest stays valid. The cleared URL is persisted first so a kill between
+      // cancel and re-create can't resurrect the stale resource.
+      if (gated.freshlyConformed && existingVideo?.resourceUrl) {
+        try {
+          await this.transport.cancel(existingVideo.resourceUrl, destination.token);
+        } catch {
+          // Already gone / network blip — creating the replacement is what matters.
+        }
+        await upsertUploadArtifact(draftId, videoKey, {
+          artifactId: videoArtifactId,
+          resourceUrl: null,
+        });
+        existingVideo = { artifactId: videoArtifactId, resourceUrl: null };
+      }
       const videoResult = await this.uploadOne(
         draftId,
         destination,
@@ -789,16 +807,22 @@ class BackgroundUploadManager {
    * The segment file to upload: the stored file itself when it conforms to the reels contract,
    * else a conformed copy at a stable sibling path (`….mp4` → `….upload.mp4`, reused on
    * resume — path-derived like every other derived artifact, so an edited revision gets its
-   * own copy and draft deletion sweeps them with the dir).
+   * own copy and draft deletion sweeps them with the dir). `freshlyConformed` marks the run
+   * that CREATED the sibling: any TUS resource persisted before it was created for the raw
+   * off-contract bytes and must not be resumed with the new ones.
    */
-  private async ensureContractFile(segment: Segment): Promise<string> {
+  private async ensureContractFile(
+    segment: Segment,
+  ): Promise<{ rel: string; freshlyConformed: boolean }> {
     const sourceRel = effFile(segment);
     const conformedRel = sourceRel.replace(/\.mp4$/, '.upload.mp4');
-    if (new File(absolutize(conformedRel)).exists) return conformedRel;
+    if (new File(absolutize(conformedRel)).exists) {
+      return { rel: conformedRel, freshlyConformed: false };
+    }
     const out = await conformToContract(absolutize(sourceRel));
-    if (out == null) return sourceRel;
+    if (out == null) return { rel: sourceRel, freshlyConformed: false };
     await new File(toFileUri(out)).move(new File(absolutize(conformedRel)));
-    return conformedRel;
+    return { rel: conformedRel, freshlyConformed: true };
   }
 }
 
