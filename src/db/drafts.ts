@@ -288,6 +288,10 @@ export async function renameDraft(draftId: string, name: string | null): Promise
 
 /** Delete a draft (segments cascade) and remove its on-disk clip directory. */
 export async function deleteDraft(draftId: string): Promise<void> {
+  // Full upload invalidation FIRST, while the resource URLs are still readable: aborts an
+  // in-flight session and server-cancels every persisted TUS reservation — the row cascade
+  // below would only drop the local rows, stranding live reservations server-side.
+  await invalidateUploadResumeState(draftId);
   await db.delete(drafts).where(eq(drafts.id, draftId));
   deleteDraftDir(draftId);
   await deleteDraftToken(draftId);
