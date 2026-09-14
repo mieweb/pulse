@@ -697,4 +697,19 @@ describe('cancelTusUpload', () => {
     expect(calls[0].init?.method).toBe('DELETE');
     expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
   });
+
+  it('treats an already-gone resource (404/410) as a successful cancel', async () => {
+    for (const status of [404, 410]) {
+      const { fetchImpl } = createFetchStub({ DELETE: [new Response(null, { status })] });
+      await expect(cancelTusUpload(`${SERVER}/upload/abc`, 'tok', fetchImpl)).resolves.toBeUndefined();
+    }
+  });
+
+  it('rejects when the server does not confirm the cancel (reservation may still be live)', async () => {
+    const { fetchImpl } = createFetchStub({ DELETE: [new Response(null, { status: 500 })] });
+    await expect(cancelTusUpload(`${SERVER}/upload/abc`, 'tok', fetchImpl)).rejects.toMatchObject({
+      statusCode: 500,
+      retryable: true,
+    });
+  });
 });

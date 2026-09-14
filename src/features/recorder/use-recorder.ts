@@ -3,7 +3,7 @@ import { launchImageLibraryAsync, UIImagePickerPreferredAssetRepresentationMode 
 import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
-import { isValidFile, compress, deleteFile, probeVideo } from 'react-native-video-trim';
+import { isValidFile, deleteFile } from 'react-native-video-trim';
 import {
   type CameraRef,
   CommonResolutions,
@@ -27,7 +27,7 @@ import {
   setSetting,
 } from '@/db/settings';
 import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
-import { decideImport } from '@/utils/import-normalization';
+import { conformToContract } from '@/utils/contract-gate';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
@@ -403,8 +403,9 @@ export function useRecorder(initialDraftId?: string) {
 
   // Pick an existing device video (system picker — no permission prompt) and add it as a
   // segment, following the same persist path as a recording. Merge-friendly imports keep
-  // their original bytes (Passthrough); hostile ones (HDR/10-bit, >1080p, >30fps, exotic
-  // codecs, non-AAC audio) are normalized to the recorder's bounds first — the policy
+  // their original bytes (Passthrough); hostile ones (HDR/10-bit, off the portrait canvas,
+  // >30fps, exotic codecs, non-AAC audio) are normalized to the recorder's bounds — and
+  // baked onto the 1080×1920 canvas — first; the policy
   // lives in decideImport (§ imports). Format-mismatched-but-benign clips remain the
   // merge engine's selective path.
   async function importClip() {
@@ -437,30 +438,27 @@ export function useRecorder(initialDraftId?: string) {
       setIsImporting(true);
 
       // Reject corrupt / zero-length picks before they enter the draft (one native probe,
-      // reused below for the duration). A thrown probe is non-fatal — fall through and let
-      // copy + getDurationMs decide.
+      // reused below for the duration). A thrown isValidFile probe is non-fatal — fall through;
+      // the contract probe below is the fail-closed one.
       const info = await isValidFile(picked.uri).catch(() => null);
       if (info && !info.isValid) {
         Alert.alert('Import failed', 'That file isn’t a supported video.');
         return;
       }
 
-      // Normalize hostile imports before they enter the draft. A failed probe or a failed
-      // re-encode falls back to importing the original bytes — the merge engine's legacy
-      // re-encode path still handles them, just slower.
+      // Normalize hostile imports before they enter the draft — and fail CLOSED: stored
+      // segments are uploaded byte-for-byte by segment destinations, so a clip that can't be
+      // probed or conformed (or whose conform fails output verification — e.g. an Android
+      // encoder fallback) is rejected rather than persisted off-contract.
       let sourceUri = picked.uri;
       let normalizedPath: string | null = null;
-      const probe = await probeVideo(picked.uri).catch(() => null);
-      if (probe) {
-        const decision = decideImport(probe);
-        if (decision.action === 'normalize') {
-          const normalized = await compress(picked.uri, decision.options).catch(() => null);
-          if (normalized) {
-            normalizedPath = normalized.outputPath;
-            sourceUri = normalized.outputPath;
-          }
-        }
+      try {
+        normalizedPath = await conformToContract(picked.uri);
+      } catch {
+        Alert.alert('Import failed', 'Could not convert that video for the timeline.');
+        return;
       }
+      if (normalizedPath) sourceUri = normalizedPath;
 
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;

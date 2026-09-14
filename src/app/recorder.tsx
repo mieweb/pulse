@@ -405,6 +405,12 @@ export default function RecorderScreen() {
           device={device}
           isActive={cameraActive}
           outputs={outputs}
+          // Reels contract: recordings are ALWAYS portrait. VisionCamera's default source is
+          // 'device' — physically holding the phone sideways rotates the output orientation even
+          // though the UI is portrait-locked, writing a landscape-tagged clip. 'interface'
+          // follows the (locked) UI orientation, so sideways recordings stay portrait: the
+          // sensor frame is unchanged, only the rotation tag stops following the gyro.
+          orientationSource="interface"
           // Zoom/torch are gated until the session has started — but only on Android: CameraX
           // rejects control calls on an inactive camera (OperationCanceledException), so applying
           // these props on mount — before `onStarted` — throws unhandled rejections there.
