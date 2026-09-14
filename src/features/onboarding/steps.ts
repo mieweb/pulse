@@ -60,7 +60,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
       { icon: 'trash', text: 'Drag a clip onto the trash to delete it from the segment bar.' },
       {
         icon: 'arrow.triangle.2.circlepath.camera',
-        text: 'Flip cameras, switch lenses, pinch to zoom, fire the torch, set stabilization, or mute audio.',
+        text: 'Flip cameras, switch lenses, pinch to zoom, fire the torch, steady your shot with stabilization, or mute audio.',
       },
     ],
   },

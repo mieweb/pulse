@@ -8,19 +8,14 @@ import type { CameraFacing, StabilizationMode } from './use-recorder';
 
 const STABILIZATION_LABELS: Record<StabilizationMode, string> = {
   off: 'Off',
-  standard: 'Std',
-  cinematic: 'Cine',
+  standard: 'On',
+  cinematic: 'High',
   auto: 'Auto',
 };
 
-// One SF Symbol per mode so the rail reads at a glance: slashed = off, gyroscope =
-// standard sensor stabilization, film = cinematic, sparkles = auto-picked.
-const STABILIZATION_ICONS: Record<StabilizationMode, SymbolViewProps['name']> = {
-  off: 'circle.slash',
-  standard: 'gyroscope',
-  cinematic: 'film',
-  auto: 'sparkles',
-};
+// One constant glyph anchors the four states as a single cycling setting (like torch/mic);
+// state is carried by tint + caption. 'gyroscope' has no .slash variant, so Off dims the glyph.
+const STABILIZATION_ICON: SymbolViewProps['name'] = 'gyroscope';
 
 type Props = {
   facing: CameraFacing;
@@ -64,10 +59,11 @@ export function CameraControls({
         onPress={onToggleTorch}
       />
       <ControlButton
-        icon={STABILIZATION_ICONS[stabilization]}
+        icon={STABILIZATION_ICON}
         label={`Stabilization: ${STABILIZATION_LABELS[stabilization]}`}
         caption={STABILIZATION_LABELS[stabilization]}
         tint={stabilization === 'off' ? '#fff' : Accent}
+        dimmed={stabilization === 'off'}
         disabled={disabled}
         onPress={onCycleStabilization}
       />
@@ -97,6 +93,7 @@ function ControlButton({
   onPress,
   tint = '#fff',
   caption,
+  dimmed = false,
   disabled = false,
 }: {
   icon: SymbolViewProps['name'];
@@ -104,6 +101,8 @@ function ControlButton({
   onPress: () => void;
   tint?: string;
   caption?: string;
+  // Fades only the glyph (not the pill) — "this feature, disabled" without reading as an inert button.
+  dimmed?: boolean;
   disabled?: boolean;
 }) {
   return (
@@ -115,7 +114,13 @@ function ControlButton({
       accessibilityLabel={label}
       style={({ pressed }) => [styles.wrap, { opacity: disabled ? 0.35 : pressed ? 0.7 : 1 }]}>
       <GlassPill style={styles.button}>
-        <Icon name={icon} size={24} weight="medium" tintColor={tint} />
+        <Icon
+          name={icon}
+          size={24}
+          weight="medium"
+          tintColor={tint}
+          style={dimmed ? styles.dimmedIcon : undefined}
+        />
       </GlassPill>
       {caption && <Text style={[styles.caption, { color: tint }]}>{caption}</Text>}
     </Pressable>
@@ -144,4 +149,6 @@ const styles = StyleSheet.create({
     borderRadius: 22,
   },
   caption: { fontSize: 10, fontWeight: '600' },
+  // Distinct from the 0.35 whole-button disabled treatment: the pill stays at full opacity.
+  dimmedIcon: { opacity: 0.45 },
 });
