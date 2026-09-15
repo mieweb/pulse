@@ -44,7 +44,7 @@ jobs:
         uses: mieweb/actions/prepare-expo-env@61db81e727847e112ae5af71a8c9b8bf62b1f4cb # v2.3.1
         with:
           package_manager: npm
-          node_version: "20"
+          node_version: "24"
 
       # ── Give every CI build a unique, increasing build number ─────────────
       - name: Stamp build number

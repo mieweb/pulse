@@ -34,7 +34,7 @@ same 13-shot run sheet and shared `01-…13-` naming.
 
 ## Regenerating the framed sets
 
-Requires Node >= 20.9.0 (needed by `sharp`).
+Requires Node >= 24 (`sharp` needs >= 20.9.0).
 
 ```sh
 cd screenshots/frame
