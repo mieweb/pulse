@@ -6,6 +6,15 @@ export function formatDuration(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+/** Display host of a server URL (e.g. "https://vault.example.org/pulsevault" → "vault.example.org"); falls back to the raw string for unparseable input. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 /** Milliseconds → zero-padded "mm:ss" (e.g. 7000 → "00:07"). */
 export function formatDurationPadded(ms: number): string {
   const total = Math.round(ms / 1000);

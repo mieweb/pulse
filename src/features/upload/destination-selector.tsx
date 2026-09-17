@@ -4,16 +4,9 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { hostOf } from '@/utils/format';
 
 import type { DestinationOption } from './use-destinations';
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 /** A small segment/merged pill so the upload strategy is legible at a glance on each chip/row. */
 export function ModeBadge({ uploadUnit }: { uploadUnit: 'segment' | 'merged' }) {

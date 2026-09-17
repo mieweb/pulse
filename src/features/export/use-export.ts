@@ -107,5 +107,14 @@ export function useExport(segments: Segment[], options?: { auto?: boolean }) {
   // Derived, not stored: overrides a stale `merging`/`done`/`error` value left over from a
   // previous render where `auto` was true (e.g. the destination changed shape) without needing a
   // corrective `setState` inside the effect above.
-  return { state: shouldRun ? state : { status: 'idle' as const }, run };
+  // An EMPTY draft never runs the merge effect at all — without the explicit error override the
+  // auto-start initializer would leave the screen on `merging` (a spinner that never resolves,
+  // mieweb/pulse#98). Zero clips is terminal for this screen, not pending.
+  const derived: ExportState =
+    segments.length === 0
+      ? { status: 'error', message: 'This draft has no clips to export.' }
+      : shouldRun
+        ? state
+        : { status: 'idle' };
+  return { state: derived, run };
 }

@@ -28,6 +28,7 @@ import {
 } from '@/db/settings';
 import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
 import { conformToContract } from '@/utils/contract-gate';
+import { useToast } from '@/features/toast/toast-provider';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
@@ -50,6 +51,7 @@ const MIN_RECORD_MS = 350;
 
 export function useRecorder(initialDraftId?: string) {
   const cameraRef = useRef<CameraRef>(null);
+  const { showToast } = useToast();
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
   const [isRecording, setIsRecording] = useState(false);
   // Wall-clock start of the active recording, for the live running timer in the UI. Mirrors
@@ -337,6 +339,10 @@ export function useRecorder(initialDraftId?: string) {
     recordCallAtRef.current = Date.now();
     setRecordStartedAt(Date.now());
     setIsRecording(true);
+    // Which file stage the take reached, so the catch below can sweep the right orphan:
+    // the recorder's temp file (pre-move), or the moved-but-rowless segment file.
+    let capturedUri: string | null = null;
+    let persistedRel: string | null = null;
     try {
       // Codec: VisionCamera defaults to the most efficient codec available (HEVC/h265 on modern
       // iPhones), which is what keeps every clip format-uniform for the merge engine's fast
@@ -382,15 +388,23 @@ export function useRecorder(initialDraftId?: string) {
       });
       // VisionCamera returns a bare filesystem path; file-store's File API wants a file:// URL.
       const uri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
+      capturedUri = uri;
 
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;
       const originalFilename = await persistRecording(uri, id, segmentId);
+      persistedRel = originalFilename;
       const durationMs = await getDurationMs(absolutize(originalFilename));
       await persistSegment(id, segmentId, originalFilename, durationMs);
-    } catch {
-      // Recording died with no salvageable file (see the error probe above), or the persist
-      // itself failed — nothing to keep.
+    } catch (err) {
+      // Recording died with no salvageable file (see the error probe above), or the
+      // persist/DB write failed. Surface it — a silently dropped take reads as "the app ate
+      // my clip" (mieweb/pulse#95) — and sweep whichever file stage was reached so a failed
+      // persist can't strand an orphan (the recorder temp, or a moved file with no row).
+      console.warn('[recorder] failed to persist recording', err);
+      showToast('Could not save that clip.');
+      const orphan = persistedRel ? absolutize(persistedRel) : capturedUri;
+      if (orphan) void deleteFile(orphan).catch(() => {});
     } finally {
       recorderRef.current = null;
       stopRequestedRef.current = false;

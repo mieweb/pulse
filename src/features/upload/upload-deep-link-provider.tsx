@@ -5,6 +5,7 @@ import { Alert, AppState } from 'react-native';
 
 import { addDestination } from '@/db/destinations';
 import { useToast } from '@/features/toast/toast-provider';
+import { hostOf } from '@/utils/format';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
@@ -17,14 +18,6 @@ const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> 
     'This upload link needs a newer version of Pulse. Update the app and try again.',
   'invalid-link': 'This upload link looks damaged. Ask for a new one and try again.',
 };
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 /**
  * Trust-on-first-use gate (PROTOCOL.md §3): asks the user to confirm the

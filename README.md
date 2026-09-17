@@ -198,6 +198,21 @@ Unit tests are co-located with the code and scoped to pure logic — cue reflow,
 npm test
 ```
 
+Two further suites are env-gated because they need more than plain Node:
+
+```bash
+# Media pipeline e2e — requires ffmpeg/ffprobe on PATH (brew install ffmpeg):
+PULSE_E2E=1 npx jest
+
+# Cross-repo integration — drives the real tus/direct-upload client against a
+# real PulseVault server spawned from the submodule. Build its dist first;
+# --forceExit is expected (the spawned server holds the event loop open):
+cd pulsevault-mieweb && npm ci && npm run build && cd ..
+PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
+```
+
+Without the env vars those tests report as *skipped* — that's the gate, not a failure. CI runs typecheck, lint, the unit suite, and the cross-repo integration suite on every PR (see [.github/workflows/ci.yml](.github/workflows/ci.yml)).
+
 ## License
 
 See [LICENSE](LICENSE).

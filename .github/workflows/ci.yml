@@ -1,0 +1,43 @@
+# PR/push CI: the fast suite on every change, plus the cross-repo integration
+# suite (the app's real tus-client against the real pulsevault server built
+# from the submodule) so the wire contract both repos share is exercised on
+# every PR — not just on developer machines.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo with pulsevault submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install app dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npx jest --ci
+      - name: Build pulsevault submodule
+        working-directory: pulsevault-mieweb
+        run: |
+          npm ci
+          npm run build
+      - name: Cross-repo integration suite (real vault, real wire)
+        run: PULSE_INTEGRATION=1 npx jest pv-integration --ci --forceExit

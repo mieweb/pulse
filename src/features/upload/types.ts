@@ -96,7 +96,7 @@ export type UploadTransport = {
     signal: AbortSignal;
     onProgress?: (progress: UploadProgress) => void;
     /** Fired as soon as the resource URL is known, so the caller can track what's in flight. */
-    onResourceCreated?: (resourceUrl: string) => void;
+    onResourceCreated?: (resourceUrl: string) => void | Promise<void>;
   }): Promise<{ resourceUrl: string }>;
   /** Server-side cancel (TUS DELETE) of an in-flight resource. */
   cancel(resourceUrl: string, token: string | null): Promise<void>;

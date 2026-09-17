@@ -6,17 +6,10 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { hostOf } from '@/utils/format';
 
 import { ModeBadge } from './destination-selector';
 import { useDestinations } from './use-destinations';
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 /**
  * A floating pill on the home screen surfacing the device-wide pool of paired upload destinations

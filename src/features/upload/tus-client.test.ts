@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import {
   cancelTusUpload,
+  deriveUploadResourceUrl,
   TusUploadError,
   type UploadChunk,
   uploadViaTus,
@@ -384,7 +385,9 @@ describe('uploadViaTus', () => {
       kind: 'video',
       file: file as never,
       resourceUrl: `${SERVER}/upload/stale`,
-      onResourceCreated: (url) => seen.push(url),
+      onResourceCreated: (url) => {
+        seen.push(url);
+      },
       fetchImpl,
       uploadChunk,
     });
@@ -638,6 +641,115 @@ describe('uploadViaTus', () => {
     expect(result.resourceUrl).toBe('https://vault.example.test/other-prefix/upload/abc');
   });
 
+  // The 409 self-heal: a create conflict means the server holds a reservation this
+  // client lost the handle to (killed in the POST→persist window). pulsevault upload
+  // ids are deterministic, so the client derives the resource URL and resumes it.
+  const derivedUrl = `${SERVER}/upload/${Buffer.from(
+    `video/${ARTIFACT_ID}.mp4`,
+    'utf8',
+  ).toString('base64url')}`;
+
+  it('recovers a 409 create conflict by deriving the resource URL and resuming', async () => {
+    const file = fakeFile(20);
+    const { fetchImpl, calls } = createFetchStub({
+      POST: [new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
+        status: 409,
+        headers: JSON_HEADERS,
+      })],
+      HEAD: [
+        // Self-heal probe: the derived URL is live with 8 bytes already landed…
+        new Response(null, { status: 200, headers: { 'upload-offset': '8' } }),
+        // …then the normal transfer re-HEADs before PATCHing.
+        new Response(null, { status: 200, headers: { 'upload-offset': '8' } }),
+      ],
+    });
+    const { uploadChunk, calls: chunkCalls } = createChunkStub([chunkOk(20)]);
+    const seen: string[] = [];
+
+    const result = await uploadViaTus({
+      server: SERVER,
+      token: 'tok',
+      artifactId: ARTIFACT_ID,
+      filename: 'clip.mp4',
+      kind: 'video',
+      file: file as never,
+      onResourceCreated: (url) => {
+        seen.push(url);
+      },
+      fetchImpl,
+      uploadChunk,
+    });
+
+    expect(result.resourceUrl).toBe(derivedUrl);
+    expect(seen).toEqual([derivedUrl]);
+    // Resumed from the server's durable offset — no restart from zero.
+    expect(chunkCalls.map((c) => [c.offset, c.chunkBytes])).toEqual([[8, 12]]);
+    const headCalls = calls.filter((c) => c.init?.method === 'HEAD');
+    expect(headCalls.every((c) => c.url === derivedUrl)).toBe(true);
+    // Exactly one create attempt — the conflict is resolved by resuming, not re-POSTing.
+    expect(calls.filter((c) => c.init?.method === 'POST')).toHaveLength(1);
+  });
+
+  it('surfaces the original 409 when the derived URL is not live on the server', async () => {
+    const file = fakeFile(20);
+    const { fetchImpl } = createFetchStub({
+      POST: [new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
+        status: 409,
+        headers: JSON_HEADERS,
+      })],
+      // Non-pulsevault id scheme / genuinely conflicting state: the probe 404s.
+      HEAD: [new Response(null, { status: 404 })],
+    });
+    const { uploadChunk } = createChunkStub([]);
+
+    await expect(
+      uploadViaTus({
+        server: SERVER,
+        token: 'tok',
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: file as never,
+        fetchImpl,
+        uploadChunk,
+      }),
+    ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
+  });
+
+  it('awaits onResourceCreated before the first byte moves', async () => {
+    // The callback persists resume state; a byte moving before that persist is durable
+    // reopens the kill-window the whole mechanism exists to close.
+    const file = fakeFile(10);
+    const { fetchImpl } = createFetchStub({
+      POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
+      HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '0' } })],
+    });
+    let persisted = false;
+    let persistedBeforeFirstChunk = false;
+    const uploadChunk: UploadChunk = async ({ offset }) => {
+      if (offset === 0) persistedBeforeFirstChunk = persisted;
+      return { status: 204, headers: { 'Upload-Offset': '10' } };
+    };
+
+    await uploadViaTus({
+      server: SERVER,
+      token: 'tok',
+      artifactId: ARTIFACT_ID,
+      filename: 'clip.mp4',
+      kind: 'video',
+      file: file as never,
+      onResourceCreated: async () => {
+        // Resolve on a later tick so a fire-and-forget caller would observe false.
+        await new Promise((r) => setTimeout(r, 10));
+        persisted = true;
+      },
+      fetchImpl,
+      uploadChunk,
+    });
+
+    expect(persistedBeforeFirstChunk).toBe(true);
+  });
+
   describe('redirect handling', () => {
     // `resolveLocation` only validates the *application-level* `Location`
     // header returned in a 201 body from `createUpload`. Without `redirect:
@@ -711,5 +823,27 @@ describe('cancelTusUpload', () => {
       statusCode: 500,
       retryable: true,
     });
+  });
+});
+
+describe('deriveUploadResourceUrl', () => {
+  it('mirrors pulsevault: base64url("<kind>/<artifactId><ext>") under <server>/upload/', () => {
+    // Must byte-match the server's own id scheme (Buffer#toString("base64url")
+    // over the same string) or the 409 self-heal probes the wrong URL.
+    const expectId = (kind: string, filename: string, ext: string) =>
+      Buffer.from(`${kind}/${ARTIFACT_ID}${ext}`, 'utf8').toString('base64url');
+
+    expect(deriveUploadResourceUrl(SERVER, 'video', ARTIFACT_ID, 'clip.mp4')).toBe(
+      `${SERVER}/upload/${expectId('video', 'clip.mp4', '.mp4')}`,
+    );
+    // Extension is lowercased and taken from the LAST dot, matching the server.
+    expect(deriveUploadResourceUrl(SERVER, 'captions', ARTIFACT_ID, 'My.Draft.VTT')).toBe(
+      `${SERVER}/upload/${expectId('captions', 'My.Draft.VTT', '.vtt')}`,
+    );
+  });
+
+  it('returns null when the filename has no usable extension', () => {
+    expect(deriveUploadResourceUrl(SERVER, 'video', ARTIFACT_ID, 'clip')).toBeNull();
+    expect(deriveUploadResourceUrl(SERVER, 'video', ARTIFACT_ID, 'clip.')).toBeNull();
   });
 });

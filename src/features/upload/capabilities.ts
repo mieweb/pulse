@@ -10,20 +10,23 @@ export type Capabilities = {
   minSupportedVersion: number;
   maxSupportedVersion: number;
   uploadUnit: 'segment' | 'merged';
+  /** Whether the server advertises the PROTOCOL §9 presigned direct-upload profile. */
+  directUpload: boolean;
 };
 
 type CapabilitiesRejectionReason = 'unreachable' | 'version-too-old' | 'version-too-new';
 
 export type CapabilitiesResult =
-  | { ok: true; capabilities: Capabilities }
-  | { ok: false; reason: CapabilitiesRejectionReason };
+  { ok: true; capabilities: Capabilities } | { ok: false; reason: CapabilitiesRejectionReason };
 
 async function fetchCapabilities(server: string): Promise<Capabilities> {
   const res = await fetch(`${server}/capabilities`, {
     signal: AbortSignal.timeout(CAPABILITIES_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-  const body = (await res.json()) as Partial<Capabilities>;
+  const body = (await res.json()) as Partial<Capabilities> & {
+    directUpload?: { enabled?: unknown };
+  };
   if (
     typeof body.minSupportedVersion !== 'number' ||
     typeof body.maxSupportedVersion !== 'number' ||
@@ -36,6 +39,7 @@ async function fetchCapabilities(server: string): Promise<Capabilities> {
     minSupportedVersion: body.minSupportedVersion,
     maxSupportedVersion: body.maxSupportedVersion,
     uploadUnit: body.uploadUnit,
+    directUpload: body.directUpload?.enabled === true,
   };
 }
 

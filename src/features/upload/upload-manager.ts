@@ -29,9 +29,11 @@ import { effFile } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 
 import { buildBeatManifest } from './beat-manifest';
+import { checkCapabilities } from './capabilities';
 import { isTokenExpired } from './capability-token';
 import { keepAlive } from './keep-alive';
 import { uploadNotify } from './notify';
+import { directServerTransport } from './transports/direct-server-transport';
 import { tusServerTransport } from './transports/tus-server-transport';
 import type { ArtifactKind } from './tus-client';
 import type {
@@ -142,6 +144,12 @@ type ArtifactInput = {
  * follow-up that persists that path.
  */
 class BackgroundUploadManager {
+  /**
+   * Default transport (TUS) — also the one cancellation/invalidation paths
+   * use for server-side cancels: both transports persist handles that a
+   * bearer-authorized DELETE frees (a tus resource URL, or the direct
+   * profile's artifact URL), and `cancel` is exactly that DELETE.
+   */
   private readonly transport: UploadTransport = tusServerTransport;
 
   private readonly listeners = new Set<() => void>();
@@ -213,6 +221,25 @@ class BackgroundUploadManager {
   /** Queue a draft's upload and start draining if not already. Ignored if the draft is already in flight. */
   enqueue(session: UploadSession): void {
     if (this.controllers.has(session.draftId)) return;
+    // One live session per destination artifactId: two drafts claiming the same pool
+    // destination would race one server-side reservation (whichever POSTs second 409s,
+    // and "recovering" it would adopt the OTHER draft's upload). Surface it as a clear
+    // terminal error on the later draft instead.
+    for (const [otherDraftId, other] of this.sessions) {
+      if (
+        otherDraftId !== session.draftId &&
+        !this.failed.has(otherDraftId) &&
+        other.destination.artifactId === session.destination.artifactId
+      ) {
+        this.setLive(session.draftId, {
+          status: 'error',
+          reason: 'This upload link is already in use by another draft — pair a new link.',
+          retryable: false,
+        });
+        void setUploadProgress(session.draftId, { status: 'failed' });
+        return;
+      }
+    }
     // Dead on arrival — surface the expired pairing immediately instead of flashing 'uploading'
     // and churning the DB status before the run inevitably fails inside `uploadOne`.
     if (isTokenExpired(session.destination.token, Date.now())) {
@@ -447,10 +474,15 @@ class BackgroundUploadManager {
     this.setLive(draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
     await setUploadProgress(draftId, { status: 'uploading' });
     try {
+      // Transport per run: servers advertising the direct-upload profile get
+      // presigned PUTs (bytes bypass the app server); everything else —
+      // including an unreachable /capabilities probe (offline → the retry
+      // loop inside the transport owns connectivity errors) — uses TUS.
+      const transport = await this.resolveTransport(destination);
       const resourceUrl =
         destination.uploadUnit === 'merged'
-          ? await this.uploadMerged(session, controller.signal)
-          : await this.uploadSegments(session, controller.signal);
+          ? await this.uploadMerged(session, transport, controller.signal)
+          : await this.uploadSegments(session, transport, controller.signal);
       // Displaced-run guard BEFORE any terminal write: if a mutation invalidation swapped this
       // session out while the final transfer was resolving, resurrecting 'uploaded'/'done' here
       // would stamp completion onto a draft whose content just changed — the invalidation owns
@@ -536,7 +568,25 @@ class BackgroundUploadManager {
     void Promise.allSettled([...urls].map((u) => this.transport.cancel(u, token)));
   }
 
+  /**
+   * Pick the transport for one run by probing `/capabilities`. Direct upload
+   * is an opt-in the server advertises; anything else — no flag, older
+   * server, or an unreachable probe — falls back to TUS, which is always
+   * served. Probed per run (not persisted at pairing) so a server upgrade or
+   * rollback takes effect on the next upload without re-pairing.
+   */
+  private async resolveTransport(destination: Destination): Promise<UploadTransport> {
+    try {
+      const result = await checkCapabilities(destination.server);
+      if (result.ok && result.capabilities.directUpload) return directServerTransport;
+    } catch {
+      // Probe failure → TUS; its own retry/backoff owns connectivity errors.
+    }
+    return this.transport;
+  }
+
   private async uploadOne(
+    transport: UploadTransport,
     draftId: string,
     destination: Destination,
     artifact: ArtifactInput,
@@ -544,16 +594,18 @@ class BackgroundUploadManager {
     checksum: string | undefined,
     signal: AbortSignal,
     onProgress?: (progress: UploadProgress) => void,
-    // Fired the instant the server assigns a resource URL — the caller persists it so an app kill
-    // mid-transfer can resume via HEAD+PATCH. WITHOUT this the resume path has no handle and
-    // re-creates the upload, which the server rejects as a duplicate reserve (409).
-    persistResourceUrl?: (url: string) => void,
+    // Fired the instant the server assigns a resource URL — AWAITED by the transport before
+    // any byte moves, so the caller's persist is durable first. WITHOUT this the resume path
+    // has no handle after a kill and re-creates the upload, which the server rejects as a
+    // duplicate reserve (409) — recoverable now via the client's derive-and-resume, but the
+    // durable handle stays the primary mechanism.
+    persistResourceUrl?: (url: string) => void | Promise<void>,
   ): Promise<{ resourceUrl: string }> {
     // Re-checked before every artifact (not just at the start of a run) — a token fine at the
     // start can go stale partway through a session.
     if (isTokenExpired(destination.token, Date.now())) throw new ExpiredPairingError();
     this.currentUpload.set(draftId, { artifactId: artifact.artifactId, resourceUrl });
-    const result = await this.transport.run({
+    const result = await transport.run({
       destination,
       artifact: {
         artifactId: artifact.artifactId,
@@ -567,9 +619,9 @@ class BackgroundUploadManager {
       },
       signal,
       onProgress,
-      onResourceCreated: (url) => {
+      onResourceCreated: async (url) => {
         this.currentUpload.set(draftId, { artifactId: artifact.artifactId, resourceUrl: url });
-        persistResourceUrl?.(url);
+        await persistResourceUrl?.(url);
       },
     });
     this.currentUpload.set(draftId, {
@@ -581,6 +633,7 @@ class BackgroundUploadManager {
 
   /** Reserve → upload → persist a session-related artifact (captions / beat manifest / thumbnail). */
   private async uploadRelatedArtifact(
+    transport: UploadTransport,
     draftId: string,
     destination: Destination,
     localKey: UploadArtifactKey,
@@ -591,6 +644,7 @@ class BackgroundUploadManager {
     const artifactId = existing?.artifactId ?? Crypto.randomUUID();
     if (!existing) await upsertUploadArtifact(draftId, localKey, { artifactId });
     const result = await this.uploadOne(
+      transport,
       draftId,
       destination,
       {
@@ -604,9 +658,9 @@ class BackgroundUploadManager {
       undefined,
       signal,
       undefined,
-      // Persist this sub-artifact's resource URL at creation so a kill mid-transfer resumes it via
-      // HEAD instead of re-creating (409).
-      (url) => void upsertUploadArtifact(draftId, localKey, { artifactId, resourceUrl: url }),
+      // Persist this sub-artifact's resource URL at creation — awaited by the transport before
+      // the first byte moves — so a kill mid-transfer resumes it via HEAD instead of re-creating.
+      (url) => upsertUploadArtifact(draftId, localKey, { artifactId, resourceUrl: url }),
     );
     await upsertUploadArtifact(draftId, localKey, { artifactId, resourceUrl: result.resourceUrl });
   }
@@ -635,7 +689,26 @@ class BackgroundUploadManager {
     return this.sessions.get(draftId) === session;
   }
 
-  private async uploadMerged(session: UploadSession, signal: AbortSignal): Promise<string> {
+  /**
+   * Ownership-gated persistence callback: runs `write` only while `session`
+   * still owns the draft's slot. The single shape behind every resume-URL
+   * persist — a displaced run must not resurrect state the invalidation wiped.
+   */
+  private ownedPersist(
+    draftId: string,
+    session: UploadSession,
+    write: (url: string) => Promise<unknown>,
+  ): (url: string) => Promise<void> {
+    return async (url) => {
+      if (this.owns(draftId, session)) await write(url);
+    };
+  }
+
+  private async uploadMerged(
+    session: UploadSession,
+    transport: UploadTransport,
+    signal: AbortSignal,
+  ): Promise<string> {
     const { draftId, destination, segments, merged } = session;
     if (!merged) throw new Error('Export is not ready yet');
     // merged.path is a bare filesystem path on Android (RNVT) — normalize to a file:// URI or the
@@ -668,6 +741,7 @@ class BackgroundUploadManager {
       await setCaptionsUploadStatus(draftId, 'uploading');
       const vttFile = writeTempTextFile(`${draftId}.vtt`, linesToVtt(lines));
       await this.uploadRelatedArtifact(
+        transport,
         draftId,
         destination,
         'captions',
@@ -684,6 +758,7 @@ class BackgroundUploadManager {
       JSON.stringify(buildBeatManifest(segments, merged.durationMs)),
     );
     await this.uploadRelatedArtifact(
+      transport,
       draftId,
       destination,
       'manifest',
@@ -696,6 +771,7 @@ class BackgroundUploadManager {
     const thumbFile = await this.resolveThumbnailFile(session, merged.path);
     if (thumbFile) {
       await this.uploadRelatedArtifact(
+        transport,
         draftId,
         destination,
         'thumbnail',
@@ -710,9 +786,16 @@ class BackgroundUploadManager {
     this.setLive(draftId, { status: 'uploading', phase: 'video', progress: 0 });
     let lastTick = 0;
     const result = await this.uploadOne(
+      transport,
       draftId,
       destination,
-      { artifactId: destination.artifactId, filename: `${draftId}.mp4`, kind: 'video', name: draftName, file },
+      {
+        artifactId: destination.artifactId,
+        filename: `${draftId}.mp4`,
+        kind: 'video',
+        name: draftName,
+        file,
+      },
       destination.resourceUrl,
       checksum,
       signal,
@@ -728,13 +811,11 @@ class BackgroundUploadManager {
         });
       },
       // Persist the video's resource URL the moment it's created (the merged anchor lives on the
-      // draft row) so an app kill DURING the video transfer resumes via HEAD+PATCH rather than
-      // re-creating the upload — which the server rejects as a duplicate reserve (409).
-      // Ownership-gated: a displaced run must not resurrect resume state the invalidation wiped.
-      (url) => {
-        if (this.owns(draftId, session))
-          void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url });
-      },
+      // draft row) — awaited by the transport before the first byte moves — so an app kill DURING
+      // the video transfer resumes via HEAD+PATCH rather than re-creating the upload.
+      this.ownedPersist(draftId, session, (url) =>
+        setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
+      ),
     );
     // Re-persist after the video lands (same URL); the final 'uploaded' status write lives in
     // `runSession` (shared by both units), not here — see the comment there.
@@ -744,7 +825,11 @@ class BackgroundUploadManager {
     return result.resourceUrl;
   }
 
-  private async uploadSegments(session: UploadSession, signal: AbortSignal): Promise<string> {
+  private async uploadSegments(
+    session: UploadSession,
+    transport: UploadTransport,
+    signal: AbortSignal,
+  ): Promise<string> {
     const { draftId, destination, segments } = session;
     const total = segments.length;
     // The ordering manifest is this unit's session anchor — carry the name there.
@@ -785,6 +870,7 @@ class BackgroundUploadManager {
     const manifestFile = writeTempTextFile(`${draftId}-segments.pulse`, JSON.stringify(manifest));
     this.setLive(draftId, { status: 'uploading', phase: 'manifest', progress: 0 });
     const result = await this.uploadOne(
+      transport,
       draftId,
       destination,
       {
@@ -799,12 +885,11 @@ class BackgroundUploadManager {
       signal,
       undefined,
       // The segment anchor is the ordering manifest; persist its URL on the draft row at creation
-      // so a kill mid-manifest resumes via HEAD instead of a 409-ing re-create. Ownership-gated
-      // (see uploadMerged).
-      (url) => {
-        if (this.owns(draftId, session))
-          void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url });
-      },
+      // (awaited before the first byte moves) so a kill mid-manifest resumes via HEAD instead of a
+      // re-create.
+      this.ownedPersist(draftId, session, (url) =>
+        setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
+      ),
     );
 
     for (const [index, segment] of segments.entries()) {
@@ -845,6 +930,7 @@ class BackgroundUploadManager {
       const file = new File(absolutize(uploadRel));
       const checksum = await md5Checksum(file);
       const videoResult = await this.uploadOne(
+        transport,
         draftId,
         destination,
         {
@@ -858,15 +944,14 @@ class BackgroundUploadManager {
         checksum,
         signal,
         undefined,
-        // Persist each clip's resource URL at creation so a kill mid-clip resumes via HEAD (409 on
-        // a re-create otherwise). Ownership-gated (see uploadMerged).
-        (url) => {
-          if (this.owns(draftId, session))
-            void upsertUploadArtifact(draftId, videoKey, {
-              artifactId: videoArtifactId,
-              resourceUrl: url,
-            });
-        },
+        // Persist each clip's resource URL at creation (awaited before the first byte moves) so a
+        // kill mid-clip resumes via HEAD.
+        this.ownedPersist(draftId, session, (url) =>
+          upsertUploadArtifact(draftId, videoKey, {
+            artifactId: videoArtifactId,
+            resourceUrl: url,
+          }),
+        ),
       );
       if (this.owns(draftId, session)) {
         await upsertUploadArtifact(draftId, videoKey, {

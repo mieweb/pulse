@@ -35,19 +35,11 @@ import { uploadPhaseLabel } from '@/features/upload/phase-label';
 import { useUpload } from '@/features/upload/use-upload';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
-import { formatClipCount, formatDuration } from '@/utils/format';
+import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
 import { effMs } from '@/utils/segment-window';
 
 /** Sum of each clip's effective duration — the segmented-mode summary line has no merged output to read a duration from. */
 const totalDurationMs = (clips: Segment[]) => clips.reduce((sum, s) => sum + effMs(s), 0);
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 export default function ExportScreen() {
   const insets = useSafeAreaInsets();
