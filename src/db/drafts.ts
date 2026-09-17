@@ -178,6 +178,15 @@ export async function listUploadResumeUrls(draftId: string): Promise<string[]> {
  */
 async function invalidateUploadResumeState(draftId: string): Promise<void> {
   if (uploadInvalidationHook) await uploadInvalidationHook(draftId);
+  await clearUploadResumeRows(draftId);
+}
+
+/**
+ * DB-only half of the invalidation above: wipe the persisted resume identities without
+ * touching in-flight runs. Also used by the upload manager to undo a resume-state write
+ * that committed after an invalidation had already swept the draft (displaced write).
+ */
+export async function clearUploadResumeRows(draftId: string): Promise<void> {
   await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
   await db
     .update(drafts)
@@ -347,6 +356,25 @@ export async function setUploadDestination(
   // A new destination invalidates any sub-artifacts (segment videos, merged captions/
   // manifest/thumbnail) uploaded to the old one — they'd resume against the wrong server otherwise.
   await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
+}
+
+/**
+ * The id of a DIFFERENT draft already paired to this server-minted artifactId, or `null`.
+ * Durable counterpart of the manager's in-memory duplicate-destination guard: after a
+ * restart the in-memory map is empty, but a failed draft's pairing survives in this table —
+ * letting a second draft claim the same artifactId would race one server-side reservation
+ * (and 409-adoption could then publish the wrong draft's video).
+ */
+export async function otherDraftPairedTo(
+  artifactId: string,
+  excludeDraftId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(and(eq(drafts.uploadArtifactId, artifactId), ne(drafts.id, excludeDraftId)))
+    .limit(1);
+  return rows[0]?.id ?? null;
 }
 
 /** Persist upload progress so a killed app can resume via `HEAD` on `resourceUrl` rather than restarting. */

@@ -30,6 +30,8 @@ jest.mock('@/db/drafts', () => {
     getDraftUploadStatus: jest.fn(async () => null),
     getResumableDrafts: jest.fn(async () => []),
     getUploadArtifact: jest.fn(async () => null),
+    clearUploadResumeRows: jest.fn(async () => {}),
+    otherDraftPairedTo: jest.fn(async () => null),
     draftQuery: jest.fn(() => []),
     listUploadResumeUrls: jest.fn(async () => state.resumeUrls),
     registerUploadInvalidationHook: jest.fn((hook) => {
@@ -116,6 +118,13 @@ jest.mock('./transports/direct-server-transport', () => ({
 const mockCheckCapabilities = jest.fn<(server: string) => Promise<unknown>>();
 jest.mock('./capabilities', () => ({
   checkCapabilities: (...args: [string]) => mockCheckCapabilities(...args),
+  // Inline copy (not requireActual) so the mock stays free of the real module's
+  // transitive imports; the manager only reads these strings.
+  CAPABILITIES_REJECTION_MESSAGE: {
+    unreachable: "Couldn't reach that server. Check the connection and try again.",
+    'version-too-old': 'This server needs a newer version of Pulse. Update the app and try again.',
+    'version-too-new': "This server hasn't been updated to work with this version of Pulse yet.",
+  },
 }));
 
 const mockIsTokenExpired = jest.fn<(token: unknown, now: number) => boolean>(() => false);
@@ -139,6 +148,11 @@ const mockDb = (
     };
   }
 ).__state;
+const mockOtherDraftPairedTo = (
+  jest.requireMock('@/db/drafts') as {
+    otherDraftPairedTo: jest.Mock<(artifactId: string, exclude: string) => Promise<string | null>>;
+  }
+).otherDraftPairedTo;
 
 const DEST_ARTIFACT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
@@ -252,6 +266,90 @@ describe('BackgroundUploadManager (characterization)', () => {
     uploads.acknowledge(draftId);
   });
 
+  it('fails terminally on an explicit protocol-version rejection instead of downgrading to TUS', async () => {
+    mockCheckCapabilities.mockResolvedValue({ ok: false, reason: 'version-too-old' });
+    const draftId = 'draft-version-reject';
+    uploads.enqueue(makeSession(draftId));
+    await eventually(() => uploads.getDraftState(draftId).status === 'error');
+    expect(uploads.getDraftState(draftId)).toMatchObject({
+      status: 'error',
+      retryable: false,
+      reason: expect.stringContaining('newer version of Pulse'),
+    });
+    expect(mockTusRun).not.toHaveBeenCalled();
+    expect(mockDirectRun).not.toHaveBeenCalled();
+  });
+
+  it('stays on the direct transport when offline if the draft holds a direct resume identity', async () => {
+    // Default mock: capabilities unreachable. A persisted `/artifacts/…` handle
+    // means a direct attempt already reserved server-side — TUS can never resume
+    // it, so the run must wait out connectivity on the direct transport.
+    mockDb.resumeUrls = [`https://vault.example.test/pulsevault/artifacts/${DEST_ARTIFACT}`];
+    mockDirectRun.mockImplementation(async (params) => ({
+      resourceUrl: `https://vault.example.test/pulsevault/artifacts/${(params.artifact as { artifactId: string }).artifactId}`,
+    }));
+    const draftId = 'draft-direct-sticky';
+    uploads.enqueue(makeSession(draftId));
+    await eventually(() => uploads.getDraftState(draftId).status === 'done');
+    expect(mockDirectRun).toHaveBeenCalled();
+    expect(mockTusRun).not.toHaveBeenCalled();
+    uploads.acknowledge(draftId);
+  });
+
+  it('stays on TUS when a TUS resume identity exists, even after the server starts advertising directUpload', async () => {
+    // Profiles share the artifactId space: a direct grant for an id holding a
+    // live TUS reservation is a hard 409 (never same-shape re-grantable), so a
+    // capability UPGRADE mid-draft must not move a run off its TUS resume state.
+    mockCheckCapabilities.mockResolvedValue({
+      ok: true,
+      capabilities: {
+        protocolVersion: 1,
+        minSupportedVersion: 1,
+        maxSupportedVersion: 1,
+        directUpload: true,
+      },
+    });
+    mockDb.resumeUrls = ['https://vault.example.test/pulsevault/upload/aWQtdGVzdA'];
+    mockTusRun.mockImplementation(async () => ({
+      resourceUrl: 'https://vault.example.test/pulsevault/upload/aWQtdGVzdA',
+    }));
+    const draftId = 'draft-tus-pinned';
+    uploads.enqueue(makeSession(draftId));
+    await eventually(() => uploads.getDraftState(draftId).status === 'done');
+    expect(mockTusRun).toHaveBeenCalled();
+    expect(mockDirectRun).not.toHaveBeenCalled();
+    uploads.acknowledge(draftId);
+  });
+
+  it('drops a direct-profile handle rather than feeding it to TUS as a resume URL', async () => {
+    // Server reachable but direct upload disabled (capability rollback): the
+    // persisted `/artifacts/…` handle is meaningless to TUS — it must arrive
+    // at the transport as null (fresh create), not as a resume identity.
+    mockCheckCapabilities.mockResolvedValue({
+      ok: true,
+      capabilities: {
+        protocolVersion: 1,
+        minSupportedVersion: 1,
+        maxSupportedVersion: 1,
+        directUpload: false,
+      },
+    });
+    mockTusRun.mockImplementation(async () => ({
+      resourceUrl: 'https://vault.example.test/pulsevault/upload/x',
+    }));
+    const draftId = 'draft-cross-profile';
+    const session = makeSession(draftId);
+    session.destination.resourceUrl = `https://vault.example.test/pulsevault/artifacts/${DEST_ARTIFACT}`;
+    uploads.enqueue(session);
+    await eventually(() => uploads.getDraftState(draftId).status === 'done');
+    const video = mockTusRun.mock.calls
+      .map(([params]) => params.artifact as { kind: string; resourceUrl: string | null })
+      .find((artifact) => artifact.kind === 'video');
+    expect(video).toBeDefined();
+    expect(video!.resourceUrl).toBeNull();
+    uploads.acknowledge(draftId);
+  });
+
   it('guards against two live sessions claiming the same destination artifactId', async () => {
     // Gate every transport call until released — then let ALL calls (manifest
     // AND video) flow, so the singleton drain can finish draft-a and never
@@ -281,6 +379,30 @@ describe('BackgroundUploadManager (characterization)', () => {
     releaseFirst();
     await eventually(() => uploads.getDraftState(first).status === 'done');
     uploads.acknowledge(first);
+  });
+
+  it('refuses a run whose artifactId is durably paired to another draft (post-restart shape)', async () => {
+    // The in-memory map can't see a rival that failed before a restart — the
+    // durable check in runSession must catch it from the drafts table instead.
+    // Keyed on the artifactId (not a once-queue) so the singleton drain's
+    // ordering across tests can't consume it early.
+    const rivalArtifact = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    mockOtherDraftPairedTo.mockImplementation(async (artifactId) =>
+      artifactId === rivalArtifact ? 'some-other-draft' : null,
+    );
+    try {
+      const draftId = 'draft-durable-rival';
+      const session = makeSession(draftId);
+      session.destination.artifactId = rivalArtifact;
+      uploads.enqueue(session);
+      await eventually(() => uploads.getDraftState(draftId).status === 'error');
+      expect(uploads.getDraftState(draftId)).toMatchObject({
+        status: 'error',
+        retryable: false,
+      });
+    } finally {
+      mockOtherDraftPairedTo.mockImplementation(async () => null);
+    }
   });
 
   it('cancel aborts the in-flight transfer, resets state, and server-cancels the live resource', async () => {

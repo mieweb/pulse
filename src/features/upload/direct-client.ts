@@ -3,6 +3,7 @@ import type { File } from 'expo-file-system';
 import type { ArtifactKind, TusUploadProgress } from './tus-client';
 import {
   authHeaders,
+  isAbortError,
   probeArtifactReady,
   rejectRedirect,
   responseError,
@@ -145,15 +146,28 @@ export async function uploadViaDirect(opts: DirectUploadOptions): Promise<Direct
 
     // One PUT per grant cycle: a transient PUT failure gets a FRESH grant on
     // the next cycle (the old URL may have expired mid-transfer), so the
-    // retry loop here only guards the request itself, not stale grants.
-    const putResult = await opts.uploadFile({
-      uploadUrl: grant.uploadUrl,
-      headers: grant.headers,
-      file: opts.file,
-      signal: opts.signal,
-      onProgress: (bytesSent) =>
-        opts.onProgress?.({ bytesSent: Math.min(bytesSent, totalBytes), totalBytes }),
-    });
+    // retry loop here only guards the request itself, not stale grants. That
+    // covers REJECTIONS too — the native task rejects on transport failures
+    // (network drop, TLS reset), which are exactly what the next cycle's
+    // fresh grant exists for; only the caller's abort escapes unchanged.
+    let putResult: { status: number };
+    try {
+      putResult = await opts.uploadFile({
+        uploadUrl: grant.uploadUrl,
+        headers: grant.headers,
+        file: opts.file,
+        signal: opts.signal,
+        onProgress: (bytesSent) =>
+          opts.onProgress?.({ bytesSent: Math.min(bytesSent, totalBytes), totalBytes }),
+      });
+    } catch (err) {
+      if (isAbortError(err) || opts.signal?.aborted) throw err;
+      if (cycle >= MAX_GRANT_CYCLES) {
+        const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
+        throw new TusUploadError(`Upload failed${detail}`, { retryable: true });
+      }
+      continue;
+    }
 
     if (putResult.status >= 200 && putResult.status < 300) {
       opts.onProgress?.({ bytesSent: totalBytes, totalBytes });

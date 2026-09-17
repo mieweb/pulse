@@ -288,4 +288,79 @@ describe('uploadViaDirect', () => {
     ).rejects.toMatchObject({ retryable: false });
     expect(putCalls).toHaveLength(0);
   });
+
+  it('recovers a REJECTED PUT with a fresh grant on the next cycle', async () => {
+    // The native task rejects on transport failures (network drop, TLS reset) —
+    // it does not return a status. That rejection must feed the same fresh-grant
+    // recovery as a non-2xx status, not escape the cycle loop.
+    const { fetchImpl, calls } = createFetchStub([
+      grantResponse(201),
+      grantResponse(200), // §9.1 re-grant for the same reservation
+      completeOk(),
+    ]);
+    let attempts = 0;
+    const uploadFile: UploadFile = async ({ onProgress }) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('network dropped mid-PUT');
+      onProgress?.(20);
+      return { status: 200 };
+    };
+
+    const result = await uploadViaDirect({
+      server: SERVER,
+      token: 'tok',
+      artifactId: ARTIFACT_ID,
+      filename: 'clip.mp4',
+      kind: 'video',
+      file: fakeFile(20) as never,
+      fetchImpl,
+      uploadFile,
+    });
+
+    expect(result.resourceUrl).toBe(ARTIFACTS_URL);
+    expect(attempts).toBe(2);
+    // Two grant POSTs (fresh + re-grant), one complete.
+    expect(calls.filter((c) => c.url.endsWith('/direct-uploads'))).toHaveLength(2);
+  });
+
+  it('surfaces a retryable error when the PUT rejects on the final cycle', async () => {
+    const { fetchImpl } = createFetchStub([grantResponse(201), grantResponse(200)]);
+    const uploadFile: UploadFile = async () => {
+      throw new Error('network dropped mid-PUT');
+    };
+
+    await expect(
+      uploadViaDirect({
+        server: SERVER,
+        token: 'tok',
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: fakeFile(20) as never,
+        fetchImpl,
+        uploadFile,
+      }),
+    ).rejects.toMatchObject({ retryable: true, message: expect.stringContaining('network dropped') });
+  });
+
+  it('lets an aborted PUT escape unchanged (no extra grant cycle)', async () => {
+    const { fetchImpl, calls } = createFetchStub([grantResponse(201)]);
+    const uploadFile: UploadFile = async () => {
+      throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+    };
+
+    await expect(
+      uploadViaDirect({
+        server: SERVER,
+        token: 'tok',
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: fakeFile(20) as never,
+        fetchImpl,
+        uploadFile,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(calls.filter((c) => c.url.endsWith('/direct-uploads'))).toHaveLength(1);
+  });
 });

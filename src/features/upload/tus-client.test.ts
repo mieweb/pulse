@@ -802,6 +802,39 @@ describe('uploadViaTus', () => {
     expect(probe?.init?.redirect).toBe('manual');
   });
 
+  it('does not adopt a 409 whose derived HEAD lacks Upload-Offset (malformed resource)', async () => {
+    // Number(null) is 0 — without the raw-header check a 2xx HEAD missing the
+    // header would read as a live zero-offset resource and get adopted.
+    const file = fakeFile(20);
+    const { fetchImpl } = createFetchStub({
+      POST: [
+        new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
+          status: 409,
+          headers: JSON_HEADERS,
+        }),
+      ],
+      // 200 but NO Upload-Offset header.
+      HEAD: [new Response(null, { status: 200 })],
+      // The ready-probe also finds nothing servable.
+      GET: [new Response(null, { status: 404 })],
+    });
+    const { uploadChunk, calls: chunkCalls } = createChunkStub([]);
+
+    await expect(
+      uploadViaTus({
+        server: SERVER,
+        token: 'tok',
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: file as never,
+        fetchImpl,
+        uploadChunk,
+      }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(chunkCalls).toHaveLength(0);
+  });
+
   it('surfaces the 409 when the upload is gone AND the artifact does not serve', async () => {
     const file = fakeFile(20);
     const { fetchImpl } = createFetchStub({
@@ -828,6 +861,63 @@ describe('uploadViaTus', () => {
         uploadChunk,
       }),
     ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
+  });
+
+  it('fails closed when the server reports more bytes than the local file has', async () => {
+    // A resume/adopt target whose offset exceeds the local file is a stale or
+    // foreign resource under this artifactId — satisfying the transfer loop
+    // with it would report success without validating a single local byte.
+    const file = fakeFile(10);
+    const { fetchImpl } = createFetchStub({
+      HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '99' } })],
+    });
+    const { uploadChunk, calls } = createChunkStub([]);
+
+    await expect(
+      uploadViaTus({
+        server: SERVER,
+        token: 'tok',
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: file as never,
+        resourceUrl: `${SERVER}/upload/abc`,
+        fetchImpl,
+        uploadChunk,
+      }),
+    ).rejects.toMatchObject({ retryable: false });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('surfaces AbortError — not the 409 — when cancelled while probing the derived URL', async () => {
+    // A cancel mid-probe must keep its cancellation semantics: swallowing the
+    // abort and rethrowing the create 409 would surface a terminal conflict
+    // for what was a user cancel.
+    const file = fakeFile(20);
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
+          status: 409,
+          headers: JSON_HEADERS,
+        });
+      }
+      // Both the derived-URL HEAD and the ready-probe GET die on the abort.
+      throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+    }) as unknown as typeof fetch;
+    const { uploadChunk } = createChunkStub([]);
+
+    await expect(
+      uploadViaTus({
+        server: SERVER,
+        token: 'tok',
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: file as never,
+        fetchImpl,
+        uploadChunk,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
   });
 
   it('awaits onResourceCreated before the first byte moves', async () => {

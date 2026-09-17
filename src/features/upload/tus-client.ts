@@ -105,7 +105,8 @@ export class TusUploadError extends Error {
   }
 }
 
-function isAbortError(err: unknown): boolean {
+/** Whether an error is a fetch/native-task cancellation. Shared with the direct-upload client so both transports keep abort semantics distinct from failures. */
+export function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError';
 }
 
@@ -227,7 +228,10 @@ export const responseError = statusError;
  * that failed client-side mid-session — not just "someone else holds it".
  * Only ready artifacts serve on the artifacts URL, so a 200/206 (local
  * streaming) or a 3xx (presigned redirect, NOT followed) proves completion.
- * Never throws — a probe failure just means "not adoptable as done".
+ * A probe failure just means "not adoptable as done" — never an exception —
+ * EXCEPT cancellation: an abort is the caller's verdict, not the probe's,
+ * and must propagate so callers keep their AbortError semantics instead of
+ * surfacing whatever error the probe was trying to recover from.
  */
 export async function probeArtifactReady(
   server: string,
@@ -242,12 +246,19 @@ export async function probeArtifactReady(
       signal,
       // Range keeps a local-storage hit to one byte; S3-backed serving 302s
       // before any body exists.
+      // Residual risk, documented: runtimes without real `redirect: 'manual'`
+      // support (React Native's fetch) may follow the 302 and forward the
+      // Authorization header to the presigned URL's host. That host is the
+      // vault operator's own bucket (the vault minted the URL), so the token
+      // stays within the trust domain that issued it — unlike the arbitrary
+      // Location targets rejectRedirect guards against elsewhere.
       headers: { Range: 'bytes=0-0', ...authHeaders(token) },
     });
     await (res.body as { cancel?: () => Promise<void> } | null)?.cancel?.().catch(() => {});
     if (res.type === 'opaqueredirect') return true;
     return res.status === 200 || res.status === 206 || (res.status >= 300 && res.status < 400);
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) throw err;
     return false;
   }
 }
@@ -379,8 +390,16 @@ async function fetchOffset(
   });
   rejectRedirect(res);
   if (!res.ok) throw await statusError(res, `Could not resume the upload (${res.status})`);
-  const offset = Number(res.headers.get('upload-offset'));
-  if (!Number.isFinite(offset)) {
+  // Check the raw header first: `Number(null)` is 0, so a 2xx HEAD *without*
+  // Upload-Offset would otherwise look like a live zero-offset resource — and
+  // the 409 adopt path would upload into a malformed resource instead of
+  // failing closed.
+  const rawOffset = res.headers.get('upload-offset');
+  if (rawOffset === null) {
+    throw new TusUploadError('Server did not return an Upload-Offset', { retryable: false });
+  }
+  const offset = Number(rawOffset);
+  if (!Number.isSafeInteger(offset) || offset < 0) {
     throw new TusUploadError('Server did not return a valid Upload-Offset', { retryable: false });
   }
   return offset;
@@ -444,6 +463,16 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
   const transfer = (resourceUrl: string) =>
     withRetry(async () => {
       let offset = await fetchOffset(resourceUrl, opts.token, opts.signal, fetchImpl);
+      // Bound by the local file: a resource claiming MORE bytes than this file
+      // holds is not this file's upload (a stale or foreign resource under the
+      // same id) — letting it satisfy the loop condition would report success
+      // without sending or validating a single local byte.
+      if (offset > totalBytes) {
+        throw new TusUploadError(
+          `Server reports more bytes (${offset}) than the local file has (${totalBytes})`,
+          { retryable: false },
+        );
+      }
       opts.onProgress?.({ bytesSent: offset, totalBytes });
 
       while (offset < totalBytes) {
@@ -478,12 +507,20 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
         // Advance strictly on the server's word. A 204 without a usable
         // Upload-Offset, or one that claims no forward progress, means this
         // loop can no longer trust its position — hand control back to
-        // withRetry, whose next attempt re-HEADs before sending anything.
+        // withRetry, whose next attempt re-HEADs before sending anything. An
+        // offset past the local file is the stale/foreign-resource case above,
+        // just detected mid-transfer — fail closed, don't "complete".
         const responseOffset = Number(headerValue(result.headers, 'upload-offset'));
         if (!Number.isFinite(responseOffset) || responseOffset <= offset) {
           throw new TusUploadError('Server acknowledged a chunk without a usable Upload-Offset', {
             retryable: true,
           });
+        }
+        if (responseOffset > totalBytes) {
+          throw new TusUploadError(
+            `Server reports more bytes (${responseOffset}) than the local file has (${totalBytes})`,
+            { retryable: false },
+          );
         }
         offset = responseOffset;
         opts.onProgress?.({ bytesSent: offset, totalBytes });
@@ -514,7 +551,11 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
       if (!derived) throw err;
       try {
         await fetchOffset(derived, opts.token, opts.signal, fetchImpl);
-      } catch {
+      } catch (offsetErr) {
+        // Cancellation mid-probe is the caller's abort, not a "derived URL
+        // isn't live" verdict — surface it instead of the original 409, or
+        // the manager would record a terminal conflict for a user cancel.
+        if (isAbortError(offsetErr)) throw offsetErr;
         // Not resumable — but a 409 whose upload is GONE often means the
         // upload already finished (finished tus uploads stop answering HEAD).
         // If the artifact serves, adopt it as complete instead of failing.

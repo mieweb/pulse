@@ -346,6 +346,8 @@ export function useRecorder(initialDraftId?: string) {
     // the recorder's temp file (pre-move), or the moved-but-rowless segment file.
     let capturedUri: string | null = null;
     let persistedRel: string | null = null;
+    let draftIdForSweep: string | null = null;
+    let segmentIdForSweep: string | null = null;
     try {
       // Codec: VisionCamera defaults to the most efficient codec available (HEVC/h265 on modern
       // iPhones), which is what keeps every clip format-uniform for the merge engine's fast
@@ -395,6 +397,8 @@ export function useRecorder(initialDraftId?: string) {
 
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;
+      draftIdForSweep = id;
+      segmentIdForSweep = segmentId;
       const originalFilename = await persistRecording(uri, id, segmentId);
       persistedRel = originalFilename;
       const durationMs = await getDurationMs(absolutize(originalFilename));
@@ -408,6 +412,13 @@ export function useRecorder(initialDraftId?: string) {
       showToast('Could not save that clip.');
       const orphan = persistedRel ? absolutize(persistedRel) : capturedUri;
       if (orphan) void deleteFile(orphan).catch(() => {});
+      // persistSegment writes the thumbnail BEFORE the DB row — an addSegment
+      // failure leaves it orphaned alongside the video; sweep it too.
+      if (persistedRel && draftIdForSweep && segmentIdForSweep) {
+        void deleteFile(absolutize(thumbRelPath(draftIdForSweep, segmentIdForSweep))).catch(
+          () => {},
+        );
+      }
     } finally {
       recorderRef.current = null;
       stopRequestedRef.current = false;
