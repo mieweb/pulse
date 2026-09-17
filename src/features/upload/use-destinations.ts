@@ -18,6 +18,8 @@ export type DestinationOption = {
   server: string;
   artifactId: string;
   token: string | null;
+  /** Transport decided at pairing time — see `uploadDestinations.directUpload`. */
+  directUpload: boolean;
   /** Millisecond `exp` for a decodable token, else `null` (tokenless = no known expiry). */
   expiresAtMs: number | null;
   /** Preformatted expiry label ("No expiry" / "Expires in 4m" / …), so views don't read the clock. */
@@ -66,6 +68,7 @@ export function useDestinations() {
           server: r.server,
           artifactId: r.artifactId,
           token: r.token,
+          directUpload: r.directUpload,
           expiresAtMs: expiresAtMs(r.token),
           expiryLabel: formatExpiry(r.token, now),
         })),

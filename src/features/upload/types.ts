@@ -7,24 +7,24 @@ import type { ArtifactKind } from './tus-client';
 /**
  * A paired upload destination resolved for a draft. The bearer `token` lives in
  * expo-secure-store (not the drizzle row); it's carried on the session so the
- * manager can upload without a re-fetch.
+ * manager can upload without a re-fetch. `directUpload` was decided when the
+ * link was paired (capabilities are probed once, at scan time).
  */
 export type Destination = {
   server: string;
   token: string | null;
   artifactId: string;
-  resourceUrl: string | null;
+  directUpload: boolean;
 };
 
 /** The merged export output an upload session sends (from `useExport`). */
 export type MergedOutput = { path: string; durationMs: number };
 
 /**
- * One queued upload run for a draft. Captured at enqueue time — while the export
- * screen is foreground and the merge is done — and held in-memory by the manager
- * so the run survives navigation/backgrounding without the screen. Durable state
- * (destination, resume identity, status) lives in SQLite; this holds the one
- * thing SQLite doesn't yet: the merged output path/duration.
+ * One upload run for a draft. Captured at enqueue time — while the export
+ * screen is foreground and the merge is done — and held in-memory by the
+ * manager. Deliberately NOT persisted: pairings are single-shot, so an app
+ * kill doesn't resume the run; the launch sweep settles the draft instead.
  */
 export type UploadSession = {
   draftId: string;
@@ -32,11 +32,6 @@ export type UploadSession = {
   segments: Segment[];
   /** The merged export this session uploads. */
   merged: MergedOutput;
-  /**
-   * The pool destination id to remove once this run finishes (single-use), or
-   * `null` for a draft whose destination came from an already-consumed session.
-   */
-  consumedDestinationId: string | null;
 };
 
 export type UploadProgress = { bytesSent: number; totalBytes: number };
@@ -52,8 +47,9 @@ export type UploadPhase = 'preparing' | 'captions' | 'manifest' | 'thumbnail' | 
 
 /**
  * Live, per-draft upload state the UI subscribes to via `useSyncExternalStore`.
- * Held in-memory (progress ticks are high-frequency and never persisted); status
- * transitions are separately written to SQLite for resume/history.
+ * Held in-memory (progress ticks are high-frequency and never persisted).
+ * There is no error state: failure is an EVENT (toast + notification), after
+ * which the draft is simply idle/unpaired again.
  */
 export type LiveUploadState =
   | { status: 'idle' }
@@ -62,8 +58,7 @@ export type LiveUploadState =
       phase: UploadPhase;
       progress: number;
     }
-  | { status: 'done'; resourceUrl: string }
-  | { status: 'error'; reason: string; retryable: boolean };
+  | { status: 'done'; resourceUrl: string };
 
 /** One artifact to hand a transport — a session anchor (video/manifest) or a related sub-artifact. */
 export type UploadArtifactSpec = {
@@ -75,14 +70,13 @@ export type UploadArtifactSpec = {
   /** Free-form display title (the draft name). Set only on the session anchor. */
   name?: string;
   file: File;
-  /** A previously-created resource URL to resume, or `null` to create fresh. */
-  resourceUrl: string | null;
 };
 
 /**
  * Uploads a single artifact to its destination. The framework-agnostic seam the
- * background manager drives — `TusServerTransport` today (local backend), an
- * `S3MultipartTransport` later (direct-to-S3). Resumable + idempotent.
+ * background manager drives — TUS by default, the presigned direct profile when
+ * the pairing advertised it. Every run creates fresh: identities are single-shot,
+ * so there is no resume input.
  */
 export type UploadTransport = {
   run(params: {
@@ -90,9 +84,9 @@ export type UploadTransport = {
     artifact: UploadArtifactSpec;
     signal: AbortSignal;
     onProgress?: (progress: UploadProgress) => void;
-    /** Fired as soon as the resource URL is known, so the caller can track what's in flight. */
+    /** Fired as soon as the resource URL is known, so the caller can track what's in flight (the cancel handle). */
     onResourceCreated?: (resourceUrl: string) => void | Promise<void>;
   }): Promise<{ resourceUrl: string }>;
-  /** Server-side cancel (TUS DELETE) of an in-flight resource. */
+  /** Server-side cancel (bearer DELETE) of an in-flight resource. */
   cancel(resourceUrl: string, token: string | null): Promise<void>;
 };

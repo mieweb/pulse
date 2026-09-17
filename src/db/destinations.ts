@@ -16,6 +16,8 @@ export type PairedDestination = {
   server: string;
   token: string | null;
   artifactId: string;
+  /** Whether the server advertised the direct-upload profile at pairing time — the transport is decided here, once. */
+  directUpload: boolean;
 };
 
 /** The non-secret portion, persisted in the `upload_destinations` table. The token (a live
@@ -28,6 +30,7 @@ export const destinationsQuery = db
     id: uploadDestinations.id,
     server: uploadDestinations.server,
     artifactId: uploadDestinations.artifactId,
+    directUpload: uploadDestinations.directUpload,
     createdAt: uploadDestinations.createdAt,
   })
   .from(uploadDestinations)
@@ -42,6 +45,7 @@ export async function addDestination(dest: PairedDestination): Promise<string> {
   const meta: PairedDestinationMeta = {
     server: dest.server,
     artifactId: dest.artifactId,
+    directUpload: dest.directUpload,
   };
   const existing = await db
     .select({ id: uploadDestinations.id })
@@ -52,7 +56,7 @@ export async function addDestination(dest: PairedDestination): Promise<string> {
   if (match) {
     await db
       .update(uploadDestinations)
-      .set({ server: meta.server })
+      .set({ server: meta.server, directUpload: meta.directUpload })
       .where(eq(uploadDestinations.id, id));
   } else {
     await db.insert(uploadDestinations).values({ id, ...meta });
@@ -67,6 +71,7 @@ export async function getDestination(id: string): Promise<PairedDestination | nu
     .select({
       server: uploadDestinations.server,
       artifactId: uploadDestinations.artifactId,
+      directUpload: uploadDestinations.directUpload,
     })
     .from(uploadDestinations)
     .where(eq(uploadDestinations.id, id));
@@ -75,21 +80,7 @@ export async function getDestination(id: string): Promise<PairedDestination | nu
   return { ...row, token: await getDestinationToken(id) };
 }
 
-/**
- * The pool id of the destination for a given server-minted `artifactId`, or `null`. The resume
- * path uses it to re-link a killed upload to its single-use pool row (that linkage isn't persisted
- * on the session) so completing the resumed run still removes it. Deduped by `artifactId`
- * (server-unique in practice), so at most one row matches.
- */
-export async function getDestinationIdByArtifactId(artifactId: string): Promise<string | null> {
-  const rows = await db
-    .select({ id: uploadDestinations.id })
-    .from(uploadDestinations)
-    .where(eq(uploadDestinations.artifactId, artifactId));
-  return rows[0]?.id ?? null;
-}
-
-/** Remove a destination from the pool (consumed by a finished upload, or deleted by the user). */
+/** Remove a destination from the pool (consumed by a claim, or deleted by the user). */
 export async function deleteDestination(id: string): Promise<void> {
   await db.delete(uploadDestinations).where(eq(uploadDestinations.id, id));
   await deleteDestinationToken(id);

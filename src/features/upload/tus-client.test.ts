@@ -1,12 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import {
-  cancelTusUpload,
-  deriveUploadResourceUrl,
-  TusUploadError,
-  type UploadChunk,
-  uploadViaTus,
-} from './tus-client';
+import { cancelTusUpload, TusUploadError, type UploadChunk, uploadViaTus } from './tus-client';
 
 const SERVER = 'https://vault.example.test/pulsevault';
 const ARTIFACT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -250,31 +244,6 @@ describe('uploadViaTus', () => {
     expect(progress).toEqual([0, 30, 70, 100, 100]);
   });
 
-  it('reports resumed in-flight progress as offset + bytes sent this attempt, clamped to the total', async () => {
-    const file = fakeFile(100);
-    const { fetchImpl } = createFetchStub({
-      HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '40' } })],
-    });
-    // 70 sent on a 60-byte remainder would claim 110/100 — must clamp.
-    const { uploadChunk } = createChunkStub([{ ...chunkOk(100), ticks: [20, 70] }]);
-
-    const progress: number[] = [];
-    await uploadViaTus({
-      server: SERVER,
-      token: null,
-      artifactId: ARTIFACT_ID,
-      filename: 'clip.mp4',
-      kind: 'video',
-      file: file as never,
-      resourceUrl: `${SERVER}/upload/abc`,
-      fetchImpl,
-      uploadChunk,
-      onProgress: ({ bytesSent }) => progress.push(bytesSent),
-    });
-
-    expect(progress).toEqual([40, 60, 100, 100]);
-  });
-
   it.each([0, -1, 0.5, NaN, Infinity])(
     'rejects an invalid chunkSizeBytes (%p) up front with a non-retryable error',
     async (chunkSizeBytes) => {
@@ -336,74 +305,7 @@ describe('uploadViaTus', () => {
     ]);
   });
 
-  it('resumes from a provided resourceUrl without creating a new upload, sending only what is missing', async () => {
-    const file = fakeFile(10);
-    const { fetchImpl, calls } = createFetchStub({
-      HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '5' } })],
-    });
-    const { uploadChunk, calls: chunkCalls } = createChunkStub([chunkOk(10)]);
-
-    const result = await uploadViaTus({
-      server: SERVER,
-      token: null,
-      artifactId: ARTIFACT_ID,
-      filename: 'clip.mp4',
-      kind: 'video',
-      file: file as never,
-      resourceUrl: `${SERVER}/upload/abc`,
-      fetchImpl,
-      uploadChunk,
-    });
-
-    expect(result.resourceUrl).toBe(`${SERVER}/upload/abc`);
-    expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
-    expect(chunkCalls).toHaveLength(1);
-    expect(chunkCalls[0].offset).toBe(5);
-    expect(chunkCalls[0].chunkBytes).toBe(5);
-    expect(chunkCalls[0].headers['Upload-Offset']).toBe('5');
-  });
-
-  it('recreates the upload when a persisted resume URL is gone server-side (404)', async () => {
-    const file = fakeFile(20);
-    const { fetchImpl, calls } = createFetchStub({
-      HEAD: [
-        // The stored resource URL: the server no longer knows it (retention
-        // cleanup / wiped storage) — must fall back to a fresh create, not
-        // surface a terminal "rejected".
-        new Response(null, { status: 404 }),
-        new Response(null, { status: 200, headers: { 'upload-offset': '0' } }),
-      ],
-      POST: [
-        new Response(null, { status: 201, headers: { location: '/pulsevault/upload/fresh' } }),
-      ],
-    });
-    const { uploadChunk, calls: chunkCalls } = createChunkStub([chunkOk(20)]);
-
-    const seen: string[] = [];
-    const result = await uploadViaTus({
-      server: SERVER,
-      token: 'tok',
-      artifactId: ARTIFACT_ID,
-      filename: 'clip.mp4',
-      kind: 'video',
-      file: file as never,
-      resourceUrl: `${SERVER}/upload/stale`,
-      onResourceCreated: (url) => {
-        seen.push(url);
-      },
-      fetchImpl,
-      uploadChunk,
-    });
-
-    expect(result.resourceUrl).toBe(`${SERVER}/upload/fresh`);
-    // Both URLs reported in order, so the caller's persisted mapping self-heals.
-    expect(seen).toEqual([`${SERVER}/upload/stale`, `${SERVER}/upload/fresh`]);
-    expect(calls.filter((c) => c.init?.method === 'POST')).toHaveLength(1);
-    expect(chunkCalls).toHaveLength(1);
-    expect(chunkCalls[0].offset).toBe(0);
-  });
-
-  it('does NOT recreate on a 404 for a URL the server handed out in this same run', async () => {
+  it('surfaces a mid-run 404 as terminal (no recreate — the URL came from this run)', async () => {
     const file = fakeFile(20);
     const { fetchImpl, calls } = createFetchStub({
       POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
@@ -683,14 +585,10 @@ describe('uploadViaTus', () => {
     expect(result.resourceUrl).toBe('https://vault.example.test/other-prefix/upload/abc');
   });
 
-  // The 409 self-heal: a create conflict means the server holds a reservation this
-  // client lost the handle to (killed in the POST→persist window). pulsevault upload
-  // ids are deterministic, so the client derives the resource URL and resumes it.
-  const derivedUrl = `${SERVER}/upload/${Buffer.from(`video/${ARTIFACT_ID}.mp4`, 'utf8').toString(
-    'base64url',
-  )}`;
-
-  it('recovers a 409 create conflict by deriving the resource URL and resuming', async () => {
+  // Single-shot identities: a create 409 means this artifactId was already
+  // used (the link is spent). There is no derive/resume/adopt recovery — the
+  // manager burns the pairing and the user scans a fresh link.
+  it('surfaces a create 409 as terminal, with no recovery probes', async () => {
     const file = fakeFile(20);
     const { fetchImpl, calls } = createFetchStub({
       POST: [
@@ -699,124 +597,6 @@ describe('uploadViaTus', () => {
           headers: JSON_HEADERS,
         }),
       ],
-      HEAD: [
-        // Self-heal probe: the derived URL is live with 8 bytes already landed…
-        new Response(null, { status: 200, headers: { 'upload-offset': '8' } }),
-        // …then the normal transfer re-HEADs before PATCHing.
-        new Response(null, { status: 200, headers: { 'upload-offset': '8' } }),
-      ],
-    });
-    const { uploadChunk, calls: chunkCalls } = createChunkStub([chunkOk(20)]);
-    const seen: string[] = [];
-
-    const result = await uploadViaTus({
-      server: SERVER,
-      token: 'tok',
-      artifactId: ARTIFACT_ID,
-      filename: 'clip.mp4',
-      kind: 'video',
-      file: file as never,
-      onResourceCreated: (url) => {
-        seen.push(url);
-      },
-      fetchImpl,
-      uploadChunk,
-    });
-
-    expect(result.resourceUrl).toBe(derivedUrl);
-    expect(seen).toEqual([derivedUrl]);
-    // Resumed from the server's durable offset — no restart from zero.
-    expect(chunkCalls.map((c) => [c.offset, c.chunkBytes])).toEqual([[8, 12]]);
-    const headCalls = calls.filter((c) => c.init?.method === 'HEAD');
-    expect(headCalls.every((c) => c.url === derivedUrl)).toBe(true);
-    // Exactly one create attempt — the conflict is resolved by resuming, not re-POSTing.
-    expect(calls.filter((c) => c.init?.method === 'POST')).toHaveLength(1);
-  });
-
-  it('surfaces the original 409 when the derived URL is not live on the server', async () => {
-    const file = fakeFile(20);
-    const { fetchImpl } = createFetchStub({
-      POST: [
-        new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
-          status: 409,
-          headers: JSON_HEADERS,
-        }),
-      ],
-      // Non-pulsevault id scheme / genuinely conflicting state: the probe 404s.
-      HEAD: [new Response(null, { status: 404 })],
-    });
-    const { uploadChunk } = createChunkStub([]);
-
-    await expect(
-      uploadViaTus({
-        server: SERVER,
-        token: 'tok',
-        artifactId: ARTIFACT_ID,
-        filename: 'clip.mp4',
-        kind: 'video',
-        file: file as never,
-        fetchImpl,
-        uploadChunk,
-      }),
-    ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
-  });
-
-  it('adopts a 409 as already-complete when the upload is gone but the artifact serves', async () => {
-    // The retry-after-mid-session-failure shape: a previous run FINISHED this
-    // artifact (ready server-side), so create 409s and the derived upload URL
-    // no longer answers HEAD — but the artifacts URL serves. That is success.
-    const file = fakeFile(20);
-    const { fetchImpl, calls } = createFetchStub({
-      POST: [
-        new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
-          status: 409,
-          headers: JSON_HEADERS,
-        }),
-      ],
-      HEAD: [new Response(null, { status: 404 })],
-      GET: [new Response(null, { status: 206 })],
-    });
-    const { uploadChunk, calls: chunkCalls } = createChunkStub([]);
-    const seen: string[] = [];
-
-    const result = await uploadViaTus({
-      server: SERVER,
-      token: 'tok',
-      artifactId: ARTIFACT_ID,
-      filename: 'clip.mp4',
-      kind: 'video',
-      file: file as never,
-      fetchImpl,
-      uploadChunk,
-      onResourceCreated: (url) => {
-        seen.push(url);
-      },
-    });
-
-    expect(result.resourceUrl).toBe(`${SERVER}/artifacts/${ARTIFACT_ID}`);
-    expect(seen).toEqual([`${SERVER}/artifacts/${ARTIFACT_ID}`]);
-    // No bytes moved — the artifact was already complete.
-    expect(chunkCalls).toHaveLength(0);
-    // The probe never follows the presigned redirect.
-    const probe = calls.find((c) => (c.init?.method ?? 'GET') === 'GET');
-    expect(probe?.init?.redirect).toBe('manual');
-  });
-
-  it('does not adopt a 409 whose derived HEAD lacks Upload-Offset (malformed resource)', async () => {
-    // Number(null) is 0 — without the raw-header check a 2xx HEAD missing the
-    // header would read as a live zero-offset resource and get adopted.
-    const file = fakeFile(20);
-    const { fetchImpl } = createFetchStub({
-      POST: [
-        new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
-          status: 409,
-          headers: JSON_HEADERS,
-        }),
-      ],
-      // 200 but NO Upload-Offset header.
-      HEAD: [new Response(null, { status: 200 })],
-      // The ready-probe also finds nothing servable.
-      GET: [new Response(null, { status: 404 })],
     });
     const { uploadChunk, calls: chunkCalls } = createChunkStub([]);
 
@@ -831,44 +611,18 @@ describe('uploadViaTus', () => {
         fetchImpl,
         uploadChunk,
       }),
-    ).rejects.toMatchObject({ statusCode: 409 });
-    expect(chunkCalls).toHaveLength(0);
-  });
-
-  it('surfaces the 409 when the upload is gone AND the artifact does not serve', async () => {
-    const file = fakeFile(20);
-    const { fetchImpl } = createFetchStub({
-      POST: [
-        new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
-          status: 409,
-          headers: JSON_HEADERS,
-        }),
-      ],
-      HEAD: [new Response(null, { status: 404 })],
-      GET: [new Response(null, { status: 404 })],
-    });
-    const { uploadChunk } = createChunkStub([]);
-
-    await expect(
-      uploadViaTus({
-        server: SERVER,
-        token: 'tok',
-        artifactId: ARTIFACT_ID,
-        filename: 'clip.mp4',
-        kind: 'video',
-        file: file as never,
-        fetchImpl,
-        uploadChunk,
-      }),
     ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
+    // No derived-URL HEAD, no artifacts-URL probe, no bytes — one POST, done.
+    expect(calls).toHaveLength(1);
+    expect(chunkCalls).toHaveLength(0);
   });
 
   it('fails closed when the server reports more bytes than the local file has', async () => {
-    // A resume/adopt target whose offset exceeds the local file is a stale or
-    // foreign resource under this artifactId — satisfying the transfer loop
-    // with it would report success without validating a single local byte.
+    // An offset past the local file is not this file's upload — satisfying the
+    // transfer loop with it would report success without sending a byte.
     const file = fakeFile(10);
     const { fetchImpl } = createFetchStub({
+      POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
       HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '99' } })],
     });
     const { uploadChunk, calls } = createChunkStub([]);
@@ -881,43 +635,11 @@ describe('uploadViaTus', () => {
         filename: 'clip.mp4',
         kind: 'video',
         file: file as never,
-        resourceUrl: `${SERVER}/upload/abc`,
         fetchImpl,
         uploadChunk,
       }),
     ).rejects.toMatchObject({ retryable: false });
     expect(calls).toHaveLength(0);
-  });
-
-  it('surfaces AbortError — not the 409 — when cancelled while probing the derived URL', async () => {
-    // A cancel mid-probe must keep its cancellation semantics: swallowing the
-    // abort and rethrowing the create 409 would surface a terminal conflict
-    // for what was a user cancel.
-    const file = fakeFile(20);
-    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
-      if (init?.method === 'POST') {
-        return new Response(JSON.stringify({ ok: false, error: 'already has an upload' }), {
-          status: 409,
-          headers: JSON_HEADERS,
-        });
-      }
-      // Both the derived-URL HEAD and the ready-probe GET die on the abort.
-      throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
-    }) as unknown as typeof fetch;
-    const { uploadChunk } = createChunkStub([]);
-
-    await expect(
-      uploadViaTus({
-        server: SERVER,
-        token: 'tok',
-        artifactId: ARTIFACT_ID,
-        filename: 'clip.mp4',
-        kind: 'video',
-        file: file as never,
-        fetchImpl,
-        uploadChunk,
-      }),
-    ).rejects.toMatchObject({ name: 'AbortError' });
   });
 
   it('awaits onResourceCreated before the first byte moves', async () => {
@@ -1031,27 +753,5 @@ describe('cancelTusUpload', () => {
       statusCode: 500,
       retryable: true,
     });
-  });
-});
-
-describe('deriveUploadResourceUrl', () => {
-  it('mirrors pulsevault: base64url("<kind>/<artifactId><ext>") under <server>/upload/', () => {
-    // Must byte-match the server's own id scheme (Buffer#toString("base64url")
-    // over the same string) or the 409 self-heal probes the wrong URL.
-    const expectId = (kind: string, filename: string, ext: string) =>
-      Buffer.from(`${kind}/${ARTIFACT_ID}${ext}`, 'utf8').toString('base64url');
-
-    expect(deriveUploadResourceUrl(SERVER, 'video', ARTIFACT_ID, 'clip.mp4')).toBe(
-      `${SERVER}/upload/${expectId('video', 'clip.mp4', '.mp4')}`,
-    );
-    // Extension is lowercased and taken from the LAST dot, matching the server.
-    expect(deriveUploadResourceUrl(SERVER, 'captions', ARTIFACT_ID, 'My.Draft.VTT')).toBe(
-      `${SERVER}/upload/${expectId('captions', 'My.Draft.VTT', '.vtt')}`,
-    );
-  });
-
-  it('returns null when the filename has no usable extension', () => {
-    expect(deriveUploadResourceUrl(SERVER, 'video', ARTIFACT_ID, 'clip')).toBeNull();
-    expect(deriveUploadResourceUrl(SERVER, 'video', ARTIFACT_ID, 'clip.')).toBeNull();
   });
 });

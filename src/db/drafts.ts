@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -11,7 +11,7 @@ import {
 import { generateThumbnailFile } from '@/utils/video';
 import { db } from './client';
 import type { Draft, Segment } from './schema';
-import { drafts, segments, uploadArtifacts } from './schema';
+import { drafts, segments } from './schema';
 import { deleteDraftToken, setDraftToken } from './secure-token';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
@@ -95,9 +95,8 @@ export async function createDraft(): Promise<string> {
 }
 
 export async function addSegment(draftId: string, segment: NewSegment): Promise<void> {
-  // Adding a clip is a structural mutation like any other: a queued/running session snapshotted
-  // the old clip set (and manifest), so it must not finish and mark the grown draft uploaded.
-  await invalidateUploadResumeState(draftId);
+  // Structural mutation — blocked while an upload is in flight (see assertNotUploading).
+  await assertNotUploading(draftId);
   // Everything is read-then-write, so it all runs inside one transaction: the badge number
   // comes from the draft's monotonic `lastClipNumber` counter (bump + read back atomically;
   // never decremented, so deletes/renames can't cause reuse), and `order` is the next free
@@ -129,16 +128,20 @@ export async function addSegment(draftId: string, segment: NewSegment): Promise<
 }
 
 /**
- * Runtime hook the upload manager registers at startup (inverted dependency — this layer
- * stays import-clean): invoked BEFORE a structural mutation wipes the SQLite resume state, so
- * the manager can abort an in-flight session (a stale-snapshot run must not finish and write
- * 'uploaded' onto the changed draft) and server-cancel persisted TUS reservations (a later
- * retry re-creates under the same artifactIds — live reservations would 409).
+ * Structural mutations are FORBIDDEN while a draft is uploading — the UI locks
+ * an uploading draft (no tap-in, no edits; cancel is the only action), so this
+ * throwing is a programming-error backstop, not a user-reachable path. It
+ * replaces the old invalidation machinery: with edits impossible mid-upload,
+ * there is no in-flight session to abort and no resume state to wipe.
  */
-type UploadInvalidationHook = (draftId: string) => Promise<void>;
-let uploadInvalidationHook: UploadInvalidationHook | null = null;
-export function registerUploadInvalidationHook(hook: UploadInvalidationHook): void {
-  uploadInvalidationHook = hook;
+export async function assertNotUploading(draftId: string): Promise<void> {
+  const [row] = await db
+    .select({ status: drafts.uploadStatus })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+  if (row?.status === 'uploading') {
+    throw new Error(`Draft ${draftId} is uploading — mutations are locked until it finishes`);
+  }
 }
 
 /** The draft's persisted upload status (null when unset / draft missing). */
@@ -150,58 +153,24 @@ export async function getDraftUploadStatus(draftId: string): Promise<Draft['uplo
   return row?.status ?? null;
 }
 
-/** Every persisted TUS resource URL for a draft (session anchor + sub-artifacts) — the set a
- * mutation invalidation must server-cancel before the rows are wiped. A COMPLETED upload's
- * resources are finished server artifacts (feed content), not resumable TUS state — a local
- * edit or draft deletion must never destroy them, so 'uploaded' drafts return nothing. */
-export async function listUploadResumeUrls(draftId: string): Promise<string[]> {
-  const [row] = await db
-    .select({ url: drafts.uploadResourceUrl, status: drafts.uploadStatus })
-    .from(drafts)
-    .where(eq(drafts.id, draftId));
-  if (row?.status === 'uploaded') return [];
-  const arts = await db
-    .select({ url: uploadArtifacts.resourceUrl })
-    .from(uploadArtifacts)
-    .where(eq(uploadArtifacts.draftId, draftId));
-  return [row?.url, ...arts.map((a) => a.url)].filter((u): u is string => !!u);
-}
-
 /**
- * A structural mutation (delete / destructive edit / edit reset / reorder) invalidates any
- * partial upload of this draft — same principle as the merged-transcript invalidation: the
- * bytes or ordering a resumed session would PATCH/reference no longer exist. The hook aborts
- * anything in flight and cancels server reservations first (while the URLs are still
- * readable), then the resume state is wiped so the next upload starts a fresh session (the
- * destination pairing itself survives). A COMPLETED upload's `uploaded` status is left
- * alone — it describes the artifact that was sent, not the draft's current state.
+ * Burn a spent pairing: reset the draft's upload columns to unpaired/editable and
+ * drop its bearer token. Called on terminal failure, cancel, and the launch sweep —
+ * the deep link is single-shot, so there is nothing to retry against; the user
+ * pairs a fresh link. An 'uploaded' draft keeps its columns (they're the watch link).
  */
-async function invalidateUploadResumeState(draftId: string): Promise<void> {
-  if (uploadInvalidationHook) await uploadInvalidationHook(draftId);
-  await clearUploadResumeRows(draftId);
-}
-
-/**
- * DB-only half of the invalidation above: wipe the persisted resume identities without
- * touching in-flight runs. Also used by the upload manager to undo a resume-state write
- * that committed after an invalidation had already swept the draft (displaced write).
- */
-export async function clearUploadResumeRows(draftId: string): Promise<void> {
-  await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
+export async function burnUploadPairing(draftId: string): Promise<void> {
   await db
     .update(drafts)
     .set({
+      uploadServer: null,
+      uploadArtifactId: null,
       uploadResourceUrl: null,
       uploadStatus: null,
-      uploadMergedPath: null,
-      uploadMergedDurationMs: null,
+      lastModified: now,
     })
-    .where(
-      and(
-        eq(drafts.id, draftId),
-        or(ne(drafts.uploadStatus, 'uploaded'), isNull(drafts.uploadStatus)),
-      ),
-    );
+    .where(and(eq(drafts.id, draftId), ne(drafts.uploadStatus, 'uploaded')));
+  await deleteDraftToken(draftId);
 }
 
 /** Delete a segment and its clip file, unless a sibling segment still references the file. */
@@ -209,10 +178,7 @@ export async function deleteSegment(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
 
-  // Invalidate BEFORE the first structural/file mutation (like addSegment): a running upload
-  // finishing mid-delete would otherwise mark the shrunken draft 'uploaded' — a status the
-  // invalidation then deliberately preserves.
-  await invalidateUploadResumeState(seg.draftId);
+  await assertNotUploading(seg.draftId);
   await db.delete(segments).where(eq(segments.id, segmentId));
 
   const [{ value: stillReferenced }] = await db
@@ -241,8 +207,7 @@ export async function setEdited(
 ): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
-  // Invalidate before the first mutation — see deleteSegment.
-  await invalidateUploadResumeState(seg.draftId);
+  await assertNotUploading(seg.draftId);
   // Cover the edited file's first frame at its revision-paired thumb path (the pristine thumb
   // stays on disk untouched, ready for a reset).
   const thumbRel = editedThumbRelPath(editedFilename);
@@ -265,8 +230,7 @@ export async function setEdited(
 export async function resetEdit(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
-  // Invalidate before the first mutation — see deleteSegment.
-  await invalidateUploadResumeState(seg.draftId);
+  await assertNotUploading(seg.draftId);
   // Revert the cover to the pristine original's thumbnail.
   const thumbRel = thumbRelPath(seg.draftId, segmentId);
   const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(thumbRel));
@@ -288,10 +252,8 @@ export async function resetEdit(segmentId: string): Promise<void> {
 /** Persist a new clip ordering (ids in target order) for a single draft. */
 export async function reorderSegments(orderedIds: string[]): Promise<void> {
   if (orderedIds.length === 0) return;
-  // Ordering is content — a reorder changes the video a resumed upload would produce, so
-  // invalidate before renumbering, like every other structural mutation.
   const [target] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
-  if (target) await invalidateUploadResumeState(target.draftId);
+  if (target) await assertNotUploading(target.draftId);
   await db.transaction(async (tx) => {
     // Two passes: SQLite checks UNIQUE per statement, so renumbering in place would collide
     // with rows still holding their old slot. Park all rows on distinct negatives first,
@@ -313,15 +275,15 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
 }
 
 export async function renameDraft(draftId: string, name: string | null): Promise<void> {
+  // The lock is absolute — even a rename waits (the name rides the upload as metadata).
+  await assertNotUploading(draftId);
   await db.update(drafts).set({ name, lastModified: now }).where(eq(drafts.id, draftId));
 }
 
 /** Delete a draft (segments cascade) and remove its on-disk clip directory. */
 export async function deleteDraft(draftId: string): Promise<void> {
-  // Full upload invalidation FIRST, while the resource URLs are still readable: aborts an
-  // in-flight session and server-cancels every persisted TUS reservation — the row cascade
-  // below would only drop the local rows, stranding live reservations server-side.
-  await invalidateUploadResumeState(draftId);
+  // The UI cancels any live upload before offering delete; this backstops it.
+  await assertNotUploading(draftId);
   await db.delete(drafts).where(eq(drafts.id, draftId));
   deleteDraftDir(draftId);
   await deleteDraftToken(draftId);
@@ -332,10 +294,9 @@ export async function deleteDraft(draftId: string): Promise<void> {
 /**
  * Pair a draft with an upload destination (from a validated deep link +
  * `/capabilities` lookup) — a draft counts as paired once `uploadServer`/
- * `uploadArtifactId` are set. Resets any prior upload progress
- * (`uploadResourceUrl`/`uploadStatus`/`captionsUploadStatus`)
- * since a new destination invalidates an in-flight upload to the old one.
- * The bearer token is written to expo-secure-store, not this row (§ token security).
+ * `uploadArtifactId` are set. Resets any prior upload progress since a new
+ * destination invalidates the old pairing. The bearer token is written to
+ * expo-secure-store, not this row (§ token security).
  */
 export async function setUploadDestination(
   draftId: string,
@@ -348,36 +309,13 @@ export async function setUploadDestination(
       uploadArtifactId: destination.artifactId,
       uploadResourceUrl: null,
       uploadStatus: 'idle',
-      captionsUploadStatus: null,
       lastModified: now,
     })
     .where(eq(drafts.id, draftId));
   await setDraftToken(draftId, destination.token);
-  // A new destination invalidates any sub-artifacts (segment videos, merged captions/
-  // manifest/thumbnail) uploaded to the old one — they'd resume against the wrong server otherwise.
-  await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
 }
 
-/**
- * The id of a DIFFERENT draft already paired to this server-minted artifactId, or `null`.
- * Durable counterpart of the manager's in-memory duplicate-destination guard: after a
- * restart the in-memory map is empty, but a failed draft's pairing survives in this table —
- * letting a second draft claim the same artifactId would race one server-side reservation
- * (and 409-adoption could then publish the wrong draft's video).
- */
-export async function otherDraftPairedTo(
-  artifactId: string,
-  excludeDraftId: string,
-): Promise<string | null> {
-  const rows = await db
-    .select({ id: drafts.id })
-    .from(drafts)
-    .where(and(eq(drafts.uploadArtifactId, artifactId), ne(drafts.id, excludeDraftId)))
-    .limit(1);
-  return rows[0]?.id ?? null;
-}
-
-/** Persist upload progress so a killed app can resume via `HEAD` on `resourceUrl` rather than restarting. */
+/** Persist upload progress. `resourceUrl` is the artifact's serving URL (the watch link). */
 export async function setUploadProgress(
   draftId: string,
   progress: { status: NonNullable<Draft['uploadStatus']>; resourceUrl?: string | null },
@@ -393,87 +331,12 @@ export async function setUploadProgress(
 }
 
 /**
- * Persist the merged export output (path + duration) the background upload manager uploads, so an
- * upload interrupted by an app kill can be re-driven from launch without the export screen.
+ * Drafts left with a stale `'uploading'` status — the app was killed mid-run (sessions are
+ * in-memory only). The launch sweep settles exactly these: one probe of the artifact's own
+ * serving URL decides uploaded-vs-burned. Never re-driven — pairings are single-shot.
  */
-export async function setUploadMerged(
-  draftId: string,
-  merged: { path: string; durationMs: number },
-): Promise<void> {
-  await db
-    .update(drafts)
-    .set({
-      uploadMergedPath: merged.path,
-      uploadMergedDurationMs: merged.durationMs,
-      lastModified: now,
-    })
-    .where(eq(drafts.id, draftId));
-}
-
-/**
- * Drafts left mid-upload — status still `'uploading'` from before an interruption (nav away, app
- * kill). The background manager re-drives exactly these on launch/foreground. Explicitly `'failed'`
- * runs are excluded: they wait for a deliberate retry rather than auto-retrying every launch.
- */
-export async function getResumableDrafts(): Promise<Draft[]> {
+export async function getInterruptedUploads(): Promise<Draft[]> {
   return db.select().from(drafts).where(eq(drafts.uploadStatus, 'uploading'));
-}
-
-/** Persist captions-upload progress independently of the video upload (so a captions-only retry doesn't redo the video). */
-export async function setCaptionsUploadStatus(
-  draftId: string,
-  status: NonNullable<Draft['captionsUploadStatus']>,
-): Promise<void> {
-  await db
-    .update(drafts)
-    .set({ captionsUploadStatus: status, lastModified: now })
-    .where(eq(drafts.id, draftId));
-}
-
-// Upload sub-artifacts (captions/manifest/thumbnail resume identity) ------------------------
-
-/**
- * Stable local key for an upload session's sub-artifacts (§ `upload_artifacts`). A closed union so
- * a typo can't silently reserve a distinct row that never matches on resume.
- */
-export type UploadArtifactKey = 'captions' | 'manifest' | 'thumbnail';
-
-/** A sub-artifact's identity/progress, or `null` if this `localKey` hasn't been reserved yet. */
-export async function getUploadArtifact(
-  draftId: string,
-  localKey: UploadArtifactKey,
-): Promise<{ artifactId: string; resourceUrl: string | null } | null> {
-  const [row] = await db
-    .select({ artifactId: uploadArtifacts.artifactId, resourceUrl: uploadArtifacts.resourceUrl })
-    .from(uploadArtifacts)
-    .where(eq(uploadArtifacts.id, `${draftId}:${localKey}`));
-  return row ?? null;
-}
-
-/** Reserve (or update the progress of) a sub-artifact, so a retry resumes it instead of
- * minting a fresh artifactId and re-uploading from scratch. */
-export async function upsertUploadArtifact(
-  draftId: string,
-  localKey: UploadArtifactKey,
-  data: { artifactId: string; resourceUrl?: string | null },
-): Promise<void> {
-  const id = `${draftId}:${localKey}`;
-  await db
-    .insert(uploadArtifacts)
-    .values({
-      id,
-      draftId,
-      localKey,
-      artifactId: data.artifactId,
-      resourceUrl: data.resourceUrl ?? null,
-    })
-    .onConflictDoUpdate({
-      target: uploadArtifacts.id,
-      set: {
-        artifactId: data.artifactId,
-        ...(data.resourceUrl !== undefined ? { resourceUrl: data.resourceUrl } : {}),
-      },
-    });
 }
 
 // Draft transfer (.pulse export/import) ----------------------------------------------------

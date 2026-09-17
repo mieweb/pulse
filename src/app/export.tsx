@@ -101,11 +101,9 @@ export default function ExportScreen() {
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
   const uState = upload.state;
 
-  const watchUrl = upload.destination
-    ? `${upload.destination.server}/artifacts/${upload.destination.artifactId}${
-        upload.destination.token ? `?token=${encodeURIComponent(upload.destination.token)}` : ''
-      }`
-    : null;
+  // The tokened watch link rides the one-shot `done` state (built by the manager
+  // from the session — tokens never land in the DB row).
+  const watchUrl = uState.status === 'done' ? uState.resourceUrl : null;
 
   // A finished upload is surfaced exactly once — a themed prompt (see the modal in the JSX
   // below) offering to watch the video in the browser — then acknowledged so no "uploaded"
@@ -131,13 +129,6 @@ export default function ExportScreen() {
 
   // Every path out of the prompt acknowledges, which flips status off 'done' and hides it.
   const uploadPromptVisible = upload.state.status === 'done' && watchUrl != null;
-
-  useEffect(() => {
-    if (upload.state.status !== 'done' || watchUrl) return;
-    Alert.alert('Upload complete', 'Your pulse was uploaded.', [
-      { text: 'OK', onPress: acknowledgeDone },
-    ]);
-  }, [upload.state.status, watchUrl, acknowledgeDone]);
 
   const runShare = async () => {
     if (state.status !== 'done' || busy) return;
@@ -215,6 +206,7 @@ export default function ExportScreen() {
               lines={captionLines}
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
               captionStatus={transcription.state.status}
+              captionsLocked={uState.status === 'uploading'}
               onEditCaptions={openCaptionEditor}
               onAddCaptions={() => setModelSheetVisible(true)}
             />
@@ -368,12 +360,9 @@ export default function ExportScreen() {
 
         {/* Merge always runs (above), so the Upload button just waits on
             `state.status === 'done'`. Shown while there's something actionable: destinations to
-            pick, a run in flight (or its error/expiry notice). A previously-uploaded draft with
-            nothing to pick shows no upload UI at all (§ post-upload UX — no persistent buttons). */}
-        {(upload.destinations.length > 0 ||
-          uState.status === 'uploading' ||
-          uState.status === 'error' ||
-          (upload.destination && upload.destinationExpired)) && (
+            pick, or a run in flight. A failed upload leaves no state here — the pairing is burned
+            and the reason arrives as a toast; scanning a fresh link repopulates the selector. */}
+        {(upload.destinations.length > 0 || uState.status === 'uploading') && (
           <View style={styles.uploadSection}>
             <ThemedText
               type="caption1"
@@ -386,8 +375,8 @@ export default function ExportScreen() {
               <View style={[styles.button, elementSurface]}>
                 <ActivityIndicator color={theme.text} />
                 {/* Phase-aware label — names the step in flight (preparing, captions,
-                    manifest, thumbnail, video, clip x of y) instead of sitting at a
-                    generic "Uploading… 0%" through all the pre-video work. */}
+                    manifest, thumbnail, video) instead of sitting at a generic
+                    "Uploading… 0%" through all the pre-video work. */}
                 <ThemedText>{uploadPhaseLabel(uState)}</ThemedText>
                 <Pressable
                   onPress={() => void upload.cancel()}
@@ -398,60 +387,7 @@ export default function ExportScreen() {
                 </Pressable>
               </View>
             ) : (
-              // Idle or error: pick a destination and upload (or retry the claimed one). A prior
-              // error shows its own Retry (same destination) plus the selector to re-pick a
-              // different destination — re-claiming is the escape hatch for a dead session.
-              <>
-                {uState.status === 'error' && (
-                  // Compact banner, not a button: title + reason share one card, with Retry as
-                  // a small pill only when retrying can actually help. A non-retryable
-                  // rejection is information, so nothing about it should look pressable.
-                  <View
-                    style={[styles.errorBanner, elementSurface]}
-                    accessibilityRole="alert"
-                    accessibilityLabel={`${uState.retryable ? 'Upload failed' : 'Upload rejected by server'}. ${uState.reason}`}>
-                    <Icon name="exclamationmark.triangle.fill" size={16} tintColor={theme.accent} />
-                    <View style={styles.errorBody}>
-                      <ThemedText type="smallBold">
-                        {uState.retryable ? 'Upload failed' : 'Rejected by server'}
-                      </ThemedText>
-                      <ThemedText type="caption1" themeColor="textSecondary" numberOfLines={2}>
-                        {uState.reason}
-                      </ThemedText>
-                    </View>
-                    {uState.retryable && (
-                      <Pressable
-                        onPress={() => void upload.retry()}
-                        accessibilityRole="button"
-                        accessibilityLabel="Retry upload"
-                        style={({ pressed }) => [
-                          styles.smallButton,
-                          { backgroundColor: theme.accent },
-                          pressed && styles.pressed,
-                        ]}>
-                        <Icon name="arrow.clockwise" size={14} tintColor={theme.onAccent} />
-                        <ThemedText type="small" style={{ color: theme.onAccent }}>
-                          Retry
-                        </ThemedText>
-                      </Pressable>
-                    )}
-                  </View>
-                )}
-
-                {upload.destinations.length > 0
-                  ? selectorAndUpload
-                  : upload.destination &&
-                    upload.destinationExpired && (
-                      <View style={[styles.button, elementSurface]}>
-                        <Icon
-                          name="exclamationmark.triangle.fill"
-                          size={18}
-                          tintColor={theme.textSecondary}
-                        />
-                        <ThemedText themeColor="textSecondary">Upload link expired</ThemedText>
-                      </View>
-                    )}
-              </>
+              selectorAndUpload
             )}
           </View>
         )}
@@ -536,6 +472,7 @@ function MergedPreview({
   lines,
   meta,
   captionStatus,
+  captionsLocked,
   onEditCaptions,
   onAddCaptions,
 }: {
@@ -544,6 +481,8 @@ function MergedPreview({
   /** Clip-count · duration readout, shown as a pill over the video. */
   meta: string;
   captionStatus: MergedTranscriptionState['status'];
+  /** Captions ride the upload — hide the edit badge while a run is in flight. */
+  captionsLocked: boolean;
   onEditCaptions: () => void;
   onAddCaptions: () => void;
 }) {
@@ -562,7 +501,8 @@ function MergedPreview({
   // editor to add captions by hand. Sits OUTSIDE the play Pressable so taps don't toggle playback.
   const working = captionStatus === 'transcribing' || captionStatus === 'downloading';
   const actionable =
-    captionStatus === 'ready' || captionStatus === 'no-model' || captionStatus === 'error';
+    !captionsLocked &&
+    (captionStatus === 'ready' || captionStatus === 'no-model' || captionStatus === 'error');
 
   // Largest 9:16 rect that fits the measured frame. Yoga can't express this — a max
   // constraint on the aspect-derived axis clamps it without re-shrinking the defined one,

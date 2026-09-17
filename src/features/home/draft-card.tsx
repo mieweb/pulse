@@ -19,7 +19,7 @@ const NAME_MAX_LENGTH = 40;
 type Props = {
   id: string;
   /** Persisted upload status, so the card can show its own upload state on the cover. */
-  uploadStatus?: 'idle' | 'uploading' | 'uploaded' | 'failed' | null;
+  uploadStatus?: 'idle' | 'uploading' | 'uploaded' | null;
   name: string | null;
   /** Relative path of the draft's first clip; the cover frame's legacy runtime fallback. */
   firstSegmentFilename?: string | null;
@@ -64,16 +64,14 @@ export function DraftCard({
   const moreRef = useRef<View>(null);
 
   // Live upload state (this session) takes precedence; otherwise fall back to the persisted status
-  // so an interrupted upload still reads correctly after a relaunch. Only two states surface on the
-  // card: the in-progress ring and the failed (!) badge — a COMPLETED upload deliberately shows
-  // nothing (a persisted 'uploaded' tick would sit on the card forever with no way to dismiss it;
-  // completion is surfaced by the export-screen prompt and the background notification instead).
+  // so an interrupted upload still reads correctly after a relaunch (until the launch sweep settles
+  // it). Only ONE state surfaces on the card: the in-progress ring — failure is a transient toast/
+  // notification (the pairing is burned, the draft just returns to normal), and a COMPLETED upload
+  // deliberately shows nothing (completion is surfaced by the export-screen prompt and the
+  // background notification instead).
   const live = useDraftUploadState(id);
-  const liveMapped =
-    live.status === 'uploading' ? 'uploading' : live.status === 'error' ? 'failed' : null;
   const upload =
-    liveMapped ??
-    (uploadStatus === 'failed' ? 'failed' : uploadStatus === 'uploading' ? 'uploading' : 'idle');
+    live.status === 'uploading' || uploadStatus === 'uploading' ? 'uploading' : 'idle';
   const uploadProgress = live.status === 'uploading' ? live.progress : 0;
 
   return (
@@ -112,11 +110,6 @@ export function DraftCard({
             // backgrounded/resumed run is as legible here as on the export screen.
             accessibilityLabel={live.status === 'uploading' ? uploadPhaseLabel(live) : 'Uploading'}>
             <UploadRing progress={uploadProgress} />
-          </View>
-        )}
-        {upload === 'failed' && (
-          <View style={styles.uploadBadge} pointerEvents="none">
-            <Icon name="exclamationmark" size={11} tintColor="#fff" />
           </View>
         )}
       </View>

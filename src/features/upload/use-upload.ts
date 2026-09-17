@@ -1,29 +1,27 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, useCallback, useMemo, useState } from 'react';
 
+import { deleteDestination } from '@/db/destinations';
 import { draftQuery, setUploadDestination } from '@/db/drafts';
-import { getDraftToken } from '@/db/secure-token';
 import type { Segment } from '@/db/schema';
-import { useNow } from '@/hooks/use-now';
 
-import { EXPIRY_CHECK_INTERVAL_MS, isTokenExpired } from './capability-token';
-import { type DestinationOption, useDestinations } from './use-destinations';
+
+import { isTokenExpired } from './capability-token';
+import { useDestinations } from './use-destinations';
 import { uploads } from './upload-manager';
 import type { Destination } from './types';
 import { useDraftUploadState } from './use-uploads';
 
 /**
- * The export screen's binding to the background upload system. This hook is now
- * a thin controller — destination-pool selection, `claim`, and a start/cancel/
- * retry surface — that hands the actual upload to the module-scope
- * `uploads` manager (see `upload-manager.ts`). It owns no orchestration, no
- * AbortController, and no "in flight" bookkeeping: leaving the screen no longer
- * aborts the upload, and a run survives navigation/backgrounding because the
- * manager, not this hook, is driving it.
+ * The export screen's binding to the background upload system — a thin
+ * controller over the single-shot model: pick a pool destination, `claim` it
+ * (consume the pool row + pair the draft + enqueue, one tap), `cancel`, and
+ * acknowledge the done prompt. There is no retry surface: a terminal failure
+ * burns the pairing (manager-side) and the user scans a fresh link.
  *
- * `state` is the manager's LIVE per-draft state (uploading/done/error, this
- * session only) via `useSyncExternalStore`; durable status lives in the drizzle
- * `draft` row. `mergedRef` is read only at enqueue time — the merge is done by
+ * `state` is the manager's LIVE per-draft state (uploading/done, this session
+ * only) via `useSyncExternalStore`; durable status lives in the drizzle
+ * `draft` row. `mergedRef` is read only at claim time — the merge is done by
  * the time Upload is tappable — and captured into the session the manager runs.
  */
 export function useUpload(
@@ -33,47 +31,9 @@ export function useUpload(
 ) {
   const { data: draftRows } = useLiveQuery(draftQuery(draftId), [draftId]);
   const draft = draftRows[0];
-  // The device-wide pool of paired-but-unconsumed destinations (non-expired only).
+  // The device-wide pool of paired-but-unconsumed destinations (non-expired only —
+  // useDestinations re-filters on a timer, so lapsed options drop out on their own).
   const { destinations } = useDestinations();
-
-  // Reactive wall-clock so expiry re-evaluates on a timer, not just on writes.
-  const now = useNow(EXPIRY_CHECK_INTERVAL_MS);
-
-  // The pool destination id this draft was claimed from, so a finished upload can remove it from
-  // the pool. Set at `claim`, handed to the manager on the session; the manager deletes the row on
-  // success. Kept on the ref so a Retry after a failure still carries it; a re-claim overwrites it.
-  const consumedIdRef = useRef<string | null>(null);
-
-  const hasDestination = !!draft?.uploadServer && !!draft.uploadArtifactId;
-
-  // The bearer token lives in expo-secure-store, not the (reactive) drizzle row — loaded into
-  // local state keyed off which draft is showing, and set directly in `claim` so the first upload
-  // in the same tap doesn't wait on a re-fetch.
-  const [draftToken, setDraftTokenState] = useState<string | null>(null);
-  useEffect(() => {
-    if (!hasDestination) return;
-    let cancelled = false;
-    void getDraftToken(draftId).then((token) => {
-      if (!cancelled) setDraftTokenState(token);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [draftId, hasDestination]);
-
-  const destination: Destination | null = useMemo(
-    () =>
-      draft?.uploadServer && draft.uploadArtifactId
-        ? {
-            server: draft.uploadServer,
-            token: draftToken,
-            artifactId: draft.uploadArtifactId,
-            resourceUrl: draft.uploadResourceUrl,
-          }
-        : null,
-    [draft, draftToken],
-  );
-  const destinationExpired = destination !== null && isTokenExpired(destination.token, now);
 
   // Which pool destination the user has picked to upload to. Defaults to the most-recent
   // non-expired one, reconciled during render (adjust-state-during-render) as the pool changes.
@@ -94,77 +54,55 @@ export function useUpload(
 
   const acknowledgeDone = useCallback(() => uploads.acknowledge(draftId), [draftId]);
 
-  const start = useCallback(
-    (explicitDestination?: Destination) => {
-      const dest = explicitDestination ?? destination;
-      if (!dest) return;
-      // The merged export is the upload's payload — without it there's nothing to enqueue
-      // (the export screen only offers upload once the merge has landed).
-      const merged = mergedRef.current;
-      if (!merged) return;
-      // Hand the whole run to the manager. Expiry, resume identity, and progress are its concern
-      // now; it surfaces an expired token as a non-retryable error on the live state.
-      // The session carries the consumed pool id so the manager removes it once the upload actually
-      // succeeds. Kept on the ref (not cleared) so a Retry after a failure still removes it; a later
-      // re-claim overwrites it with the newly-picked destination.
-      uploads.enqueue({
-        draftId,
-        destination: dest,
-        segments,
-        merged,
-        consumedDestinationId: consumedIdRef.current,
-      });
-    },
-    [destination, draftId, segments, mergedRef],
-  );
-
   const cancel = useCallback(() => {
     void uploads.cancel(draftId);
   }, [draftId]);
 
-  // Commits this draft to a chosen pool destination and starts uploading in the same tap. The pool
-  // destination is removed only once the upload finishes (the manager does it), so a failed/
-  // cancelled attempt keeps it around to retry or re-pick.
+  // Commits this draft to a chosen pool destination and starts uploading in the same tap.
+  // The pool row is CONSUMED here (single-shot): success or failure, this link is spent —
+  // a terminal failure burns the pairing and the user scans a fresh one.
   const claim = useCallback(
     async (destinationId: string | null) => {
       const option = destinationId
         ? (destinations.find((d) => d.id === destinationId) ?? null)
         : null;
       if (!option || isTokenExpired(option.token, Date.now())) return;
-      const claimedDestination: Destination = {
+      // The merged export is the upload's payload — without it there's nothing to enqueue
+      // (the export screen only offers upload once the merge has landed).
+      const merged = mergedRef.current;
+      if (!merged) return;
+      const destination: Destination = {
         server: option.server,
         token: option.token,
         artifactId: option.artifactId,
-        resourceUrl: null,
+        directUpload: option.directUpload,
       };
       await setUploadDestination(draftId, {
         server: option.server,
         token: option.token,
         artifactId: option.artifactId,
       });
-      setDraftTokenState(option.token);
-      consumedIdRef.current = option.id;
-      start(claimedDestination);
+      await deleteDestination(option.id);
+      uploads.enqueue({ draftId, destination, segments, merged });
     },
-    [destinations, draftId, start],
+    [destinations, draftId, segments, mergedRef],
   );
 
-  // The destination whose host/mode the UI should name right now: the draft's own claimed
+  // The destination whose host the UI should name right now: the draft's own claimed
   // destination once a run is underway/finished, otherwise the pool option currently selected.
-  const activeDestination: Destination | DestinationOption | null =
-    destination && state.status !== 'idle' ? destination : selectedDestination;
+  const activeServer: string | null =
+    draft?.uploadServer && state.status !== 'idle'
+      ? draft.uploadServer
+      : (selectedDestination?.server ?? null);
 
   return {
     state,
-    destination,
-    destinationExpired,
+    draft,
     destinations,
     selectedId,
     setSelectedId,
     selectedDestination,
-    activeDestination,
-    start,
-    retry: start,
+    activeServer,
     cancel,
     claim,
     acknowledgeDone,

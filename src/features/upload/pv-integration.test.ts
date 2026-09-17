@@ -21,7 +21,6 @@ import path from 'node:path';
 
 import {
   cancelTusUpload,
-  deriveUploadResourceUrl,
   uploadViaTus,
   type UploadChunk,
 } from './tus-client';
@@ -155,15 +154,15 @@ describeIf('pulsevault integration (real server, real wire)', () => {
     expect(Buffer.compare(served, bytes)).toBe(0);
   });
 
-  it('resumes from the durable offset after an interrupted transfer (kill/resume)', async () => {
+  it('an interrupted upload leaves nothing served, and its artifactId 409s until cancelled (single-shot)', async () => {
     const bytes = makeMp4(96 * 1024);
     const artifactId = randomUUID();
 
     // First attempt: bounded chunks, aborted after the first chunk lands —
-    // the "app killed mid-upload" shape. The resource URL was persisted (the
-    // onResourceCreated contract), the bytes were partially durable.
+    // the "app killed mid-upload" shape. The in-flight resource URL is the
+    // cancel handle the manager holds in memory.
     const controller = new AbortController();
-    let persistedUrl: string | null = null;
+    let inflightUrl: string | null = null;
     let chunksSent = 0;
     const abortingChunker: UploadChunk = async (params) => {
       const result = await bufferChunkUploader(bytes)(params);
@@ -177,75 +176,28 @@ describeIf('pulsevault integration (real server, real wire)', () => {
         signal: controller.signal,
         uploadChunk: abortingChunker,
         onResourceCreated: (url) => {
-          persistedUrl = url;
+          inflightUrl = url;
         },
       }),
     ).rejects.toMatchObject({ name: 'AbortError' });
-    expect(persistedUrl).not.toBeNull();
+    expect(inflightUrl).not.toBeNull();
 
     // Not served while incomplete.
     const early = await fetch(`${server}/artifacts/${artifactId}`);
     expect(early.status).toBe(404);
 
-    // Relaunch shape: resume from the persisted URL; HEAD gives the durable
-    // offset (32 KiB) and only the remainder moves.
-    const offsets: number[] = [];
-    const resumeChunker: UploadChunk = async (params) => {
-      offsets.push(params.offset);
-      return bufferChunkUploader(bytes)(params);
-    };
-    await upload(bytes, artifactId, {
-      resourceUrl: persistedUrl,
-      uploadChunk: resumeChunker,
+    // Single-shot identity: a fresh run under the same artifactId is a
+    // terminal 409 — no derive/adopt recovery. (The app would burn the
+    // pairing here; the user scans a fresh link.)
+    await expect(upload(bytes, artifactId)).rejects.toMatchObject({
+      retryable: false,
+      statusCode: 409,
     });
-    expect(offsets[0]).toBe(32 * 1024);
 
+    // The cancel path (burning) frees the id for a genuinely fresh create.
+    await cancelTusUpload(inflightUrl!, null);
+    await upload(bytes, artifactId);
     const res = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), bytes)).toBe(0);
-  });
-
-  it('self-heals a 409 create conflict end to end (lost-handle recovery)', async () => {
-    const bytes = makeMp4(48 * 1024);
-    const artifactId = randomUUID();
-
-    // Simulate the kill window: a create succeeded server-side but the client
-    // never persisted the Location. 16 KiB landed before the "kill".
-    const first = await upload(bytes, artifactId, {
-      chunkSizeBytes: 16 * 1024,
-      uploadChunk: (() => {
-        const inner = bufferChunkUploader(bytes);
-        let sent = 0;
-        const chunker: UploadChunk = async (params) => {
-          const result = await inner(params);
-          sent += 1;
-          if (sent === 1) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
-          return result;
-        };
-        return chunker;
-      })(),
-    }).catch((err) => err);
-    expect((first as Error).name).toBe('AbortError');
-
-    // Fresh run with NO resourceUrl — exactly what a relaunched app does when
-    // the persist never happened. POST 409s; the client derives the resource
-    // URL, HEADs the durable offset, and finishes the upload.
-    const derived = deriveUploadResourceUrl(server, 'video', artifactId, 'clip.mp4');
-    const offsets: number[] = [];
-    const result = await upload(bytes, artifactId, {
-      uploadChunk: (() => {
-        const inner = bufferChunkUploader(bytes);
-        const chunker: UploadChunk = async (params) => {
-          offsets.push(params.offset);
-          return inner(params);
-        };
-        return chunker;
-      })(),
-    });
-    expect(result.resourceUrl).toBe(derived);
-    expect(offsets[0]).toBe(16 * 1024);
-
-    const res = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(res.status).toBe(200);
     expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), bytes)).toBe(0);
   });
 
@@ -268,13 +220,13 @@ describeIf('pulsevault integration (real server, real wire)', () => {
     const artifactId = randomUUID();
 
     const controller = new AbortController();
-    let persistedUrl: string | null = null;
+    let inflightUrl: string | null = null;
     let sent = 0;
     await upload(bytes, artifactId, {
       chunkSizeBytes: 32 * 1024,
       signal: controller.signal,
       onResourceCreated: (url) => {
-        persistedUrl = url;
+        inflightUrl = url;
       },
       uploadChunk: (() => {
         const inner = bufferChunkUploader(bytes);
@@ -288,7 +240,7 @@ describeIf('pulsevault integration (real server, real wire)', () => {
       })(),
     }).catch(() => undefined);
 
-    await cancelTusUpload(persistedUrl!, null);
+    await cancelTusUpload(inflightUrl!, null);
 
     // Termination swept the server-side reservation (bytes + sidecar) — a
     // fresh create under the same artifactId succeeds without waiting out
@@ -397,18 +349,17 @@ describeIf('pulsevault integration — direct-upload profile (real server, mock 
     expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), bytes)).toBe(0);
   });
 
-  it('adopts an already-completed upload on retry without re-sending bytes', async () => {
+  it('surfaces a grant 409 as terminal for an already-used artifactId (single-shot)', async () => {
     const bytes = makeMp4(32 * 1024);
     const artifactId = randomUUID();
     await uploadDirect(bytes, artifactId);
 
-    // Retry after a client-side failure that lost the completion: the grant
-    // 409s (artifact is ready), the artifacts URL serves → adopt as done.
+    // The id is spent (artifact is ready): a new run gets a terminal 409 and
+    // moves no bytes — the app burns the pairing and asks for a fresh link.
     const calls = { puts: 0 };
-    const result = await uploadDirect(bytes, artifactId, {
-      uploadFile: bufferFileUploader(bytes, calls),
-    });
-    expect(result.resourceUrl).toBe(`${server}/artifacts/${artifactId}`);
+    await expect(
+      uploadDirect(bytes, artifactId, { uploadFile: bufferFileUploader(bytes, calls) }),
+    ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
     expect(calls.puts).toBe(0);
   });
 

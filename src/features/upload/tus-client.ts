@@ -52,15 +52,11 @@ export type TusUploadOptions = {
   /** Free-form display title for the artifact (the draft name). Sent only on the session anchor. */
   name?: string;
   file: File;
-  /** A previously-created upload's resource URL, to resume instead of creating a new one. */
-  resourceUrl?: string | null;
   /**
-   * Called as soon as the resource URL is known — immediately if resuming, or right after
-   * the initial `POST` otherwise — so a caller can track "what's actually in flight right
-   * now" (e.g. for `cancel()`) without waiting for the whole upload to finish. AWAITED
-   * before any byte moves: callers persist the URL here, and an app kill between the POST
-   * and that persist is exactly the window that used to strand a server-side reservation
-   * with no local handle (the 409-on-retry trap).
+   * Called as soon as the resource URL is known (right after the initial
+   * `POST`) so a caller can track "what's actually in flight right now"
+   * (e.g. for `cancel()`) without waiting for the whole upload to finish.
+   * AWAITED before any byte moves.
    */
   onResourceCreated?: (resourceUrl: string) => void | Promise<void>;
   signal?: AbortSignal;
@@ -222,47 +218,6 @@ async function statusError(res: Response, fallbackMessage: string): Promise<TusU
 /** Exported alias of the response→error mapper for the direct-upload client — same body parsing, same retryability rules. */
 export const responseError = statusError;
 
-/**
- * Whether the artifact is already complete (ready) server-side. A 409 on
- * create can mean "this upload already FINISHED" — e.g. a retry after a run
- * that failed client-side mid-session — not just "someone else holds it".
- * Only ready artifacts serve on the artifacts URL, so a 200/206 (local
- * streaming) or a 3xx (presigned redirect, NOT followed) proves completion.
- * A probe failure just means "not adoptable as done" — never an exception —
- * EXCEPT cancellation: an abort is the caller's verdict, not the probe's,
- * and must propagate so callers keep their AbortError semantics instead of
- * surfacing whatever error the probe was trying to recover from.
- */
-export async function probeArtifactReady(
-  server: string,
-  artifactId: string,
-  token: string | null,
-  fetchImpl: typeof fetch = fetch,
-  signal?: AbortSignal,
-): Promise<boolean> {
-  try {
-    const res = await fetchImpl(`${server}/artifacts/${artifactId}`, {
-      redirect: 'manual',
-      signal,
-      // Range keeps a local-storage hit to one byte; S3-backed serving 302s
-      // before any body exists.
-      // Residual risk, documented: runtimes without real `redirect: 'manual'`
-      // support (React Native's fetch) may follow the 302 and forward the
-      // Authorization header to the presigned URL's host. That host is the
-      // vault operator's own bucket (the vault minted the URL), so the token
-      // stays within the trust domain that issued it — unlike the arbitrary
-      // Location targets rejectRedirect guards against elsewhere.
-      headers: { Range: 'bytes=0-0', ...authHeaders(token) },
-    });
-    await (res.body as { cancel?: () => Promise<void> } | null)?.cancel?.().catch(() => {});
-    if (res.type === 'opaqueredirect') return true;
-    return res.status === 200 || res.status === 206 || (res.status >= 300 && res.status < 400);
-  } catch (err) {
-    if (isAbortError(err)) throw err;
-    return false;
-  }
-}
-
 function statusErrorFromChunk(result: ChunkUploadResult, fallbackMessage: string): TusUploadError {
   // A PATCH 409 is an offset conflict — this client's position went stale (a
   // “failed” chunk actually landed, or a parallel resume advanced the upload).
@@ -343,38 +298,6 @@ async function createUpload(opts: TusUploadOptions, fetchImpl: typeof fetch): Pr
   return resolveLocation(location, opts.server);
 }
 
-/**
- * The resource URL a pulsevault server WOULD have handed out for this artifact:
- * the tus upload id is deterministic — `base64url("<kind>/<artifactId><ext>")`,
- * see `generateUrl`/`namingFunction` in pulsevault's `lib/pulsevaultTus.ts` — so
- * a client that lost the `Location` header (killed between the POST and the
- * resume-state persist) can re-derive it and resume the server-side reservation
- * instead of dead-ending on the 409 a re-create would produce. Returns `null`
- * when the filename has no extension (the id is unknowable without it — the
- * server would have rejected such a create anyway).
- *
- * Deliberately pulsevault-shaped: a non-pulsevault tus server may mint opaque
- * ids, in which case the derived URL simply HEADs to a 404 and the caller
- * falls back to surfacing the original 409.
- */
-export function deriveUploadResourceUrl(
-  server: string,
-  kind: ArtifactKind,
-  artifactId: string,
-  filename: string,
-): string | null {
-  const dot = filename.lastIndexOf('.');
-  if (dot < 0 || dot === filename.length - 1) return null;
-  const ext = filename.slice(dot).toLowerCase();
-  // btoa is safe here: kind/uuid/extension are all ASCII. base64url = base64
-  // with the URL-hostile chars swapped and padding dropped (RFC 4648 §5).
-  const base64url = btoa(`${kind}/${artifactId}${ext}`)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-  return `${server}/upload/${base64url}`;
-}
-
 /** Always re-`HEAD`s rather than trusting a cached offset — the server may have restarted, or the upload may not have completed as far as last assumed. */
 async function fetchOffset(
   resourceUrl: string,
@@ -391,9 +314,8 @@ async function fetchOffset(
   rejectRedirect(res);
   if (!res.ok) throw await statusError(res, `Could not resume the upload (${res.status})`);
   // Check the raw header first: `Number(null)` is 0, so a 2xx HEAD *without*
-  // Upload-Offset would otherwise look like a live zero-offset resource — and
-  // the 409 adopt path would upload into a malformed resource instead of
-  // failing closed.
+  // Upload-Offset would otherwise look like a live zero-offset resource
+  // instead of failing closed.
   const rawOffset = res.headers.get('upload-offset');
   if (rawOffset === null) {
     throw new TusUploadError('Server did not return an Upload-Offset', { retryable: false });
@@ -527,76 +449,14 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
       }
     }, opts.signal);
 
-  let resourceUrl = opts.resourceUrl ?? null;
-  // Whether the URL in hand was recovered from a 409 rather than created/persisted —
-  // such a URL has the same "may be stale" standing as a persisted one, so the
-  // gone-mid-transfer recreate below applies to it too.
-  let adopted = false;
-  if (!resourceUrl) {
-    try {
-      resourceUrl = await createFresh();
-    } catch (err) {
-      // 409 on create = the server already holds a reservation for this artifactId.
-      // That's the signature of a kill in the POST→persist window (the reservation
-      // exists server-side but this client lost the Location handle). The upload id
-      // is deterministic on pulsevault, so instead of dead-ending — the old behavior
-      // forced the user to re-pair — derive the resource URL and, if the server
-      // confirms it's live (HEAD returns an offset), resume it. If the derived URL
-      // isn't live (non-pulsevault server, or genuinely conflicting state), surface
-      // the original 409 unchanged.
-      const conflict = err instanceof TusUploadError && err.statusCode === 409;
-      const derived = conflict
-        ? deriveUploadResourceUrl(opts.server, opts.kind, opts.artifactId, opts.filename)
-        : null;
-      if (!derived) throw err;
-      try {
-        await fetchOffset(derived, opts.token, opts.signal, fetchImpl);
-      } catch (offsetErr) {
-        // Cancellation mid-probe is the caller's abort, not a "derived URL
-        // isn't live" verdict — surface it instead of the original 409, or
-        // the manager would record a terminal conflict for a user cancel.
-        if (isAbortError(offsetErr)) throw offsetErr;
-        // Not resumable — but a 409 whose upload is GONE often means the
-        // upload already finished (finished tus uploads stop answering HEAD).
-        // If the artifact serves, adopt it as complete instead of failing.
-        const done = await probeArtifactReady(
-          opts.server,
-          opts.artifactId,
-          opts.token,
-          fetchImpl,
-          opts.signal,
-        );
-        if (!done) throw err;
-        const artifactsUrl = `${opts.server}/artifacts/${opts.artifactId}`;
-        await opts.onResourceCreated?.(artifactsUrl);
-        opts.onProgress?.({ bytesSent: totalBytes, totalBytes });
-        return { resourceUrl: artifactsUrl };
-      }
-      resourceUrl = derived;
-      adopted = true;
-    }
-  }
-  // Awaited so the caller's resume-state persist is durable BEFORE any byte moves —
-  // a kill after this point resumes via HEAD instead of re-creating (409).
+  // Identities are single-shot: every run creates its own fresh resource. A
+  // create 409 means the artifactId is already taken server-side (this exact
+  // link was used before) — terminal; the pairing is burned and the user scans
+  // a fresh link. There is no resume input and no derive/adopt recovery.
+  const resourceUrl = await createFresh();
+  // Awaited before any byte moves so the manager holds the cancel handle first.
   await opts.onResourceCreated?.(resourceUrl);
-
-  try {
-    await transfer(resourceUrl);
-  } catch (err) {
-    // A 404/410 on a PERSISTED (or 409-adopted) resource URL means the server no
-    // longer knows this upload — retention cleanup, wiped storage, a rebuilt
-    // datastore. Standard TUS client behavior is to start over with a fresh create
-    // (the artifactId is unchanged, so the session's authorization still applies)
-    // rather than surface a terminal "rejected". Only safe when we were resuming a
-    // stored/derived URL: a 404 on a URL the server just handed us in this run is a
-    // real error and still propagates.
-    const uploadGone =
-      err instanceof TusUploadError && (err.statusCode === 404 || err.statusCode === 410);
-    if ((!opts.resourceUrl && !adopted) || !uploadGone) throw err;
-    resourceUrl = await createFresh();
-    await opts.onResourceCreated?.(resourceUrl);
-    await transfer(resourceUrl);
-  }
+  await transfer(resourceUrl);
 
   return { resourceUrl };
 }

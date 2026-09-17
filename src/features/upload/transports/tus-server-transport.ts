@@ -29,7 +29,6 @@ export const tusServerTransport: UploadTransport = {
       checksum: artifact.checksum,
       name: artifact.name,
       file: artifact.file,
-      resourceUrl: artifact.resourceUrl,
       onResourceCreated,
       signal,
       uploadChunk: uploadChunkNative,

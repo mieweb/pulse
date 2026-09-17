@@ -45,7 +45,6 @@ if (process.env.PV_STORAGE === 's3-mock') {
     accessKeyId: 'MOCKS3',
     secretAccessKey: 'MOCKS3',
     forcePathStyle: true,
-    reclaimGraceMs: 200,
     clientConfig: {
       requestChecksumCalculation: 'WHEN_REQUIRED',
       responseChecksumValidation: 'WHEN_REQUIRED',
@@ -57,7 +56,7 @@ if (process.env.PV_STORAGE === 's3-mock') {
   };
 } else {
   const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pv-integration-'));
-  storage = createLocalStorage({ workspaceDir, reclaimGraceMs: 200 });
+  storage = createLocalStorage({ workspaceDir });
   validatePayload = createChecksumValidator(createMp4Sniffer(storage));
   cleanup = async () => {
     await fs.rm(workspaceDir, { recursive: true, force: true }).catch(() => {});

@@ -4,7 +4,6 @@ import type { ArtifactKind, TusUploadProgress } from './tus-client';
 import {
   authHeaders,
   isAbortError,
-  probeArtifactReady,
   rejectRedirect,
   responseError,
   TusUploadError,
@@ -17,16 +16,13 @@ import {
  * data plane never touches the app server), then confirm with `complete`.
  *
  * Trade vs TUS, honestly: the PUT is one shot — retryable from zero, not
- * resumable mid-file. The upload manager only picks this transport when the
- * paired server advertises `directUpload` in `/capabilities`; TUS stays the
- * default everywhere else.
+ * resumable mid-file. The upload manager picks this transport when the
+ * pairing advertised `directUpload`; TUS is the default everywhere else.
  *
- * Kill-safety needs no persisted grant: `POST /direct-uploads` re-grants a
- * fresh URL for an incomplete reservation of the same shape (§9.1), and
- * `complete` is idempotent — so resume-after-kill is simply "run the same
- * three steps again". The durable handle persisted via `onResourceCreated`
- * is the artifact URL (`{server}/artifacts/{artifactId}`), which is exactly
- * what cancellation/invalidation DELETEs.
+ * Within one run, trouble is absorbed by grant cycles: a rejected/failed PUT
+ * gets a FRESH grant (§9.1 re-grant) and tries again. Anything terminal
+ * escapes to the manager, which burns the single-shot pairing — a grant 409
+ * (artifactId already used) is exactly that.
  */
 
 /** Performs the byte-carrying PUT to the presigned URL. Injected (native upload task in production, a fake in tests) for the same reasons as `UploadChunk` in tus-client. */
@@ -121,28 +117,12 @@ export async function uploadViaDirect(opts: DirectUploadOptions): Promise<Direct
   const totalBytes = opts.file.size ?? 0;
   const resourceUrl = `${opts.server}/artifacts/${opts.artifactId}`;
 
-  // Durable cancel/invalidate handle persisted before any byte moves — same
-  // discipline as the tus path's resource URL.
+  // The cancel handle, reported before any byte moves — same discipline as
+  // the tus path's resource URL (in-memory only; identities are single-shot).
   await opts.onResourceCreated?.(resourceUrl);
 
   for (let cycle = 1; ; cycle += 1) {
-    let grant: Grant;
-    try {
-      grant = await withRetry(() => requestGrant(opts, fetchImpl), opts.signal);
-    } catch (err) {
-      // A grant 409 means the artifactId's reservation is not re-grantable —
-      // most commonly because the upload already COMPLETED (a retry after a
-      // mid-session client failure). If the artifact serves, it IS done.
-      const conflict = err instanceof TusUploadError && err.statusCode === 409;
-      if (
-        conflict &&
-        (await probeArtifactReady(opts.server, opts.artifactId, opts.token, fetchImpl, opts.signal))
-      ) {
-        opts.onProgress?.({ bytesSent: totalBytes, totalBytes });
-        return { resourceUrl };
-      }
-      throw err;
-    }
+    const grant = await withRetry(() => requestGrant(opts, fetchImpl), opts.signal);
 
     // One PUT per grant cycle: a transient PUT failure gets a FRESH grant on
     // the next cycle (the old URL may have expired mid-transfer), so the

@@ -10,7 +10,6 @@ import { hostOf } from '@/utils/format';
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
 import { cleanupStaleUploadTempFiles } from './native-chunk-upload';
-import { registerUploadResumeTask } from './resume-task';
 import { uploads } from './upload-manager';
 
 const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> = {
@@ -60,18 +59,18 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
 
   // Best-effort sweep of orphaned tus-resume temp files from a previous
   // launch that was killed mid-upload — see `cleanupStaleUploadTempFiles`.
-  // Then poke the upload manager: on launch it re-drives anything still queued,
-  // and on every foreground it resumes a run that stalled while backgrounded
-  // (the JS drain loop is suspended, not the native URLSession transfer).
+  // Then settle drafts a kill left 'uploading' (probe → uploaded, or
+  // burn+toast); every foreground re-poke resumes a JS drain suspended by
+  // backgrounding (the native transfer itself never stopped).
   useEffect(() => {
+    uploads.registerToast(showToast);
     cleanupStaleUploadTempFiles();
-    void registerUploadResumeTask();
-    void uploads.ensureRunning();
+    void uploads.sweepInterruptedUploads();
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') void uploads.ensureRunning();
     });
     return () => sub.remove();
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     if (!url || url === handledUrl.current || !url.startsWith('pulsecam://')) return;
@@ -111,13 +110,14 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             Alert.alert("Can't connect", CAPABILITIES_REJECTION_MESSAGE[capResult.reason]);
             return;
           }
-          // `/capabilities` is fetched for the protocol-version check above. Added to the
-          // device-wide pool (not a single slot) — any draft can pick it at upload time, and
-          // several servers can be paired at once.
+          // `/capabilities` is fetched once here — the protocol-version check AND the
+          // transport decision (direct vs TUS) both happen at pairing time; a later server
+          // capability change applies to new pairings, never to a link already scanned.
           return addDestination({
             server: link.server,
             token: link.token,
             artifactId: link.artifactId,
+            directUpload: capResult.capabilities.directUpload,
           }).then(() => {
             showToast(`Connected to ${host} — pick it when you upload`);
           });
