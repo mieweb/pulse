@@ -64,7 +64,7 @@ flowchart TB
 - 🎬 **Segmented recording** — build a walkthrough from multiple clips, reorder them, re-record the ones you fumbled
 - ✂️ **Non-compounding edits** — trims re-encode from the pristine original every time, so re-editing never stacks generation loss
 - 🗣️ **On-device captions** — Whisper (whisper.cpp) transcription with word-level timing, no audio ever leaves the phone
-- 📡 **Resumable uploads** — TUS v1 protocol; a two-minute capture survives signal drops, app kills, and relaunches
+- 📡 **Single-shot uploads** — TUS v1 with in-run resume; a two-minute capture survives signal drops, and a transfer that finishes in the background while the app is dead is picked up on the next launch
 - 🔐 **Self-hosted by design** — pair with your server via QR / deep link; capability tokens live in the device keychain
 - 📦 **Local-first drafts** — SQLite-backed library that works fully offline, shareable device-to-device as `.pulse` bundles
 
@@ -100,13 +100,13 @@ flowchart TB
 ### Upload & pairing
 
 - Pair with a server by scanning a QR / opening a `pulsecam://` deep link — trust-on-first-use confirmation, capability negotiation against the server's `/capabilities` endpoint
-- TUS v1 resumable uploads with exponential backoff; interrupted uploads resume from the server's true byte offset, even after an app relaunch
+- TUS v1 uploads with exponential backoff; within a run, every retry re-reads the server's true byte offset before sending more. Uploads are single-shot: one pairing, one attempt — a failure or cancel burns the pairing (toast or notification) and the user scans a fresh link. On launch and on return to the foreground, a one-probe sweep settles anything interrupted: served → marked uploaded; otherwise burned
 - One upload per pulse: the video plus its captions, beat-timecode manifest, and thumbnail, chained under a single session token
 - Bearer tokens stored in the secure keychain, never in the database
 
 ## Platform support
 
-Pulse runs on **iOS and Android** from a single codebase. iOS is the original platform; Android has been brought to parity and verified end-to-end on device — recording, editing, merge/export, on-device captions, `.pulse` sharing, pairing, and resumable uploads (including upload survival through backgrounding, Doze, and app kills via a foreground service).
+Pulse runs on **iOS and Android** from a single codebase. iOS is the original platform; Android has been brought to parity and verified end-to-end on device — recording, editing, merge/export, on-device captions, `.pulse` sharing, pairing, and uploads (including upload survival through backgrounding and Doze via a foreground service).
 
 Platform notes:
 
@@ -138,7 +138,7 @@ Platform notes:
 
 ### PulseVault — self-hosted uploads
 
-The server side lives in [`pulsevault-mieweb/`](pulsevault-mieweb/): a Fastify plugin (with a framework-agnostic core for Express, Meteor, or plain Node `http`) that receives Pulse uploads into filesystem-first storage, with `authorize` / `validatePayload` / `onUploadComplete` hooks for wiring in your SSO, audit trail, transcoding, or AI pipeline. The wire contract is documented in [PROTOCOL.md](pulsevault-mieweb/PROTOCOL.md) — an implementation-independent spec (capability discovery, artifact kinds, tokens, TUS) so anyone can build a compatible server.
+The server side lives in [`pulsevault-mieweb/`](pulsevault-mieweb/): a framework-agnostic core (plain Node `http`, Express, Meteor, or a web-standard `Request → Response` handler for Workers/Hono) with a Fastify adapter that receives Pulse uploads into filesystem-first storage, with `authorize` / `validatePayload` / `onUploadComplete` hooks for wiring in your SSO, audit trail, transcoding, or AI pipeline. The wire contract is documented in [PROTOCOL.md](pulsevault-mieweb/PROTOCOL.md) — an implementation-independent spec (capability discovery, artifact kinds, tokens, TUS) so anyone can build a compatible server.
 
 ## Getting started
 
