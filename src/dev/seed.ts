@@ -173,10 +173,7 @@ async function seedModules(
     return;
   }
 
-  const existing = await db
-    .select({ id: drafts.id })
-    .from(drafts)
-    .where(eq(drafts.id, draftId));
+  const existing = await db.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, draftId));
   if (existing.length > 0) return draftId;
 
   await db.insert(drafts).values({ id: draftId, name });

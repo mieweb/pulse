@@ -5,11 +5,11 @@ import { Alert, AppState } from 'react-native';
 
 import { addDestination } from '@/db/destinations';
 import { useToast } from '@/features/toast/toast-provider';
+import { hostOf } from '@/utils/format';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
 import { cleanupStaleUploadTempFiles } from './native-chunk-upload';
-import { registerUploadResumeTask } from './resume-task';
 import { uploads } from './upload-manager';
 
 const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> = {
@@ -17,14 +17,6 @@ const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> 
     'This upload link needs a newer version of Pulse. Update the app and try again.',
   'invalid-link': 'This upload link looks damaged. Ask for a new one and try again.',
 };
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 /**
  * Trust-on-first-use gate (PROTOCOL.md §3): asks the user to confirm the
@@ -65,20 +57,24 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   const handledUrl = useRef<string | null>(null);
   const { showToast } = useToast();
 
-  // Best-effort sweep of orphaned tus-resume temp files from a previous
-  // launch that was killed mid-upload — see `cleanupStaleUploadTempFiles`.
-  // Then poke the upload manager: on launch it re-drives anything still queued,
-  // and on every foreground it resumes a run that stalled while backgrounded
-  // (the JS drain loop is suspended, not the native URLSession transfer).
+  // Best-effort sweep of orphaned upload temp files from a previous launch
+  // that was killed mid-upload — see `cleanupStaleUploadTempFiles`. Then
+  // settle drafts a kill left 'uploading' (probe → uploaded, or burn+toast) —
+  // at launch and again on every foreground, so a probe that was inconclusive
+  // (offline, or a transfer iOS was still finishing) settles as soon as the
+  // server is reachable. The foreground poke also resumes a JS drain suspended
+  // by backgrounding (the native transfer itself never stopped).
   useEffect(() => {
+    uploads.registerToast(showToast);
     cleanupStaleUploadTempFiles();
-    void registerUploadResumeTask();
-    void uploads.ensureRunning();
+    void uploads.sweepInterruptedUploads();
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') void uploads.ensureRunning();
+      if (next !== 'active') return;
+      void uploads.ensureRunning();
+      void uploads.sweepInterruptedUploads();
     });
     return () => sub.remove();
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     if (!url || url === handledUrl.current || !url.startsWith('pulsecam://')) return;
@@ -118,16 +114,14 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             Alert.alert("Can't connect", CAPABILITIES_REJECTION_MESSAGE[capResult.reason]);
             return;
           }
-          // The link's own `uploadUnit` (if present) is a per-session override of the
-          // deployment-wide value `/capabilities` reports (PROTOCOL.md §3, §8) — prefer it.
-          // `/capabilities` is still fetched regardless, for the protocol-version check above.
-          // Added to the device-wide pool (not a single slot) — any draft can pick it at
-          // upload time, and several servers can be paired at once.
+          // `/capabilities` is fetched once here — the protocol-version check AND the
+          // transport decision (direct vs TUS) both happen at pairing time; a later server
+          // capability change applies to new pairings, never to a link already scanned.
           return addDestination({
             server: link.server,
             token: link.token,
             artifactId: link.artifactId,
-            uploadUnit: link.uploadUnit ?? capResult.capabilities.uploadUnit,
+            directUpload: capResult.capabilities.directUpload,
           }).then(() => {
             showToast(`Connected to ${host} — pick it when you upload`);
           });

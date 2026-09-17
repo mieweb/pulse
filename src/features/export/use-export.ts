@@ -31,25 +31,11 @@ export type ExportState =
  * Single-clip drafts go through the engine too: a lone conforming clip is a near-free passthrough
  * remux, a lone landscape import gets conformed to portrait like any outlier. The job re-runs only
  * when the clip set actually changes (keyed on a file signature, not array identity) or on `run`.
- *
- * `options.auto` (default `true`) controls whether the merge starts on mount. Pass `false` for a
- * segmented upload destination — `uploadSegments` never touches the merged file, so merging eagerly
- * would just be wasted CPU/battery blocking the screen for no reason. The hook stays `idle` until
- * something (Share, Save, Preview) calls `run()` on demand.
  */
-export function useExport(segments: Segment[], options?: { auto?: boolean }) {
-  const auto = options?.auto ?? true;
-  // Lazy initializer, snapshotted once at mount — just avoids a one-frame "idle" flash for the
-  // common case where `auto` doesn't change over the component's lifetime. The effect below is
-  // what actually corrects state if `auto` changes later (e.g. a destination resolves after mount).
-  const [state, setState] = useState<ExportState>(() =>
-    auto ? { status: 'merging', progress: 0 } : { status: 'idle' },
-  );
+export function useExport(segments: Segment[]) {
+  const [state, setState] = useState<ExportState>({ status: 'merging', progress: 0 });
   const [attempt, setAttempt] = useState(0);
   const run = () => setAttempt((n) => n + 1);
-
-  // Not auto-running and nobody has explicitly called `run()` yet — the merge below never runs.
-  const shouldRun = auto || attempt > 0;
 
   // Stable across re-renders that don't change the actual clips, so the live query re-emitting
   // the same data doesn't kick off a second merge.
@@ -57,7 +43,7 @@ export function useExport(segments: Segment[], options?: { auto?: boolean }) {
   const signature = segmentSignature(segments);
 
   useEffect(() => {
-    if (segments.length === 0 || !shouldRun) return;
+    if (segments.length === 0) return;
 
     // A late merge resolving after this effect re-ran (or the screen unmounted) must not clobber
     // newer state — only the most recent run is allowed to commit.
@@ -82,7 +68,8 @@ export function useExport(segments: Segment[], options?: { auto?: boolean }) {
         const result = await merge(urls, { outputExt: 'mp4', ...REELS_TARGET });
         // Emergency encoder fallback missed the pin (Android broken-encoder devices) — the
         // export is playable but off-contract; the vault's web-ready backstop owns the re-encode.
-        if (result.degraded) console.warn('[export] merged output is degraded (missed the reels pin)');
+        if (result.degraded)
+          console.warn('[export] merged output is degraded (missed the reels pin)');
         if (current) {
           setState({ status: 'done', outputPath: result.outputPath, durationMs: result.duration });
         }
@@ -102,10 +89,14 @@ export function useExport(segments: Segment[], options?: { auto?: boolean }) {
       sub.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signature, attempt, shouldRun]);
+  }, [signature, attempt]);
 
-  // Derived, not stored: overrides a stale `merging`/`done`/`error` value left over from a
-  // previous render where `auto` was true (e.g. the destination changed shape) without needing a
-  // corrective `setState` inside the effect above.
-  return { state: shouldRun ? state : { status: 'idle' as const }, run };
+  // Derived, not stored: an EMPTY draft never runs the merge effect at all — without the
+  // explicit error override the auto-start initializer would leave the screen on `merging`
+  // (a spinner that never resolves, mieweb/pulse#98). Zero clips is terminal for this screen.
+  const derived: ExportState =
+    segments.length === 0
+      ? { status: 'error', message: 'This draft has no clips to export.' }
+      : state;
+  return { state: derived, run };
 }

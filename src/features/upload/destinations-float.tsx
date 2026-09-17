@@ -6,22 +6,14 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { hostOf } from '@/utils/format';
 
-import { ModeBadge } from './destination-selector';
 import { useDestinations } from './use-destinations';
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 /**
  * A floating pill on the home screen surfacing the device-wide pool of paired upload destinations
  * (§ destination pool). Tapping it opens a sheet to *view and delete* every non-expired
- * destination — its host, segment/merged mode, and expiry. View/delete only; picking *which* one to
+ * destination — its host and expiry. View/delete only; picking *which* one to
  * upload to happens later, on the export screen. Renders nothing when the pool is empty, so it
  * only appears once at least one server is paired, and disappears as destinations are consumed by
  * finished uploads, deleted here, or expire.
@@ -106,7 +98,6 @@ export function DestinationsFloat() {
                         <ThemedText type="smallBold" numberOfLines={1} style={styles.rowHost}>
                           {host}
                         </ThemedText>
-                        <ModeBadge uploadUnit={d.uploadUnit} />
                       </View>
                       <ThemedText type="caption1" themeColor="textSecondary">
                         {d.expiryLabel}

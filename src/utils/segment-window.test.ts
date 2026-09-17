@@ -1,7 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 
 import type { Segment } from '@/db/schema';
-import { effFile, effMs, indexAtGlobalMs, segmentOffsets, segmentSignature } from './segment-window';
+import {
+  effFile,
+  effMs,
+  indexAtGlobalMs,
+  segmentOffsets,
+  segmentSignature,
+} from './segment-window';
 
 // Minimal Segment factory — only the fields the timeline math reads.
 const seg = (over: Partial<Segment>): Segment =>

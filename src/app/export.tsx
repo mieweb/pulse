@@ -35,19 +35,12 @@ import { uploadPhaseLabel } from '@/features/upload/phase-label';
 import { useUpload } from '@/features/upload/use-upload';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
-import { formatClipCount, formatDuration } from '@/utils/format';
+import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
+import { closeToHome } from '@/utils/navigation';
 import { effMs } from '@/utils/segment-window';
 
-/** Sum of each clip's effective duration — the segmented-mode summary line has no merged output to read a duration from. */
+/** Sum of each clip's effective duration — the summary line before the merge finishes has no merged output to read a duration from. */
 const totalDurationMs = (clips: Segment[]) => clips.reduce((sum, s) => sum + effMs(s), 0);
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 export default function ExportScreen() {
   const insets = useSafeAreaInsets();
@@ -63,15 +56,9 @@ export default function ExportScreen() {
   const mergedRef = useRef<{ path: string; durationMs: number } | null>(null);
   const upload = useUpload(draftId ?? '', clips, mergedRef);
 
-  // The upload unit that governs the current view: the draft's claimed destination once a run is
-  // underway/finished, otherwise the pool destination the user has currently selected. Drives the
-  // error-title wording and (via the selected unit below) the Upload button's readiness.
-  const effectiveUploadUnit = upload.activeDestination?.uploadUnit ?? null;
-  const isSegmentOnly = effectiveUploadUnit === 'segment';
-
-  // Always auto-merge, whatever the upload unit. Share/Save/Preview want the merged file in
-  // every mode anyway, and a pairing can arrive (or switch to "merged") at any moment — merging
-  // eagerly means a merged-mode upload never has to stop and ask the user to export first.
+  // Always auto-merge: Share/Save/Preview want the merged file anyway, and a pairing can
+  // arrive at any moment — merging eagerly means an upload never has to stop and ask the
+  // user to export first.
   const { state, run } = useExport(clips);
   // `uploadMerged` reads `mergedRef.current` at upload time, not via a reactive prop — update it
   // whenever the merge's own state changes instead of threading `merged` through as a value.
@@ -107,29 +94,22 @@ export default function ExportScreen() {
     router.push(`/subtitles?draftId=${draftId}&videoUri=${encodeURIComponent(state.outputPath)}`);
   };
 
-  // Merged-only: uploading the single video needs the merge done first (segmented uploads each clip
-  // on its own). Computed from the currently *selected* pool destination so switching segment↔merged in
-  // the selector updates the Upload button's readiness immediately.
-  const selectedNeedsMerge = upload.selectedDestination?.uploadUnit === 'merged';
-  const selectedUploadReady = !selectedNeedsMerge || state.status === 'done';
+  // Uploading needs the merge done first. Computed so the Upload button's readiness updates
+  // immediately as the merge lands.
+  const selectedUploadReady = state.status === 'done';
   const selectedHost = upload.selectedDestination ? hostOf(upload.selectedDestination.server) : '';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
   const uState = upload.state;
 
-  const watchUrl =
-    upload.destination?.uploadUnit === 'merged'
-      ? `${upload.destination.server}/artifacts/${upload.destination.artifactId}${
-          upload.destination.token ? `?token=${encodeURIComponent(upload.destination.token)}` : ''
-        }`
-      : null;
+  // The tokened watch link rides the one-shot `done` state (built by the manager
+  // from the session — tokens never land in the DB row).
+  const watchUrl = uState.status === 'done' ? uState.resourceUrl : null;
 
   // A finished upload is surfaced exactly once — a themed prompt (see the modal in the JSX
   // below) offering to watch the video in the browser — then acknowledged so no "uploaded"
   // button lingers in the draft (§ post-upload UX). `done` only occurs for a run completed this
   // session (see `useUpload`), so this can't fire for a draft that was uploaded some other time.
-  // Segmented sessions have no single watchable video (the anchor artifact is the ordering
-  // manifest), so they keep a plain native confirmation instead.
   // "Copy link" puts the watch URL on the clipboard for sharing into chats/notes — previously
   // the URL was reachable only by opening the browser (#69's missing-watch-link gap). A custom
   // modal, not Alert.alert: an alert's Cancel row renders identically to the real actions,
@@ -151,12 +131,14 @@ export default function ExportScreen() {
   // Every path out of the prompt acknowledges, which flips status off 'done' and hides it.
   const uploadPromptVisible = upload.state.status === 'done' && watchUrl != null;
 
-  useEffect(() => {
-    if (upload.state.status !== 'done' || watchUrl) return;
-    Alert.alert('Upload complete', 'Your pulse was uploaded.', [
-      { text: 'OK', onPress: acknowledgeDone },
-    ]);
-  }, [upload.state.status, watchUrl, acknowledgeDone]);
+  // Tapping Upload locks the draft (Home enforces the lock; cancel is the only action until
+  // the run settles), so closing mid-upload skips the recorder underneath — an editable
+  // timeline under a locked draft — and lands on Home. Otherwise ✕ pops back as usual.
+  const close = () => {
+    if (uState.status !== 'uploading') closeToHome();
+    else if (router.canDismiss()) router.dismissAll();
+    else router.replace('/');
+  };
 
   const runShare = async () => {
     if (state.status !== 'done' || busy) return;
@@ -191,10 +173,10 @@ export default function ExportScreen() {
           (!upload.selectedId || !selectedUploadReady) && styles.disabled,
           pressed && styles.pressed,
         ]}>
-        {selectedNeedsMerge && !selectedUploadReady ? (
+        {!selectedUploadReady ? (
           <>
             <ActivityIndicator color={theme.onAccent} />
-            <ThemedText style={{ color: theme.onAccent }}>Preparing merged video…</ThemedText>
+            <ThemedText style={{ color: theme.onAccent }}>Preparing video…</ThemedText>
           </>
         ) : (
           <>
@@ -209,7 +191,7 @@ export default function ExportScreen() {
   return (
     <ThemedView style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-        <CloseButton />
+        <CloseButton onPress={close} />
       </View>
 
       {/* Bottom padding tracks the home indicator instead of a fixed 64pt — the difference
@@ -234,6 +216,7 @@ export default function ExportScreen() {
               lines={captionLines}
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
               captionStatus={transcription.state.status}
+              captionsLocked={uState.status === 'uploading'}
               onEditCaptions={openCaptionEditor}
               onAddCaptions={() => setModelSheetVisible(true)}
             />
@@ -362,7 +345,7 @@ export default function ExportScreen() {
           <>
             <Icon name="exclamationmark.triangle.fill" size={64} tintColor={theme.accent} />
             <ThemedText type="subtitle" style={styles.title}>
-              {isSegmentOnly ? 'Merged copy failed' : 'Export failed'}
+              Export failed
             </ThemedText>
             <ThemedText themeColor="textSecondary" style={styles.errorMessage}>
               {state.message}
@@ -385,16 +368,11 @@ export default function ExportScreen() {
           </>
         )}
 
-        {/* One UPLOAD section for both units. Merge always runs (above), so a merged-unit
-            destination just waits on `state.status === 'done'` while a segment-unit one is ready
-            immediately — the difference is only the Upload button's enabled state, not a
-            separate flow. Shown while there's something actionable: destinations to pick, a run
-            in flight (or its error/expiry notice). A previously-uploaded draft with nothing to
-            pick shows no upload UI at all (§ post-upload UX — no persistent buttons). */}
-        {(upload.destinations.length > 0 ||
-          uState.status === 'uploading' ||
-          uState.status === 'error' ||
-          (upload.destination && upload.destinationExpired)) && (
+        {/* Merge always runs (above), so the Upload button just waits on
+            `state.status === 'done'`. Shown while there's something actionable: destinations to
+            pick, or a run in flight. A failed upload leaves no state here — the pairing is burned
+            and the reason arrives as a toast; scanning a fresh link repopulates the selector. */}
+        {(upload.destinations.length > 0 || uState.status === 'uploading') && (
           <View style={styles.uploadSection}>
             <ThemedText
               type="caption1"
@@ -407,8 +385,8 @@ export default function ExportScreen() {
               <View style={[styles.button, elementSurface]}>
                 <ActivityIndicator color={theme.text} />
                 {/* Phase-aware label — names the step in flight (preparing, captions,
-                    manifest, thumbnail, video, clip x of y) instead of sitting at a
-                    generic "Uploading… 0%" through all the pre-video work. */}
+                    manifest, thumbnail, video) instead of sitting at a generic
+                    "Uploading… 0%" through all the pre-video work. */}
                 <ThemedText>{uploadPhaseLabel(uState)}</ThemedText>
                 <Pressable
                   onPress={() => void upload.cancel()}
@@ -419,60 +397,7 @@ export default function ExportScreen() {
                 </Pressable>
               </View>
             ) : (
-              // Idle or error: pick a destination and upload (or retry the claimed one). A prior
-              // error shows its own Retry (same destination) plus the selector to re-pick a
-              // different destination — re-claiming is the escape hatch for a dead session.
-              <>
-                {uState.status === 'error' && (
-                  // Compact banner, not a button: title + reason share one card, with Retry as
-                  // a small pill only when retrying can actually help. A non-retryable
-                  // rejection is information, so nothing about it should look pressable.
-                  <View
-                    style={[styles.errorBanner, elementSurface]}
-                    accessibilityRole="alert"
-                    accessibilityLabel={`${uState.retryable ? 'Upload failed' : 'Upload rejected by server'}. ${uState.reason}`}>
-                    <Icon name="exclamationmark.triangle.fill" size={16} tintColor={theme.accent} />
-                    <View style={styles.errorBody}>
-                      <ThemedText type="smallBold">
-                        {uState.retryable ? 'Upload failed' : 'Rejected by server'}
-                      </ThemedText>
-                      <ThemedText type="caption1" themeColor="textSecondary" numberOfLines={2}>
-                        {uState.reason}
-                      </ThemedText>
-                    </View>
-                    {uState.retryable && (
-                      <Pressable
-                        onPress={() => void upload.retry()}
-                        accessibilityRole="button"
-                        accessibilityLabel="Retry upload"
-                        style={({ pressed }) => [
-                          styles.smallButton,
-                          { backgroundColor: theme.accent },
-                          pressed && styles.pressed,
-                        ]}>
-                        <Icon name="arrow.clockwise" size={14} tintColor={theme.onAccent} />
-                        <ThemedText type="small" style={{ color: theme.onAccent }}>
-                          Retry
-                        </ThemedText>
-                      </Pressable>
-                    )}
-                  </View>
-                )}
-
-                {upload.destinations.length > 0
-                  ? selectorAndUpload
-                  : upload.destination &&
-                    upload.destinationExpired && (
-                      <View style={[styles.button, elementSurface]}>
-                        <Icon
-                          name="exclamationmark.triangle.fill"
-                          size={18}
-                          tintColor={theme.textSecondary}
-                        />
-                        <ThemedText themeColor="textSecondary">Upload link expired</ThemedText>
-                      </View>
-                    )}
-              </>
+              selectorAndUpload
             )}
           </View>
         )}
@@ -557,6 +482,7 @@ function MergedPreview({
   lines,
   meta,
   captionStatus,
+  captionsLocked,
   onEditCaptions,
   onAddCaptions,
 }: {
@@ -565,6 +491,8 @@ function MergedPreview({
   /** Clip-count · duration readout, shown as a pill over the video. */
   meta: string;
   captionStatus: MergedTranscriptionState['status'];
+  /** Captions ride the upload — hide the edit badge while a run is in flight. */
+  captionsLocked: boolean;
   onEditCaptions: () => void;
   onAddCaptions: () => void;
 }) {
@@ -583,7 +511,8 @@ function MergedPreview({
   // editor to add captions by hand. Sits OUTSIDE the play Pressable so taps don't toggle playback.
   const working = captionStatus === 'transcribing' || captionStatus === 'downloading';
   const actionable =
-    captionStatus === 'ready' || captionStatus === 'no-model' || captionStatus === 'error';
+    !captionsLocked &&
+    (captionStatus === 'ready' || captionStatus === 'no-model' || captionStatus === 'error');
 
   // Largest 9:16 rect that fits the measured frame. Yoga can't express this — a max
   // constraint on the aspect-derived axis clamps it without re-shrinking the defined one,

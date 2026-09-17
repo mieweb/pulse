@@ -109,20 +109,16 @@ export default function HomeScreen() {
           style: 'destructive',
           onPress: () => {
             setDeletingIds((prev) => new Set(prev).add(draft.id));
-            // Stop any in-flight upload FIRST — deleting the row/files under a running session
-            // would otherwise let a deleted draft finish landing on the server (or die midway
-            // with a file-not-found), and strand its session in the manager.
-            uploads
-              .cancel(draft.id)
-              .then(() => deleteDraft(draft.id))
-              .catch(() => {
-                setDeletingIds((prev) => {
-                  const next = new Set(prev);
-                  next.delete(draft.id);
-                  return next;
-                });
-                Alert.alert('Delete failed', 'The draft could not be deleted.');
+            // Delete is only offered while the draft is not uploading (see `menuActions`), and
+            // `deleteDraft` asserts the same on the row, so there is no live run to stop first.
+            deleteDraft(draft.id).catch(() => {
+              setDeletingIds((prev) => {
+                const next = new Set(prev);
+                next.delete(draft.id);
+                return next;
               });
+              Alert.alert('Delete failed', 'The draft could not be deleted.');
+            });
           },
         },
       ],
@@ -135,33 +131,8 @@ export default function HomeScreen() {
     : null;
   const menuActions: MenuAction[] = actionsDraft
     ? [
-        {
-          key: 'rename',
-          label: 'Rename',
-          icon: 'pencil',
-          onPress: () => {
-            setEditingDraftId(actionsDraft.id);
-            setActionsDraft(null);
-          },
-        },
-        // Only for a draft whose upload failed (the ! badge) — re-drives it via the background
-        // manager (reusing/reconstructing the session) without reopening the export screen.
-        ...(actionsDraftStatus === 'failed'
-          ? [
-              {
-                key: 'retry-upload',
-                label: 'Retry upload',
-                icon: 'arrow.clockwise',
-                onPress: () => {
-                  const draftId = actionsDraft.id;
-                  setActionsDraft(null);
-                  void uploads.retry(draftId);
-                },
-              } satisfies MenuAction,
-            ]
-          : []),
-        // Only while the upload is running (the progress ring) — aborts and resets to idle
-        // without reopening the export screen; the manager also server-cancels best-effort.
+        // A draft is LOCKED while uploading — cancel is the only action (rename/
+        // delete would mutate content the run is mid-flight on).
         ...(actionsDraftStatus === 'uploading'
           ? [
               {
@@ -175,18 +146,28 @@ export default function HomeScreen() {
                 },
               } satisfies MenuAction,
             ]
-          : []),
-        {
-          key: 'delete',
-          label: 'Delete',
-          icon: 'trash',
-          destructive: true,
-          onPress: () => {
-            const draft = actionsDraft;
-            setActionsDraft(null);
-            confirmDelete(draft);
-          },
-        },
+          : [
+              {
+                key: 'rename',
+                label: 'Rename',
+                icon: 'pencil',
+                onPress: () => {
+                  setEditingDraftId(actionsDraft.id);
+                  setActionsDraft(null);
+                },
+              } satisfies MenuAction,
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: 'trash',
+                destructive: true,
+                onPress: () => {
+                  const draft = actionsDraft;
+                  setActionsDraft(null);
+                  confirmDelete(draft);
+                },
+              } satisfies MenuAction,
+            ]),
       ]
     : [];
 
@@ -334,9 +315,15 @@ export default function HomeScreen() {
               onPress={() =>
                 selectionMode
                   ? toggleSelected(item.id)
-                  : router.push({ pathname: '/recorder', params: { draftId: item.id } })
+                  : // LOCKED while uploading: the draft can't be opened (edits would
+                    // mutate content mid-run) — the card shows the ring; ⋯ offers cancel.
+                    item.uploadStatus === 'uploading'
+                    ? undefined
+                    : router.push({ pathname: '/recorder', params: { draftId: item.id } })
               }
-              onLongPress={() => setEditingDraftId(item.id)}
+              onLongPress={
+                item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
+              }
               onMore={(anchor) => setActionsDraft({ id: item.id, name: item.name, anchor })}
               onSubmitName={(input) => submitRename(item.id, item.name, input)}
             />

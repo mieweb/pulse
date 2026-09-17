@@ -54,7 +54,8 @@ function fixturesReady(): boolean {
   }
 }
 
-const ENABLED = process.env.PULSE_E2E === '1' && hasCmd('ffmpeg') && hasCmd('ffprobe') && fixturesReady();
+const ENABLED =
+  process.env.PULSE_E2E === '1' && hasCmd('ffmpeg') && hasCmd('ffprobe') && fixturesReady();
 const e2e = ENABLED ? describe : describe.skip;
 const TIMEOUT = 180_000;
 
@@ -220,8 +221,22 @@ function decodeFrame(file: string, t: number): { data: Buffer; width: number; he
   const height = rotated ? Number(v.width) : Number(v.height);
   const data = execFileSync(
     'ffmpeg',
-    ['-hide_banner', '-loglevel', 'error', '-ss', String(t), '-i', file,
-     '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-ss',
+      String(t),
+      '-i',
+      file,
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      '-',
+    ],
     { maxBuffer: 64 * 1024 * 1024 },
   );
   expect(data.length).toBe(width * height * 3);
@@ -333,12 +348,29 @@ function mergeSignature(file: string): string {
 function makeRecorderClip(name: string, seconds: number, hue: number): string {
   const out = path.join(TMP, name);
   ff([
-    '-f', 'lavfi', '-i', `testsrc2=size=1920x1080:rate=30:duration=${seconds}`,
-    '-f', 'lavfi', '-i', `sine=frequency=${220 + hue * 110}:duration=${seconds}`,
-    '-vf', `hue=h=${hue * 60},format=yuv420p`,
-    '-c:v', 'h264_videotoolbox', '-b:v', '5000000',
-    '-c:a', 'aac', '-ar', '48000', '-ac', '2',
-    '-movflags', '+faststart', out,
+    '-f',
+    'lavfi',
+    '-i',
+    `testsrc2=size=1920x1080:rate=30:duration=${seconds}`,
+    '-f',
+    'lavfi',
+    '-i',
+    `sine=frequency=${220 + hue * 110}:duration=${seconds}`,
+    '-vf',
+    `hue=h=${hue * 60},format=yuv420p`,
+    '-c:v',
+    'h264_videotoolbox',
+    '-b:v',
+    '5000000',
+    '-c:a',
+    'aac',
+    '-ar',
+    '48000',
+    '-ac',
+    '2',
+    '-movflags',
+    '+faststart',
+    out,
   ]);
   return out;
 }
@@ -375,7 +407,10 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
   const fixtures = Object.keys(EXPECTED);
 
   it('covers exactly the committed corpus', () => {
-    const onDisk = fs.readdirSync(FIXTURES_DIR).filter((f) => f.endsWith('.mp4')).sort();
+    const onDisk = fs
+      .readdirSync(FIXTURES_DIR)
+      .filter((f) => f.endsWith('.mp4'))
+      .sort();
     expect(onDisk).toEqual(fixtures.slice().sort());
   });
 
@@ -470,12 +505,20 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
           const pad = 6; // stay clear of encode ringing at the content edge
           const geo = `${name} @ ${frac}: rect=${Math.round(expW)}x${Math.round(expH)}`;
           if (box.top > pad * 2) {
-            expect(`${geo} | top bar black: ${isBlackRegion(frame, 0, frame.width - 1, 0, box.top - pad)}`).toContain('| top bar black: true');
-            expect(`${geo} | bottom bar black: ${isBlackRegion(frame, 0, frame.width - 1, box.bottom + pad, frame.height - 1)}`).toContain('| bottom bar black: true');
+            expect(
+              `${geo} | top bar black: ${isBlackRegion(frame, 0, frame.width - 1, 0, box.top - pad)}`,
+            ).toContain('| top bar black: true');
+            expect(
+              `${geo} | bottom bar black: ${isBlackRegion(frame, 0, frame.width - 1, box.bottom + pad, frame.height - 1)}`,
+            ).toContain('| bottom bar black: true');
           }
           if (box.left > pad * 2) {
-            expect(`${geo} | left bar black: ${isBlackRegion(frame, 0, box.left - pad, 0, frame.height - 1)}`).toContain('| left bar black: true');
-            expect(`${geo} | right bar black: ${isBlackRegion(frame, box.right + pad, frame.width - 1, 0, frame.height - 1)}`).toContain('| right bar black: true');
+            expect(
+              `${geo} | left bar black: ${isBlackRegion(frame, 0, box.left - pad, 0, frame.height - 1)}`,
+            ).toContain('| left bar black: true');
+            expect(
+              `${geo} | right bar black: ${isBlackRegion(frame, box.right + pad, frame.width - 1, 0, frame.height - 1)}`,
+            ).toContain('| right bar black: true');
           }
           // The full-content-height red playhead is the preferred timing reference (unique
           // color); the yellow bar must reach it along the CONTENT bottom (canvas bars
@@ -528,8 +571,16 @@ e2e('merge grounding: uniform signatures unlock the stream-copy fast path', () =
         ...inputs,
         '-filter_complex',
         '[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[v][a]',
-        '-map', '[v]', '-map', '[a]',
-        '-c:v', 'h264_videotoolbox', '-b:v', '5000000', '-c:a', 'aac',
+        '-map',
+        '[v]',
+        '-map',
+        '[a]',
+        '-c:v',
+        'h264_videotoolbox',
+        '-b:v',
+        '5000000',
+        '-c:a',
+        'aac',
         reencOut,
       ]);
       const reencMs = Date.now() - t1;
@@ -558,20 +609,26 @@ e2e('merge grounding: uniform signatures unlock the stream-copy fast path', () =
       const conformed = path.join(TMP, 'outlier-conformed.mp4');
       const t0 = Date.now();
       ff([
-        '-i', outlier,
+        '-i',
+        outlier,
         '-vf',
         'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p',
-        '-c:v', 'h264_videotoolbox', '-b:v', '5000000',
-        '-c:a', 'aac', '-ar', '48000', '-ac', '2',
+        '-c:v',
+        'h264_videotoolbox',
+        '-b:v',
+        '5000000',
+        '-c:a',
+        'aac',
+        '-ar',
+        '48000',
+        '-ac',
+        '2',
         conformed,
       ]);
       expect(mergeSignature(conformed)).toBe(mergeSignature(uniform[0]));
 
       const listFile = path.join(TMP, 'concat-mixed.txt');
-      fs.writeFileSync(
-        listFile,
-        [...uniform, conformed].map((c) => `file '${c}'`).join('\n'),
-      );
+      fs.writeFileSync(listFile, [...uniform, conformed].map((c) => `file '${c}'`).join('\n'));
       const out = path.join(TMP, 'merged-mixed.mp4');
       ff(['-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', out]);
       const selectiveMs = Date.now() - t0;
@@ -584,14 +641,30 @@ e2e('merge grounding: uniform signatures unlock the stream-copy fast path', () =
       const full = path.join(TMP, 'merged-mixed-full.mp4');
       const t1 = Date.now();
       ff([
-        '-i', uniform[0], '-i', uniform[1], '-i', outlier,
+        '-i',
+        uniform[0],
+        '-i',
+        uniform[1],
+        '-i',
+        outlier,
         '-filter_complex',
         '[0:v]fps=30,format=yuv420p[v0];[1:v]fps=30,format=yuv420p[v1];' +
           '[2:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[v2];' +
           '[v0][0:a][v1][1:a][v2][2:a]concat=n=3:v=1:a=1[v][a]',
-        '-map', '[v]', '-map', '[a]',
-        '-c:v', 'h264_videotoolbox', '-b:v', '5000000',
-        '-c:a', 'aac', '-ar', '48000', '-ac', '2',
+        '-map',
+        '[v]',
+        '-map',
+        '[a]',
+        '-c:v',
+        'h264_videotoolbox',
+        '-b:v',
+        '5000000',
+        '-c:a',
+        'aac',
+        '-ar',
+        '48000',
+        '-ac',
+        '2',
         full,
       ]);
       const fullMs = Date.now() - t1;

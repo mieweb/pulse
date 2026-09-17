@@ -12,13 +12,13 @@
 [![Whisper](https://img.shields.io/badge/Whisper-on--device-4B8BBE)](https://github.com/mybigday/whisper.rn)
 [![VisionCamera](https://img.shields.io/badge/VisionCamera-v5-FF6B6B)](https://react-native-vision-camera.com)
 
-*Capture knowledge before it walks out the door — training walkthroughs, process demos, handoffs — without sending a single frame to a third-party cloud.*
+_Capture knowledge before it walks out the door — training walkthroughs, process demos, handoffs — without sending a single frame to a third-party cloud._
 
 </div>
 
 ---
 
-Pulse is a React Native (Expo) app for capturing institutional knowledge as short-form video. Everything happens on the device: segmented recording, trimming, merging, and even speech-to-text captioning run locally. When you're ready to publish, Pulse uploads to a [**PulseVault**](#pulsevault--self-hosted-uploads) server *you* run — your organization keeps the content on its own infrastructure and owns auth, retention, and quota decisions. No central Pulse service exists.
+Pulse is a React Native (Expo) app for capturing institutional knowledge as short-form video. Everything happens on the device: segmented recording, trimming, merging, and even speech-to-text captioning run locally. When you're ready to publish, Pulse uploads to a [**PulseVault**](#pulsevault--self-hosted-uploads) server _you_ run — your organization keeps the content on its own infrastructure and owns auth, retention, and quota decisions. No central Pulse service exists.
 
 ## Anatomy of a Pulse
 
@@ -26,7 +26,7 @@ Two words show up throughout Pulse — here's what they mean.
 
 ### What is a Pulse?
 
-A **Pulse** is a single short-form video, assembled on-device from an ordered set of clips. Record a few, import a few, reorder them — on export they merge (losslessly where formats match) into one `.mp4`. Publishing a Pulse sends a small bundle: the merged video, its captions (WebVTT), a **beat manifest**, and a thumbnail. On-device each Pulse is a *draft* in your library; drafts move between devices as `.pulse` bundles.
+A **Pulse** is a single short-form video, assembled on-device from an ordered set of clips. Record a few, import a few, reorder them — on export they merge (losslessly where formats match) into one `.mp4`. Publishing a Pulse sends a small bundle: the merged video, its captions (WebVTT), a **beat manifest**, and a thumbnail. On-device each Pulse is a _draft_ in your library; drafts move between devices as `.pulse` bundles.
 
 ```mermaid
 flowchart LR
@@ -64,7 +64,7 @@ flowchart TB
 - 🎬 **Segmented recording** — build a walkthrough from multiple clips, reorder them, re-record the ones you fumbled
 - ✂️ **Non-compounding edits** — trims re-encode from the pristine original every time, so re-editing never stacks generation loss
 - 🗣️ **On-device captions** — Whisper (whisper.cpp) transcription with word-level timing, no audio ever leaves the phone
-- 📡 **Resumable uploads** — TUS v1 protocol; a two-minute capture survives signal drops, app kills, and relaunches
+- 📡 **Single-shot uploads** — TUS v1 with in-run resume; a two-minute capture survives signal drops, and a transfer that finishes in the background while the app is dead is picked up on the next launch
 - 🔐 **Self-hosted by design** — pair with your server via QR / deep link; capability tokens live in the device keychain
 - 📦 **Local-first drafts** — SQLite-backed library that works fully offline, shareable device-to-device as `.pulse` bundles
 
@@ -100,13 +100,13 @@ flowchart TB
 ### Upload & pairing
 
 - Pair with a server by scanning a QR / opening a `pulsecam://` deep link — trust-on-first-use confirmation, capability negotiation against the server's `/capabilities` endpoint
-- TUS v1 resumable uploads with exponential backoff; interrupted uploads resume from the server's true byte offset, even after an app relaunch
-- Two upload strategies, negotiated per server: **merged** (one video + captions + beat-timecode manifest + thumbnail) or **segment** (per-segment clips + an ordering manifest)
+- TUS v1 uploads with exponential backoff; within a run, every retry re-reads the server's true byte offset before sending more. Uploads are single-shot: one pairing, one attempt — a failure or cancel burns the pairing (toast or notification) and the user scans a fresh link. On launch and on return to the foreground, a one-probe sweep settles anything interrupted: served → marked uploaded; otherwise burned
+- One upload per pulse: the video plus its captions, beat-timecode manifest, and thumbnail, chained under a single session token
 - Bearer tokens stored in the secure keychain, never in the database
 
 ## Platform support
 
-Pulse runs on **iOS and Android** from a single codebase. iOS is the original platform; Android has been brought to parity and verified end-to-end on device — recording, editing, merge/export, on-device captions, `.pulse` sharing, pairing, and resumable uploads (including upload survival through backgrounding, Doze, and app kills via a foreground service).
+Pulse runs on **iOS and Android** from a single codebase. iOS is the original platform; Android has been brought to parity and verified end-to-end on device — recording, editing, merge/export, on-device captions, `.pulse` sharing, pairing, and uploads (including upload survival through backgrounding and Doze via a foreground service).
 
 Platform notes:
 
@@ -138,7 +138,7 @@ Platform notes:
 
 ### PulseVault — self-hosted uploads
 
-The server side lives in [`pulsevault-mieweb/`](pulsevault-mieweb/): a Fastify plugin (with a framework-agnostic core for Express, Meteor, or plain Node `http`) that receives Pulse uploads into filesystem-first storage, with `authorize` / `validatePayload` / `onUploadComplete` hooks for wiring in your SSO, audit trail, transcoding, or AI pipeline. The wire contract is documented in [PROTOCOL.md](pulsevault-mieweb/PROTOCOL.md) — an implementation-independent spec (capability discovery, artifact kinds, tokens, TUS) so anyone can build a compatible server.
+The server side lives in [`pulsevault-mieweb/`](pulsevault-mieweb/): a framework-agnostic core (plain Node `http`, Express, Meteor, or a web-standard `Request → Response` handler for Workers/Hono) with a Fastify adapter that receives Pulse uploads into filesystem-first storage, with `authorize` / `validatePayload` / `onUploadComplete` hooks for wiring in your SSO, audit trail, transcoding, or AI pipeline. The wire contract is documented in [PROTOCOL.md](pulsevault-mieweb/PROTOCOL.md) — an implementation-independent spec (capability discovery, artifact kinds, tokens, TUS) so anyone can build a compatible server.
 
 ## Getting started
 
@@ -167,13 +167,13 @@ Pulse uses native modules (VisionCamera, Whisper, FFmpeg), so it needs a **dev b
 
 ### Commands
 
-| Command | What it does |
-| --- | --- |
-| `npm start` | Start the Metro dev server |
-| `npm run ios` / `npm run android` | Build & run the dev client |
-| `npm test` | Run the Jest unit-test suite |
-| `npm run lint` | ESLint via `expo lint` |
-| `npm run format` | Prettier |
+| Command                           | What it does                 |
+| --------------------------------- | ---------------------------- |
+| `npm start`                       | Start the Metro dev server   |
+| `npm run ios` / `npm run android` | Build & run the dev client   |
+| `npm test`                        | Run the Jest unit-test suite |
+| `npm run lint`                    | ESLint via `expo lint`       |
+| `npm run format`                  | Prettier                     |
 
 ### Project structure
 
@@ -197,6 +197,21 @@ Unit tests are co-located with the code and scoped to pure logic — cue reflow,
 ```bash
 npm test
 ```
+
+Two further suites are env-gated because they need more than plain Node:
+
+```bash
+# Media pipeline e2e — requires ffmpeg/ffprobe on PATH (brew install ffmpeg):
+PULSE_E2E=1 npx jest
+
+# Cross-repo integration — drives the real tus/direct-upload client against a
+# real PulseVault server spawned from the submodule. Build its dist first;
+# --forceExit is expected (the spawned server holds the event loop open):
+cd pulsevault-mieweb && npm ci && npm run build && cd ..
+PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
+```
+
+Without the env vars those tests report as _skipped_ — that's the gate, not a failure. CI runs typecheck, lint, the unit suite, and the cross-repo integration suite on every PR (see [.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
 ## License
 

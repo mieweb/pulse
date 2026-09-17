@@ -1,5 +1,5 @@
 import { uploadChunkNative } from '../native-chunk-upload';
-import { cancelTusUpload, uploadViaTus } from '../tus-client';
+import { uploadViaTus } from '../tus-client';
 import type { UploadTransport } from '../types';
 
 /**
@@ -29,12 +29,9 @@ export const tusServerTransport: UploadTransport = {
       checksum: artifact.checksum,
       name: artifact.name,
       file: artifact.file,
-      resourceUrl: artifact.resourceUrl,
       onResourceCreated,
       signal,
       uploadChunk: uploadChunkNative,
       onProgress,
     }),
-
-  cancel: (resourceUrl, token) => cancelTusUpload(resourceUrl, token),
 };

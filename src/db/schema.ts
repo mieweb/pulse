@@ -3,43 +3,29 @@ import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
-/** Which artifact a draft's `uploadArtifactId` anchors: the merged export video itself, or the
- * session that every segment/manifest/captions artifact declares via `relatedTo`. */
-type UploadUnit = 'segment' | 'merged';
-
-/** Lifecycle of a single upload (video or captions), tracked independently per artifact. */
-type UploadStatus = 'idle' | 'uploading' | 'uploaded' | 'failed';
+/**
+ * Lifecycle of a draft's upload. Deliberately has NO failed/retry state: a
+ * terminal failure burns the pairing, resets the columns, and surfaces as a
+ * transient toast — the draft simply returns to being editable/unpaired.
+ */
+type UploadStatus = 'uploading' | 'uploaded';
 
 /** A draft — an ordered set of segments, plus its upload destination. */
 export const drafts = sqliteTable('drafts', {
   id: text('id').primaryKey(),
   name: text('name'),
   // Per-draft upload destination (§4). A draft is "paired" when these are set (via
-  // `setUploadDestination`); there is no separate mode flag. `uploadArtifactId` is the session-anchor artifact id
-  // from the pairing deep link, used as the TUS artifactId directly (merged) or as `relatedTo`
-  // (segment). `uploadUnit` is resolved once from the server's `/capabilities` at pairing time and
-  // cached here so later upload runs don't re-fetch it.
+  // `setUploadDestination`); there is no separate mode flag. `uploadArtifactId` is the
+  // session-anchor artifact id from the pairing deep link, used as the TUS artifactId for the
+  // video and as `relatedTo` on its related artifacts. Pairings are SINGLE-SHOT: a terminal
+  // upload failure clears these (the deep link is spent) — the user pairs a fresh link.
   uploadServer: text('upload_server'),
   // The bearer token itself is NOT stored here — it's a live capability credential, kept in
   // expo-secure-store instead (`db/secure-token.ts`), not in this plaintext-at-rest table.
   uploadArtifactId: text('upload_artifact_id'),
-  uploadUnit: text('upload_unit', { enum: ['segment', 'merged'] }).$type<UploadUnit>(),
-  // The TUS resource URL (the `Location` from the initial create) for the
-  // merged-video upload, persisted so a relaunch can `HEAD` it to learn the
-  // true offset and resume rather than restarting from byte 0.
-  uploadResourceUrl: text('upload_resource_url'),
-  uploadStatus: text('upload_status', {
-    enum: ['idle', 'uploading', 'uploaded', 'failed'],
-  }).$type<UploadStatus>(),
-  captionsUploadStatus: text('captions_upload_status', {
-    enum: ['idle', 'uploading', 'uploaded', 'failed'],
-  }).$type<UploadStatus>(),
-  // The merged export output the background upload manager uploads. Persisted at enqueue so an
-  // upload interrupted by an app kill can be re-driven from launch without the export screen —
-  // the one piece of a merged run not otherwise recoverable from the DB (the path is a native
-  // merge output, the duration feeds the beat manifest). Null for segment-unit drafts.
-  uploadMergedPath: text('upload_merged_path'),
-  uploadMergedDurationMs: integer('upload_merged_duration_ms'),
+  // 'uploading' from the claim write until the run settles; 'uploaded' keeps server +
+  // artifactId as the watch link. Unpaired is NULL — there is no idle-but-paired state.
+  uploadStatus: text('upload_status', { enum: ['uploading', 'uploaded'] }).$type<UploadStatus>(),
   // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
   // every clip added, never decremented — so deleting (or renaming) a clip can never cause
   // its number to be reused.
@@ -126,28 +112,11 @@ export const settings = sqliteTable('settings', {
 });
 
 /**
- * A sub-artifact within an upload session, keyed so a retry can look up and resume the SAME
- * server-side artifact instead of minting a fresh UUID and re-uploading from scratch.
- * `localKey` is one of the merged-mode session's `"captions"`, `"manifest"` (beat manifest) or
- * `"thumbnail"`, or `` `${segmentId}:video` `` for a segmented-mode clip.
- */
-export const uploadArtifacts = sqliteTable('upload_artifacts', {
-  id: text('id').primaryKey(), // `${draftId}:${localKey}`
-  draftId: text('draft_id')
-    .notNull()
-    .references(() => drafts.id, { onDelete: 'cascade' }),
-  localKey: text('local_key').notNull(),
-  artifactId: text('artifact_id').notNull(),
-  // Null until the first PATCH round succeeds — see `tus-client.ts`'s `createUpload`.
-  resourceUrl: text('resource_url'),
-});
-
-/**
  * The pool of upload destinations the device has paired with (via `pulsecam://` deep links)
  * but not yet consumed. Unlike a draft's `drafts.upload*` columns (which record where a
  * specific draft is being/has been sent), this is a device-wide list any draft can pick from
  * at upload time. Each row is single-use — its server-minted `artifactId` anchors exactly one
- * upload session, so the row is deleted once that upload finishes (or the user deletes it).
+ * upload session, so the row is deleted when a draft claims it.
  * The bearer token is NOT stored here (live capability credential) — it lives in
  * expo-secure-store keyed by `id`, same policy as the per-draft token above.
  */
@@ -155,14 +124,14 @@ export const uploadDestinations = sqliteTable('upload_destinations', {
   id: text('id').primaryKey(), // local uuid (Crypto.randomUUID), also the secure-store token key
   server: text('server').notNull(),
   artifactId: text('artifact_id').notNull(),
-  uploadUnit: text('upload_unit', { enum: ['segment', 'merged'] })
-    .$type<UploadUnit>()
-    .notNull(),
+  // Whether the server advertised the presigned direct-upload profile when this link was
+  // paired — the transport is DECIDED AT PAIRING (a capability change applies to new
+  // pairings, never to a link already scanned).
+  directUpload: integer('direct_upload', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at').notNull().default(now),
 });
 
 export type Draft = typeof drafts.$inferSelect;
 export type Segment = typeof segments.$inferSelect;
 export type DraftTranscript = typeof draftTranscripts.$inferSelect;
-export type UploadArtifact = typeof uploadArtifacts.$inferSelect;
 export type UploadDestination = typeof uploadDestinations.$inferSelect;

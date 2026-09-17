@@ -90,10 +90,17 @@ export function useMergedTranscription(
       try {
         if (!isModelReady(model)) {
           setState({ status: 'downloading', progress: 0 });
-          setTranscriptionStatus({ kind: 'downloading', bytesWritten: 0, totalBytes: model.approxBytes });
+          setTranscriptionStatus({
+            kind: 'downloading',
+            bytesWritten: 0,
+            totalBytes: model.approxBytes,
+          });
           await ensureModel(model, ({ bytesWritten, totalBytes }) => {
             if (!current) return;
-            setState({ status: 'downloading', progress: totalBytes ? bytesWritten / totalBytes : 0 });
+            setState({
+              status: 'downloading',
+              progress: totalBytes ? bytesWritten / totalBytes : 0,
+            });
             setTranscriptionStatus({ kind: 'downloading', bytesWritten, totalBytes });
           });
         }

@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 import type { Anchor } from '@/components/action-menu';
+import type { Draft } from '@/db/schema';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useDraftUploadState } from '@/features/upload/use-uploads';
@@ -19,7 +20,7 @@ const NAME_MAX_LENGTH = 40;
 type Props = {
   id: string;
   /** Persisted upload status, so the card can show its own upload state on the cover. */
-  uploadStatus?: 'idle' | 'uploading' | 'uploaded' | 'failed' | null;
+  uploadStatus?: Draft['uploadStatus'];
   name: string | null;
   /** Relative path of the draft's first clip; the cover frame's legacy runtime fallback. */
   firstSegmentFilename?: string | null;
@@ -63,17 +64,14 @@ export function DraftCard({
   const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
   const moreRef = useRef<View>(null);
 
-  // Live upload state (this session) takes precedence; otherwise fall back to the persisted status
-  // so an interrupted upload still reads correctly after a relaunch. Only two states surface on the
-  // card: the in-progress ring and the failed (!) badge — a COMPLETED upload deliberately shows
-  // nothing (a persisted 'uploaded' tick would sit on the card forever with no way to dismiss it;
-  // completion is surfaced by the export-screen prompt and the background notification instead).
+  // The persisted `upload_status` column alone says whether the draft is uploading — the claim
+  // writes it before any run starts and it survives a relaunch until the launch sweep settles it.
+  // The manager's live state (this session only) supplies the phase and progress for the ring.
+  // Only ONE state surfaces on the card: the in-progress ring — failure is a transient toast/
+  // notification (the pairing is burned, the draft just returns to normal), and a COMPLETED upload
+  // deliberately shows nothing (completion is surfaced by the export-screen prompt and the
+  // background notification instead).
   const live = useDraftUploadState(id);
-  const liveMapped =
-    live.status === 'uploading' ? 'uploading' : live.status === 'error' ? 'failed' : null;
-  const upload =
-    liveMapped ??
-    (uploadStatus === 'failed' ? 'failed' : uploadStatus === 'uploading' ? 'uploading' : 'idle');
   const uploadProgress = live.status === 'uploading' ? live.progress : 0;
 
   return (
@@ -84,8 +82,7 @@ export function DraftCard({
         styles.card,
         {
           // Rows highlight by fill swap (action-menu rows, home header buttons), not by dimming.
-          backgroundColor:
-            pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
+          backgroundColor: pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
           borderColor: theme.border,
         },
       ]}>
@@ -104,7 +101,7 @@ export function DraftCard({
         ) : (
           <Icon name="video.fill" size={18} tintColor={theme.textSecondary} />
         )}
-        {upload === 'uploading' && (
+        {uploadStatus === 'uploading' && (
           <View
             style={styles.uploadScrim}
             pointerEvents="none"
@@ -113,11 +110,6 @@ export function DraftCard({
             // backgrounded/resumed run is as legible here as on the export screen.
             accessibilityLabel={live.status === 'uploading' ? uploadPhaseLabel(live) : 'Uploading'}>
             <UploadRing progress={uploadProgress} />
-          </View>
-        )}
-        {upload === 'failed' && (
-          <View style={styles.uploadBadge} pointerEvents="none">
-            <Icon name="exclamationmark" size={11} tintColor="#fff" />
           </View>
         )}
       </View>
