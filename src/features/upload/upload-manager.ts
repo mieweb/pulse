@@ -2,13 +2,8 @@ import * as Crypto from 'expo-crypto';
 import { Directory, File, Paths } from 'expo-file-system';
 import { getInfoAsync } from 'expo-file-system/legacy';
 
-import {
-  burnUploadPairing,
-  getDraftName,
-  getDraftUploadStatus,
-  getInterruptedUploads,
-  setUploadProgress,
-} from '@/db/drafts';
+import { burnUploadPairing, getDraftName, getInterruptedUploads, markUploaded } from '@/db/drafts';
+import type { Draft } from '@/db/schema';
 import { getDraftToken } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
@@ -22,7 +17,14 @@ import { keepAlive } from './keep-alive';
 import { uploadNotify } from './notify';
 import { directServerTransport } from './transports/direct-server-transport';
 import { tusServerTransport } from './transports/tus-server-transport';
-import { authHeaders, isAbortError, type ArtifactKind } from './tus-client';
+import {
+  artifactUrl,
+  authHeaders,
+  cancelTusUpload,
+  isAbortError,
+  isRedirect,
+  type ArtifactKind,
+} from './tus-client';
 import type {
   Destination,
   LiveUploadState,
@@ -31,10 +33,21 @@ import type {
   UploadTransport,
 } from './types';
 
-const EXPIRED_PAIRING_MESSAGE = 'Upload link expired — scan a new one to upload.';
+/** Failure reasons are sentences without the call to action — `settleFailure` appends it once. */
+const EXPIRED_PAIRING_MESSAGE = 'Upload link expired';
+const INTERRUPTED_MESSAGE = 'An upload didn’t finish';
 
 /** How long a finished run's one-shot `done` live state survives without being acknowledged. */
 const DONE_STATE_TTL_MS = 60_000;
+
+/**
+ * How long after the claim a launch-sweep 404 is still "maybe streaming" rather than
+ * "didn't land". iOS keeps a background URLSession transfer running after the process is
+ * killed, and the server only serves the artifact once the final PATCH lands — so a probe
+ * during that window would burn a pairing the OS is still completing. Past the window a
+ * 404 is a verdict; inside it the draft stays locked (cancel still works) until a later sweep.
+ */
+const IN_FLIGHT_GRACE_MS = 60 * 60_000;
 
 class ExpiredPairingError extends Error {
   constructor() {
@@ -108,15 +121,18 @@ type ArtifactInput = {
  * settled by `sweepInterruptedUploads` on the next launch.
  */
 class BackgroundUploadManager {
-  /** TUS transport — also performs bearer-DELETE cancels for both profiles. */
-  private readonly transport: UploadTransport = tusServerTransport;
-
   private readonly listeners = new Set<() => void>();
   private readonly live = new Map<string, LiveUploadState>();
   private readonly sessions = new Map<string, UploadSession>();
   private readonly controllers = new Map<string, AbortController>();
-  /** The in-flight artifact's server resource URL — the cancel handle. */
-  private readonly currentUpload = new Map<string, { resourceUrl: string | null }>();
+  /**
+   * Every server resource this run has created so far (related artifacts land
+   * before the video). A cancel or terminal failure DELETEs all of them — the
+   * anchor will never complete, so a finished captions/manifest/thumbnail is
+   * debris nothing could ever clean up (their ids are minted per run, never
+   * persisted). In memory only: an app kill leaves them to server retention.
+   */
+  private readonly created = new Map<string, string[]>();
   private running = false;
   /** Set when a new upload is enqueued while a drain is already running, so it isn't stranded. */
   private wake = false;
@@ -184,12 +200,27 @@ class BackgroundUploadManager {
    * why — toast in the foreground, notification off-screen. The draft card
    * carries no failure UI; scanning a fresh link is the retry.
    */
-  private async settleFailure(draftId: string, reason: string): Promise<void> {
+  private async settleFailure(
+    draftId: string,
+    reason: string,
+    token: string | null,
+  ): Promise<void> {
     const message = `${this.failureReason(draftId, reason)} — scan a new link to try again.`;
-    await burnUploadPairing(draftId);
     this.setLive(draftId, { status: 'idle' });
+    if (await burnUploadPairing(draftId)) await this.discardCreated(draftId, token);
     this.showToast?.(message);
     void uploadNotify.failed();
+  }
+
+  /**
+   * Best-effort bearer DELETE of everything this run created server-side; a
+   * missed one just ages out via retention. Only ever called after a burn
+   * actually happened — a run that raced to 'uploaded' keeps its artifacts.
+   */
+  private async discardCreated(draftId: string, token: string | null): Promise<void> {
+    const urls = this.created.get(draftId) ?? [];
+    this.created.delete(draftId);
+    await Promise.all(urls.map((url) => cancelTusUpload(url, token).catch(() => {})));
   }
 
   // ---- public API ----
@@ -199,7 +230,7 @@ class BackgroundUploadManager {
     if (this.controllers.has(session.draftId) || this.sessions.has(session.draftId)) return;
     // Dead on arrival — the pairing expired between claim and tap.
     if (isTokenExpired(session.destination.token, Date.now())) {
-      void this.settleFailure(session.draftId, EXPIRED_PAIRING_MESSAGE);
+      void this.settleFailure(session.draftId, EXPIRED_PAIRING_MESSAGE, session.destination.token);
       return;
     }
     this.sessions.set(session.draftId, session);
@@ -212,34 +243,18 @@ class BackgroundUploadManager {
     void this.ensureRunning();
   }
 
-  /** Abort + server-cancel whatever's in flight for a draft, and burn its pairing. */
+  /** Abort whatever's in flight for a draft, burn its pairing, and DELETE what the run created. */
   async cancel(draftId: string): Promise<void> {
-    if (!this.sessions.has(draftId) && !this.controllers.has(draftId)) {
-      // Nothing live. Never touch a COMPLETED upload's row (its columns are the
-      // watch link); anything else is a stale 'uploading'/paired row — burn it.
-      const status = await getDraftUploadStatus(draftId);
-      if (status !== 'uploaded') await burnUploadPairing(draftId);
-      this.setLive(draftId, { status: 'idle' });
-      return;
-    }
-    this.controllers.get(draftId)?.abort();
-    const target = this.currentUpload.get(draftId)?.resourceUrl ?? null;
     const token = this.sessions.get(draftId)?.destination.token ?? null;
-    // Reset local state FIRST — before the network round-trip below. You often cancel
-    // *because* the network died; a slow server-cancel must not leave the row stuck.
+    this.controllers.get(draftId)?.abort();
+    // Reset local state FIRST — before any round-trip. You often cancel *because* the
+    // network died; a slow burn or server-cancel must not leave the card stuck.
     this.sessions.delete(draftId);
     this.controllers.delete(draftId);
-    this.currentUpload.delete(draftId);
-    await burnUploadPairing(draftId);
     this.setLive(draftId, { status: 'idle' });
-    // Best-effort server-side cancel; a missed DELETE just ages out server-side.
-    if (target) {
-      try {
-        await this.transport.cancel(target, token);
-      } catch {
-        // Network down / already gone — the local reset stands.
-      }
-    }
+    // The burn's own WHERE is the guard: a COMPLETED upload's row is untouched (its
+    // columns are the watch link) and reports false, so its artifacts are kept too.
+    if (await burnUploadPairing(draftId)) await this.discardCreated(draftId, token);
   }
 
   /** Dismiss a finished run's `done` state back to idle (after the one-time watch prompt). */
@@ -297,56 +312,65 @@ class BackgroundUploadManager {
 
   /**
    * Settle drafts left `'uploading'` by an app kill (sessions are in-memory
-   * only) — called once at launch by the deep-link provider. One GET probe of
-   * the draft's own artifacts URL decides the outcome: the native background
+   * only) — run at launch and on every return to the foreground. One GET probe
+   * of the draft's own artifacts URL decides the outcome: the native background
    * task may have FINISHED the transfer while the app was dead — a serving
    * artifact is marked uploaded (safe to trust: the draft was locked for the
-   * whole run, so the bytes can only be its own content). Anything else burns
-   * the pairing; the user scans a fresh link.
+   * whole run, so the bytes can only be its own content). A definitive miss
+   * burns the pairing; anything inconclusive leaves the row for the next sweep.
    */
   async sweepInterruptedUploads(): Promise<void> {
     const rows = await getInterruptedUploads();
-    for (const row of rows) {
-      if (this.sessions.has(row.id) || this.controllers.has(row.id)) continue;
-      const verdict = await this.probeArtifactServes(
-        row.uploadServer,
-        row.uploadArtifactId,
-        row.id,
-      );
-      // Offline / transport failure is NOT evidence the upload didn't land — leave the row
-      // for a future launch to settle (the draft stays locked; cancel still works offline).
-      if (verdict === 'unknown') continue;
-      if (verdict === 'serving') {
-        await setUploadProgress(row.id, {
-          status: 'uploaded',
-          resourceUrl: `${row.uploadServer}/artifacts/${row.uploadArtifactId}`,
-        });
-        continue;
-      }
-      await burnUploadPairing(row.id);
-      this.showToast?.('An upload didn’t finish — scan a new link to try again.');
-    }
+    await Promise.all(rows.map((row) => this.settleInterrupted(row)));
   }
 
-  /** Whether the draft's own artifact already serves (completed while the app was dead).
-   * `'unknown'` = the probe itself failed (offline, DNS) — no verdict either way. */
+  private async settleInterrupted(row: Draft): Promise<void> {
+    if (this.sessions.has(row.id) || this.controllers.has(row.id)) return;
+    const token = await getDraftToken(row.id);
+    const verdict = isTokenExpired(token, Date.now())
+      ? 'expired'
+      : await this.probeArtifactServes(row.uploadServer, row.uploadArtifactId, token);
+    switch (verdict) {
+      case 'unknown':
+        // Offline / transport failure is NOT evidence the upload didn't land — the draft
+        // stays locked (cancel still works offline) until a sweep can reach the server.
+        return;
+      case 'serving':
+        // CAS: a cancel that landed during the probe already burned the row — its verdict stands.
+        await markUploaded(row.id, row.uploadArtifactId ?? '');
+        return;
+      case 'absent':
+        if (Date.now() - row.lastModified < IN_FLIGHT_GRACE_MS) return;
+        break;
+      case 'expired':
+        break;
+    }
+    if (!(await burnUploadPairing(row.id))) return;
+    const reason = verdict === 'expired' ? EXPIRED_PAIRING_MESSAGE : INTERRUPTED_MESSAGE;
+    this.showToast?.(`${reason} — scan a new link to try again.`);
+  }
+
+  /**
+   * Whether the draft's own artifact already serves (completed while the app was dead).
+   * Only a status that speaks to the artifact's existence is a verdict: 2xx/3xx serves
+   * (storage adapters redirect to presigned objects), 404/410 is gone, 401/403 is a
+   * pairing the server no longer honors. Everything else — 5xx, 429, a failed fetch
+   * (offline, DNS) — is `'unknown'`, the same codes the transports treat as transient.
+   */
   private async probeArtifactServes(
     server: string | null,
     artifactId: string | null,
-    draftId: string,
+    token: string | null,
   ): Promise<'serving' | 'absent' | 'unknown'> {
     if (!server || !artifactId) return 'absent';
     try {
-      const token = await getDraftToken(draftId);
-      const res = await fetch(`${server}/artifacts/${artifactId}`, {
+      const res = await fetch(artifactUrl(server, artifactId), {
         redirect: 'manual',
         headers: { Range: 'bytes=0-0', ...authHeaders(token) },
       });
       await (res.body as { cancel?: () => Promise<void> } | null)?.cancel?.().catch(() => {});
-      if (res.type === 'opaqueredirect') return 'serving';
-      const serving =
-        res.status === 200 || res.status === 206 || (res.status >= 300 && res.status < 400);
-      return serving ? 'serving' : 'absent';
+      if (res.ok || isRedirect(res)) return 'serving';
+      return [401, 403, 404, 410].includes(res.status) ? 'absent' : 'unknown';
     } catch {
       return 'unknown';
     }
@@ -370,19 +394,21 @@ class BackgroundUploadManager {
     // scan): the pairing either advertised the presigned direct profile or it
     // didn't. No per-run probe — a server capability change applies to new
     // pairings, never to a link already scanned.
-    const transport = destination.directUpload ? directServerTransport : this.transport;
+    const transport = destination.directUpload ? directServerTransport : tusServerTransport;
     try {
       await this.uploadMerged(session, transport, controller.signal);
-      // A cancel that raced the final await owns the reset (burn + idle) — don't
-      // resurrect a cancelled draft as uploaded with a watch link.
-      if (this.sessions.get(draftId) !== session || controller.signal.aborted) return;
-      // The durable row keeps the plain serving URL; the one-shot done state
-      // carries the tokened watch link (tokens never land in the DB).
-      const artifactsUrl = `${destination.server}/artifacts/${destination.artifactId}`;
+      // The row is the arbiter: a cancel that raced the final await already burned it,
+      // and this CAS then fails — the cancelled draft is never resurrected with a watch link.
+      // Either way the session is over (the drain loop re-runs any session left without
+      // a controller), so it leaves the queue before the outcome is acted on.
+      const settled = await markUploaded(draftId, destination.artifactId);
+      this.sessions.delete(draftId);
+      if (!settled) return;
+      this.created.delete(draftId);
+      // The one-shot done state carries the tokened watch link (tokens never land in the DB).
       const watchUrl = destination.token
-        ? `${artifactsUrl}?token=${encodeURIComponent(destination.token)}`
-        : artifactsUrl;
-      await setUploadProgress(draftId, { status: 'uploaded', resourceUrl: artifactsUrl });
+        ? `${artifactUrl(destination.server, destination.artifactId)}?token=${encodeURIComponent(destination.token)}`
+        : artifactUrl(destination.server, destination.artifactId);
       this.setLive(draftId, { status: 'done', resourceUrl: watchUrl });
       // `done` is a one-shot signal for the export screen's watch prompt; if no screen is around
       // to `acknowledge` it (the run finished on Home / in the background), expire it so it
@@ -391,7 +417,6 @@ class BackgroundUploadManager {
       setTimeout(() => this.acknowledge(draftId), DONE_STATE_TTL_MS);
       // Tell the user their pulse landed — only surfaces if the app is backgrounded / off-screen.
       void uploadNotify.complete();
-      this.sessions.delete(draftId);
     } catch (err) {
       if (isAbortError(err)) {
         // Cancelled via cancel() — that path owns the reset (burn + idle);
@@ -400,13 +425,10 @@ class BackgroundUploadManager {
         // Terminal failure: the pairing is spent. Burn it, reset the draft to
         // editable, and say why — there is nothing to retry against.
         this.sessions.delete(draftId);
-        await this.settleFailure(draftId, describeError(err));
+        await this.settleFailure(draftId, describeError(err), destination.token);
       }
     } finally {
-      if (this.controllers.get(draftId) === controller) {
-        this.controllers.delete(draftId);
-        this.currentUpload.delete(draftId);
-      }
+      if (this.controllers.get(draftId) === controller) this.controllers.delete(draftId);
     }
   }
 
@@ -422,8 +444,7 @@ class BackgroundUploadManager {
     // Re-checked before every artifact (not just at the start of a run) — a token fine at the
     // start can go stale partway through a session.
     if (isTokenExpired(destination.token, Date.now())) throw new ExpiredPairingError();
-    this.currentUpload.set(draftId, { resourceUrl: null });
-    const result = await transport.run({
+    return transport.run({
       destination,
       artifact: {
         artifactId: artifact.artifactId,
@@ -436,14 +457,11 @@ class BackgroundUploadManager {
       },
       signal,
       onProgress,
-      // Track the in-flight resource in memory only — it's the cancel handle,
-      // never a resume identity (pairings are single-shot).
+      // Remembered in memory only — the cancel/discard handle, never a resume identity.
       onResourceCreated: (url) => {
-        this.currentUpload.set(draftId, { resourceUrl: url });
+        this.created.set(draftId, [...(this.created.get(draftId) ?? []), url]);
       },
     });
-    this.currentUpload.set(draftId, { resourceUrl: result.resourceUrl });
-    return result;
   }
 
   /** Upload a session-related artifact (captions / beat manifest / thumbnail) under a fresh ephemeral id. */

@@ -30,6 +30,7 @@ import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
 import { usePreview } from '@/features/recorder/use-preview';
 import { useRecorder } from '@/features/recorder/use-recorder';
+import { useDraftUploadState } from '@/features/upload/use-uploads';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
@@ -90,6 +91,17 @@ export default function RecorderScreen() {
     deleteSegment,
     reorderSegments,
   } = useRecorder(draftIdParam);
+
+  // The export modal is pushed over this screen; tapping Upload there locks the draft
+  // (cancel is the only action until the run settles), and Home is the screen that
+  // enforces the lock. Regaining focus mid-upload — the user closed export — goes
+  // straight to Home rather than leaving an editable timeline under a locked draft.
+  const uploadState = useDraftUploadState(draftId ?? '');
+  useFocusEffect(
+    useCallback(() => {
+      if (uploadState.status === 'uploading' && router.canDismiss()) router.dismissAll();
+    }, [uploadState.status]),
+  );
 
   // Preview mode: a tapped segment opens the in-recorder preview over the camera area;
   // `null` means record mode. The camera stays mounted but its session pauses.

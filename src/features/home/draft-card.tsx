@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 import type { Anchor } from '@/components/action-menu';
+import type { Draft } from '@/db/schema';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useDraftUploadState } from '@/features/upload/use-uploads';
@@ -19,7 +20,7 @@ const NAME_MAX_LENGTH = 40;
 type Props = {
   id: string;
   /** Persisted upload status, so the card can show its own upload state on the cover. */
-  uploadStatus?: 'idle' | 'uploading' | 'uploaded' | null;
+  uploadStatus?: Draft['uploadStatus'];
   name: string | null;
   /** Relative path of the draft's first clip; the cover frame's legacy runtime fallback. */
   firstSegmentFilename?: string | null;
@@ -70,8 +71,7 @@ export function DraftCard({
   // deliberately shows nothing (completion is surfaced by the export-screen prompt and the
   // background notification instead).
   const live = useDraftUploadState(id);
-  const upload =
-    live.status === 'uploading' || uploadStatus === 'uploading' ? 'uploading' : 'idle';
+  const upload = live.status === 'uploading' || uploadStatus === 'uploading' ? 'uploading' : 'idle';
   const uploadProgress = live.status === 'uploading' ? live.progress : 0;
 
   return (

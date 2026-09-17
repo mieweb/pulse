@@ -2,10 +2,11 @@ import type { File } from 'expo-file-system';
 
 import type { ArtifactKind, TusUploadProgress } from './tus-client';
 import {
+  artifactUrl,
   authHeaders,
   isAbortError,
   rejectRedirect,
-  responseError,
+  statusError,
   TusUploadError,
   withRetry,
 } from './tus-client';
@@ -80,7 +81,7 @@ async function requestGrant(opts: DirectUploadOptions, fetchImpl: typeof fetch):
   // 201 = fresh reservation, 200 = re-grant for our own incomplete upload —
   // both carry a usable grant.
   if (res.status !== 201 && res.status !== 200) {
-    throw await responseError(res, `Could not start the upload (${res.status})`);
+    throw await statusError(res, `Could not start the upload (${res.status})`);
   }
   const body = (await res.json()) as Partial<Grant>;
   if (typeof body.uploadUrl !== 'string' || !body.uploadUrl) {
@@ -104,7 +105,7 @@ async function requestComplete(
   // 409 = the PUT never landed (or the object vanished) — the caller runs
   // another grant→PUT cycle rather than surfacing an error.
   if (res.status === 409) return 'object-missing';
-  throw await responseError(res, `Could not finish the upload (${res.status})`);
+  throw await statusError(res, `Could not finish the upload (${res.status})`);
 }
 
 /**
@@ -115,13 +116,16 @@ async function requestComplete(
 export async function uploadViaDirect(opts: DirectUploadOptions): Promise<DirectUploadResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const totalBytes = opts.file.size ?? 0;
-  const resourceUrl = `${opts.server}/artifacts/${opts.artifactId}`;
+  const resourceUrl = artifactUrl(opts.server, opts.artifactId);
 
   // The cancel handle, reported before any byte moves — same discipline as
   // the tus path's resource URL (in-memory only; identities are single-shot).
   await opts.onResourceCreated?.(resourceUrl);
 
-  for (let cycle = 1; ; cycle += 1) {
+  // Why the last cycle gave up — one exit below reports it.
+  let failure: { message: string; statusCode?: number } = { message: 'Upload failed' };
+
+  for (let cycle = 1; cycle <= MAX_GRANT_CYCLES; cycle += 1) {
     const grant = await withRetry(() => requestGrant(opts, fetchImpl), opts.signal);
 
     // One PUT per grant cycle: a transient PUT failure gets a FRESH grant on
@@ -130,41 +134,35 @@ export async function uploadViaDirect(opts: DirectUploadOptions): Promise<Direct
     // covers REJECTIONS too — the native task rejects on transport failures
     // (network drop, TLS reset), which are exactly what the next cycle's
     // fresh grant exists for; only the caller's abort escapes unchanged.
-    let putResult: { status: number };
+    let status: number;
     try {
-      putResult = await opts.uploadFile({
+      ({ status } = await opts.uploadFile({
         uploadUrl: grant.uploadUrl,
         headers: grant.headers,
         file: opts.file,
         signal: opts.signal,
         onProgress: (bytesSent) =>
           opts.onProgress?.({ bytesSent: Math.min(bytesSent, totalBytes), totalBytes }),
-      });
+      }));
     } catch (err) {
       if (isAbortError(err) || opts.signal?.aborted) throw err;
-      if (cycle >= MAX_GRANT_CYCLES) {
-        const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
-        throw new TusUploadError(`Upload failed${detail}`, { retryable: true });
-      }
+      const detail = err instanceof Error && err.message ? `: ${err.message}` : '';
+      failure = { message: `Upload failed${detail}` };
+      continue;
+    }
+    if (status < 200 || status >= 300) {
+      failure = { message: `Upload failed (${status})`, statusCode: status };
       continue;
     }
 
-    if (putResult.status >= 200 && putResult.status < 300) {
-      opts.onProgress?.({ bytesSent: totalBytes, totalBytes });
-      const completion = await withRetry(() => requestComplete(opts, fetchImpl), opts.signal);
-      if (completion === 'done') return { resourceUrl };
-      // fall through: object missing server-side — grant again and re-PUT.
-    }
-
-    if (cycle >= MAX_GRANT_CYCLES) {
-      throw new TusUploadError(
-        putResult.status >= 200 && putResult.status < 300
-          ? 'Upload could not be confirmed by the server'
-          : `Upload failed (${putResult.status})`,
-        // The whole cycle is re-runnable from scratch — nothing about the
-        // request itself is proven wrong — so surface as retryable.
-        { retryable: true, statusCode: putResult.status },
-      );
-    }
+    opts.onProgress?.({ bytesSent: totalBytes, totalBytes });
+    const completion = await withRetry(() => requestComplete(opts, fetchImpl), opts.signal);
+    if (completion === 'done') return { resourceUrl };
+    // Object missing server-side — grant again and re-PUT.
+    failure = { message: 'Upload could not be confirmed by the server', statusCode: status };
   }
+
+  // Every cycle is re-runnable from scratch — nothing about the request itself
+  // is proven wrong — so the exhaustion surfaces as retryable.
+  throw new TusUploadError(failure.message, { retryable: true, statusCode: failure.statusCode });
 }

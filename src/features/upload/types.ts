@@ -1,21 +1,17 @@
 import type { File } from 'expo-file-system';
 
+import type { PairedDestination } from '@/db/destinations';
 import type { Segment } from '@/db/schema';
 
 import type { ArtifactKind } from './tus-client';
 
 /**
- * A paired upload destination resolved for a draft. The bearer `token` lives in
- * expo-secure-store (not the drizzle row); it's carried on the session so the
- * manager can upload without a re-fetch. `directUpload` was decided when the
- * link was paired (capabilities are probed once, at scan time).
+ * The pairing a draft uploads under — the pool row it claimed, carried on the
+ * session as-is so the manager can upload without a re-fetch. The bearer
+ * `token` lives in expo-secure-store (not the drizzle row); `directUpload` was
+ * decided when the link was paired (capabilities are probed once, at scan time).
  */
-export type Destination = {
-  server: string;
-  token: string | null;
-  artifactId: string;
-  directUpload: boolean;
-};
+export type Destination = PairedDestination;
 
 /** The merged export output an upload session sends (from `useExport`). */
 export type MergedOutput = { path: string; durationMs: number };
@@ -87,6 +83,4 @@ export type UploadTransport = {
     /** Fired as soon as the resource URL is known, so the caller can track what's in flight (the cancel handle). */
     onResourceCreated?: (resourceUrl: string) => void | Promise<void>;
   }): Promise<{ resourceUrl: string }>;
-  /** Server-side cancel (bearer DELETE) of an in-flight resource. */
-  cancel(resourceUrl: string, token: string | null): Promise<void>;
 };

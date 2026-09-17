@@ -19,11 +19,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import {
-  cancelTusUpload,
-  uploadViaTus,
-  type UploadChunk,
-} from './tus-client';
+import { cancelTusUpload, uploadViaTus, type UploadChunk } from './tus-client';
 import { uploadViaDirect, type UploadFile } from './direct-client';
 
 const ROOT = path.resolve(__dirname, '../../..');
@@ -259,124 +255,130 @@ describeIf('pulsevault integration (real server, real wire)', () => {
   });
 });
 
-describeIf('pulsevault integration — direct-upload profile (real server, mock S3 data plane)', () => {
-  jest.setTimeout(30_000);
-  let child: ChildProcess;
-  let server: string;
+describeIf(
+  'pulsevault integration — direct-upload profile (real server, mock S3 data plane)',
+  () => {
+    jest.setTimeout(30_000);
+    let child: ChildProcess;
+    let server: string;
 
-  beforeAll(async () => {
-    ({ child, server } = await spawnServer({ PV_STORAGE: 's3-mock' }));
-  });
+    beforeAll(async () => {
+      ({ child, server } = await spawnServer({ PV_STORAGE: 's3-mock' }));
+    });
 
-  afterAll(async () => {
-    await stopServer(child);
-  });
+    afterAll(async () => {
+      await stopServer(child);
+    });
 
-  /** Real-wire UploadFile: PUTs the whole payload to the presigned URL with the grant's headers verbatim. */
-  const bufferFileUploader =
-    (bytes: Buffer, calls?: { puts: number }): UploadFile =>
-    async ({ uploadUrl, headers, signal, onProgress }) => {
-      if (calls) calls.puts += 1;
-      const res = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers,
-        signal,
-        body: bytes as unknown as BodyInit,
+    /** Real-wire UploadFile: PUTs the whole payload to the presigned URL with the grant's headers verbatim. */
+    const bufferFileUploader =
+      (bytes: Buffer, calls?: { puts: number }): UploadFile =>
+      async ({ uploadUrl, headers, signal, onProgress }) => {
+        if (calls) calls.puts += 1;
+        const res = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers,
+          signal,
+          body: bytes as unknown as BodyInit,
+        });
+        await res.arrayBuffer().catch(() => undefined);
+        onProgress?.(bytes.length);
+        return { status: res.status };
+      };
+
+    const uploadDirect = (
+      bytes: Buffer,
+      artifactId: string,
+      extra?: Partial<Parameters<typeof uploadViaDirect>[0]>,
+    ) =>
+      uploadViaDirect({
+        server,
+        token: null,
+        artifactId,
+        filename: 'clip.mp4',
+        kind: 'video',
+        checksum: md5(bytes),
+        file: { size: bytes.length } as never,
+        uploadFile: bufferFileUploader(bytes),
+        ...extra,
       });
-      await res.arrayBuffer().catch(() => undefined);
-      onProgress?.(bytes.length);
-      return { status: res.status };
-    };
 
-  const uploadDirect = (
-    bytes: Buffer,
-    artifactId: string,
-    extra?: Partial<Parameters<typeof uploadViaDirect>[0]>,
-  ) =>
-    uploadViaDirect({
-      server,
-      token: null,
-      artifactId,
-      filename: 'clip.mp4',
-      kind: 'video',
-      checksum: md5(bytes),
-      file: { size: bytes.length } as never,
-      uploadFile: bufferFileUploader(bytes),
-      ...extra,
+    it('advertises the profile and uploads grant → PUT → complete end to end', async () => {
+      const caps = (await (await fetch(`${server}/capabilities`)).json()) as Record<
+        string,
+        unknown
+      >;
+      expect(caps.directUpload).toEqual({ enabled: true });
+
+      const bytes = makeMp4(64 * 1024);
+      const artifactId = randomUUID();
+      let persistedUrl: string | null = null;
+      const result = await uploadDirect(bytes, artifactId, {
+        onResourceCreated: (url) => {
+          persistedUrl = url;
+        },
+      });
+      // The durable handle is the artifacts URL — cancel/invalidate DELETEs it.
+      expect(persistedUrl).toBe(`${server}/artifacts/${artifactId}`);
+      expect(result.resourceUrl).toBe(persistedUrl);
+
+      // Served bytes are identical (mock-S3 presigned redirect followed by fetch).
+      const res = await fetch(`${server}/artifacts/${artifactId}`);
+      expect(res.status).toBe(200);
+      expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), bytes)).toBe(0);
     });
 
-  it('advertises the profile and uploads grant → PUT → complete end to end', async () => {
-    const caps = (await (await fetch(`${server}/capabilities`)).json()) as Record<string, unknown>;
-    expect(caps.directUpload).toEqual({ enabled: true });
+    it('recovers a rejected PUT with a fresh grant on the next cycle (re-grant, §9.1)', async () => {
+      const bytes = makeMp4(48 * 1024);
+      const artifactId = randomUUID();
+      const grantedUrls: string[] = [];
+      let attempts = 0;
+      const flakyOnce: UploadFile = async (params) => {
+        grantedUrls.push(params.uploadUrl);
+        attempts += 1;
+        // First PUT dies mid-transport — the native task rejects, it does not
+        // return a status. The client must fetch a FRESH grant and re-PUT.
+        if (attempts === 1) throw new Error('network dropped mid-PUT');
+        return bufferFileUploader(bytes)(params);
+      };
+      await uploadDirect(bytes, artifactId, { uploadFile: flakyOnce });
+      expect(attempts).toBe(2);
+      // Both grants target the same reservation, re-signed per cycle.
+      expect(grantedUrls).toHaveLength(2);
 
-    const bytes = makeMp4(64 * 1024);
-    const artifactId = randomUUID();
-    let persistedUrl: string | null = null;
-    const result = await uploadDirect(bytes, artifactId, {
-      onResourceCreated: (url) => {
-        persistedUrl = url;
-      },
+      const res = await fetch(`${server}/artifacts/${artifactId}`);
+      expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), bytes)).toBe(0);
     });
-    // The durable handle is the artifacts URL — cancel/invalidate DELETEs it.
-    expect(persistedUrl).toBe(`${server}/artifacts/${artifactId}`);
-    expect(result.resourceUrl).toBe(persistedUrl);
 
-    // Served bytes are identical (mock-S3 presigned redirect followed by fetch).
-    const res = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(res.status).toBe(200);
-    expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), bytes)).toBe(0);
-  });
+    it('surfaces a grant 409 as terminal for an already-used artifactId (single-shot)', async () => {
+      const bytes = makeMp4(32 * 1024);
+      const artifactId = randomUUID();
+      await uploadDirect(bytes, artifactId);
 
-  it('recovers a rejected PUT with a fresh grant on the next cycle (re-grant, §9.1)', async () => {
-    const bytes = makeMp4(48 * 1024);
-    const artifactId = randomUUID();
-    const grantedUrls: string[] = [];
-    let attempts = 0;
-    const flakyOnce: UploadFile = async (params) => {
-      grantedUrls.push(params.uploadUrl);
-      attempts += 1;
-      // First PUT dies mid-transport — the native task rejects, it does not
-      // return a status. The client must fetch a FRESH grant and re-PUT.
-      if (attempts === 1) throw new Error('network dropped mid-PUT');
-      return bufferFileUploader(bytes)(params);
-    };
-    await uploadDirect(bytes, artifactId, { uploadFile: flakyOnce });
-    expect(attempts).toBe(2);
-    // Both grants target the same reservation, re-signed per cycle.
-    expect(grantedUrls).toHaveLength(2);
+      // The id is spent (artifact is ready): a new run gets a terminal 409 and
+      // moves no bytes — the app burns the pairing and asks for a fresh link.
+      const calls = { puts: 0 };
+      await expect(
+        uploadDirect(bytes, artifactId, { uploadFile: bufferFileUploader(bytes, calls) }),
+      ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
+      expect(calls.puts).toBe(0);
+    });
 
-    const res = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), bytes)).toBe(0);
-  });
+    it('cancel (DELETE on the artifacts URL) frees the reservation for a fresh create', async () => {
+      const bytes = makeMp4(32 * 1024);
+      const artifactId = randomUUID();
+      const result = await uploadDirect(bytes, artifactId);
 
-  it('surfaces a grant 409 as terminal for an already-used artifactId (single-shot)', async () => {
-    const bytes = makeMp4(32 * 1024);
-    const artifactId = randomUUID();
-    await uploadDirect(bytes, artifactId);
+      await cancelTusUpload(result.resourceUrl, null);
+      const gone = await fetch(`${server}/artifacts/${artifactId}`);
+      expect(gone.status).toBe(404);
 
-    // The id is spent (artifact is ready): a new run gets a terminal 409 and
-    // moves no bytes — the app burns the pairing and asks for a fresh link.
-    const calls = { puts: 0 };
-    await expect(
-      uploadDirect(bytes, artifactId, { uploadFile: bufferFileUploader(bytes, calls) }),
-    ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
-    expect(calls.puts).toBe(0);
-  });
-
-  it('cancel (DELETE on the artifacts URL) frees the reservation for a fresh create', async () => {
-    const bytes = makeMp4(32 * 1024);
-    const artifactId = randomUUID();
-    const result = await uploadDirect(bytes, artifactId);
-
-    await cancelTusUpload(result.resourceUrl, null);
-    const gone = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(gone.status).toBe(404);
-
-    // The artifactId is immediately reusable — and serves the new bytes.
-    const fresh = makeMp4(32 * 1024);
-    fresh.fill(0xcd, 64);
-    await uploadDirect(fresh, artifactId, { checksum: md5(fresh) });
-    const res = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), fresh)).toBe(0);
-  });
-});
+      // The artifactId is immediately reusable — and serves the new bytes.
+      const fresh = makeMp4(32 * 1024);
+      fresh.fill(0xcd, 64);
+      await uploadDirect(fresh, artifactId, { checksum: md5(fresh) });
+      const res = await fetch(`${server}/artifacts/${artifactId}`);
+      expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), fresh)).toBe(0);
+    });
+  },
+);

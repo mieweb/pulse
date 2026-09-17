@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "76c311c0-0f19-4b38-8009-b27be139aa98",
+  "id": "9b58f2b2-54bf-4b4a-8d0d-c4bf5aabaafc",
   "prevId": "f2cb40af-741e-4f23-b257-23542ea18c03",
   "tables": {
     "draft_transcripts": {
@@ -112,13 +112,6 @@
         },
         "upload_artifact_id": {
           "name": "upload_artifact_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "upload_resource_url": {
-          "name": "upload_resource_url",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

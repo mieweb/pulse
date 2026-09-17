@@ -160,6 +160,10 @@ function buildUploadMetadata(opts: {
   return parts.join(',');
 }
 
+/** The artifact's serving URL — the watch link, the sweep's probe target, and the direct profile's cancel handle. */
+export const artifactUrl = (server: string, artifactId: string): string =>
+  `${server}/artifacts/${artifactId}`;
+
 /** Bearer header for a paired session's capability token. Shared with the direct-upload client. */
 export function authHeaders(token: string | null): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -200,7 +204,8 @@ export async function withRetry<T>(
   }
 }
 
-async function statusError(res: Response, fallbackMessage: string): Promise<TusUploadError> {
+/** Map a non-OK response to a `TusUploadError` — body `error` text if any, retryable only for 5xx/429. Shared with the direct-upload client. */
+export async function statusError(res: Response, fallbackMessage: string): Promise<TusUploadError> {
   let message = fallbackMessage;
   try {
     const body = (await res.json()) as { error?: string };
@@ -215,15 +220,12 @@ async function statusError(res: Response, fallbackMessage: string): Promise<TusU
   return new TusUploadError(message, { retryable, statusCode: res.status });
 }
 
-/** Exported alias of the response→error mapper for the direct-upload client — same body parsing, same retryability rules. */
-export const responseError = statusError;
-
 function statusErrorFromChunk(result: ChunkUploadResult, fallbackMessage: string): TusUploadError {
   // A PATCH 409 is an offset conflict — this client's position went stale (a
-  // “failed” chunk actually landed, or a parallel resume advanced the upload).
-  // Unlike a create-409 it is NOT terminal: retryable hands control back to
-  // withRetry, whose next attempt re-HEADs and re-anchors to the server's
-  // offset before sending another byte (see “offset discipline” above).
+  // “failed” chunk actually landed). Unlike a create-409 it is NOT terminal:
+  // retryable hands control back to withRetry, whose next attempt re-HEADs and
+  // re-anchors to the server's offset before sending another byte (see
+  // “offset discipline” above).
   const retryable = result.status >= 500 || result.status === 429 || result.status === 409;
   return new TusUploadError(fallbackMessage, { retryable, statusCode: result.status });
 }
@@ -250,8 +252,11 @@ function headerValue(headers: Record<string, string>, name: string): string | un
  * ever being followed. Exported for the direct-upload client — same threat,
  * same rule.
  */
+export const isRedirect = (res: Response): boolean =>
+  res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400);
+
 export function rejectRedirect(res: Response): void {
-  if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+  if (isRedirect(res)) {
     throw new TusUploadError('Server returned a redirect instead of a direct response', {
       retryable: false,
     });
@@ -385,10 +390,9 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
   const transfer = (resourceUrl: string) =>
     withRetry(async () => {
       let offset = await fetchOffset(resourceUrl, opts.token, opts.signal, fetchImpl);
-      // Bound by the local file: a resource claiming MORE bytes than this file
-      // holds is not this file's upload (a stale or foreign resource under the
-      // same id) — letting it satisfy the loop condition would report success
-      // without sending or validating a single local byte.
+      // Bound by the local file: every run creates its own resource, so an offset
+      // past EOF can only be a server fault — fail closed rather than let it satisfy
+      // the loop condition and report success without sending a single byte.
       if (offset > totalBytes) {
         throw new TusUploadError(
           `Server reports more bytes (${offset}) than the local file has (${totalBytes})`,

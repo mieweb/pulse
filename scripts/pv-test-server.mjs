@@ -71,23 +71,18 @@ const core = createPulseVaultCore({
   logger: { info() {}, error() {} },
 });
 
-const server = http.createServer((req, res) => {
-  core.handler(req, res).catch(() => {
-    if (!res.headersSent) res.writeHead(500);
-    res.end();
-  });
-});
-
-server.listen(0, '127.0.0.1', () => {
-  process.stdout.write(`PV_PORT=${server.address().port}\n`);
-});
+const { serveCore } = await import(
+  new URL('../pulsevault-mieweb/test/helpers.mjs', import.meta.url).href
+);
+const server = await serveCore(core);
+process.stdout.write(`PV_PORT=${new URL(server.baseUrl).port}\n`);
 
 let shuttingDown = false;
 async function shutdown() {
   // stdin 'end' and 'close' both fire on a normal teardown — run once.
   if (shuttingDown) return;
   shuttingDown = true;
-  await new Promise((resolve) => server.close(resolve));
+  await server.close();
   await core.shutdown();
   await cleanup();
   process.exit(0);

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -10,6 +10,7 @@ import {
 } from '@/utils/file-store';
 import { generateThumbnailFile } from '@/utils/video';
 import { db } from './client';
+import type { PairedDestination } from './destinations';
 import type { Draft, Segment } from './schema';
 import { drafts, segments } from './schema';
 import { deleteDraftToken, setDraftToken } from './secure-token';
@@ -23,13 +24,6 @@ type NewSegment = {
   originalFilename: string;
   durationMs: number;
   thumbnail?: string | null;
-};
-
-/** A validated deep-link + `/capabilities` lookup result, ready to pair with a draft. */
-type UploadDestination = {
-  server: string;
-  token: string | null;
-  artifactId: string;
 };
 
 /** One row per draft with its segment count, trim-aware duration, and cover clip. */
@@ -144,33 +138,38 @@ export async function assertNotUploading(draftId: string): Promise<void> {
   }
 }
 
-/** The draft's persisted upload status (null when unset / draft missing). */
-export async function getDraftUploadStatus(draftId: string): Promise<Draft['uploadStatus']> {
-  const [row] = await db
-    .select({ status: drafts.uploadStatus })
-    .from(drafts)
-    .where(eq(drafts.id, draftId));
-  return row?.status ?? null;
-}
+/** Paired-but-not-finished, spelled NULL-safe: SQL `NULL != 'uploaded'` is NULL, never true. */
+const notUploaded = or(isNull(drafts.uploadStatus), ne(drafts.uploadStatus, 'uploaded'));
 
 /**
  * Burn a spent pairing: reset the draft's upload columns to unpaired/editable and
  * drop its bearer token. Called on terminal failure, cancel, and the launch sweep —
  * the deep link is single-shot, so there is nothing to retry against; the user
  * pairs a fresh link. An 'uploaded' draft keeps its columns (they're the watch link).
+ * Returns whether a pairing was actually burned — false means the row was already
+ * 'uploaded' (or gone), so its token and server-side artifacts must be left alone.
  */
-export async function burnUploadPairing(draftId: string): Promise<void> {
-  await db
+export async function burnUploadPairing(draftId: string): Promise<boolean> {
+  const burned = await db
     .update(drafts)
-    .set({
-      uploadServer: null,
-      uploadArtifactId: null,
-      uploadResourceUrl: null,
-      uploadStatus: null,
-      lastModified: now,
-    })
-    .where(and(eq(drafts.id, draftId), ne(drafts.uploadStatus, 'uploaded')));
-  await deleteDraftToken(draftId);
+    .set({ uploadServer: null, uploadArtifactId: null, uploadStatus: null, lastModified: now })
+    .where(and(eq(drafts.id, draftId), notUploaded))
+    .returning({ id: drafts.id });
+  if (burned.length > 0) await deleteDraftToken(draftId);
+  return burned.length > 0;
+}
+
+/**
+ * Drafts still paired to a server by a pre-single-shot build ('idle', 'failed', or a
+ * mid-run 'uploading' the old resume machinery owned). The upgrade burns these once —
+ * the new sweep can't judge them, and their keychain tokens would otherwise outlive the rows.
+ */
+export async function getLegacyPairedDraftIds(): Promise<string[]> {
+  const rows = await db
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(and(isNotNull(drafts.uploadServer), notUploaded));
+  return rows.map((r) => r.id);
 }
 
 /** Delete a segment and its clip file, unless a sibling segment still references the file. */
@@ -301,14 +300,13 @@ export async function deleteDraft(draftId: string): Promise<void> {
  */
 export async function setUploadDestination(
   draftId: string,
-  destination: UploadDestination,
+  destination: PairedDestination,
 ): Promise<void> {
   await db
     .update(drafts)
     .set({
       uploadServer: destination.server,
       uploadArtifactId: destination.artifactId,
-      uploadResourceUrl: null,
       uploadStatus: 'uploading',
       lastModified: now,
     })
@@ -316,19 +314,25 @@ export async function setUploadDestination(
   await setDraftToken(draftId, destination.token);
 }
 
-/** Persist upload progress. `resourceUrl` is the artifact's serving URL (the watch link). */
-export async function setUploadProgress(
-  draftId: string,
-  progress: { status: NonNullable<Draft['uploadStatus']>; resourceUrl?: string | null },
-): Promise<void> {
-  await db
+/**
+ * Settle a run as uploaded — a compare-and-set on the exact pairing that ran
+ * (`'uploading'` + this artifactId), so a cancel or burn that landed first wins
+ * and the caller learns it did (false). This is the one ownership rule for the
+ * success path; there is no in-memory guard to keep in step with it.
+ */
+export async function markUploaded(draftId: string, artifactId: string): Promise<boolean> {
+  const settled = await db
     .update(drafts)
-    .set({
-      uploadStatus: progress.status,
-      ...(progress.resourceUrl !== undefined ? { uploadResourceUrl: progress.resourceUrl } : {}),
-      lastModified: now,
-    })
-    .where(eq(drafts.id, draftId));
+    .set({ uploadStatus: 'uploaded', lastModified: now })
+    .where(
+      and(
+        eq(drafts.id, draftId),
+        eq(drafts.uploadStatus, 'uploading'),
+        eq(drafts.uploadArtifactId, artifactId),
+      ),
+    )
+    .returning({ id: drafts.id });
+  return settled.length > 0;
 }
 
 /**

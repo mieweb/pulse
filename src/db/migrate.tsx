@@ -8,14 +8,27 @@ import { ThemedView } from '@/components/themed-view';
 import migrations from '../../drizzle/migrations';
 import { db } from './client';
 import { runDataMigrations, type DataMigration } from './data-migrations';
-import { getInterruptedUploads } from './drafts';
+import { burnUploadPairing, getInterruptedUploads, getLegacyPairedDraftIds } from './drafts';
 import { legacyDraftsImport } from './legacy-migration';
 
 /**
  * All one-shot data migrations, in execution order. APPEND new tasks at the end — never
  * remove, rename, or reorder shipped entries (see data-migrations.ts for the task rules).
  */
-const DATA_MIGRATIONS: readonly DataMigration[] = [legacyDraftsImport];
+/**
+ * Single-shot uploads (2.1): pairings written by older builds — 'idle' (paired, not started),
+ * 'failed', or an interrupted run the old resume queue owned — have no meaning in the new model
+ * and the launch sweep can't settle them (a segment-mode anchor that serves is a manifest, not
+ * the video). Burn them once, tokens included; the user pairs a fresh link.
+ */
+const burnLegacyPairings: DataMigration = {
+  id: 'single-shot-uploads-burn',
+  run: async () => {
+    for (const id of await getLegacyPairedDraftIds()) await burnUploadPairing(id);
+  },
+};
+
+const DATA_MIGRATIONS: readonly DataMigration[] = [legacyDraftsImport, burnLegacyPairings];
 
 const centered = { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 } as const;
 

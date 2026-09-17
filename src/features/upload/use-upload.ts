@@ -2,14 +2,12 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { type RefObject, useCallback, useMemo, useState } from 'react';
 
 import { deleteDestination } from '@/db/destinations';
-import { draftQuery, setUploadDestination } from '@/db/drafts';
+import { burnUploadPairing, draftQuery, setUploadDestination } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
-
 
 import { isTokenExpired } from './capability-token';
 import { useDestinations } from './use-destinations';
 import { uploads } from './upload-manager';
-import type { Destination } from './types';
 import { useDraftUploadState } from './use-uploads';
 
 /**
@@ -71,22 +69,17 @@ export function useUpload(
       // (the export screen only offers upload once the merge has landed).
       const merged = mergedRef.current;
       if (!merged) return;
-      const destination: Destination = {
-        server: option.server,
-        token: option.token,
-        artifactId: option.artifactId,
-        directUpload: option.directUpload,
-      };
-      // Consume FIRST — the pool delete is the one-winner arbiter, so a double tap or a
-      // second screen claiming the same link loses here instead of double-pairing. Then the
-      // pairing lands durably as 'uploading' in one write: killed anywhere after this, the
-      // launch sweep settles the draft (probe → uploaded or burn), never a stranded pairing.
-      if (!(await deleteDestination(option.id))) return;
-      await setUploadDestination(draftId, {
-        server: option.server,
-        token: option.token,
-        artifactId: option.artifactId,
-      });
+      const { id, expiresAtMs: _expiresAtMs, ...destination } = option;
+      // Pair FIRST — the row lands 'uploading' before the link is spent, so a kill at any
+      // later point leaves a marker the launch sweep settles (probe → uploaded or burn),
+      // never a consumed link with nothing to show for it. THEN consume: the pool delete
+      // is the one-winner arbiter — a double tap or a second screen claiming the same link
+      // loses here and burns its own pairing instead of double-pairing.
+      await setUploadDestination(draftId, destination);
+      if (!(await deleteDestination(id))) {
+        await burnUploadPairing(draftId);
+        return;
+      }
       uploads.enqueue({ draftId, destination, segments, merged });
     },
     [destinations, draftId, segments, mergedRef],

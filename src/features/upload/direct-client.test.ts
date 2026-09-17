@@ -316,7 +316,10 @@ describe('uploadViaDirect', () => {
         fetchImpl,
         uploadFile,
       }),
-    ).rejects.toMatchObject({ retryable: true, message: expect.stringContaining('network dropped') });
+    ).rejects.toMatchObject({
+      retryable: true,
+      message: expect.stringContaining('network dropped'),
+    });
   });
 
   it('lets an aborted PUT escape unchanged (no extra grant cycle)', async () => {

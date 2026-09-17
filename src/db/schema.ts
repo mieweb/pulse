@@ -8,7 +8,7 @@ const now = sql`(unixepoch('subsec') * 1000)`;
  * terminal failure burns the pairing, resets the columns, and surfaces as a
  * transient toast — the draft simply returns to being editable/unpaired.
  */
-type UploadStatus = 'idle' | 'uploading' | 'uploaded';
+type UploadStatus = 'uploading' | 'uploaded';
 
 /** A draft — an ordered set of segments, plus its upload destination. */
 export const drafts = sqliteTable('drafts', {
@@ -23,12 +23,9 @@ export const drafts = sqliteTable('drafts', {
   // The bearer token itself is NOT stored here — it's a live capability credential, kept in
   // expo-secure-store instead (`db/secure-token.ts`), not in this plaintext-at-rest table.
   uploadArtifactId: text('upload_artifact_id'),
-  // The artifact's serving URL once uploaded — the "watch" link. (While uploading it is a
-  // launch-sweep probe target; it is never used to resume a transfer.)
-  uploadResourceUrl: text('upload_resource_url'),
-  uploadStatus: text('upload_status', {
-    enum: ['idle', 'uploading', 'uploaded'],
-  }).$type<UploadStatus>(),
+  // 'uploading' from the claim write until the run settles; 'uploaded' keeps server +
+  // artifactId as the watch link. Unpaired is NULL — there is no idle-but-paired state.
+  uploadStatus: text('upload_status', { enum: ['uploading', 'uploaded'] }).$type<UploadStatus>(),
   // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
   // every clip added, never decremented — so deleting (or renaming) a clip can never cause
   // its number to be reused.

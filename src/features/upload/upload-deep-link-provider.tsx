@@ -57,17 +57,21 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   const handledUrl = useRef<string | null>(null);
   const { showToast } = useToast();
 
-  // Best-effort sweep of orphaned tus-resume temp files from a previous
-  // launch that was killed mid-upload — see `cleanupStaleUploadTempFiles`.
-  // Then settle drafts a kill left 'uploading' (probe → uploaded, or
-  // burn+toast); every foreground re-poke resumes a JS drain suspended by
-  // backgrounding (the native transfer itself never stopped).
+  // Best-effort sweep of orphaned upload temp files from a previous launch
+  // that was killed mid-upload — see `cleanupStaleUploadTempFiles`. Then
+  // settle drafts a kill left 'uploading' (probe → uploaded, or burn+toast) —
+  // at launch and again on every foreground, so a probe that was inconclusive
+  // (offline, or a transfer iOS was still finishing) settles as soon as the
+  // server is reachable. The foreground poke also resumes a JS drain suspended
+  // by backgrounding (the native transfer itself never stopped).
   useEffect(() => {
     uploads.registerToast(showToast);
     cleanupStaleUploadTempFiles();
     void uploads.sweepInterruptedUploads();
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') void uploads.ensureRunning();
+      if (next !== 'active') return;
+      void uploads.ensureRunning();
+      void uploads.sweepInterruptedUploads();
     });
     return () => sub.remove();
   }, [showToast]);

@@ -6,6 +6,7 @@ import {
 import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
+import { File } from 'expo-file-system';
 import { isValidFile, deleteFile } from 'react-native-video-trim';
 import {
   type CameraRef,
@@ -29,7 +30,13 @@ import {
   getRecorderPrefs,
   setSetting,
 } from '@/db/settings';
-import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
+import {
+  absolutize,
+  copyIntoSegments,
+  deleteSegmentFile,
+  persistRecording,
+  thumbRelPath,
+} from '@/utils/file-store';
 import { conformToContract } from '@/utils/contract-gate';
 import { useToast } from '@/features/toast/toast-provider';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
@@ -412,14 +419,18 @@ export function useRecorder(initialDraftId?: string) {
       // persist can't strand an orphan (the recorder temp, or a moved file with no row).
       console.warn('[recorder] failed to persist recording', err);
       showToast('Could not save that clip.');
-      const orphan = persistedRel ? absolutize(persistedRel) : capturedUri;
-      if (orphan) void deleteFile(orphan).catch(() => {});
-      // persistSegment writes the thumbnail BEFORE the DB row — an addSegment
-      // failure leaves it orphaned alongside the video; sweep it too.
-      if (persistedRel && draftIdForSweep && segmentIdForSweep) {
-        void deleteFile(absolutize(thumbRelPath(draftIdForSweep, segmentIdForSweep))).catch(
-          () => {},
-        );
+      try {
+        if (persistedRel && draftIdForSweep && segmentIdForSweep) {
+          deleteSegmentFile(persistedRel);
+          // persistSegment writes the thumbnail BEFORE the DB row — an addSegment
+          // failure leaves it orphaned alongside the video; sweep it too.
+          deleteSegmentFile(thumbRelPath(draftIdForSweep, segmentIdForSweep));
+        } else if (capturedUri) {
+          const temp = new File(capturedUri);
+          if (temp.exists) temp.delete();
+        }
+      } catch {
+        // Best-effort sweep — the toast above is the user-facing outcome.
       }
     } finally {
       recorderRef.current = null;
