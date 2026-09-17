@@ -57,7 +57,6 @@
       "expo-sqlite",
       "expo-video",
       "./plugins/with-disable-script-sandboxing",
-      "./plugins/with-video-trim",
       "expo-image",
       "expo-sharing",
       "./plugins/with-strip-legacy-storage",
