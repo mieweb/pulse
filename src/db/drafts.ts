@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -56,11 +56,6 @@ export function segmentsForDraft(draftId: string) {
     .from(segments)
     .where(eq(segments.draftId, draftId))
     .orderBy(asc(segments.order));
-}
-
-/** Reactive single-row query for a draft's `drafts` row (upload destination/status live here). */
-export function draftQuery(draftId: string) {
-  return db.select().from(drafts).where(eq(drafts.id, draftId));
 }
 
 /**
@@ -138,38 +133,25 @@ export async function assertNotUploading(draftId: string): Promise<void> {
   }
 }
 
-/** Paired-but-not-finished, spelled NULL-safe: SQL `NULL != 'uploaded'` is NULL, never true. */
-const notUploaded = or(isNull(drafts.uploadStatus), ne(drafts.uploadStatus, 'uploaded'));
-
 /**
  * Burn a spent pairing: reset the draft's upload columns to unpaired/editable and
  * drop its bearer token. Called on terminal failure, cancel, and the launch sweep —
  * the deep link is single-shot, so there is nothing to retry against; the user
- * pairs a fresh link. An 'uploaded' draft keeps its columns (they're the watch link).
+ * pairs a fresh link. Only an 'uploading' row can burn: an 'uploaded' draft keeps its
+ * columns (they're the watch link), and an unpaired row has nothing to burn.
  * Returns whether a pairing was actually burned — false means the row was already
- * 'uploaded' (or gone), so its token and server-side artifacts must be left alone.
+ * settled (or gone), so its token and server-side artifacts must be left alone.
+ * (Pairings from pre-single-shot builds were reset in SQL by migration 0014; their
+ * leftover keychain tokens expire on their own.)
  */
 export async function burnUploadPairing(draftId: string): Promise<boolean> {
   const burned = await db
     .update(drafts)
     .set({ uploadServer: null, uploadArtifactId: null, uploadStatus: null, lastModified: now })
-    .where(and(eq(drafts.id, draftId), notUploaded))
+    .where(and(eq(drafts.id, draftId), eq(drafts.uploadStatus, 'uploading')))
     .returning({ id: drafts.id });
   if (burned.length > 0) await deleteDraftToken(draftId);
   return burned.length > 0;
-}
-
-/**
- * Drafts still paired to a server by a pre-single-shot build ('idle', 'failed', or a
- * mid-run 'uploading' the old resume machinery owned). The upgrade burns these once —
- * the new sweep can't judge them, and their keychain tokens would otherwise outlive the rows.
- */
-export async function getLegacyPairedDraftIds(): Promise<string[]> {
-  const rows = await db
-    .select({ id: drafts.id })
-    .from(drafts)
-    .where(and(isNotNull(drafts.uploadServer), notUploaded));
-  return rows.map((r) => r.id);
 }
 
 /** Delete a segment and its clip file, unless a sibling segment still references the file. */

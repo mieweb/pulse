@@ -35,6 +35,7 @@ import {
   copyIntoSegments,
   deleteSegmentFile,
   persistRecording,
+  segmentRelPath,
   thumbRelPath,
 } from '@/utils/file-store';
 import { conformToContract } from '@/utils/contract-gate';
@@ -349,12 +350,12 @@ export function useRecorder(initialDraftId?: string) {
     recordCallAtRef.current = Date.now();
     setRecordStartedAt(Date.now());
     setIsRecording(true);
-    // Which file stage the take reached, so the catch below can sweep the right orphan:
-    // the recorder's temp file (pre-move), or the moved-but-rowless segment file.
-    let capturedUri: string | null = null;
-    let persistedRel: string | null = null;
-    let draftIdForSweep: string | null = null;
-    let segmentIdForSweep: string | null = null;
+    // The take's files, for the orphan sweep in the catch below: the recorder's temp file, and
+    // the segment identity its persisted paths derive from. Every delete is exists-guarded, so
+    // whichever stage the take reached is swept and the rest are no-ops (`persistRecording`
+    // MOVES the temp file, so once it has landed the temp URI is gone).
+    let tempUri: string | null = null;
+    let take: { draftId: string; segmentId: string } | null = null;
     try {
       // Codec: VisionCamera defaults to the most efficient codec available (HEVC/h265 on modern
       // iPhones), which is what keeps every clip format-uniform for the merge engine's fast
@@ -371,7 +372,7 @@ export function useRecorder(initialDraftId?: string) {
       // The temp file the recorder writes to, captured up front for the salvage path below.
       const recordingPath = recorder.filePath;
       // Sweepable from here — even the error probe's reject leaves a temp file to clean up.
-      capturedUri = recordingPath.startsWith('file://') ? recordingPath : `file://${recordingPath}`;
+      tempUri = recordingPath.startsWith('file://') ? recordingPath : `file://${recordingPath}`;
       const filePath = await new Promise<string>((resolve, reject) => {
         recorder
           .startRecording(
@@ -402,32 +403,31 @@ export function useRecorder(initialDraftId?: string) {
       });
       // VisionCamera returns a bare filesystem path; file-store's File API wants a file:// URL.
       const uri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
-      capturedUri = uri;
+      tempUri = uri;
 
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;
-      draftIdForSweep = id;
-      segmentIdForSweep = segmentId;
+      take = { draftId: id, segmentId };
       const originalFilename = await persistRecording(uri, id, segmentId);
-      persistedRel = originalFilename;
       const durationMs = await getDurationMs(absolutize(originalFilename));
       await persistSegment(id, segmentId, originalFilename, durationMs);
     } catch (err) {
       // Recording died with no salvageable file (see the error probe above), or the
       // persist/DB write failed. Surface it — a silently dropped take reads as "the app ate
-      // my clip" (mieweb/pulse#95) — and sweep whichever file stage was reached so a failed
-      // persist can't strand an orphan (the recorder temp, or a moved file with no row).
+      // my clip" (mieweb/pulse#95) — and sweep the take's files so a failed persist can't
+      // strand an orphan (the recorder temp, or a moved file with no row).
       console.warn('[recorder] failed to persist recording', err);
       showToast('Could not save that clip.');
       try {
-        if (persistedRel && draftIdForSweep && segmentIdForSweep) {
-          deleteSegmentFile(persistedRel);
+        if (tempUri) {
+          const temp = new File(tempUri);
+          if (temp.exists) temp.delete();
+        }
+        if (take) {
+          deleteSegmentFile(segmentRelPath(take.draftId, take.segmentId));
           // persistSegment writes the thumbnail BEFORE the DB row — an addSegment
           // failure leaves it orphaned alongside the video; sweep it too.
-          deleteSegmentFile(thumbRelPath(draftIdForSweep, segmentIdForSweep));
-        } else if (capturedUri) {
-          const temp = new File(capturedUri);
-          if (temp.exists) temp.delete();
+          deleteSegmentFile(thumbRelPath(take.draftId, take.segmentId));
         }
       } catch {
         // Best-effort sweep — the toast above is the user-facing outcome.

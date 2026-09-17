@@ -150,7 +150,7 @@ describeIf('pulsevault integration (real server, real wire)', () => {
     expect(Buffer.compare(served, bytes)).toBe(0);
   });
 
-  it('an interrupted upload leaves nothing served, and its artifactId 409s until cancelled (single-shot)', async () => {
+  it('an interrupted upload leaves nothing served, and its artifactId 409s before and after cancel (single-shot)', async () => {
     const bytes = makeMp4(96 * 1024);
     const artifactId = randomUUID();
 
@@ -190,14 +190,18 @@ describeIf('pulsevault integration (real server, real wire)', () => {
       statusCode: 409,
     });
 
-    // The cancel path (burning) frees the id for a genuinely fresh create.
+    // Cancel (the burn path) tombstones the id: still nothing served, and a fresh create
+    // under it stays a terminal 409 — the pairing is spent for good.
     await cancelTusUpload(inflightUrl!, null);
-    await upload(bytes, artifactId);
-    const res = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), bytes)).toBe(0);
+    const gone = await fetch(`${server}/artifacts/${artifactId}`);
+    expect(gone.status).toBe(404);
+    await expect(upload(bytes, artifactId)).rejects.toMatchObject({
+      retryable: false,
+      statusCode: 409,
+    });
   });
 
-  it('rejects a checksum mismatch terminally, wipes the artifact, and allows a corrected retry', async () => {
+  it('rejects a checksum mismatch terminally and wipes the artifact; the id is spent', async () => {
     const bytes = makeMp4(32 * 1024);
     const artifactId = randomUUID();
 
@@ -205,13 +209,19 @@ describeIf('pulsevault integration (real server, real wire)', () => {
       upload(bytes, artifactId, { checksum: `md5:${'0'.repeat(32)}` }),
     ).rejects.toMatchObject({ retryable: false, statusCode: 422 });
 
-    // Fail-closed cleanup freed the artifactId — the corrected retry works.
-    await upload(bytes, artifactId);
-    const res = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(res.status).toBe(200);
+    // Fail-closed cleanup: nothing served, and the id is tombstoned — the app
+    // burns the pairing and the corrected retry runs under a fresh link.
+    expect((await fetch(`${server}/artifacts/${artifactId}`)).status).toBe(404);
+    await expect(upload(bytes, artifactId)).rejects.toMatchObject({
+      retryable: false,
+      statusCode: 409,
+    });
+    const fresh = randomUUID();
+    await upload(bytes, fresh);
+    expect((await fetch(`${server}/artifacts/${fresh}`)).status).toBe(200);
   });
 
-  it('cancel (tus DELETE) frees the reservation so the artifactId is immediately reusable', async () => {
+  it('cancel (tus DELETE) tombstones the artifactId: nothing served, a fresh create is a terminal 409', async () => {
     const bytes = makeMp4(64 * 1024);
     const artifactId = randomUUID();
 
@@ -238,12 +248,15 @@ describeIf('pulsevault integration (real server, real wire)', () => {
 
     await cancelTusUpload(inflightUrl!, null);
 
-    // Termination swept the server-side reservation (bytes + sidecar) — a
-    // fresh create under the same artifactId succeeds without waiting out
-    // any grace period.
-    await upload(bytes, artifactId);
-    const res = await fetch(`${server}/artifacts/${artifactId}`);
-    expect(res.status).toBe(200);
+    // Termination swept the reservation's bytes but left a tombstone: the id
+    // serves nothing and can never be re-created — single-shot means one
+    // pairing, one attempt, and the app scans a fresh link.
+    const gone = await fetch(`${server}/artifacts/${artifactId}`);
+    expect(gone.status).toBe(404);
+    await expect(upload(bytes, artifactId)).rejects.toMatchObject({
+      retryable: false,
+      statusCode: 409,
+    });
   });
 
   it('capabilities probe: version-compatible, no direct upload on local storage', async () => {
@@ -364,7 +377,7 @@ describeIf(
       expect(calls.puts).toBe(0);
     });
 
-    it('cancel (DELETE on the artifacts URL) frees the reservation for a fresh create', async () => {
+    it('cancel (DELETE on the artifacts URL) tombstones the artifactId: 404, then a fresh create is a terminal 409', async () => {
       const bytes = makeMp4(32 * 1024);
       const artifactId = randomUUID();
       const result = await uploadDirect(bytes, artifactId);
@@ -373,12 +386,12 @@ describeIf(
       const gone = await fetch(`${server}/artifacts/${artifactId}`);
       expect(gone.status).toBe(404);
 
-      // The artifactId is immediately reusable — and serves the new bytes.
-      const fresh = makeMp4(32 * 1024);
-      fresh.fill(0xcd, 64);
-      await uploadDirect(fresh, artifactId, { checksum: md5(fresh) });
-      const res = await fetch(`${server}/artifacts/${artifactId}`);
-      expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), fresh)).toBe(0);
+      // The id is spent, not freed: a fresh grant under it is refused and moves no bytes.
+      const calls = { puts: 0 };
+      await expect(
+        uploadDirect(bytes, artifactId, { uploadFile: bufferFileUploader(bytes, calls) }),
+      ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
+      expect(calls.puts).toBe(0);
     });
   },
 );

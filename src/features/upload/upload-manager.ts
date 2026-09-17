@@ -40,15 +40,6 @@ const INTERRUPTED_MESSAGE = 'An upload didn’t finish';
 /** How long a finished run's one-shot `done` live state survives without being acknowledged. */
 const DONE_STATE_TTL_MS = 60_000;
 
-/**
- * How long after the claim a launch-sweep 404 is still "maybe streaming" rather than
- * "didn't land". iOS keeps a background URLSession transfer running after the process is
- * killed, and the server only serves the artifact once the final PATCH lands — so a probe
- * during that window would burn a pairing the OS is still completing. Past the window a
- * 404 is a verdict; inside it the draft stays locked (cancel still works) until a later sweep.
- */
-const IN_FLIGHT_GRACE_MS = 60 * 60_000;
-
 class ExpiredPairingError extends Error {
   constructor() {
     super(EXPIRED_PAIRING_MESSAGE);
@@ -312,12 +303,15 @@ class BackgroundUploadManager {
 
   /**
    * Settle drafts left `'uploading'` by an app kill (sessions are in-memory
-   * only) — run at launch and on every return to the foreground. One GET probe
-   * of the draft's own artifacts URL decides the outcome: the native background
-   * task may have FINISHED the transfer while the app was dead — a serving
-   * artifact is marked uploaded (safe to trust: the draft was locked for the
-   * whole run, so the bytes can only be its own content). A definitive miss
-   * burns the pairing; anything inconclusive leaves the row for the next sweep.
+   * only) — run at launch and on every return to the foreground. One rule: GET
+   * the draft's own artifacts URL once. Serving (2xx, or a storage adapter's
+   * presigned redirect) means the native background task finished the transfer
+   * while the app was dead — mark it uploaded (safe to trust: the draft was
+   * locked for the whole run, so the bytes can only be its own content). Any
+   * other answer burns the pairing — including an iOS background transfer still
+   * in flight at launch, whose orphan the server's retention cleans up. Only a
+   * fetch that throws (offline) says nothing either way and leaves the row for
+   * the next sweep.
    */
   async sweepInterruptedUploads(): Promise<void> {
     const rows = await getInterruptedUploads();
@@ -326,53 +320,26 @@ class BackgroundUploadManager {
 
   private async settleInterrupted(row: Draft): Promise<void> {
     if (this.sessions.has(row.id) || this.controllers.has(row.id)) return;
-    const token = await getDraftToken(row.id);
-    const verdict = isTokenExpired(token, Date.now())
-      ? 'expired'
-      : await this.probeArtifactServes(row.uploadServer, row.uploadArtifactId, token);
-    switch (verdict) {
-      case 'unknown':
-        // Offline / transport failure is NOT evidence the upload didn't land — the draft
-        // stays locked (cancel still works offline) until a sweep can reach the server.
+    // An 'uploading' row always carries its pairing; one without it has nothing to probe.
+    if (row.uploadServer && row.uploadArtifactId) {
+      let res: Response;
+      try {
+        res = await fetch(artifactUrl(row.uploadServer, row.uploadArtifactId), {
+          redirect: 'manual',
+          headers: { Range: 'bytes=0-0', ...authHeaders(await getDraftToken(row.id)) },
+        });
+      } catch {
         return;
-      case 'serving':
-        // CAS: a cancel that landed during the probe already burned the row — its verdict stands.
-        await markUploaded(row.id, row.uploadArtifactId ?? '');
-        return;
-      case 'absent':
-        if (Date.now() - row.lastModified < IN_FLIGHT_GRACE_MS) return;
-        break;
-      case 'expired':
-        break;
-    }
-    if (!(await burnUploadPairing(row.id))) return;
-    const reason = verdict === 'expired' ? EXPIRED_PAIRING_MESSAGE : INTERRUPTED_MESSAGE;
-    this.showToast?.(`${reason} — scan a new link to try again.`);
-  }
-
-  /**
-   * Whether the draft's own artifact already serves (completed while the app was dead).
-   * Only a status that speaks to the artifact's existence is a verdict: 2xx/3xx serves
-   * (storage adapters redirect to presigned objects), 404/410 is gone, 401/403 is a
-   * pairing the server no longer honors. Everything else — 5xx, 429, a failed fetch
-   * (offline, DNS) — is `'unknown'`, the same codes the transports treat as transient.
-   */
-  private async probeArtifactServes(
-    server: string | null,
-    artifactId: string | null,
-    token: string | null,
-  ): Promise<'serving' | 'absent' | 'unknown'> {
-    if (!server || !artifactId) return 'absent';
-    try {
-      const res = await fetch(artifactUrl(server, artifactId), {
-        redirect: 'manual',
-        headers: { Range: 'bytes=0-0', ...authHeaders(token) },
-      });
+      }
       await (res.body as { cancel?: () => Promise<void> } | null)?.cancel?.().catch(() => {});
-      if (res.ok || isRedirect(res)) return 'serving';
-      return [401, 403, 404, 410].includes(res.status) ? 'absent' : 'unknown';
-    } catch {
-      return 'unknown';
+      if (res.ok || isRedirect(res)) {
+        // CAS: a cancel that landed during the probe already burned the row — its verdict stands.
+        await markUploaded(row.id, row.uploadArtifactId);
+        return;
+      }
+    }
+    if (await burnUploadPairing(row.id)) {
+      this.showToast?.(`${INTERRUPTED_MESSAGE} — scan a new link to try again.`);
     }
   }
 
@@ -403,7 +370,14 @@ class BackgroundUploadManager {
       // a controller), so it leaves the queue before the outcome is acted on.
       const settled = await markUploaded(draftId, destination.artifactId);
       this.sessions.delete(draftId);
-      if (!settled) return;
+      if (!settled) {
+        // Lost the CAS: a cancel/burn landed first and owns the row, but its reset may
+        // predate this run's last progress tick — so reset again, and discard what the run
+        // created exactly as cancel does (under a burned pairing it is all debris).
+        this.setLive(draftId, { status: 'idle' });
+        await this.discardCreated(draftId, destination.token);
+        return;
+      }
       this.created.delete(draftId);
       // The one-shot done state carries the tokened watch link (tokens never land in the DB).
       const watchUrl = destination.token

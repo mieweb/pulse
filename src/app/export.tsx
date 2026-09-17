@@ -36,6 +36,7 @@ import { useUpload } from '@/features/upload/use-upload';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
+import { closeToHome } from '@/utils/navigation';
 import { effMs } from '@/utils/segment-window';
 
 /** Sum of each clip's effective duration — the summary line before the merge finishes has no merged output to read a duration from. */
@@ -130,6 +131,15 @@ export default function ExportScreen() {
   // Every path out of the prompt acknowledges, which flips status off 'done' and hides it.
   const uploadPromptVisible = upload.state.status === 'done' && watchUrl != null;
 
+  // Tapping Upload locks the draft (Home enforces the lock; cancel is the only action until
+  // the run settles), so closing mid-upload skips the recorder underneath — an editable
+  // timeline under a locked draft — and lands on Home. Otherwise ✕ pops back as usual.
+  const close = () => {
+    if (uState.status !== 'uploading') closeToHome();
+    else if (router.canDismiss()) router.dismissAll();
+    else router.replace('/');
+  };
+
   const runShare = async () => {
     if (state.status !== 'done' || busy) return;
     setBusy(true);
@@ -181,7 +191,7 @@ export default function ExportScreen() {
   return (
     <ThemedView style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-        <CloseButton />
+        <CloseButton onPress={close} />
       </View>
 
       {/* Bottom padding tracks the home indicator instead of a fixed 64pt — the difference

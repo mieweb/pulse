@@ -64,14 +64,14 @@ export function DraftCard({
   const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
   const moreRef = useRef<View>(null);
 
-  // Live upload state (this session) takes precedence; otherwise fall back to the persisted status
-  // so an interrupted upload still reads correctly after a relaunch (until the launch sweep settles
-  // it). Only ONE state surfaces on the card: the in-progress ring — failure is a transient toast/
+  // The persisted `upload_status` column alone says whether the draft is uploading — the claim
+  // writes it before any run starts and it survives a relaunch until the launch sweep settles it.
+  // The manager's live state (this session only) supplies the phase and progress for the ring.
+  // Only ONE state surfaces on the card: the in-progress ring — failure is a transient toast/
   // notification (the pairing is burned, the draft just returns to normal), and a COMPLETED upload
   // deliberately shows nothing (completion is surfaced by the export-screen prompt and the
   // background notification instead).
   const live = useDraftUploadState(id);
-  const upload = live.status === 'uploading' || uploadStatus === 'uploading' ? 'uploading' : 'idle';
   const uploadProgress = live.status === 'uploading' ? live.progress : 0;
 
   return (
@@ -101,7 +101,7 @@ export function DraftCard({
         ) : (
           <Icon name="video.fill" size={18} tintColor={theme.textSecondary} />
         )}
-        {upload === 'uploading' && (
+        {uploadStatus === 'uploading' && (
           <View
             style={styles.uploadScrim}
             pointerEvents="none"

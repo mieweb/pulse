@@ -109,20 +109,16 @@ export default function HomeScreen() {
           style: 'destructive',
           onPress: () => {
             setDeletingIds((prev) => new Set(prev).add(draft.id));
-            // Stop any in-flight upload FIRST — deleting the row/files under a running session
-            // would otherwise let a deleted draft finish landing on the server (or die midway
-            // with a file-not-found), and strand its session in the manager.
-            uploads
-              .cancel(draft.id)
-              .then(() => deleteDraft(draft.id))
-              .catch(() => {
-                setDeletingIds((prev) => {
-                  const next = new Set(prev);
-                  next.delete(draft.id);
-                  return next;
-                });
-                Alert.alert('Delete failed', 'The draft could not be deleted.');
+            // Delete is only offered while the draft is not uploading (see `menuActions`), and
+            // `deleteDraft` asserts the same on the row, so there is no live run to stop first.
+            deleteDraft(draft.id).catch(() => {
+              setDeletingIds((prev) => {
+                const next = new Set(prev);
+                next.delete(draft.id);
+                return next;
               });
+              Alert.alert('Delete failed', 'The draft could not be deleted.');
+            });
           },
         },
       ],

@@ -3,4 +3,5 @@ ALTER TABLE `upload_destinations` ADD `direct_upload` integer DEFAULT false NOT 
 ALTER TABLE `drafts` DROP COLUMN `upload_resource_url`;--> statement-breakpoint
 ALTER TABLE `drafts` DROP COLUMN `captions_upload_status`;--> statement-breakpoint
 ALTER TABLE `drafts` DROP COLUMN `upload_merged_path`;--> statement-breakpoint
-ALTER TABLE `drafts` DROP COLUMN `upload_merged_duration_ms`;
+ALTER TABLE `drafts` DROP COLUMN `upload_merged_duration_ms`;--> statement-breakpoint
+UPDATE `drafts` SET `upload_server` = NULL, `upload_artifact_id` = NULL, `upload_status` = NULL WHERE `upload_status` IS NOT 'uploaded';

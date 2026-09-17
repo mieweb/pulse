@@ -166,16 +166,10 @@ async function eventually(pred: () => boolean, ms = 2000): Promise<void> {
 const mockToast = jest.fn<(message: string) => void>();
 uploads.registerToast((m) => mockToast(m));
 
-/** An interrupted-row fixture; `claimedAgoMs` positions it inside/outside the in-flight grace window. */
-function interruptedRow(id: string, claimedAgoMs: number) {
-  return {
-    id,
-    uploadServer: SERVER,
-    uploadArtifactId: DEST_ARTIFACT,
-    lastModified: Date.now() - claimedAgoMs,
-  };
+/** A draft row left 'uploading' by an app kill — what the launch sweep settles. */
+function interruptedRow(id: string) {
+  return { id, uploadServer: SERVER, uploadArtifactId: DEST_ARTIFACT };
 }
-const HOURS = 60 * 60_000;
 
 beforeEach(() => {
   mockDb.rows.clear();
@@ -312,6 +306,39 @@ describe('BackgroundUploadManager (single-shot model)', () => {
     expect(mockNotifyFailed).not.toHaveBeenCalled();
   });
 
+  it('a lost CAS (row burned during the final PATCH) resets to idle and discards what the run created', async () => {
+    const draftId = 'draft-cas-lost';
+    mockTusRun.mockImplementation(async (params) => {
+      const artifact = params.artifact as { kind: string };
+      const onResourceCreated = params.onResourceCreated as (url: string) => Promise<void>;
+      await onResourceCreated(`${SERVER}/upload/${artifact.kind}`);
+      if (artifact.kind === 'video') {
+        // The burn lands mid-transfer (a cancel that raced the last chunk); the transfer's
+        // final progress tick then repopulates the live state AFTER cancel's own reset.
+        mockDb.rows.set(draftId, null);
+        const onProgress = params.onProgress as (p: {
+          bytesSent: number;
+          totalBytes: number;
+        }) => void;
+        onProgress({ bytesSent: 1024, totalBytes: 1024 });
+      }
+      return { resourceUrl: `${SERVER}/upload/${artifact.kind}` };
+    });
+    uploads.enqueue(makeSession(draftId));
+    await eventually(() => mockTusCancel.mock.calls.length >= 2);
+
+    expect(mockDb.uploaded).toHaveLength(0);
+    // Not stuck at 100%: the CAS loser resets the ring like cancel does…
+    expect(uploads.getDraftState(draftId).status).toBe('idle');
+    // …and DELETEs every artifact the run created — debris under a burned pairing.
+    expect(mockTusCancel.mock.calls.map(([url]) => url).sort()).toEqual([
+      `${SERVER}/upload/project`,
+      `${SERVER}/upload/video`,
+    ]);
+    // Not a failure event of its own — whoever burned the row already told the user.
+    expect(mockToast).not.toHaveBeenCalled();
+  });
+
   it('ignores a duplicate enqueue while a run is live', async () => {
     let release: () => void = () => {};
     mockTusRun.mockImplementation(async (params) => {
@@ -345,65 +372,61 @@ describe('BackgroundUploadManager (single-shot model)', () => {
   });
 
   describe('launch sweep', () => {
-    /** Run one sweep against a probe that answers `response` (or throws it). */
-    async function sweepWith(response: Response | Error): Promise<void> {
+    /** Run one sweep against a probe that answers `response` (or throws it); returns the probe calls. */
+    async function sweepWith(response: Response | Error): Promise<unknown[][]> {
       const fetchSpy = jest.spyOn(globalThis, 'fetch');
       if (response instanceof Error) fetchSpy.mockRejectedValue(response as never);
       else fetchSpy.mockResolvedValue(response as never);
       try {
         await uploads.sweepInterruptedUploads();
+        return fetchSpy.mock.calls;
       } finally {
         fetchSpy.mockRestore();
       }
     }
-    const untouched = (id: string) => {
-      expect(mockDb.burned).not.toContain(id);
-      expect(mockDb.uploaded.some((u) => u.draftId === id)).toBe(false);
-      expect(mockToast).not.toHaveBeenCalled();
-    };
 
     it('marks an interrupted upload uploaded (CAS on its pairing) when its artifact already serves', async () => {
-      mockDb.interrupted.push(interruptedRow('draft-sweep-done', 2 * HOURS));
-      await sweepWith(new Response(null, { status: 206 }));
+      mockDb.interrupted.push(interruptedRow('draft-sweep-done'));
+      const calls = await sweepWith(new Response(null, { status: 206 }));
+      // One probe: a one-byte ranged GET of the artifacts URL, bearer-authed, redirects unfollowed.
+      expect(calls).toEqual([
+        [
+          `${SERVER}/artifacts/${DEST_ARTIFACT}`,
+          { redirect: 'manual', headers: { Range: 'bytes=0-0', Authorization: 'Bearer tok' } },
+        ],
+      ]);
       expect(mockDb.uploaded).toEqual([{ draftId: 'draft-sweep-done', artifactId: DEST_ARTIFACT }]);
       expect(mockDb.burned).not.toContain('draft-sweep-done');
+      expect(mockToast).not.toHaveBeenCalled();
     });
 
-    it('burns an interrupted upload whose artifact is definitively gone, with a toast', async () => {
-      mockDb.interrupted.push(interruptedRow('draft-sweep-burn', 2 * HOURS));
-      await sweepWith(new Response(null, { status: 404 }));
-      expect(mockDb.burned).toContain('draft-sweep-burn');
-      expect(mockToast).toHaveBeenCalledWith(
-        'An upload didn’t finish — scan a new link to try again.',
-      );
+    it("treats a storage adapter's presigned redirect as serving", async () => {
+      mockDb.interrupted.push(interruptedRow('draft-sweep-redirect'));
+      await sweepWith(new Response(null, { status: 302 }));
+      expect(mockDb.uploaded).toEqual([
+        { draftId: 'draft-sweep-redirect', artifactId: DEST_ARTIFACT },
+      ]);
     });
 
-    it('does NOT burn on a 404 inside the in-flight grace window — iOS may still be streaming', async () => {
-      mockDb.interrupted.push(interruptedRow('draft-sweep-fresh', 5 * 60_000));
-      await sweepWith(new Response(null, { status: 404 }));
-      untouched('draft-sweep-fresh');
-    });
-
-    it('defers on anything inconclusive — a failed fetch (offline) or a transient 5xx', async () => {
-      mockDb.interrupted.push(interruptedRow('draft-sweep-offline', 2 * HOURS));
+    it('leaves the row for the next sweep when the probe cannot reach the server (offline)', async () => {
+      mockDb.interrupted.push(interruptedRow('draft-sweep-offline'));
       await sweepWith(new TypeError('Network request failed'));
-      untouched('draft-sweep-offline');
-      await sweepWith(new Response(null, { status: 503 }));
-      untouched('draft-sweep-offline');
+      expect(mockDb.burned).not.toContain('draft-sweep-offline');
+      expect(mockDb.uploaded).toHaveLength(0);
+      expect(mockToast).not.toHaveBeenCalled();
     });
 
-    it('burns a pairing whose token has expired without probing — the link is dead either way', async () => {
-      mockIsTokenExpired.mockReturnValue(true);
-      mockDb.interrupted.push(interruptedRow('draft-sweep-expired', 0));
-      const fetchSpy = jest.spyOn(globalThis, 'fetch');
-      try {
-        await uploads.sweepInterruptedUploads();
-        expect(fetchSpy).not.toHaveBeenCalled();
-      } finally {
-        fetchSpy.mockRestore();
-      }
-      expect(mockDb.burned).toContain('draft-sweep-expired');
-      expect(mockToast).toHaveBeenCalledWith('Upload link expired — scan a new link to try again.');
-    });
+    it.each([404, 403, 500])(
+      'burns an interrupted upload on any other answer (HTTP %i), with a toast',
+      async (status) => {
+        mockDb.interrupted.push(interruptedRow('draft-sweep-burn'));
+        await sweepWith(new Response(null, { status }));
+        expect(mockDb.burned).toContain('draft-sweep-burn');
+        expect(mockDb.uploaded).toHaveLength(0);
+        expect(mockToast).toHaveBeenCalledWith(
+          'An upload didn’t finish — scan a new link to try again.',
+        );
+      },
+    );
   });
 });
