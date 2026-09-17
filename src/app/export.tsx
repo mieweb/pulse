@@ -38,7 +38,7 @@ import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
 import { effMs } from '@/utils/segment-window';
 
-/** Sum of each clip's effective duration — the segmented-mode summary line has no merged output to read a duration from. */
+/** Sum of each clip's effective duration — the summary line before the merge finishes has no merged output to read a duration from. */
 const totalDurationMs = (clips: Segment[]) => clips.reduce((sum, s) => sum + effMs(s), 0);
 
 export default function ExportScreen() {
@@ -55,15 +55,9 @@ export default function ExportScreen() {
   const mergedRef = useRef<{ path: string; durationMs: number } | null>(null);
   const upload = useUpload(draftId ?? '', clips, mergedRef);
 
-  // The upload unit that governs the current view: the draft's claimed destination once a run is
-  // underway/finished, otherwise the pool destination the user has currently selected. Drives the
-  // error-title wording and (via the selected unit below) the Upload button's readiness.
-  const effectiveUploadUnit = upload.activeDestination?.uploadUnit ?? null;
-  const isSegmentOnly = effectiveUploadUnit === 'segment';
-
-  // Always auto-merge, whatever the upload unit. Share/Save/Preview want the merged file in
-  // every mode anyway, and a pairing can arrive (or switch to "merged") at any moment — merging
-  // eagerly means a merged-mode upload never has to stop and ask the user to export first.
+  // Always auto-merge: Share/Save/Preview want the merged file anyway, and a pairing can
+  // arrive at any moment — merging eagerly means an upload never has to stop and ask the
+  // user to export first.
   const { state, run } = useExport(clips);
   // `uploadMerged` reads `mergedRef.current` at upload time, not via a reactive prop — update it
   // whenever the merge's own state changes instead of threading `merged` through as a value.
@@ -99,29 +93,24 @@ export default function ExportScreen() {
     router.push(`/subtitles?draftId=${draftId}&videoUri=${encodeURIComponent(state.outputPath)}`);
   };
 
-  // Merged-only: uploading the single video needs the merge done first (segmented uploads each clip
-  // on its own). Computed from the currently *selected* pool destination so switching segment↔merged in
-  // the selector updates the Upload button's readiness immediately.
-  const selectedNeedsMerge = upload.selectedDestination?.uploadUnit === 'merged';
-  const selectedUploadReady = !selectedNeedsMerge || state.status === 'done';
+  // Uploading needs the merge done first. Computed so the Upload button's readiness updates
+  // immediately as the merge lands.
+  const selectedUploadReady = state.status === 'done';
   const selectedHost = upload.selectedDestination ? hostOf(upload.selectedDestination.server) : '';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
   const uState = upload.state;
 
-  const watchUrl =
-    upload.destination?.uploadUnit === 'merged'
-      ? `${upload.destination.server}/artifacts/${upload.destination.artifactId}${
-          upload.destination.token ? `?token=${encodeURIComponent(upload.destination.token)}` : ''
-        }`
-      : null;
+  const watchUrl = upload.destination
+    ? `${upload.destination.server}/artifacts/${upload.destination.artifactId}${
+        upload.destination.token ? `?token=${encodeURIComponent(upload.destination.token)}` : ''
+      }`
+    : null;
 
   // A finished upload is surfaced exactly once — a themed prompt (see the modal in the JSX
   // below) offering to watch the video in the browser — then acknowledged so no "uploaded"
   // button lingers in the draft (§ post-upload UX). `done` only occurs for a run completed this
   // session (see `useUpload`), so this can't fire for a draft that was uploaded some other time.
-  // Segmented sessions have no single watchable video (the anchor artifact is the ordering
-  // manifest), so they keep a plain native confirmation instead.
   // "Copy link" puts the watch URL on the clipboard for sharing into chats/notes — previously
   // the URL was reachable only by opening the browser (#69's missing-watch-link gap). A custom
   // modal, not Alert.alert: an alert's Cancel row renders identically to the real actions,
@@ -183,10 +172,10 @@ export default function ExportScreen() {
           (!upload.selectedId || !selectedUploadReady) && styles.disabled,
           pressed && styles.pressed,
         ]}>
-        {selectedNeedsMerge && !selectedUploadReady ? (
+        {!selectedUploadReady ? (
           <>
             <ActivityIndicator color={theme.onAccent} />
-            <ThemedText style={{ color: theme.onAccent }}>Preparing merged video…</ThemedText>
+            <ThemedText style={{ color: theme.onAccent }}>Preparing video…</ThemedText>
           </>
         ) : (
           <>
@@ -354,7 +343,7 @@ export default function ExportScreen() {
           <>
             <Icon name="exclamationmark.triangle.fill" size={64} tintColor={theme.accent} />
             <ThemedText type="subtitle" style={styles.title}>
-              {isSegmentOnly ? 'Merged copy failed' : 'Export failed'}
+              Export failed
             </ThemedText>
             <ThemedText themeColor="textSecondary" style={styles.errorMessage}>
               {state.message}
@@ -377,12 +366,10 @@ export default function ExportScreen() {
           </>
         )}
 
-        {/* One UPLOAD section for both units. Merge always runs (above), so a merged-unit
-            destination just waits on `state.status === 'done'` while a segment-unit one is ready
-            immediately — the difference is only the Upload button's enabled state, not a
-            separate flow. Shown while there's something actionable: destinations to pick, a run
-            in flight (or its error/expiry notice). A previously-uploaded draft with nothing to
-            pick shows no upload UI at all (§ post-upload UX — no persistent buttons). */}
+        {/* Merge always runs (above), so the Upload button just waits on
+            `state.status === 'done'`. Shown while there's something actionable: destinations to
+            pick, a run in flight (or its error/expiry notice). A previously-uploaded draft with
+            nothing to pick shows no upload UI at all (§ post-upload UX — no persistent buttons). */}
         {(upload.destinations.length > 0 ||
           uState.status === 'uploading' ||
           uState.status === 'error' ||

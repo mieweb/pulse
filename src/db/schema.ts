@@ -3,10 +3,6 @@ import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
-/** Which artifact a draft's `uploadArtifactId` anchors: the merged export video itself, or the
- * session that every segment/manifest/captions artifact declares via `relatedTo`. */
-type UploadUnit = 'segment' | 'merged';
-
 /** Lifecycle of a single upload (video or captions), tracked independently per artifact. */
 type UploadStatus = 'idle' | 'uploading' | 'uploaded' | 'failed';
 
@@ -15,15 +11,13 @@ export const drafts = sqliteTable('drafts', {
   id: text('id').primaryKey(),
   name: text('name'),
   // Per-draft upload destination (§4). A draft is "paired" when these are set (via
-  // `setUploadDestination`); there is no separate mode flag. `uploadArtifactId` is the session-anchor artifact id
-  // from the pairing deep link, used as the TUS artifactId directly (merged) or as `relatedTo`
-  // (segment). `uploadUnit` is resolved once from the server's `/capabilities` at pairing time and
-  // cached here so later upload runs don't re-fetch it.
+  // `setUploadDestination`); there is no separate mode flag. `uploadArtifactId` is the
+  // session-anchor artifact id from the pairing deep link, used as the TUS artifactId for the
+  // video and as `relatedTo` on its related artifacts.
   uploadServer: text('upload_server'),
   // The bearer token itself is NOT stored here — it's a live capability credential, kept in
   // expo-secure-store instead (`db/secure-token.ts`), not in this plaintext-at-rest table.
   uploadArtifactId: text('upload_artifact_id'),
-  uploadUnit: text('upload_unit', { enum: ['segment', 'merged'] }).$type<UploadUnit>(),
   // The TUS resource URL (the `Location` from the initial create) for the
   // merged-video upload, persisted so a relaunch can `HEAD` it to learn the
   // true offset and resume rather than restarting from byte 0.
@@ -36,8 +30,8 @@ export const drafts = sqliteTable('drafts', {
   }).$type<UploadStatus>(),
   // The merged export output the background upload manager uploads. Persisted at enqueue so an
   // upload interrupted by an app kill can be re-driven from launch without the export screen —
-  // the one piece of a merged run not otherwise recoverable from the DB (the path is a native
-  // merge output, the duration feeds the beat manifest). Null for segment-unit drafts.
+  // the one piece of a run not otherwise recoverable from the DB (the path is a native
+  // merge output, the duration feeds the beat manifest).
   uploadMergedPath: text('upload_merged_path'),
   uploadMergedDurationMs: integer('upload_merged_duration_ms'),
   // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
@@ -128,8 +122,7 @@ export const settings = sqliteTable('settings', {
 /**
  * A sub-artifact within an upload session, keyed so a retry can look up and resume the SAME
  * server-side artifact instead of minting a fresh UUID and re-uploading from scratch.
- * `localKey` is one of the merged-mode session's `"captions"`, `"manifest"` (beat manifest) or
- * `"thumbnail"`, or `` `${segmentId}:video` `` for a segmented-mode clip.
+ * `localKey` is one of the session's `"captions"`, `"manifest"` (beat manifest) or `"thumbnail"`.
  */
 export const uploadArtifacts = sqliteTable('upload_artifacts', {
   id: text('id').primaryKey(), // `${draftId}:${localKey}`
@@ -155,9 +148,6 @@ export const uploadDestinations = sqliteTable('upload_destinations', {
   id: text('id').primaryKey(), // local uuid (Crypto.randomUUID), also the secure-store token key
   server: text('server').notNull(),
   artifactId: text('artifact_id').notNull(),
-  uploadUnit: text('upload_unit', { enum: ['segment', 'merged'] })
-    .$type<UploadUnit>()
-    .notNull(),
   createdAt: integer('created_at').notNull().default(now),
 });
 

@@ -257,20 +257,24 @@ function Editor({
   const [rowEdited, setRowEdited] = useState(savedJson != null);
   const showReset = (rowEdited || editor.dirty) && editor.cues.length > 0;
   const onResetToAuto = () => {
-    Alert.alert('Reset captions?', 'This discards your edits and restores the automatic captions.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reset',
-        style: 'destructive',
-        onPress: async () => {
-          clearSelection();
-          await clearEditedTranscript(draftId);
-          markCleared();
-          editor.reset(autoLines);
-          setRowEdited(false);
+    Alert.alert(
+      'Reset captions?',
+      'This discards your edits and restores the automatic captions.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            clearSelection();
+            await clearEditedTranscript(draftId);
+            markCleared();
+            editor.reset(autoLines);
+            setRowEdited(false);
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
@@ -379,7 +383,9 @@ function Editor({
               }>
               <CueRow
                 cue={cue}
-                state={cue.id === editingId ? 'editing' : cue.id === selectedId ? 'selected' : 'view'}
+                state={
+                  cue.id === editingId ? 'editing' : cue.id === selectedId ? 'selected' : 'view'
+                }
                 playing={cue.id === playingId}
                 posCs={posCs}
                 theme={theme}
@@ -391,10 +397,7 @@ function Editor({
             </View>
           ))}
           {showReset && (
-            <Pressable
-              onPress={onResetToAuto}
-              accessibilityRole="button"
-              style={styles.resetLink}>
+            <Pressable onPress={onResetToAuto} accessibilityRole="button" style={styles.resetLink}>
               <ThemedText type="footnote" themeColor="textSecondary">
                 Reset to automatic captions
               </ThemedText>
@@ -417,10 +420,7 @@ function Editor({
         )}
       </KeyboardAvoidingView>
 
-      <ModelSwitcherModal
-        visible={modelSheetVisible}
-        onClose={() => setModelSheetVisible(false)}
-      />
+      <ModelSwitcherModal visible={modelSheetVisible} onClose={() => setModelSheetVisible(false)} />
     </ThemedView>
   );
 }

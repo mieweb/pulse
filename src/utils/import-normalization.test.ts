@@ -137,7 +137,10 @@ describe('decideImport against the wild-import fixture corpus', () => {
   });
 
   it.each([
-    ['hdr-hlg-portrait-1080p-30-hevc10', ['video codec hevc', '10-bit', 'HDR transfer arib-std-b67']],
+    [
+      'hdr-hlg-portrait-1080p-30-hevc10',
+      ['video codec hevc', '10-bit', 'HDR transfer arib-std-b67'],
+    ],
     ['hdr-pq-landscape-4k-30-hevc10', ['video codec hevc', '10-bit', 'HDR transfer smpte2084']],
     ['rot270-portrait-1080p-30-hevc', ['video codec hevc']],
     ['timelapse-landscape-1080p-30-hevc-noaudio', ['video codec hevc', 'off the 1080x1920 canvas']],
@@ -236,9 +239,9 @@ describe('decideImport edge cases beyond the corpus', () => {
   });
 
   it('on-canvas 29.97 NTSC still passes through', () => {
-    expect(
-      decideImport(probe({ rotation: 90, nominalFps: 29.97, averageFps: 29.97 })),
-    ).toEqual({ action: 'passthrough' });
+    expect(decideImport(probe({ rotation: 90, nominalFps: 29.97, averageFps: 29.97 }))).toEqual({
+      action: 'passthrough',
+    });
   });
 
   it('unknown bitrate (probe -1) does not trigger the bitrate rule', () => {
@@ -259,7 +262,8 @@ describe('decideImport edge cases beyond the corpus', () => {
     for (const pixelFormat of ['yuv420p10le', 'yuv420p10be', 'p010le']) {
       const d = decideImport(probe({ pixelFormat }));
       expect(d.action).toBe('normalize');
-      if (d.action === 'normalize') expect(d.reasons).toContain(`10-bit pixel format ${pixelFormat}`);
+      if (d.action === 'normalize')
+        expect(d.reasons).toContain(`10-bit pixel format ${pixelFormat}`);
     }
   });
 });

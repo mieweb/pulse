@@ -77,7 +77,11 @@ export function CueRow({
         styles.row,
         { backgroundColor: theme.backgroundElement, borderColor: theme.border },
         playing && { borderColor: Accent },
-        active && { borderColor: Accent, borderWidth: 1.5, backgroundColor: theme.backgroundSelected },
+        active && {
+          borderColor: Accent,
+          borderWidth: 1.5,
+          backgroundColor: theme.backgroundSelected,
+        },
       ]}>
       <View style={styles.inner}>
         <ThemedText style={[styles.tc, { color: tcColor }]}>{clock(cue.t0)}</ThemedText>

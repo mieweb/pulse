@@ -30,7 +30,6 @@ type UploadDestination = {
   server: string;
   token: string | null;
   artifactId: string;
-  uploadUnit: NonNullable<Draft['uploadUnit']>;
 };
 
 /** One row per draft with its segment count, trim-aware duration, and cover clip. */
@@ -182,7 +181,12 @@ async function invalidateUploadResumeState(draftId: string): Promise<void> {
   await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
   await db
     .update(drafts)
-    .set({ uploadResourceUrl: null, uploadStatus: null, uploadMergedPath: null, uploadMergedDurationMs: null })
+    .set({
+      uploadResourceUrl: null,
+      uploadStatus: null,
+      uploadMergedPath: null,
+      uploadMergedDurationMs: null,
+    })
     .where(
       and(
         eq(drafts.id, draftId),
@@ -275,7 +279,7 @@ export async function resetEdit(segmentId: string): Promise<void> {
 /** Persist a new clip ordering (ids in target order) for a single draft. */
 export async function reorderSegments(orderedIds: string[]): Promise<void> {
   if (orderedIds.length === 0) return;
-  // Ordering is part of what a partial segmented upload already sent (the ordering manifest) —
+  // Ordering is content — a reorder changes the video a resumed upload would produce, so
   // invalidate before renumbering, like every other structural mutation.
   const [target] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
   if (target) await invalidateUploadResumeState(target.draftId);
@@ -291,10 +295,7 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
       orderedIds.map((id, i) => sql`when ${segments.id} = ${id} then ${i}`),
       sql` `,
     )} else ${segments.order} end`;
-    await tx
-      .update(segments)
-      .set({ order: finalOrder })
-      .where(inArray(segments.id, orderedIds));
+    await tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, orderedIds));
     const [first] = await tx.select().from(segments).where(eq(segments.id, orderedIds[0]));
     if (first) {
       await tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId));
@@ -322,7 +323,7 @@ export async function deleteDraft(draftId: string): Promise<void> {
 /**
  * Pair a draft with an upload destination (from a validated deep link +
  * `/capabilities` lookup) — a draft counts as paired once `uploadServer`/
- * `uploadArtifactId`/`uploadUnit` are set. Resets any prior upload progress
+ * `uploadArtifactId` are set. Resets any prior upload progress
  * (`uploadResourceUrl`/`uploadStatus`/`captionsUploadStatus`)
  * since a new destination invalidates an in-flight upload to the old one.
  * The bearer token is written to expo-secure-store, not this row (§ token security).
@@ -336,7 +337,6 @@ export async function setUploadDestination(
     .set({
       uploadServer: destination.server,
       uploadArtifactId: destination.artifactId,
-      uploadUnit: destination.uploadUnit,
       uploadResourceUrl: null,
       uploadStatus: 'idle',
       captionsUploadStatus: null,
@@ -402,14 +402,13 @@ export async function setCaptionsUploadStatus(
     .where(eq(drafts.id, draftId));
 }
 
-// Upload sub-artifacts (segment/captions/manifest/thumbnail resume identity) ----------------
+// Upload sub-artifacts (captions/manifest/thumbnail resume identity) ------------------------
 
 /**
  * Stable local key for an upload session's sub-artifacts (§ `upload_artifacts`). A closed union so
- * a typo can't silently reserve a distinct row that never matches on resume. Merged mode:
- * `"captions"` | `"manifest"` (beat manifest) | `"thumbnail"`. Segmented mode: one `:video` per clip.
+ * a typo can't silently reserve a distinct row that never matches on resume.
  */
-export type UploadArtifactKey = 'captions' | 'manifest' | 'thumbnail' | `${string}:video`;
+export type UploadArtifactKey = 'captions' | 'manifest' | 'thumbnail';
 
 /** A sub-artifact's identity/progress, or `null` if this `localKey` hasn't been reserved yet. */
 export async function getUploadArtifact(

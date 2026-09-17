@@ -68,9 +68,7 @@ describe('modelCaveat', () => {
   });
 
   it('flags the large model as slow on Android (CPU-only inference)', () => {
-    expect(modelCaveat(large, { os: 'android', totalMemoryBytes: 8 * GB })).toBe(
-      'slow on Android',
-    );
+    expect(modelCaveat(large, { os: 'android', totalMemoryBytes: 8 * GB })).toBe('slow on Android');
     expect(modelCaveat(large, { os: 'ios', totalMemoryBytes: 8 * GB })).toBeNull();
   });
 

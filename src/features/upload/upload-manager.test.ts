@@ -59,7 +59,6 @@ jest.mock('@/utils/video', () => ({ generateThumbnailFile: jest.fn(async () => f
 jest.mock('@/utils/file-store', () => ({
   absolutize: (p: string) => `/abs/${p}`,
   toFileUri: (p: string) => (p.startsWith('file://') ? p : `file://${p}`),
-  uploadCopyRelPath: (p: string) => `${p}.upload.mp4`,
 }));
 
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }));
@@ -150,7 +149,6 @@ function makeSession(draftId: string, overrides?: Partial<UploadSession>): Uploa
       server: 'https://vault.example.test/pulsevault',
       token: 'tok',
       artifactId: DEST_ARTIFACT,
-      uploadUnit: 'merged',
       resourceUrl: null,
     },
     segments: [],
@@ -240,7 +238,6 @@ describe('BackgroundUploadManager (characterization)', () => {
         protocolVersion: 1,
         minSupportedVersion: 1,
         maxSupportedVersion: 1,
-        uploadUnit: 'merged',
         directUpload: true,
       },
     });

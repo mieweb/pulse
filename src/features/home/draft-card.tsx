@@ -84,8 +84,7 @@ export function DraftCard({
         styles.card,
         {
           // Rows highlight by fill swap (action-menu rows, home header buttons), not by dimming.
-          backgroundColor:
-            pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
+          backgroundColor: pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
           borderColor: theme.border,
         },
       ]}>

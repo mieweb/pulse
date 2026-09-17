@@ -9,7 +9,6 @@ export type Capabilities = {
   protocolVersion: number;
   minSupportedVersion: number;
   maxSupportedVersion: number;
-  uploadUnit: 'segment' | 'merged';
   /** Whether the server advertises the PROTOCOL §9 presigned direct-upload profile. */
   directUpload: boolean;
 };
@@ -29,8 +28,7 @@ async function fetchCapabilities(server: string): Promise<Capabilities> {
   };
   if (
     typeof body.minSupportedVersion !== 'number' ||
-    typeof body.maxSupportedVersion !== 'number' ||
-    (body.uploadUnit !== 'segment' && body.uploadUnit !== 'merged')
+    typeof body.maxSupportedVersion !== 'number'
   ) {
     throw new Error('Server returned an unexpected /capabilities response');
   }
@@ -38,7 +36,6 @@ async function fetchCapabilities(server: string): Promise<Capabilities> {
     protocolVersion: body.protocolVersion ?? body.minSupportedVersion,
     minSupportedVersion: body.minSupportedVersion,
     maxSupportedVersion: body.maxSupportedVersion,
-    uploadUnit: body.uploadUnit,
     directUpload: body.directUpload?.enabled === true,
   };
 }

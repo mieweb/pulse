@@ -63,6 +63,53 @@ function createUploadFileStub(results: { status: number; ticks?: number[] }[]) {
 }
 
 describe('uploadViaDirect', () => {
+  it('adopts a grant 409 as already-complete when the artifact serves', async () => {
+    // Retry after a mid-session failure: a previous run completed this
+    // artifact, so the grant 409s — but the artifacts URL serves. Success,
+    // zero bytes moved.
+    const { fetchImpl, calls } = createFetchStub([
+      jsonError(409, `artifactId ${ARTIFACT_ID} already has an upload`),
+      new Response(null, { status: 206 }),
+    ]);
+    const { uploadFile, calls: putCalls } = createUploadFileStub([]);
+
+    const result = await uploadViaDirect({
+      server: SERVER,
+      token: 'tok',
+      artifactId: ARTIFACT_ID,
+      filename: 'clip.mp4',
+      kind: 'video',
+      file: fakeFile(20) as never,
+      fetchImpl,
+      uploadFile,
+    });
+
+    expect(result.resourceUrl).toBe(ARTIFACTS_URL);
+    expect(putCalls).toHaveLength(0);
+    expect(calls[1]?.init?.redirect).toBe('manual');
+  });
+
+  it('surfaces the grant 409 when the artifact does not serve', async () => {
+    const { fetchImpl } = createFetchStub([
+      jsonError(409, `artifactId ${ARTIFACT_ID} already has an upload`),
+      new Response(null, { status: 404 }),
+    ]);
+    const { uploadFile } = createUploadFileStub([]);
+
+    await expect(
+      uploadViaDirect({
+        server: SERVER,
+        token: 'tok',
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: fakeFile(20) as never,
+        fetchImpl,
+        uploadFile,
+      }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
   it('grant → PUT → complete; persists the artifact URL before any byte moves', async () => {
     const { fetchImpl, calls } = createFetchStub([grantResponse(201), completeOk()]);
     let persisted: string | null = null;

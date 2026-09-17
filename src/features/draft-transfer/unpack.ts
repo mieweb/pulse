@@ -91,7 +91,7 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         }
 
         // Enforce the portrait reels contract on foreign media: bundles from older installs
-        // can carry off-canvas / non-H.264 clips that segment uploads would ship byte-for-byte.
+        // can carry off-canvas / non-H.264 clips that would otherwise enter the draft unchecked.
         // Conform in place (before the thumbnail, so the cover reflects the stored pixels);
         // a clip that can't be conformed is dropped like one missing from the archive.
         try {

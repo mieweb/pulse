@@ -3,6 +3,7 @@ import type { File } from 'expo-file-system';
 import type { ArtifactKind, TusUploadProgress } from './tus-client';
 import {
   authHeaders,
+  probeArtifactReady,
   rejectRedirect,
   responseError,
   TusUploadError,
@@ -124,7 +125,23 @@ export async function uploadViaDirect(opts: DirectUploadOptions): Promise<Direct
   await opts.onResourceCreated?.(resourceUrl);
 
   for (let cycle = 1; ; cycle += 1) {
-    const grant = await withRetry(() => requestGrant(opts, fetchImpl), opts.signal);
+    let grant: Grant;
+    try {
+      grant = await withRetry(() => requestGrant(opts, fetchImpl), opts.signal);
+    } catch (err) {
+      // A grant 409 means the artifactId's reservation is not re-grantable —
+      // most commonly because the upload already COMPLETED (a retry after a
+      // mid-session client failure). If the artifact serves, it IS done.
+      const conflict = err instanceof TusUploadError && err.statusCode === 409;
+      if (
+        conflict &&
+        (await probeArtifactReady(opts.server, opts.artifactId, opts.token, fetchImpl, opts.signal))
+      ) {
+        opts.onProgress?.({ bytesSent: totalBytes, totalBytes });
+        return { resourceUrl };
+      }
+      throw err;
+    }
 
     // One PUT per grant cycle: a transient PUT failure gets a FRESH grant on
     // the next cycle (the old URL may have expired mid-transfer), so the

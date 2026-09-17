@@ -13,11 +13,10 @@ export type Destination = {
   server: string;
   token: string | null;
   artifactId: string;
-  uploadUnit: 'segment' | 'merged';
   resourceUrl: string | null;
 };
 
-/** The merged export output a merged-unit session uploads (from `useExport`). */
+/** The merged export output an upload session sends (from `useExport`). */
 export type MergedOutput = { path: string; durationMs: number };
 
 /**
@@ -31,8 +30,8 @@ export type UploadSession = {
   draftId: string;
   destination: Destination;
   segments: Segment[];
-  /** Present for merged-unit runs; `null` for segment-unit. */
-  merged: MergedOutput | null;
+  /** The merged export this session uploads. */
+  merged: MergedOutput;
   /**
    * The pool destination id to remove once this run finishes (single-use), or
    * `null` for a draft whose destination came from an already-consumed session.
@@ -46,10 +45,10 @@ export type UploadProgress = { bytesSent: number; totalBytes: number };
  * What an in-flight upload is actually doing. A run spends real time before (and
  * between) byte transfers — preparing the export and building/uploading the small
  * related artifacts — and each of those used to render as an indistinguishable
- * `Uploading… 0%`. Only `video` (merged unit) and `clip` (segment unit) carry
- * meaningful byte/unit progress; the rest are label-only.
+ * `Uploading… 0%`. Only `video` carries meaningful byte progress; the rest are
+ * label-only.
  */
-export type UploadPhase = 'preparing' | 'captions' | 'manifest' | 'thumbnail' | 'video' | 'clip';
+export type UploadPhase = 'preparing' | 'captions' | 'manifest' | 'thumbnail' | 'video';
 
 /**
  * Live, per-draft upload state the UI subscribes to via `useSyncExternalStore`.
@@ -62,10 +61,6 @@ export type LiveUploadState =
       status: 'uploading';
       phase: UploadPhase;
       progress: number;
-      /** 1-based position of the clip in flight — present only for `phase: 'clip'`. */
-      current?: number;
-      /** Total clips in the run — present only for `phase: 'clip'`. */
-      total?: number;
     }
   | { status: 'done'; resourceUrl: string }
   | { status: 'error'; reason: string; retryable: boolean };

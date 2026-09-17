@@ -282,12 +282,11 @@ describeIf('pulsevault integration (real server, real wire)', () => {
     expect(res.status).toBe(200);
   });
 
-  it('capabilities probe: version-compatible, segment default, no direct upload on local storage', async () => {
+  it('capabilities probe: version-compatible, no direct upload on local storage', async () => {
     const res = await fetch(`${server}/capabilities`);
     expect(res.status).toBe(200);
     const caps = (await res.json()) as Record<string, unknown>;
     expect(caps.protocolVersion).toBe(1);
-    expect(caps.uploadUnit).toBe('segment');
     expect(caps.directUpload).toBeUndefined();
   });
 });

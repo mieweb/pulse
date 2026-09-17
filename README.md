@@ -12,13 +12,13 @@
 [![Whisper](https://img.shields.io/badge/Whisper-on--device-4B8BBE)](https://github.com/mybigday/whisper.rn)
 [![VisionCamera](https://img.shields.io/badge/VisionCamera-v5-FF6B6B)](https://react-native-vision-camera.com)
 
-*Capture knowledge before it walks out the door — training walkthroughs, process demos, handoffs — without sending a single frame to a third-party cloud.*
+_Capture knowledge before it walks out the door — training walkthroughs, process demos, handoffs — without sending a single frame to a third-party cloud._
 
 </div>
 
 ---
 
-Pulse is a React Native (Expo) app for capturing institutional knowledge as short-form video. Everything happens on the device: segmented recording, trimming, merging, and even speech-to-text captioning run locally. When you're ready to publish, Pulse uploads to a [**PulseVault**](#pulsevault--self-hosted-uploads) server *you* run — your organization keeps the content on its own infrastructure and owns auth, retention, and quota decisions. No central Pulse service exists.
+Pulse is a React Native (Expo) app for capturing institutional knowledge as short-form video. Everything happens on the device: segmented recording, trimming, merging, and even speech-to-text captioning run locally. When you're ready to publish, Pulse uploads to a [**PulseVault**](#pulsevault--self-hosted-uploads) server _you_ run — your organization keeps the content on its own infrastructure and owns auth, retention, and quota decisions. No central Pulse service exists.
 
 ## Anatomy of a Pulse
 
@@ -26,7 +26,7 @@ Two words show up throughout Pulse — here's what they mean.
 
 ### What is a Pulse?
 
-A **Pulse** is a single short-form video, assembled on-device from an ordered set of clips. Record a few, import a few, reorder them — on export they merge (losslessly where formats match) into one `.mp4`. Publishing a Pulse sends a small bundle: the merged video, its captions (WebVTT), a **beat manifest**, and a thumbnail. On-device each Pulse is a *draft* in your library; drafts move between devices as `.pulse` bundles.
+A **Pulse** is a single short-form video, assembled on-device from an ordered set of clips. Record a few, import a few, reorder them — on export they merge (losslessly where formats match) into one `.mp4`. Publishing a Pulse sends a small bundle: the merged video, its captions (WebVTT), a **beat manifest**, and a thumbnail. On-device each Pulse is a _draft_ in your library; drafts move between devices as `.pulse` bundles.
 
 ```mermaid
 flowchart LR
@@ -101,7 +101,7 @@ flowchart TB
 
 - Pair with a server by scanning a QR / opening a `pulsecam://` deep link — trust-on-first-use confirmation, capability negotiation against the server's `/capabilities` endpoint
 - TUS v1 resumable uploads with exponential backoff; interrupted uploads resume from the server's true byte offset, even after an app relaunch
-- Two upload strategies, negotiated per server: **merged** (one video + captions + beat-timecode manifest + thumbnail) or **segment** (per-segment clips + an ordering manifest)
+- One upload per pulse: the video plus its captions, beat-timecode manifest, and thumbnail, chained under a single session token
 - Bearer tokens stored in the secure keychain, never in the database
 
 ## Platform support
@@ -167,13 +167,13 @@ Pulse uses native modules (VisionCamera, Whisper, FFmpeg), so it needs a **dev b
 
 ### Commands
 
-| Command | What it does |
-| --- | --- |
-| `npm start` | Start the Metro dev server |
-| `npm run ios` / `npm run android` | Build & run the dev client |
-| `npm test` | Run the Jest unit-test suite |
-| `npm run lint` | ESLint via `expo lint` |
-| `npm run format` | Prettier |
+| Command                           | What it does                 |
+| --------------------------------- | ---------------------------- |
+| `npm start`                       | Start the Metro dev server   |
+| `npm run ios` / `npm run android` | Build & run the dev client   |
+| `npm test`                        | Run the Jest unit-test suite |
+| `npm run lint`                    | ESLint via `expo lint`       |
+| `npm run format`                  | Prettier                     |
 
 ### Project structure
 
@@ -211,7 +211,7 @@ cd pulsevault-mieweb && npm ci && npm run build && cd ..
 PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
 ```
 
-Without the env vars those tests report as *skipped* — that's the gate, not a failure. CI runs typecheck, lint, the unit suite, and the cross-repo integration suite on every PR (see [.github/workflows/ci.yml](.github/workflows/ci.yml)).
+Without the env vars those tests report as _skipped_ — that's the gate, not a failure. CI runs typecheck, lint, the unit suite, and the cross-repo integration suite on every PR (see [.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
 ## License
 

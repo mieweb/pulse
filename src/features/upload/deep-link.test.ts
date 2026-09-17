@@ -15,7 +15,6 @@ describe('parseUploadDeepLink', () => {
         artifactId: ARTIFACT_ID,
         server: 'https://vault.example.org',
         token: 'secret',
-        uploadUnit: null,
       },
     });
   });
@@ -26,7 +25,7 @@ describe('parseUploadDeepLink', () => {
     );
     expect(result).toEqual({
       ok: true,
-      link: { artifactId: ARTIFACT_ID, server: 'https://vault.example.org', token: null, uploadUnit: null },
+      link: { artifactId: ARTIFACT_ID, server: 'https://vault.example.org', token: null },
     });
   });
 
@@ -45,11 +44,14 @@ describe('parseUploadDeepLink', () => {
   });
 
   it('rejects a missing or malformed artifactId', () => {
+    expect(parseUploadDeepLink('pulsecam://?v=1&server=https%3A%2F%2Fvault.example.org')).toEqual({
+      ok: false,
+      reason: 'invalid-link',
+    });
     expect(
-      parseUploadDeepLink('pulsecam://?v=1&server=https%3A%2F%2Fvault.example.org'),
-    ).toEqual({ ok: false, reason: 'invalid-link' });
-    expect(
-      parseUploadDeepLink('pulsecam://?v=1&artifactId=not-a-uuid&server=https%3A%2F%2Fvault.example.org'),
+      parseUploadDeepLink(
+        'pulsecam://?v=1&artifactId=not-a-uuid&server=https%3A%2F%2Fvault.example.org',
+      ),
     ).toEqual({ ok: false, reason: 'invalid-link' });
   });
 
@@ -87,7 +89,6 @@ describe('parseUploadDeepLink', () => {
         artifactId: ARTIFACT_ID,
         server: 'https://vault.example.org/pulsevault',
         token: null,
-        uploadUnit: null,
       },
     });
   });
@@ -99,27 +100,13 @@ describe('parseUploadDeepLink', () => {
     expect(result).toEqual({ ok: false, reason: 'invalid-link' });
   });
 
-  it('accepts an explicit uploadUnit override, either value', () => {
-    for (const uploadUnit of ['segment', 'merged']) {
-      const result = parseUploadDeepLink(
-        `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=https%3A%2F%2Fvault.example.org&uploadUnit=${uploadUnit}`,
-      );
-      expect(result).toEqual({
-        ok: true,
-        link: {
-          artifactId: ARTIFACT_ID,
-          server: 'https://vault.example.org',
-          token: null,
-          uploadUnit,
-        },
-      });
-    }
-  });
-
-  it('rejects an invalid uploadUnit value', () => {
+  it('ignores unrecognized params on a supported-version link (e.g. the retired uploadUnit)', () => {
     const result = parseUploadDeepLink(
-      `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=https%3A%2F%2Fvault.example.org&uploadUnit=bogus`,
+      `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=https%3A%2F%2Fvault.example.org&uploadUnit=segment&future=x`,
     );
-    expect(result).toEqual({ ok: false, reason: 'invalid-link' });
+    expect(result).toEqual({
+      ok: true,
+      link: { artifactId: ARTIFACT_ID, server: 'https://vault.example.org', token: null },
+    });
   });
 });

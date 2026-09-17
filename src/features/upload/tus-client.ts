@@ -221,8 +221,44 @@ async function statusError(res: Response, fallbackMessage: string): Promise<TusU
 /** Exported alias of the response→error mapper for the direct-upload client — same body parsing, same retryability rules. */
 export const responseError = statusError;
 
+/**
+ * Whether the artifact is already complete (ready) server-side. A 409 on
+ * create can mean "this upload already FINISHED" — e.g. a retry after a run
+ * that failed client-side mid-session — not just "someone else holds it".
+ * Only ready artifacts serve on the artifacts URL, so a 200/206 (local
+ * streaming) or a 3xx (presigned redirect, NOT followed) proves completion.
+ * Never throws — a probe failure just means "not adoptable as done".
+ */
+export async function probeArtifactReady(
+  server: string,
+  artifactId: string,
+  token: string | null,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  try {
+    const res = await fetchImpl(`${server}/artifacts/${artifactId}`, {
+      redirect: 'manual',
+      signal,
+      // Range keeps a local-storage hit to one byte; S3-backed serving 302s
+      // before any body exists.
+      headers: { Range: 'bytes=0-0', ...authHeaders(token) },
+    });
+    await (res.body as { cancel?: () => Promise<void> } | null)?.cancel?.().catch(() => {});
+    if (res.type === 'opaqueredirect') return true;
+    return res.status === 200 || res.status === 206 || (res.status >= 300 && res.status < 400);
+  } catch {
+    return false;
+  }
+}
+
 function statusErrorFromChunk(result: ChunkUploadResult, fallbackMessage: string): TusUploadError {
-  const retryable = result.status >= 500 || result.status === 429;
+  // A PATCH 409 is an offset conflict — this client's position went stale (a
+  // “failed” chunk actually landed, or a parallel resume advanced the upload).
+  // Unlike a create-409 it is NOT terminal: retryable hands control back to
+  // withRetry, whose next attempt re-HEADs and re-anchors to the server's
+  // offset before sending another byte (see “offset discipline” above).
+  const retryable = result.status >= 500 || result.status === 429 || result.status === 409;
   return new TusUploadError(fallbackMessage, { retryable, statusCode: result.status });
 }
 
@@ -479,7 +515,21 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
       try {
         await fetchOffset(derived, opts.token, opts.signal, fetchImpl);
       } catch {
-        throw err;
+        // Not resumable — but a 409 whose upload is GONE often means the
+        // upload already finished (finished tus uploads stop answering HEAD).
+        // If the artifact serves, adopt it as complete instead of failing.
+        const done = await probeArtifactReady(
+          opts.server,
+          opts.artifactId,
+          opts.token,
+          fetchImpl,
+          opts.signal,
+        );
+        if (!done) throw err;
+        const artifactsUrl = `${opts.server}/artifacts/${opts.artifactId}`;
+        await opts.onResourceCreated?.(artifactsUrl);
+        opts.onProgress?.({ bytesSent: totalBytes, totalBytes });
+        return { resourceUrl: artifactsUrl };
       }
       resourceUrl = derived;
       adopted = true;

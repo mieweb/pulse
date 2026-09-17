@@ -111,16 +111,13 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             Alert.alert("Can't connect", CAPABILITIES_REJECTION_MESSAGE[capResult.reason]);
             return;
           }
-          // The link's own `uploadUnit` (if present) is a per-session override of the
-          // deployment-wide value `/capabilities` reports (PROTOCOL.md §3, §8) — prefer it.
-          // `/capabilities` is still fetched regardless, for the protocol-version check above.
-          // Added to the device-wide pool (not a single slot) — any draft can pick it at
-          // upload time, and several servers can be paired at once.
+          // `/capabilities` is fetched for the protocol-version check above. Added to the
+          // device-wide pool (not a single slot) — any draft can pick it at upload time, and
+          // several servers can be paired at once.
           return addDestination({
             server: link.server,
             token: link.token,
             artifactId: link.artifactId,
-            uploadUnit: link.uploadUnit ?? capResult.capabilities.uploadUnit,
           }).then(() => {
             showToast(`Connected to ${host} — pick it when you upload`);
           });

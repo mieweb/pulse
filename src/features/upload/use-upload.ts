@@ -44,8 +44,7 @@ export function useUpload(
   // success. Kept on the ref so a Retry after a failure still carries it; a re-claim overwrites it.
   const consumedIdRef = useRef<string | null>(null);
 
-  const hasDestination =
-    !!draft?.uploadServer && !!draft.uploadArtifactId && !!draft.uploadUnit;
+  const hasDestination = !!draft?.uploadServer && !!draft.uploadArtifactId;
 
   // The bearer token lives in expo-secure-store, not the (reactive) drizzle row — loaded into
   // local state keyed off which draft is showing, and set directly in `claim` so the first upload
@@ -64,16 +63,15 @@ export function useUpload(
 
   const destination: Destination | null = useMemo(
     () =>
-      hasDestination
+      draft?.uploadServer && draft.uploadArtifactId
         ? {
-            server: draft!.uploadServer!,
+            server: draft.uploadServer,
             token: draftToken,
-            artifactId: draft!.uploadArtifactId!,
-            uploadUnit: draft!.uploadUnit!,
-            resourceUrl: draft!.uploadResourceUrl,
+            artifactId: draft.uploadArtifactId,
+            resourceUrl: draft.uploadResourceUrl,
           }
         : null,
-    [hasDestination, draft, draftToken],
+    [draft, draftToken],
   );
   const destinationExpired = destination !== null && isTokenExpired(destination.token, now);
 
@@ -100,6 +98,10 @@ export function useUpload(
     (explicitDestination?: Destination) => {
       const dest = explicitDestination ?? destination;
       if (!dest) return;
+      // The merged export is the upload's payload — without it there's nothing to enqueue
+      // (the export screen only offers upload once the merge has landed).
+      const merged = mergedRef.current;
+      if (!merged) return;
       // Hand the whole run to the manager. Expiry, resume identity, and progress are its concern
       // now; it surfaces an expired token as a non-retryable error on the live state.
       // The session carries the consumed pool id so the manager removes it once the upload actually
@@ -109,7 +111,7 @@ export function useUpload(
         draftId,
         destination: dest,
         segments,
-        merged: mergedRef.current,
+        merged,
         consumedDestinationId: consumedIdRef.current,
       });
     },
@@ -133,14 +135,12 @@ export function useUpload(
         server: option.server,
         token: option.token,
         artifactId: option.artifactId,
-        uploadUnit: option.uploadUnit,
         resourceUrl: null,
       };
       await setUploadDestination(draftId, {
         server: option.server,
         token: option.token,
         artifactId: option.artifactId,
-        uploadUnit: option.uploadUnit,
       });
       setDraftTokenState(option.token);
       consumedIdRef.current = option.id;
