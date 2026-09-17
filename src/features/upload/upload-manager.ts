@@ -206,8 +206,9 @@ class BackgroundUploadManager {
     // Ask for notification permission now — a foreground moment (the user just tapped Upload) — so
     // the background completion/failure banner can fire later without prompting mid-upload.
     void uploadNotify.ensurePermission();
+    // The durable 'uploading' marker was already written by the claim (setUploadDestination),
+    // BEFORE this enqueue — so no network step can outrun it into a kill window.
     this.setLive(session.draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
-    void setUploadProgress(session.draftId, { status: 'uploading' });
     void this.ensureRunning();
   }
 
@@ -307,8 +308,15 @@ class BackgroundUploadManager {
     const rows = await getInterruptedUploads();
     for (const row of rows) {
       if (this.sessions.has(row.id) || this.controllers.has(row.id)) continue;
-      const served = await this.probeArtifactServes(row.uploadServer, row.uploadArtifactId, row.id);
-      if (served) {
+      const verdict = await this.probeArtifactServes(
+        row.uploadServer,
+        row.uploadArtifactId,
+        row.id,
+      );
+      // Offline / transport failure is NOT evidence the upload didn't land — leave the row
+      // for a future launch to settle (the draft stays locked; cancel still works offline).
+      if (verdict === 'unknown') continue;
+      if (verdict === 'serving') {
         await setUploadProgress(row.id, {
           status: 'uploaded',
           resourceUrl: `${row.uploadServer}/artifacts/${row.uploadArtifactId}`,
@@ -320,13 +328,14 @@ class BackgroundUploadManager {
     }
   }
 
-  /** Whether the draft's own artifact already serves (completed while the app was dead). */
+  /** Whether the draft's own artifact already serves (completed while the app was dead).
+   * `'unknown'` = the probe itself failed (offline, DNS) — no verdict either way. */
   private async probeArtifactServes(
     server: string | null,
     artifactId: string | null,
     draftId: string,
-  ): Promise<boolean> {
-    if (!server || !artifactId) return false;
+  ): Promise<'serving' | 'absent' | 'unknown'> {
+    if (!server || !artifactId) return 'absent';
     try {
       const token = await getDraftToken(draftId);
       const res = await fetch(`${server}/artifacts/${artifactId}`, {
@@ -334,10 +343,12 @@ class BackgroundUploadManager {
         headers: { Range: 'bytes=0-0', ...authHeaders(token) },
       });
       await (res.body as { cancel?: () => Promise<void> } | null)?.cancel?.().catch(() => {});
-      if (res.type === 'opaqueredirect') return true;
-      return res.status === 200 || res.status === 206 || (res.status >= 300 && res.status < 400);
+      if (res.type === 'opaqueredirect') return 'serving';
+      const serving =
+        res.status === 200 || res.status === 206 || (res.status >= 300 && res.status < 400);
+      return serving ? 'serving' : 'absent';
     } catch {
-      return false;
+      return 'unknown';
     }
   }
 
@@ -362,6 +373,9 @@ class BackgroundUploadManager {
     const transport = destination.directUpload ? directServerTransport : this.transport;
     try {
       await this.uploadMerged(session, transport, controller.signal);
+      // A cancel that raced the final await owns the reset (burn + idle) — don't
+      // resurrect a cancelled draft as uploaded with a watch link.
+      if (this.sessions.get(draftId) !== session || controller.signal.aborted) return;
       // The durable row keeps the plain serving URL; the one-shot done state
       // carries the tokened watch link (tokens never land in the DB).
       const artifactsUrl = `${destination.server}/artifacts/${destination.artifactId}`;

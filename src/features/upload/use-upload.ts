@@ -77,12 +77,16 @@ export function useUpload(
         artifactId: option.artifactId,
         directUpload: option.directUpload,
       };
+      // Consume FIRST — the pool delete is the one-winner arbiter, so a double tap or a
+      // second screen claiming the same link loses here instead of double-pairing. Then the
+      // pairing lands durably as 'uploading' in one write: killed anywhere after this, the
+      // launch sweep settles the draft (probe → uploaded or burn), never a stranded pairing.
+      if (!(await deleteDestination(option.id))) return;
       await setUploadDestination(draftId, {
         server: option.server,
         token: option.token,
         artifactId: option.artifactId,
       });
-      await deleteDestination(option.id);
       uploads.enqueue({ draftId, destination, segments, merged });
     },
     [destinations, draftId, segments, mergedRef],

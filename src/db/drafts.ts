@@ -293,10 +293,11 @@ export async function deleteDraft(draftId: string): Promise<void> {
 
 /**
  * Pair a draft with an upload destination (from a validated deep link +
- * `/capabilities` lookup) — a draft counts as paired once `uploadServer`/
- * `uploadArtifactId` are set. Resets any prior upload progress since a new
- * destination invalidates the old pairing. The bearer token is written to
- * expo-secure-store, not this row (§ token security).
+ * `/capabilities` lookup) and commit it to a run in the same durable write:
+ * the row lands already `'uploading'`, so a kill at ANY later point — before
+ * the in-memory session even exists — is caught by the launch sweep instead
+ * of stranding a consumed pairing on an idle-looking draft. The bearer token
+ * is written to expo-secure-store, not this row (§ token security).
  */
 export async function setUploadDestination(
   draftId: string,
@@ -308,7 +309,7 @@ export async function setUploadDestination(
       uploadServer: destination.server,
       uploadArtifactId: destination.artifactId,
       uploadResourceUrl: null,
-      uploadStatus: 'idle',
+      uploadStatus: 'uploading',
       lastModified: now,
     })
     .where(eq(drafts.id, draftId));

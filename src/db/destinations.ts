@@ -80,8 +80,14 @@ export async function getDestination(id: string): Promise<PairedDestination | nu
   return { ...row, token: await getDestinationToken(id) };
 }
 
-/** Remove a destination from the pool (consumed by a claim, or deleted by the user). */
-export async function deleteDestination(id: string): Promise<void> {
-  await db.delete(uploadDestinations).where(eq(uploadDestinations.id, id));
+/** Remove a destination from the pool (consumed by a claim, or deleted by the user).
+ * Returns whether the row still existed — a claim must win this delete to proceed, so
+ * two racing claimants can never both consume the same single-use link. */
+export async function deleteDestination(id: string): Promise<boolean> {
+  const deleted = await db
+    .delete(uploadDestinations)
+    .where(eq(uploadDestinations.id, id))
+    .returning({ id: uploadDestinations.id });
   await deleteDestinationToken(id);
+  return deleted.length > 0;
 }

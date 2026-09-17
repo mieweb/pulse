@@ -432,8 +432,10 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
         // withRetry, whose next attempt re-HEADs before sending anything. An
         // offset past the local file is the stale/foreign-resource case above,
         // just detected mid-transfer — fail closed, don't "complete".
+        // Safe integer, same as the HEAD check — a fractional/unsafe ack would
+        // corrupt the next slice's offset instead of failing closed.
         const responseOffset = Number(headerValue(result.headers, 'upload-offset'));
-        if (!Number.isFinite(responseOffset) || responseOffset <= offset) {
+        if (!Number.isSafeInteger(responseOffset) || responseOffset <= offset) {
           throw new TusUploadError('Server acknowledged a chunk without a usable Upload-Offset', {
             retryable: true,
           });

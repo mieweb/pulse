@@ -289,9 +289,14 @@ describe('BackgroundUploadManager (single-shot model)', () => {
       () => mockTusRun.mock.calls.filter(([p]) => (p.artifact as { kind: string }).kind === 'video').length > 0,
     );
     uploads.enqueue(makeSession(draftId));
-    // Second enqueue neither restarted the run nor re-wrote 'uploading'.
-    const uploadingWrites = mockDb.uploadProgress.filter((w) => w.patch.status === 'uploading');
-    expect(uploadingWrites).toHaveLength(1);
+    // Second enqueue didn't restart the run: the video PATCH is still the gated
+    // first one, and no extra durable write appeared (the 'uploading' marker is
+    // the claim's job, before enqueue — the manager itself writes none).
+    const videoRuns = mockTusRun.mock.calls.filter(
+      ([p]) => (p.artifact as { kind: string }).kind === 'video',
+    );
+    expect(videoRuns).toHaveLength(1);
+    expect(mockDb.uploadProgress.filter((w) => w.patch.status === 'uploading')).toHaveLength(0);
     release();
     await eventually(() => uploads.getDraftState(draftId).status === 'done');
     uploads.acknowledge(draftId);
@@ -336,6 +341,27 @@ describe('BackgroundUploadManager (single-shot model)', () => {
         await uploads.sweepInterruptedUploads();
         expect(mockDb.burned).toContain('draft-sweep-burn');
         expect(mockToast).toHaveBeenCalledWith(expect.stringContaining('scan a new link'));
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it('defers when the probe itself fails (offline launch) — no burn, no uploaded write', async () => {
+      mockDb.interrupted.push({
+        id: 'draft-sweep-offline',
+        uploadServer: SERVER,
+        uploadArtifactId: DEST_ARTIFACT,
+      });
+      const fetchSpy = jest
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new TypeError('Network request failed') as never);
+      try {
+        await uploads.sweepInterruptedUploads();
+        expect(mockDb.burned).not.toContain('draft-sweep-offline');
+        expect(
+          mockDb.uploadProgress.some((w) => w.draftId === 'draft-sweep-offline'),
+        ).toBe(false);
+        expect(mockToast).not.toHaveBeenCalled();
       } finally {
         fetchSpy.mockRestore();
       }

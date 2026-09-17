@@ -363,6 +363,8 @@ export function useRecorder(initialDraftId?: string) {
       recorderRef.current = recorder;
       // The temp file the recorder writes to, captured up front for the salvage path below.
       const recordingPath = recorder.filePath;
+      // Sweepable from here — even the error probe's reject leaves a temp file to clean up.
+      capturedUri = recordingPath.startsWith('file://') ? recordingPath : `file://${recordingPath}`;
       const filePath = await new Promise<string>((resolve, reject) => {
         recorder
           .startRecording(
