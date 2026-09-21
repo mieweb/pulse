@@ -129,6 +129,38 @@ export function deleteSegmentFile(relPath: string): void {
   }
 }
 
+/**
+ * The draft's persisted merged export (relative path). One per draft, inside the draft dir so
+ * `deleteDraftDir` removes it for free; its content key lives on the `drafts` row
+ * (`merged_signature`). Never bundled into a `.pulse` transfer — it's derived, re-mergeable data.
+ */
+export function exportRelPath(draftId: string): string {
+  return `drafts/${draftId}/export.mp4`;
+}
+
+/** Whether the draft's persisted export file is on disk. */
+export function exportFileExists(draftId: string): boolean {
+  return new File(absolutize(exportRelPath(draftId))).exists;
+}
+
+/** Delete the draft's persisted export file, if any. */
+export function deleteExportFile(draftId: string): void {
+  const file = new File(absolutize(exportRelPath(draftId)));
+  if (file.exists) file.delete();
+}
+
+/**
+ * Move a finished merge output (RNVT's cache) into place as the draft's persisted export,
+ * replacing any previous one; returns its absolute URI. The merge itself wrote elsewhere, so
+ * the only window where `export.mp4` is missing is between the delete and the move.
+ */
+export async function persistExportFile(draftId: string, mergeOutputPath: string): Promise<string> {
+  const dest = new File(absolutize(exportRelPath(draftId)));
+  if (dest.exists) dest.delete();
+  await new File(toFileUri(mergeOutputPath)).move(dest);
+  return dest.uri;
+}
+
 export function deleteDraftDir(draftId: string): void {
   const dir = new Directory(Paths.document, 'drafts', draftId);
   if (dir.exists) dir.delete();

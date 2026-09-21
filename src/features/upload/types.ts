@@ -17,15 +17,14 @@ export type Destination = {
   resourceUrl: string | null;
 };
 
-/** The merged export output a merged-unit session uploads (from `useExport`). */
+/** The merged video a merged-unit session uploads: the draft's persisted export (`drafts/{id}/export.mp4`). */
 export type MergedOutput = { path: string; durationMs: number };
 
 /**
  * One queued upload run for a draft. Captured at enqueue time — while the export
  * screen is foreground and the merge is done — and held in-memory by the manager
- * so the run survives navigation/backgrounding without the screen. Durable state
- * (destination, resume identity, status) lives in SQLite; this holds the one
- * thing SQLite doesn't yet: the merged output path/duration.
+ * so the run survives navigation/backgrounding without the screen. After a kill
+ * it is rebuilt from SQLite and the persisted export (see `reconstructSession`).
  */
 export type UploadSession = {
   draftId: string;
