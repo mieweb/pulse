@@ -563,10 +563,10 @@ function MergedPreview({
 }: {
   uri: string;
   lines: TranscriptLine[];
-  /** Clip-count · duration readout, a quiet pill just above the video. */
+  /** Clip-count · duration readout, a pill just above the video. */
   meta: string;
 }) {
-  const theme = useTheme();
+  const mode = useThemeMode();
   const player = useVideoPlayer(toFileUri(uri), (p) => {
     p.timeUpdateEventInterval = 0.1;
     p.play();
@@ -592,10 +592,8 @@ function MergedPreview({
         setFrame({ width: layout.width, height: layout.height })
       }>
       {frame != null && (
-        <View style={[styles.metaPill, { backgroundColor: theme.backgroundElement }]}>
-          <ThemedText themeColor="textSecondary" style={styles.metaText}>
-            {meta}
-          </ThemedText>
+        <View style={[styles.metaPill, ControlScrim[mode]]}>
+          <ThemedText style={styles.metaText}>{meta}</ThemedText>
         </View>
       )}
       {frame != null && (
@@ -660,8 +658,9 @@ function CaptionsButton({
   );
 }
 
-/** Meta pill height + its gap to the video — reserved out of the preview frame's height. */
-const META_PILL_HEIGHT = 22;
+/** Meta pill height + its gap to the video — reserved out of the preview frame's height.
+ * 28 = the recorder timer pill's 4pt padding around its 16pt text. */
+const META_PILL_HEIGHT = 28;
 const META_ROW = META_PILL_HEIGHT + Spacing.one + Spacing.one;
 
 /** Room for expo-video's native control bar (AVPlayerViewController / Media3) at the bottom. */
@@ -709,18 +708,22 @@ const styles = StyleSheet.create({
     marginTop: Spacing.one,
   },
   previewSurface: { flex: 1 },
+  // Same chrome as the recorder's preview timer pill (recorder.tsx timerPill/previewTimerPill):
+  // mode-aware scrim + hairline edge, matching the ✕ and captions buttons above it.
   metaPill: {
     height: META_PILL_HEIGHT,
     justifyContent: 'center',
     paddingHorizontal: Spacing.two,
-    borderRadius: META_PILL_HEIGHT / 2,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
     marginBottom: Spacing.one + Spacing.one,
   },
   metaText: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '500',
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
+    letterSpacing: 0.5,
   },
   // Captions are bottom-anchored; inset them above the native control bar (#210).
   captionLayer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: NATIVE_CONTROLS_INSET },
