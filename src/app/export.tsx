@@ -12,10 +12,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { GlassPill } from '@/components/glass-pill';
 import { CloseButton } from '@/features/recorder/close-button';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { ControlScrim, Spacing } from '@/constants/theme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { segmentsForDraft } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
 import { useExport } from '@/features/export/use-export';
@@ -210,6 +209,14 @@ export default function ExportScreen() {
     <ThemedView style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
         <CloseButton />
+        {state.status === 'done' && (
+          <CaptionsButton
+            status={transcription.state.status}
+            hasCaptions={captionLines.length > 0}
+            onEditCaptions={openCaptionEditor}
+            onAddCaptions={() => setModelSheetVisible(true)}
+          />
+        )}
       </View>
 
       {/* Bottom padding tracks the home indicator instead of a fixed 64pt — the difference
@@ -233,9 +240,6 @@ export default function ExportScreen() {
               uri={state.outputPath}
               lines={captionLines}
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
-              captionStatus={transcription.state.status}
-              onEditCaptions={openCaptionEditor}
-              onAddCaptions={() => setModelSheetVisible(true)}
             />
 
             {/* Compact inline row — these are secondary actions; the upload button(s) below
@@ -549,47 +553,36 @@ export default function ExportScreen() {
 
 /**
  * Plays the merged output. Mounts only once the merge is done, so `uri` is known at first
- * render and the player never needs a source swap. Plays once (no loop); tap to pause or
- * replay after it ends.
+ * render and the player never needs a source swap. Plays once (no loop); play/pause and the
+ * seek bar are expo-video's native controls (#210).
  */
 function MergedPreview({
   uri,
   lines,
   meta,
-  captionStatus,
-  onEditCaptions,
-  onAddCaptions,
 }: {
   uri: string;
   lines: TranscriptLine[];
-  /** Clip-count · duration readout, shown as a pill over the video. */
+  /** Clip-count · duration readout, a pill just above the video. */
   meta: string;
-  captionStatus: MergedTranscriptionState['status'];
-  onEditCaptions: () => void;
-  onAddCaptions: () => void;
 }) {
+  const mode = useThemeMode();
   const player = useVideoPlayer(toFileUri(uri), (p) => {
     p.timeUpdateEventInterval = 0.1;
     p.play();
   });
-  // Parked playback: on end the playhead reparks at 0 (while paused), so play always restarts
-  // cleanly — replay()'s seek-then-play races an audible blip of the clip's end otherwise.
-  const { isPlaying, togglePlay } = useParkedPlayback(player);
+  // Parked playback: on end the playhead reparks at 0 (while paused), so the native play button
+  // restarts cleanly instead of blipping the clip's end. Only the park side effect is used here.
+  useParkedPlayback(player);
   const timeUpdate = useEvent(player, 'timeUpdate');
   const positionMs = (timeUpdate?.currentTime ?? player.currentTime) * 1000;
-
-  // Working state → a spinner badge; actionable state → a tappable caption badge; `idle` (merge not
-  // done) → nothing. `error` is actionable: transcription failed, but the user can still open the
-  // editor to add captions by hand. Sits OUTSIDE the play Pressable so taps don't toggle playback.
-  const working = captionStatus === 'transcribing' || captionStatus === 'downloading';
-  const actionable =
-    captionStatus === 'ready' || captionStatus === 'no-model' || captionStatus === 'error';
 
   // Largest 9:16 rect that fits the measured frame. Yoga can't express this — a max
   // constraint on the aspect-derived axis clamps it without re-shrinking the defined one,
   // which is exactly the off-ratio card #196 flags — so measure and do the math.
   const [frame, setFrame] = useState<{ width: number; height: number } | null>(null);
-  const cardWidth = frame ? Math.min(frame.width, (frame.height * 9) / 16) : 0;
+  // The meta pill sits in flow above the card, so its row comes out of the height budget.
+  const cardWidth = frame ? Math.min(frame.width, ((frame.height - META_ROW) * 9) / 16) : 0;
   const cardHeight = (cardWidth * 16) / 9;
 
   return (
@@ -599,63 +592,88 @@ function MergedPreview({
         setFrame({ width: layout.width, height: layout.height })
       }>
       {frame != null && (
+        <View style={[styles.metaPill, ControlScrim[mode]]}>
+          <ThemedText style={styles.metaText}>{meta}</ThemedText>
+        </View>
+      )}
+      {frame != null && (
         <View style={[styles.previewCard, { width: cardWidth, height: cardHeight }]}>
-          <Pressable
-            style={styles.previewSurface}
-            onPress={togglePlay}
-            accessibilityRole="button"
-            accessibilityLabel="Toggle playback">
+          <View style={styles.previewSurface}>
+            {/* Fullscreen/PiP off: captions are an RN overlay, not burned in, so they'd be lost. */}
             <VideoView
               style={StyleSheet.absoluteFill}
               player={player}
               contentFit="contain"
-              nativeControls={false}
+              nativeControls
+              fullscreenOptions={{ enable: false }}
+              allowsPictureInPicture={false}
             />
-            <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <View style={styles.captionLayer} pointerEvents="none">
               <CaptionOverlay lines={lines} positionMs={positionMs} />
             </View>
-            {!isPlaying && (
-              <View style={styles.playOverlay} pointerEvents="none">
-                <GlassPill style={styles.playBadge}>
-                  <Icon name="play.fill" size={28} tintColor="#fff" />
-                </GlassPill>
-              </View>
-            )}
-            <View style={styles.metaRow} pointerEvents="none">
-              <GlassPill style={styles.metaPill}>
-                <ThemedText style={styles.metaText}>{meta}</ThemedText>
-              </GlassPill>
-            </View>
-          </Pressable>
-
-          {working && (
-            <GlassPill style={[styles.captionBadge, styles.captionSurface]} pointerEvents="none">
-              <ActivityIndicator size="small" color="#fff" />
-            </GlassPill>
-          )}
-          {actionable && (
-            <Pressable
-              onPress={captionStatus === 'no-model' ? onAddCaptions : onEditCaptions}
-              hitSlop={4}
-              accessibilityRole="button"
-              accessibilityLabel={
-                captionStatus === 'ready' && lines.length > 0 ? 'Edit captions' : 'Add captions'
-              }
-              style={styles.captionBadge}>
-              <GlassPill style={styles.captionSurface}>
-                <Icon name="captions.bubble" size={20} weight="semibold" tintColor="#fff" />
-              </GlassPill>
-            </Pressable>
-          )}
+          </View>
         </View>
       )}
     </View>
   );
 }
 
+/**
+ * Edit/add captions, in the header opposite the ✕ — off the video so it never sits over the
+ * native controls (#210). Working state → a spinner; actionable state → tappable; `idle` (merge
+ * not done) → nothing. `error` is actionable: transcription failed, but the user can still open
+ * the editor to add captions by hand. Same themed scrim as CloseButton on this flat screen.
+ */
+function CaptionsButton({
+  status,
+  hasCaptions,
+  onEditCaptions,
+  onAddCaptions,
+}: {
+  status: MergedTranscriptionState['status'];
+  hasCaptions: boolean;
+  onEditCaptions: () => void;
+  onAddCaptions: () => void;
+}) {
+  const mode = useThemeMode();
+  const surface = [styles.captionSurface, ControlScrim[mode]];
+  if (status === 'transcribing' || status === 'downloading') {
+    return (
+      <View style={surface} accessibilityLabel="Generating captions">
+        <ActivityIndicator size="small" color="#fff" />
+      </View>
+    );
+  }
+  if (status !== 'ready' && status !== 'no-model' && status !== 'error') return null;
+  return (
+    <Pressable
+      onPress={status === 'no-model' ? onAddCaptions : onEditCaptions}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={status === 'ready' && hasCaptions ? 'Edit captions' : 'Add captions'}>
+      <View style={surface}>
+        <Icon name="captions.bubble" size={20} weight="semibold" tintColor="#fff" />
+      </View>
+    </Pressable>
+  );
+}
+
+/** Meta pill height + its gap to the video — reserved out of the preview frame's height.
+ * 28 = the recorder timer pill's 4pt padding around its 16pt text. */
+const META_PILL_HEIGHT = 28;
+const META_ROW = META_PILL_HEIGHT + Spacing.one + Spacing.one;
+
+/** Room for expo-video's native control bar (AVPlayerViewController / Media3) at the bottom. */
+const NATIVE_CONTROLS_INSET = 64;
+
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  header: { paddingHorizontal: Spacing.three },
+  header: {
+    paddingHorizontal: Spacing.three,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   // All the column height the rows below don't claim — the preview grows when the upload
   // section is absent and adapts per screen instead of fixed 90%/66% caps (#196).
   previewFrame: {
@@ -671,25 +689,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.35)',
-  },
-  playOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Shape only — GlassPill owns the surface (Liquid Glass on iOS 26+, dark scrim fallback).
-  // Matches the recorder preview card's ▶; paddingLeft optically centers the glyph.
-  playBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingLeft: 4,
   },
   center: {
     flex: 1,
@@ -709,33 +708,31 @@ const styles = StyleSheet.create({
     marginTop: Spacing.one,
   },
   previewSurface: { flex: 1 },
-  // Clip-count · duration readout, bottom-center over the video.
-  metaRow: { position: 'absolute', left: 0, right: 0, bottom: Spacing.two, alignItems: 'center' },
+  // Same chrome as the recorder's preview timer pill (recorder.tsx timerPill/previewTimerPill):
+  // mode-aware scrim + hairline edge, matching the ✕ and captions buttons above it.
   metaPill: {
+    height: META_PILL_HEIGHT,
+    justifyContent: 'center',
     paddingHorizontal: Spacing.two,
-    paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: Spacing.one + Spacing.one,
   },
   metaText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 16,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
   },
-  // Small tappable badge in the top-right of the merged preview — edit/add captions, or a
-  // spinner while transcribing/downloading. Placement here; the glass surface (sized to a
-  // 48pt effective target with hitSlop, like the recorder preview card's badges) is split
-  // out so the Pressable variant can own the position while GlassPill owns the surface.
-  captionBadge: {
-    position: 'absolute',
-    top: Spacing.two,
-    right: Spacing.two,
-  },
+  // Captions are bottom-anchored; inset them above the native control bar (#210).
+  captionLayer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: NATIVE_CONTROLS_INSET },
+  // Matches CloseButton's 40pt circle + hairline edge so the header pair reads as a set.
   captionSurface: {
     width: 40,
     height: 40,
     borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
