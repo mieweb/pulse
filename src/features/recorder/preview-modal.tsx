@@ -2,7 +2,7 @@ import { Icon } from '@/components/icon';
 import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
@@ -13,6 +13,10 @@ import { useTheme, useThemeMode } from '@/hooks/use-theme';
 // minimum); the ✂ and 🗑 badges sit a full Spacing.five apart so their hit areas can't overlap.
 const BADGE_SIZE = 40;
 const BADGE_HIT_SLOP = 4;
+// The "Undo trim" pill is 28pt tall (the recorder timer pill's shape); 8pt slop keeps the tap
+// target at 44pt.
+const RESET_PILL_HEIGHT = 28;
+const RESET_HIT_SLOP = 8;
 
 // The ▶ badge appears only after playback has been parked this long. Clip switches and
 // auto-advance pass through short "parked" windows the status can't distinguish (the old
@@ -30,13 +34,16 @@ type Props = {
   onTogglePlay: () => void;
   onTrim: () => void;
   onDelete: () => void;
+  /** Reset the active clip to its original — passed only when that clip has been trimmed. */
+  onReset?: () => void;
 };
 
 /**
  * Full-bleed preview stage over the recorder — fills the area between the top bar and the
  * segment bar on a themed backdrop (the recorder covers the paused camera with the theme
  * background). Plays the draft through one shared player; tap toggles play, ✂ opens the RNVT
- * editor for the active clip, 🗑 deletes — both in a row below the video. Closing and the
+ * editor for the active clip, 🗑 deletes — centred in a row below the video — and ↺ (trimmed
+ * clips only, "Undo trim", pinned to that row's left edge) resets the clip to its original. Closing and the
  * position / total readout live in the recorder's top bar, so nothing floats over the video.
  * The video renders full-bleed:
  * `contentFit="contain"` letterboxes into the themed backdrop and lets the native player
@@ -51,6 +58,7 @@ export function PreviewModal({
   onTogglePlay,
   onTrim,
   onDelete,
+  onReset,
 }: Props) {
   const theme = useTheme();
   const mode = useThemeMode();
@@ -133,6 +141,21 @@ export function PreviewModal({
       </Pressable>
 
       <View style={styles.actionRow}>
+        {/* "Undo trim" pinned to the row's far left, apart from ✂/🗑 — a different kind of action
+            (undo a saved trim), and pinning it out of the flow keeps ✂/🗑 centred either way. */}
+        {onReset && (
+          <View style={styles.resetSlot} pointerEvents="box-none">
+            <Pressable
+              onPress={onReset}
+              hitSlop={RESET_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Undo Trim">
+              <View style={[styles.resetPill, ControlScrim[mode]]}>
+                <Text style={styles.resetText}>Undo Trim</Text>
+              </View>
+            </Pressable>
+          </View>
+        )}
         <Pressable
           onPress={onTrim}
           hitSlop={BADGE_HIT_SLOP}
@@ -207,4 +230,21 @@ const styles = StyleSheet.create({
     gap: Spacing.five,
     paddingVertical: Spacing.two,
   },
+  // Same row, same vertical centre as ✂/🗑; inset like the top bar's ✕ (recorder.tsx topBar).
+  resetSlot: {
+    position: 'absolute',
+    left: Spacing.three,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+  },
+  // Small text-only pill, so it reads as its own action rather than a third icon badge.
+  resetPill: {
+    height: RESET_PILL_HEIGHT,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.two,
+    borderRadius: RESET_PILL_HEIGHT / 2,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  resetText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });

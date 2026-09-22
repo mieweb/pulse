@@ -17,6 +17,7 @@ import {
   deleteDraft,
   deleteSegment,
   reorderSegments,
+  resetEdit,
   segmentsForDraft,
 } from '@/db/drafts';
 import {
@@ -584,6 +585,7 @@ export function useRecorder(initialDraftId?: string) {
     toggleMute: () => setMuted((prev) => !prev),
     cycleStabilization,
     deleteSegment: (id: string) => void deleteSegment(id),
+    resetSegment: (id: string) => void resetEdit(id),
     reorderSegments: (ids: string[]) => void reorderSegments(ids),
   };
 }
