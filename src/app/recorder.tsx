@@ -88,6 +88,7 @@ export default function RecorderScreen() {
     toggleMute,
     cycleStabilization,
     deleteSegment,
+    resetSegment,
     reorderSegments,
   } = useRecorder(draftIdParam);
 
@@ -529,6 +530,13 @@ export default function RecorderScreen() {
                 openTrim(seg);
               }}
               onDelete={() => preview.activeId && confirmDeleteSegment(preview.activeId)}
+              // Only for a trimmed clip: back to the untouched original. No confirm — the trim
+              // is one ✂ away, and undoing edits before ➡️ reuses the saved merge (#212).
+              onReset={
+                preview.active?.editedFilename
+                  ? () => preview.activeId && resetSegment(preview.activeId)
+                  : undefined
+              }
             />
           </View>
         )}

@@ -9,11 +9,8 @@ import {
   getResumableDrafts,
   getUploadArtifact,
   draftQuery,
-  listUploadResumeUrls,
-  registerUploadInvalidationHook,
   segmentsForDraft,
   setCaptionsUploadStatus,
-  setUploadMerged,
   setUploadProgress,
   type UploadArtifactKey,
   upsertUploadArtifact,
@@ -21,11 +18,12 @@ import {
 import type { Draft, Segment } from '@/db/schema';
 import { getDraftToken } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
+import { loadMergedExport } from '@/features/export/merged-export';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
 import { conformToContract } from '@/utils/contract-gate';
 import { absolutize, toFileUri, uploadCopyRelPath } from '@/utils/file-store';
-import { effFile } from '@/utils/segment-window';
+import { effFile, effMs } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 
 import { buildBeatManifest } from './beat-manifest';
@@ -134,12 +132,11 @@ type ArtifactInput = {
  * Durable state (destination, resume identity, status) lives in SQLite; this
  * holds only what SQLite doesn't: the in-flight AbortControllers, the live
  * byte-progress the UI subscribes to (never persisted per-tick), a run-lock, and
- * the enqueued sessions (which carry the merged output path). Because the queue
- * of pending work is really the set of drafts with an `uploading` status in
- * SQLite, a session is crash-safe up to its resume identity; the one thing not
- * yet persisted is the merged output path — so an upload survives navigation and
- * backgrounding today, and after-kill resume of a merged upload lands with the
- * follow-up that persists that path.
+ * the enqueued sessions. Because the queue of pending work is really the set of
+ * drafts with an `uploading` status in SQLite, a session is crash-safe: after a
+ * kill it is rebuilt from the row, the clip table, and the draft's persisted
+ * merged export (`drafts/{id}/export.mp4`). The draft is locked while its run is
+ * live (see `assertNotUploading`), so nothing it reads can change under it.
  */
 class BackgroundUploadManager {
   private readonly transport: UploadTransport = tusServerTransport;
@@ -229,9 +226,6 @@ class BackgroundUploadManager {
     // Ask for notification permission now — a foreground moment (the user just tapped Upload) — so
     // the background completion/failure banner can fire later without prompting mid-upload.
     void uploadNotify.ensurePermission();
-    // Persist the merged output so an app kill mid-upload can be resumed from launch (see
-    // `hydrateFromDb`). Everything else the run needs is already durable in the drizzle row.
-    if (session.merged) void setUploadMerged(session.draftId, session.merged);
     this.setLive(session.draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
     void setUploadProgress(session.draftId, { status: 'uploading' });
     void this.ensureRunning();
@@ -259,7 +253,6 @@ class BackgroundUploadManager {
     }
     this.failed.delete(draftId);
     this.sessions.set(draftId, session);
-    if (session.merged) void setUploadMerged(draftId, session.merged);
     this.setLive(draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
     void setUploadProgress(draftId, { status: 'uploading' });
     void this.ensureRunning();
@@ -268,9 +261,8 @@ class BackgroundUploadManager {
   /** Abort + server-cancel whatever's in flight for a draft, and drop it from the queue. */
   async cancel(draftId: string): Promise<void> {
     // A COMPLETED upload has nothing to cancel — and resetting its row would strip the
-    // 'uploaded' marker that shields the finished server artifacts from the invalidation
-    // path (Home calls cancel() right before deleteDraft()). Only bail when nothing is
-    // actually live, so the reset keeps un-wedging genuinely stuck rows.
+    // 'uploaded' marker that keeps a later clip edit from wiping its (finished) upload state.
+    // Only bail when nothing is actually live, so the reset keeps un-wedging stuck rows.
     if (!this.sessions.has(draftId) && !this.controllers.has(draftId)) {
       const status = await getDraftUploadStatus(draftId);
       if (status === 'uploaded') return;
@@ -363,8 +355,8 @@ class BackgroundUploadManager {
    * Rebuild sessions for drafts left mid-upload (status still `uploading`) that aren't already in
    * memory — the after-kill/relaunch resume path. Everything a run needs is reconstructed from
    * durable state: destination + resume URL from the drizzle row, token from secure-store, segments
-   * from the clip table, and the merged output from the columns persisted at enqueue. A merged run
-   * with no persisted output path (older row) or an expired token is skipped rather than restarted.
+   * from the clip table, and the merged output from the draft's persisted export. A run that can't
+   * be rebuilt (expired token, no valid export) is settled to failed rather than restarted.
    */
   private async hydrateFromDb(): Promise<void> {
     const rows = await getResumableDrafts();
@@ -386,8 +378,9 @@ class BackgroundUploadManager {
 
   /**
    * Rebuild an upload session from a persisted draft row (destination + token + segments + merged
-   * output), or a failure `reason` if it can't be resumed off-screen — a missing destination, an
-   * expired token, or a merged run whose native export file is gone.
+   * export), or a failure `reason` if it can't be resumed off-screen — a missing destination, an
+   * expired token, or a merged run with no persisted export of these clips (a backstop — the
+   * draft is locked while uploading, so its clips and export can't change under the run).
    */
   private async reconstructSession(
     row: Draft,
@@ -397,10 +390,9 @@ class BackgroundUploadManager {
     }
     const token = await getDraftToken(row.id);
     if (isTokenExpired(token, Date.now())) return { ok: false, reason: EXPIRED_PAIRING_MESSAGE };
-    const merged =
-      row.uploadUnit === 'merged' && row.uploadMergedPath && row.uploadMergedDurationMs != null
-        ? { path: row.uploadMergedPath, durationMs: row.uploadMergedDurationMs }
-        : null;
+    // The same clip set the export screen merges and uploads (zero-length clips can't be joined).
+    const segments = (await segmentsForDraft(row.id)).filter((s) => effMs(s) > 0);
+    const merged = row.uploadUnit === 'merged' ? await loadMergedExport(row.id, segments) : null;
     if (row.uploadUnit === 'merged' && !merged) {
       return {
         ok: false,
@@ -408,7 +400,6 @@ class BackgroundUploadManager {
           'The merged video is no longer available — reopen the draft to re-export, then upload.',
       };
     }
-    const segments = await segmentsForDraft(row.id);
     // Re-link the single-use pool destination (that id isn't persisted on the session) so a resumed
     // run still removes it on success — otherwise a spent destination lingers in the pool and gets
     // reused against an already-consumed server-minted artifactId (409).
@@ -451,10 +442,9 @@ class BackgroundUploadManager {
         destination.uploadUnit === 'merged'
           ? await this.uploadMerged(session, controller.signal)
           : await this.uploadSegments(session, controller.signal);
-      // Displaced-run guard BEFORE any terminal write: if a mutation invalidation swapped this
-      // session out while the final transfer was resolving, resurrecting 'uploaded'/'done' here
-      // would stamp completion onto a draft whose content just changed — the invalidation owns
-      // all state from the moment it removed this run from the map.
+      // Displaced-run guard BEFORE any terminal write: if a cancel removed this session while the
+      // final transfer was resolving, resurrecting 'uploaded'/'done' here would overrule it —
+      // cancel owns all state from the moment it removed this run from the map.
       if (this.sessions.get(draftId) !== session) return;
       // Persist completion here (not inside the per-unit methods) so BOTH branches settle the row
       // to 'uploaded'. Without this, a finished SEGMENT upload stayed 'uploading' and the resume
@@ -477,12 +467,11 @@ class BackgroundUploadManager {
         this.failed.delete(draftId);
       }
     } catch (err) {
-      // Every branch below is identity-guarded: an invalidation/cancel may have cleared the
-      // maps AND a fresh session for the same draft may have been enqueued inside the abort
-      // window — a displaced run must neither tear down the fresh run's entries nor write
-      // its own terminal state over it.
+      // Every branch below is identity-guarded: a cancel may have cleared the maps AND a fresh
+      // session for the same draft may have been enqueued inside the abort window — a displaced
+      // run must neither tear down the fresh run's entries nor write its own terminal state over it.
       if (err instanceof Error && err.name === 'AbortError') {
-        // Cancelled via cancel()/invalidation — that path owns resetting status/live to idle;
+        // Cancelled via cancel() — that path owns resetting status/live to idle;
         // don't race it by overwriting with an error state or keeping the session as "failed".
         if (this.sessions.get(draftId) === session) {
           this.sessions.delete(draftId);
@@ -507,33 +496,6 @@ class BackgroundUploadManager {
         this.currentUpload.delete(draftId);
       }
     }
-  }
-
-  /**
-   * A structural draft mutation is about to wipe this draft's upload resume state (see
-   * `registerUploadInvalidationHook`): abort anything in flight so a stale-snapshot session
-   * can't finish and write 'uploaded' onto the changed draft, and server-cancel every
-   * persisted TUS reservation so a fresh session's re-creates under the same artifactIds
-   * can't 409. The cancels are fire-and-forget — a UI edit must not block on the network;
-   * a missed DELETE surfaces as a visible retry failure (the documented un-wedge gap).
-   */
-  async invalidateForMutation(draftId: string): Promise<void> {
-    // Capture the in-flight resource BEFORE clearing the map — its URL may not have reached
-    // SQLite yet (the persistence callbacks are async), and it must still be cancelled.
-    const current = this.currentUpload.get(draftId)?.resourceUrl ?? null;
-    this.controllers.get(draftId)?.abort();
-    const session = this.sessions.get(draftId);
-    this.sessions.delete(draftId);
-    this.failed.delete(draftId);
-    this.controllers.delete(draftId);
-    this.currentUpload.delete(draftId);
-    this.setLive(draftId, { status: 'idle' });
-    // Capture the URLs before the caller wipes the rows.
-    const urls = new Set(await listUploadResumeUrls(draftId));
-    if (current) urls.add(current);
-    if (urls.size === 0) return;
-    const token = session?.destination.token ?? (await getDraftToken(draftId));
-    void Promise.allSettled([...urls].map((u) => this.transport.cancel(u, token)));
   }
 
   private async uploadOne(
@@ -629,12 +591,6 @@ class BackgroundUploadManager {
     return ok && out.exists ? out : null;
   }
 
-  /** True while `session` still owns its draft's slot — persistence callbacks are gated on
-   * this so a run displaced by mutation invalidation can't write stale resume URLs back. */
-  private owns(draftId: string, session: UploadSession): boolean {
-    return this.sessions.get(draftId) === session;
-  }
-
   private async uploadMerged(session: UploadSession, signal: AbortSignal): Promise<string> {
     const { draftId, destination, segments, merged } = session;
     if (!merged) throw new Error('Export is not ready yet');
@@ -643,9 +599,9 @@ class BackgroundUploadManager {
     const file = new File(toFileUri(merged.path));
     // The draft's title rides the video — the merged unit's session anchor.
     const draftName = await getDraftName(draftId);
-    // The merged output is a native cache file; if it was evicted (rare, but possible after a long
-    // gap or an app kill) there's nothing to upload — surface a clear, actionable reason rather
-    // than crashing in `bytes()`. Re-opening the draft re-exports and re-enqueues with a fresh path.
+    // Backstop: the persisted export lives in the draft dir (safe from cache sweeps) and the draft
+    // is locked while uploading, so a missing file means something outside the app removed it —
+    // surface an actionable reason rather than crashing in `bytes()`.
     if (!file.exists) {
       throw new Error(
         'The merged video is no longer available — reopen the draft to re-export, then upload.',
@@ -730,17 +686,11 @@ class BackgroundUploadManager {
       // Persist the video's resource URL the moment it's created (the merged anchor lives on the
       // draft row) so an app kill DURING the video transfer resumes via HEAD+PATCH rather than
       // re-creating the upload — which the server rejects as a duplicate reserve (409).
-      // Ownership-gated: a displaced run must not resurrect resume state the invalidation wiped.
-      (url) => {
-        if (this.owns(draftId, session))
-          void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url });
-      },
+      (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
     );
     // Re-persist after the video lands (same URL); the final 'uploaded' status write lives in
     // `runSession` (shared by both units), not here — see the comment there.
-    if (this.owns(draftId, session)) {
-      await setUploadProgress(draftId, { status: 'uploading', resourceUrl: result.resourceUrl });
-    }
+    await setUploadProgress(draftId, { status: 'uploading', resourceUrl: result.resourceUrl });
     return result.resourceUrl;
   }
 
@@ -799,12 +749,8 @@ class BackgroundUploadManager {
       signal,
       undefined,
       // The segment anchor is the ordering manifest; persist its URL on the draft row at creation
-      // so a kill mid-manifest resumes via HEAD instead of a 409-ing re-create. Ownership-gated
-      // (see uploadMerged).
-      (url) => {
-        if (this.owns(draftId, session))
-          void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url });
-      },
+      // so a kill mid-manifest resumes via HEAD instead of a 409-ing re-create (see uploadMerged).
+      (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
     );
 
     for (const [index, segment] of segments.entries()) {
@@ -825,17 +771,13 @@ class BackgroundUploadManager {
       // is what makes this crash-safe: a kill before the sibling exists just re-runs the
       // conform, so "sibling on disk" always implies "stale resource already invalidated".
       const uploadRel = await this.ensureContractFile(segment, async () => {
-        // Ownership-gated like every persistence callback: a run displaced while the conform
-        // was awaiting must not cancel the replacement run's reservation or clear rows the
-        // invalidation already re-seeded.
-        if (!this.owns(draftId, session) || !existingVideo?.resourceUrl) return;
+        if (!existingVideo?.resourceUrl) return;
         // Cancel failures PROPAGATE (unlike the user-cancel path): the sibling doesn't exist
         // yet, so failing the session here just re-conforms and retries the cancel next run —
         // whereas continuing past an unconfirmed DELETE would 409 the replacement create
         // against the still-live reservation. "Already gone" (404/410) counts as success
         // inside cancelTusUpload.
         await this.transport.cancel(existingVideo.resourceUrl, destination.token);
-        if (!this.owns(draftId, session)) return;
         await upsertUploadArtifact(draftId, videoKey, {
           artifactId: videoArtifactId,
           resourceUrl: null,
@@ -859,21 +801,17 @@ class BackgroundUploadManager {
         signal,
         undefined,
         // Persist each clip's resource URL at creation so a kill mid-clip resumes via HEAD (409 on
-        // a re-create otherwise). Ownership-gated (see uploadMerged).
-        (url) => {
-          if (this.owns(draftId, session))
-            void upsertUploadArtifact(draftId, videoKey, {
-              artifactId: videoArtifactId,
-              resourceUrl: url,
-            });
-        },
+        // a re-create otherwise).
+        (url) =>
+          void upsertUploadArtifact(draftId, videoKey, {
+            artifactId: videoArtifactId,
+            resourceUrl: url,
+          }),
       );
-      if (this.owns(draftId, session)) {
-        await upsertUploadArtifact(draftId, videoKey, {
-          artifactId: videoArtifactId,
-          resourceUrl: videoResult.resourceUrl,
-        });
-      }
+      await upsertUploadArtifact(draftId, videoKey, {
+        artifactId: videoArtifactId,
+        resourceUrl: videoResult.resourceUrl,
+      });
 
       reportClip(Math.min(index + 2, total), index + 1);
     }
@@ -907,7 +845,3 @@ class BackgroundUploadManager {
 
 /** The app-wide singleton. Imported by `upload-deep-link-provider` so it registers for the app's lifetime. */
 export const uploads = new BackgroundUploadManager();
-
-// Structural draft mutations (delete/edit/reset/reorder in db/drafts) invalidate upload resume
-// state through this hook — registered here so the db layer never imports the upload feature.
-registerUploadInvalidationHook((draftId) => uploads.invalidateForMutation(draftId));

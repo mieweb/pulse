@@ -96,9 +96,7 @@ export async function createDraft(): Promise<string> {
 }
 
 export async function addSegment(draftId: string, segment: NewSegment): Promise<void> {
-  // Adding a clip is a structural mutation like any other: a queued/running session snapshotted
-  // the old clip set (and manifest), so it must not finish and mark the grown draft uploaded.
-  await invalidateUploadResumeState(draftId);
+  await beginClipMutation(draftId);
   // Everything is read-then-write, so it all runs inside one transaction: the badge number
   // comes from the draft's monotonic `lastClipNumber` counter (bump + read back atomically;
   // never decremented, so deletes/renames can't cause reuse), and `order` is the next free
@@ -129,19 +127,6 @@ export async function addSegment(draftId: string, segment: NewSegment): Promise<
   });
 }
 
-/**
- * Runtime hook the upload manager registers at startup (inverted dependency — this layer
- * stays import-clean): invoked BEFORE a structural mutation wipes the SQLite resume state, so
- * the manager can abort an in-flight session (a stale-snapshot run must not finish and write
- * 'uploaded' onto the changed draft) and server-cancel persisted TUS reservations (a later
- * retry re-creates under the same artifactIds — live reservations would 409).
- */
-type UploadInvalidationHook = (draftId: string) => Promise<void>;
-let uploadInvalidationHook: UploadInvalidationHook | null = null;
-export function registerUploadInvalidationHook(hook: UploadInvalidationHook): void {
-  uploadInvalidationHook = hook;
-}
-
 /** The draft's persisted upload status (null when unset / draft missing). */
 export async function getDraftUploadStatus(draftId: string): Promise<Draft['uploadStatus']> {
   const [row] = await db
@@ -151,38 +136,40 @@ export async function getDraftUploadStatus(draftId: string): Promise<Draft['uplo
   return row?.status ?? null;
 }
 
-/** Every persisted TUS resource URL for a draft (session anchor + sub-artifacts) — the set a
- * mutation invalidation must server-cancel before the rows are wiped. A COMPLETED upload's
- * resources are finished server artifacts (feed content), not resumable TUS state — a local
- * edit or draft deletion must never destroy them, so 'uploaded' drafts return nothing. */
-export async function listUploadResumeUrls(draftId: string): Promise<string[]> {
-  const [row] = await db
-    .select({ url: drafts.uploadResourceUrl, status: drafts.uploadStatus })
-    .from(drafts)
-    .where(eq(drafts.id, draftId));
-  if (row?.status === 'uploaded') return [];
-  const arts = await db
-    .select({ url: uploadArtifacts.resourceUrl })
-    .from(uploadArtifacts)
-    .where(eq(uploadArtifacts.draftId, draftId));
-  return [row?.url, ...arts.map((a) => a.url)].filter((u): u is string => !!u);
+/**
+ * A draft is LOCKED while it uploads: it goes up exactly as it was when Upload was tapped, and
+ * cancelling is the only way back to editing. The UI never offers an edit on an uploading draft,
+ * so this throwing is a backstop, not a user-reachable path.
+ */
+export async function assertNotUploading(draftId: string): Promise<void> {
+  if ((await getDraftUploadStatus(draftId)) === 'uploading') {
+    throw new Error(`Draft ${draftId} is uploading — cancel the upload to edit it`);
+  }
 }
 
 /**
- * A structural mutation (delete / destructive edit / edit reset / reorder) invalidates any
- * partial upload of this draft — same principle as the merged-transcript invalidation: the
- * bytes or ordering a resumed session would PATCH/reference no longer exist. The hook aborts
- * anything in flight and cancels server reservations first (while the URLs are still
- * readable), then the resume state is wiped so the next upload starts a fresh session (the
- * destination pairing itself survives). A COMPLETED upload's `uploaded` status is left
- * alone — it describes the artifact that was sent, not the draft's current state.
+ * Entry point of every clip mutation (add/delete/trim/reset/reorder): refuse while uploading.
+ * The persisted merged export is deliberately left alone — the export screen compares its
+ * signature with the clips on arrival, so edits that are undone (reorder back, reset a trim,
+ * delete an added clip) reuse it, and anything still changed merges again.
  */
-async function invalidateUploadResumeState(draftId: string): Promise<void> {
-  if (uploadInvalidationHook) await uploadInvalidationHook(draftId);
+async function beginClipMutation(draftId: string): Promise<void> {
+  await assertNotUploading(draftId);
+  await resetFailedUploadState(draftId);
+}
+
+/**
+ * A clip mutation invalidates a FAILED upload's resume state — the bytes or ordering a retry
+ * would PATCH/reference no longer exist — so the next upload starts a fresh session (the
+ * destination pairing itself survives). A COMPLETED upload's `uploaded` status is left alone:
+ * it describes the artifact that was sent, not the draft's current state. (An uploading draft
+ * never gets here — `assertNotUploading` runs first.)
+ */
+async function resetFailedUploadState(draftId: string): Promise<void> {
   await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
   await db
     .update(drafts)
-    .set({ uploadResourceUrl: null, uploadStatus: null, uploadMergedPath: null, uploadMergedDurationMs: null })
+    .set({ uploadResourceUrl: null, uploadStatus: null })
     .where(
       and(
         eq(drafts.id, draftId),
@@ -191,15 +178,37 @@ async function invalidateUploadResumeState(draftId: string): Promise<void> {
     );
 }
 
+/** The draft's persisted-export record (see `drafts.mergedSignature`), or null if no row. */
+export async function getMergedExport(
+  draftId: string,
+): Promise<{ signature: string | null; durationMs: number | null } | null> {
+  const [row] = await db
+    .select({ signature: drafts.mergedSignature, durationMs: drafts.mergedDurationMs })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+  return row ?? null;
+}
+
+/** Record (or clear, with `null`) the content key of the draft's persisted export. */
+export async function setMergedExport(
+  draftId: string,
+  merged: { signature: string; durationMs: number } | null,
+): Promise<void> {
+  await db
+    .update(drafts)
+    .set({
+      mergedSignature: merged?.signature ?? null,
+      mergedDurationMs: merged?.durationMs ?? null,
+    })
+    .where(eq(drafts.id, draftId));
+}
+
 /** Delete a segment and its clip file, unless a sibling segment still references the file. */
 export async function deleteSegment(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
 
-  // Invalidate BEFORE the first structural/file mutation (like addSegment): a running upload
-  // finishing mid-delete would otherwise mark the shrunken draft 'uploaded' — a status the
-  // invalidation then deliberately preserves.
-  await invalidateUploadResumeState(seg.draftId);
+  await beginClipMutation(seg.draftId);
   await db.delete(segments).where(eq(segments.id, segmentId));
 
   const [{ value: stillReferenced }] = await db
@@ -228,8 +237,7 @@ export async function setEdited(
 ): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
-  // Invalidate before the first mutation — see deleteSegment.
-  await invalidateUploadResumeState(seg.draftId);
+  await beginClipMutation(seg.draftId);
   // Cover the edited file's first frame at its revision-paired thumb path (the pristine thumb
   // stays on disk untouched, ready for a reset).
   const thumbRel = editedThumbRelPath(editedFilename);
@@ -252,8 +260,7 @@ export async function setEdited(
 export async function resetEdit(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
-  // Invalidate before the first mutation — see deleteSegment.
-  await invalidateUploadResumeState(seg.draftId);
+  await beginClipMutation(seg.draftId);
   // Revert the cover to the pristine original's thumbnail.
   const thumbRel = thumbRelPath(seg.draftId, segmentId);
   const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(thumbRel));
@@ -275,10 +282,8 @@ export async function resetEdit(segmentId: string): Promise<void> {
 /** Persist a new clip ordering (ids in target order) for a single draft. */
 export async function reorderSegments(orderedIds: string[]): Promise<void> {
   if (orderedIds.length === 0) return;
-  // Ordering is part of what a partial segmented upload already sent (the ordering manifest) —
-  // invalidate before renumbering, like every other structural mutation.
   const [target] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
-  if (target) await invalidateUploadResumeState(target.draftId);
+  if (target) await beginClipMutation(target.draftId);
   await db.transaction(async (tx) => {
     // Two passes: SQLite checks UNIQUE per statement, so renumbering in place would collide
     // with rows still holding their old slot. Park all rows on distinct negatives first,
@@ -303,15 +308,15 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
 }
 
 export async function renameDraft(draftId: string, name: string | null): Promise<void> {
+  // Locked too — the name rides the upload as the video's title. The video itself doesn't
+  // change, so the persisted export stays valid.
+  await assertNotUploading(draftId);
   await db.update(drafts).set({ name, lastModified: now }).where(eq(drafts.id, draftId));
 }
 
-/** Delete a draft (segments cascade) and remove its on-disk clip directory. */
+/** Delete a draft (segments cascade) and remove its on-disk directory (clips + export). */
 export async function deleteDraft(draftId: string): Promise<void> {
-  // Full upload invalidation FIRST, while the resource URLs are still readable: aborts an
-  // in-flight session and server-cancels every persisted TUS reservation — the row cascade
-  // below would only drop the local rows, stranding live reservations server-side.
-  await invalidateUploadResumeState(draftId);
+  await assertNotUploading(draftId);
   await db.delete(drafts).where(eq(drafts.id, draftId));
   deleteDraftDir(draftId);
   await deleteDraftToken(draftId);
@@ -359,24 +364,6 @@ export async function setUploadProgress(
     .set({
       uploadStatus: progress.status,
       ...(progress.resourceUrl !== undefined ? { uploadResourceUrl: progress.resourceUrl } : {}),
-      lastModified: now,
-    })
-    .where(eq(drafts.id, draftId));
-}
-
-/**
- * Persist the merged export output (path + duration) the background upload manager uploads, so an
- * upload interrupted by an app kill can be re-driven from launch without the export screen.
- */
-export async function setUploadMerged(
-  draftId: string,
-  merged: { path: string; durationMs: number },
-): Promise<void> {
-  await db
-    .update(drafts)
-    .set({
-      uploadMergedPath: merged.path,
-      uploadMergedDurationMs: merged.durationMs,
       lastModified: now,
     })
     .where(eq(drafts.id, draftId));

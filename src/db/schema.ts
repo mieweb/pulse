@@ -34,12 +34,13 @@ export const drafts = sqliteTable('drafts', {
   captionsUploadStatus: text('captions_upload_status', {
     enum: ['idle', 'uploading', 'uploaded', 'failed'],
   }).$type<UploadStatus>(),
-  // The merged export output the background upload manager uploads. Persisted at enqueue so an
-  // upload interrupted by an app kill can be re-driven from launch without the export screen —
-  // the one piece of a merged run not otherwise recoverable from the DB (the path is a native
-  // merge output, the duration feeds the beat manifest). Null for segment-unit drafts.
-  uploadMergedPath: text('upload_merged_path'),
-  uploadMergedDurationMs: integer('upload_merged_duration_ms'),
+  // The persisted merged export at `drafts/{id}/export.mp4` (see `exportRelPath`): the
+  // `mergedSignature` of the clip set it was merged from, and its true duration (feeds the beat
+  // manifest). Written only after the file is in place. Clip edits leave it alone: the export
+  // screen reuses it only while the signature matches the current clips (so undoing edits gets
+  // it back), and a mismatch or missing file means "merge again". Null = no export.
+  mergedSignature: text('merged_signature'),
+  mergedDurationMs: integer('merged_duration_ms'),
   // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
   // every clip added, never decremented — so deleting (or renaming) a clip can never cause
   // its number to be reused.

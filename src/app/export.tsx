@@ -6,7 +6,15 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  BackHandler,
+  Modal,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { shareAsync } from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -35,6 +43,7 @@ import { useUpload } from '@/features/upload/use-upload';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration } from '@/utils/format';
+import { closeToHome } from '@/utils/navigation';
 import { effMs } from '@/utils/segment-window';
 
 /** Sum of each clip's effective duration — the segmented-mode summary line has no merged output to read a duration from. */
@@ -71,7 +80,7 @@ export default function ExportScreen() {
   // Always auto-merge, whatever the upload unit. Share/Save/Preview want the merged file in
   // every mode anyway, and a pairing can arrive (or switch to "merged") at any moment — merging
   // eagerly means a merged-mode upload never has to stop and ask the user to export first.
-  const { state, run } = useExport(clips);
+  const { state, run } = useExport(draftId ?? '', clips);
   // `uploadMerged` reads `mergedRef.current` at upload time, not via a reactive prop — update it
   // whenever the merge's own state changes instead of threading `merged` through as a value.
   useEffect(() => {
@@ -115,6 +124,24 @@ export default function ExportScreen() {
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
   const uState = upload.state;
+  // Tapping Upload LOCKS the draft (see `assertNotUploading`) until the run settles or is
+  // cancelled: no caption edits here, and leaving skips the recorder underneath — an editable
+  // timeline under a locked draft — for Home.
+  const uploading = uState.status === 'uploading';
+  const close = useCallback(() => {
+    if (!uploading) closeToHome();
+    else if (router.canDismiss()) router.dismissAll();
+    else router.replace('/');
+  }, [uploading]);
+  // Android's back button would otherwise pop straight to the recorder.
+  useEffect(() => {
+    if (!uploading) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      close();
+      return true;
+    });
+    return () => sub.remove();
+  }, [uploading, close]);
 
   const watchUrl =
     upload.destination?.uploadUnit === 'merged'
@@ -208,8 +235,8 @@ export default function ExportScreen() {
   return (
     <ThemedView style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-        <CloseButton />
-        {state.status === 'done' && (
+        <CloseButton onPress={close} />
+        {state.status === 'done' && !uploading && (
           <CaptionsButton
             status={transcription.state.status}
             hasCaptions={captionLines.length > 0}
