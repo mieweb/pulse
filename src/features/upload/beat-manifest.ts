@@ -1,36 +1,36 @@
 import type { Segment } from '@/db/schema';
 import { effMs, segmentOffsets } from '@/utils/segment-window';
 
-/** One recorded segment's precise placement on the merged timeline (for future HLS deep-links). */
+/** One recorded segment's precise placement on the video's timeline (for future HLS deep-links). */
 export type Beat = {
   /** The local segment id this timecode range corresponds to. */
   segmentId: string;
-  /** 0-based position of the segment in the merged video. */
+  /** 0-based position of the segment in the video. */
   order: number;
-  /** Start of the segment on the merged timeline (ms). */
+  /** Start of the segment on the video's timeline (ms). */
   startMs: number;
-  /** End of the segment on the merged timeline (ms). Equals the next beat's `startMs`. */
+  /** End of the segment on the video's timeline (ms). Equals the next beat's `startMs`. */
   endMs: number;
 };
 
 export type BeatManifest = {
   version: 1;
   type: 'beat-manifest';
-  /** True duration of the merged mp4 (ms). */
+  /** True duration of the video (ms). */
   durationMs: number;
   beats: Beat[];
 };
 
 /**
- * Build the beat manifest for a merged upload: precise per-segment start/end timecodes on the
- * merged timeline, reconciled to the REAL merged duration.
+ * Build the video's beat manifest: precise per-segment start/end timecodes on the video's
+ * timeline, reconciled to the video's REAL duration.
  *
  * `segmentOffsets` sums each clip's `effMs` (the DB-recorded, decoder-derived per-clip durations),
  * which can drift a few ms from the actual concatenated file after container/re-encode framing.
  * We scale the cumulative boundaries by `trueDurationMs / Σ effMs` so they distribute that drift
  * proportionally and land on the true timeline — the head is pinned to 0 and the tail exactly to
  * `trueDurationMs`, so the beats stay contiguous (`beats[i].endMs === beats[i+1].startMs`) and sum
- * exactly to the merged duration. A single-clip draft skips the merge, so `k = 1`.
+ * exactly to the video's duration. A single-clip draft skips the merge, so `k = 1`.
  */
 export function buildBeatManifest(clips: Segment[], trueDurationMs: number): BeatManifest {
   const offsets = segmentOffsets(clips); // prefix sums of effMs

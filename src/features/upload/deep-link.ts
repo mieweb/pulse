@@ -15,12 +15,6 @@ export type UploadDeepLink = {
    */
   server: string;
   token: string | null;
-  /**
-   * Per-session override of the deployment-wide value from `GET
-   * /capabilities` (PROTOCOL.md §3, §8). `null` means the link didn't carry
-   * one — fall back to `/capabilities` exactly as before this field existed.
-   */
-  uploadUnit: 'segment' | 'merged' | null;
 };
 
 export type DeepLinkResult =
@@ -89,12 +83,6 @@ export function parseUploadDeepLink(url: string): DeepLinkResult {
   // mounted pulsevault at, breaking every subsequent request.
   const server = rawServer.replace(/\/$/, '');
 
-  // Optional — absent on a link from an operator/server predating this field. Present but not
-  // one of the two known values means a corrupt/forged link, same treatment as a bad artifactId.
-  const rawUploadUnit = param('uploadUnit');
-  if (rawUploadUnit !== null && rawUploadUnit !== 'segment' && rawUploadUnit !== 'merged') {
-    return { ok: false, reason: 'invalid-link' };
-  }
-
-  return { ok: true, link: { artifactId, server, token: param('token'), uploadUnit: rawUploadUnit } };
+  // Any other param (e.g. `uploadUnit` from an older server) is ignored, not rejected (PROTOCOL §3).
+  return { ok: true, link: { artifactId, server, token: param('token') } };
 }

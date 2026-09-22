@@ -15,15 +15,14 @@ import {
   type UploadArtifactKey,
   upsertUploadArtifact,
 } from '@/db/drafts';
-import type { Draft, Segment } from '@/db/schema';
+import type { Draft } from '@/db/schema';
 import { getDraftToken } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
 import { loadMergedExport } from '@/features/export/merged-export';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
-import { conformToContract } from '@/utils/contract-gate';
-import { absolutize, toFileUri, uploadCopyRelPath } from '@/utils/file-store';
-import { effFile, effMs } from '@/utils/segment-window';
+import { absolutize, toFileUri } from '@/utils/file-store';
+import { effMs } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 
 import { buildBeatManifest } from './beat-manifest';
@@ -55,12 +54,6 @@ class ExpiredPairingError extends Error {
 
 /** Stable idle reference so `useSyncExternalStore`'s `getSnapshot` returns `===` for untouched drafts. */
 const IDLE: LiveUploadState = { status: 'idle' };
-
-/** Segmented-mode ordering manifest — the clip artifactIds in play order. */
-type SegmentManifest = {
-  version: 1;
-  segments: { artifactId: string; order: number }[];
-};
 
 type RetryableError = Error & { retryable: boolean };
 type ErrorDescription = { reason: string; retryable: boolean };
@@ -111,7 +104,7 @@ function writeTempTextFile(name: string, contents: string): File {
   return file;
 }
 
-/** A session anchor (video/manifest) or a related sub-artifact — the input to `uploadOne`. */
+/** The session anchor (the video) or a related sub-artifact — the input to `uploadOne`. */
 type ArtifactInput = {
   artifactId: string;
   filename: string;
@@ -196,10 +189,6 @@ class BackgroundUploadManager {
         return `Thumbnail upload failed: ${reason}`;
       case 'video':
         return `Video upload failed: ${reason}`;
-      case 'clip':
-        return live.current != null && live.total != null
-          ? `Clip ${live.current} of ${live.total} failed: ${reason}`
-          : `Clip upload failed: ${reason}`;
       default:
         return reason;
     }
@@ -355,7 +344,7 @@ class BackgroundUploadManager {
    * Rebuild sessions for drafts left mid-upload (status still `uploading`) that aren't already in
    * memory — the after-kill/relaunch resume path. Everything a run needs is reconstructed from
    * durable state: destination + resume URL from the drizzle row, token from secure-store, segments
-   * from the clip table, and the merged output from the draft's persisted export. A run that can't
+   * from the clip table, and the video from the draft's persisted export. A run that can't
    * be rebuilt (expired token, no valid export) is settled to failed rather than restarted.
    */
   private async hydrateFromDb(): Promise<void> {
@@ -377,27 +366,26 @@ class BackgroundUploadManager {
   }
 
   /**
-   * Rebuild an upload session from a persisted draft row (destination + token + segments + merged
-   * export), or a failure `reason` if it can't be resumed off-screen — a missing destination, an
-   * expired token, or a merged run with no persisted export of these clips (a backstop — the
-   * draft is locked while uploading, so its clips and export can't change under the run).
+   * Rebuild an upload session from a persisted draft row (destination + token + segments + export),
+   * or a failure `reason` if it can't be resumed off-screen — a missing destination, an expired
+   * token, or no persisted export of these clips (a backstop — the draft is locked while
+   * uploading, so its clips and export can't change under the run).
    */
   private async reconstructSession(
     row: Draft,
   ): Promise<{ ok: true; session: UploadSession } | { ok: false; reason: string }> {
-    if (!row.uploadServer || !row.uploadArtifactId || !row.uploadUnit) {
+    if (!row.uploadServer || !row.uploadArtifactId) {
       return { ok: false, reason: 'Upload destination is missing — re-pair to upload.' };
     }
     const token = await getDraftToken(row.id);
     if (isTokenExpired(token, Date.now())) return { ok: false, reason: EXPIRED_PAIRING_MESSAGE };
     // The same clip set the export screen merges and uploads (zero-length clips can't be joined).
     const segments = (await segmentsForDraft(row.id)).filter((s) => effMs(s) > 0);
-    const merged = row.uploadUnit === 'merged' ? await loadMergedExport(row.id, segments) : null;
-    if (row.uploadUnit === 'merged' && !merged) {
+    const merged = await loadMergedExport(row.id, segments);
+    if (!merged) {
       return {
         ok: false,
-        reason:
-          'The merged video is no longer available — reopen the draft to re-export, then upload.',
+        reason: 'The video is no longer available — reopen the draft to re-export, then upload.',
       };
     }
     // Re-link the single-use pool destination (that id isn't persisted on the session) so a resumed
@@ -412,7 +400,6 @@ class BackgroundUploadManager {
           server: row.uploadServer,
           token,
           artifactId: row.uploadArtifactId,
-          uploadUnit: row.uploadUnit,
           resourceUrl: row.uploadResourceUrl,
         },
         segments,
@@ -432,23 +419,17 @@ class BackgroundUploadManager {
   // ---- per-session orchestration (moved verbatim in behaviour from the old useUpload hook) ----
 
   private async runSession(session: UploadSession): Promise<void> {
-    const { draftId, destination } = session;
+    const { draftId } = session;
     const controller = new AbortController();
     this.controllers.set(draftId, controller);
     this.setLive(draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
     await setUploadProgress(draftId, { status: 'uploading' });
     try {
-      const resourceUrl =
-        destination.uploadUnit === 'merged'
-          ? await this.uploadMerged(session, controller.signal)
-          : await this.uploadSegments(session, controller.signal);
+      const resourceUrl = await this.uploadPulse(session, controller.signal);
       // Displaced-run guard BEFORE any terminal write: if a cancel removed this session while the
       // final transfer was resolving, resurrecting 'uploaded'/'done' here would overrule it —
       // cancel owns all state from the moment it removed this run from the map.
       if (this.sessions.get(draftId) !== session) return;
-      // Persist completion here (not inside the per-unit methods) so BOTH branches settle the row
-      // to 'uploaded'. Without this, a finished SEGMENT upload stayed 'uploading' and the resume
-      // path re-drove it on every launch (and the home card showed a perpetual ring).
       await setUploadProgress(draftId, { status: 'uploaded', resourceUrl });
       this.setLive(draftId, { status: 'done', resourceUrl });
       // `done` is a one-shot signal for the export screen's watch prompt; if no screen is around
@@ -573,7 +554,7 @@ class BackgroundUploadManager {
     await upsertUploadArtifact(draftId, localKey, { artifactId, resourceUrl: result.resourceUrl });
   }
 
-  /** The draft's cover for a merged upload: the first clip's persisted jpeg, or a frame from the merge. */
+  /** The draft's cover: the first clip's persisted jpeg, or a frame from the video. */
   private async resolveThumbnailFile(
     session: UploadSession,
     mergedPath: string,
@@ -591,20 +572,24 @@ class BackgroundUploadManager {
     return ok && out.exists ? out : null;
   }
 
-  private async uploadMerged(session: UploadSession, signal: AbortSignal): Promise<string> {
+  /**
+   * Upload a pulse: its captions, beat manifest and thumbnail (each `relatedTo` the video), then
+   * the video itself — the session anchor, named by the pairing link's `artifactId`.
+   */
+  private async uploadPulse(session: UploadSession, signal: AbortSignal): Promise<string> {
     const { draftId, destination, segments, merged } = session;
     if (!merged) throw new Error('Export is not ready yet');
     // merged.path is a bare filesystem path on Android (RNVT) — normalize to a file:// URI or the
     // File API rejects it outright ("URI is not absolute").
     const file = new File(toFileUri(merged.path));
-    // The draft's title rides the video — the merged unit's session anchor.
+    // The draft's title rides the video — the session anchor.
     const draftName = await getDraftName(draftId);
     // Backstop: the persisted export lives in the draft dir (safe from cache sweeps) and the draft
     // is locked while uploading, so a missing file means something outside the app removed it —
     // surface an actionable reason rather than crashing in `bytes()`.
     if (!file.exists) {
       throw new Error(
-        'The merged video is no longer available — reopen the draft to re-export, then upload.',
+        'The video is no longer available — reopen the draft to re-export, then upload.',
       );
     }
     const checksum = await md5Checksum(file);
@@ -616,7 +601,7 @@ class BackgroundUploadManager {
     // background transfer, instead of stalling at "100%" with captions/manifest/thumbnail
     // (all a few KB each) still queued behind a suspended JS thread.
 
-    // Captions: the draft's single MERGED transcript (hand-edit if present, else auto).
+    // Captions: the draft's transcript of the video (hand-edit if present, else auto).
     const row = await getDraftTranscriptRow(draftId);
     const lines = parseTranscriptLines(row?.editedLines ?? row?.lines);
     if (lines.length > 0) {
@@ -633,7 +618,7 @@ class BackgroundUploadManager {
       await setCaptionsUploadStatus(draftId, 'uploaded');
     }
 
-    // Beat manifest: per-segment timecodes on the merged timeline (groundwork for HLS).
+    // Beat manifest: each recorded clip's start/end on the video's timeline (groundwork for HLS).
     this.setLive(draftId, { status: 'uploading', phase: 'manifest', progress: 0 });
     const manifestFile = writeTempTextFile(
       `${draftId}-beats.pulse`,
@@ -668,7 +653,13 @@ class BackgroundUploadManager {
     const result = await this.uploadOne(
       draftId,
       destination,
-      { artifactId: destination.artifactId, filename: `${draftId}.mp4`, kind: 'video', name: draftName, file },
+      {
+        artifactId: destination.artifactId,
+        filename: `${draftId}.mp4`,
+        kind: 'video',
+        name: draftName,
+        file,
+      },
       destination.resourceUrl,
       checksum,
       signal,
@@ -683,163 +674,15 @@ class BackgroundUploadManager {
           progress: totalBytes ? bytesSent / totalBytes : 0,
         });
       },
-      // Persist the video's resource URL the moment it's created (the merged anchor lives on the
-      // draft row) so an app kill DURING the video transfer resumes via HEAD+PATCH rather than
+      // Persist the video's resource URL the moment it's created (the anchor lives on the draft
+      // row) so an app kill DURING the video transfer resumes via HEAD+PATCH rather than
       // re-creating the upload — which the server rejects as a duplicate reserve (409).
       (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
     );
     // Re-persist after the video lands (same URL); the final 'uploaded' status write lives in
-    // `runSession` (shared by both units), not here — see the comment there.
+    // `runSession`, after its displaced-run guard — see the comment there.
     await setUploadProgress(draftId, { status: 'uploading', resourceUrl: result.resourceUrl });
     return result.resourceUrl;
-  }
-
-  private async uploadSegments(session: UploadSession, signal: AbortSignal): Promise<string> {
-    const { draftId, destination, segments } = session;
-    const total = segments.length;
-    // The ordering manifest is this unit's session anchor — carry the name there.
-    const draftName = await getDraftName(draftId);
-    // Per-clip phase: `current` is the 1-based clip in flight; `progress` counts clips
-    // already landed, so the bar only advances on completions (no misleading 0%-per-clip).
-    const reportClip = (current: number, completed: number) =>
-      this.setLive(draftId, {
-        status: 'uploading',
-        phase: 'clip',
-        current,
-        total,
-        progress: total ? completed / total : 0,
-      });
-
-    // Reserve every clip's artifactId up front (idempotent — reuses persisted ids on resume) so
-    // the ordering manifest can be built and uploaded BEFORE the clips. Like the merged unit's
-    // related artifacts, the manifest is a tiny JS-driven fetch that would otherwise strand a
-    // backgrounded upload at "all clips sent" until the next foreground; the clips' native
-    // background transfers are what should run last.
-    const segmentArtifactIds = new Map<string, string>();
-    for (const segment of segments) {
-      const videoKey = `${segment.id}:video` as const;
-      const existing = await getUploadArtifact(draftId, videoKey);
-      const artifactId = existing?.artifactId ?? Crypto.randomUUID();
-      if (!existing) await upsertUploadArtifact(draftId, videoKey, { artifactId });
-      segmentArtifactIds.set(segment.id, artifactId);
-    }
-
-    const manifest: SegmentManifest = {
-      version: 1,
-      segments: segments.map((s, i) => {
-        const artifactId = segmentArtifactIds.get(s.id);
-        if (!artifactId) throw new Error(`No artifact id for segment ${s.id}`);
-        return { artifactId, order: i };
-      }),
-    };
-    const manifestFile = writeTempTextFile(`${draftId}-segments.pulse`, JSON.stringify(manifest));
-    this.setLive(draftId, { status: 'uploading', phase: 'manifest', progress: 0 });
-    const result = await this.uploadOne(
-      draftId,
-      destination,
-      {
-        artifactId: destination.artifactId,
-        filename: `${draftId}-segments.pulse`,
-        kind: 'project',
-        name: draftName,
-        file: manifestFile,
-      },
-      destination.resourceUrl,
-      undefined,
-      signal,
-      undefined,
-      // The segment anchor is the ordering manifest; persist its URL on the draft row at creation
-      // so a kill mid-manifest resumes via HEAD instead of a 409-ing re-create (see uploadMerged).
-      (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
-    );
-
-    for (const [index, segment] of segments.entries()) {
-      reportClip(index + 1, index);
-      const videoKey = `${segment.id}:video` as const;
-      const videoArtifactId = segmentArtifactIds.get(segment.id)!;
-      let existingVideo = await getUploadArtifact(draftId, videoKey);
-      // Contract gate: segment uploads ship stored files byte-for-byte, and a file can predate
-      // the portrait/H.264/AAC contract (old drafts, legacy .pulse bundles, iOS codec-pin
-      // races). Off-contract clips are conformed into a stable path-keyed sibling so a
-      // kill-resume PATCHes identical bytes; conforming clips upload untouched. A clip that
-      // can't be probed/conformed fails the session (fail closed) via the normal error path.
-      // The callback runs when a FRESH conform happened, BEFORE the sibling lands on disk: any
-      // resource persisted at that point was created for the raw bytes — resuming it would
-      // PATCH conformed bytes onto the raw upload's offset/length (truncated or corrupt
-      // artifact). Cancel it server-side (TUS DELETE frees the reservation) and re-create under
-      // the SAME artifactId so the already-uploaded ordering manifest stays valid. The ordering
-      // is what makes this crash-safe: a kill before the sibling exists just re-runs the
-      // conform, so "sibling on disk" always implies "stale resource already invalidated".
-      const uploadRel = await this.ensureContractFile(segment, async () => {
-        if (!existingVideo?.resourceUrl) return;
-        // Cancel failures PROPAGATE (unlike the user-cancel path): the sibling doesn't exist
-        // yet, so failing the session here just re-conforms and retries the cancel next run —
-        // whereas continuing past an unconfirmed DELETE would 409 the replacement create
-        // against the still-live reservation. "Already gone" (404/410) counts as success
-        // inside cancelTusUpload.
-        await this.transport.cancel(existingVideo.resourceUrl, destination.token);
-        await upsertUploadArtifact(draftId, videoKey, {
-          artifactId: videoArtifactId,
-          resourceUrl: null,
-        });
-        existingVideo = { artifactId: videoArtifactId, resourceUrl: null };
-      });
-      const file = new File(absolutize(uploadRel));
-      const checksum = await md5Checksum(file);
-      const videoResult = await this.uploadOne(
-        draftId,
-        destination,
-        {
-          artifactId: videoArtifactId,
-          filename: `${segment.id}.mp4`,
-          kind: 'video',
-          relatedTo: destination.artifactId,
-          file,
-        },
-        existingVideo?.resourceUrl ?? null,
-        checksum,
-        signal,
-        undefined,
-        // Persist each clip's resource URL at creation so a kill mid-clip resumes via HEAD (409 on
-        // a re-create otherwise).
-        (url) =>
-          void upsertUploadArtifact(draftId, videoKey, {
-            artifactId: videoArtifactId,
-            resourceUrl: url,
-          }),
-      );
-      await upsertUploadArtifact(draftId, videoKey, {
-        artifactId: videoArtifactId,
-        resourceUrl: videoResult.resourceUrl,
-      });
-
-      reportClip(Math.min(index + 2, total), index + 1);
-    }
-
-    return result.resourceUrl;
-  }
-
-  /**
-   * The segment file to upload: the stored file itself when it conforms to the reels contract,
-   * else a conformed copy at a stable sibling path (any extension → `….upload.mp4`, reused on
-   * resume — path-derived like every other derived artifact, so an edited revision gets its
-   * own copy, `deleteSegmentFile` sweeps the copy with its source, and draft deletion catches
-   * the rest). `onFreshConform` fires between a successful conform and the sibling's move into
-   * place — the crash-safe window for invalidating upload state tied to the raw bytes (a kill
-   * before the move leaves no sibling, so the next run simply conforms again).
-   */
-  private async ensureContractFile(
-    segment: Segment,
-    onFreshConform: () => Promise<void>,
-  ): Promise<string> {
-    const sourceRel = effFile(segment);
-    const conformedRel = uploadCopyRelPath(sourceRel);
-    if (new File(absolutize(conformedRel)).exists) return conformedRel;
-    const out = await conformToContract(absolutize(sourceRel));
-    if (out == null) return sourceRel;
-    await onFreshConform();
-    await new File(toFileUri(out)).move(new File(absolutize(conformedRel)));
-    return conformedRel;
   }
 }
 

@@ -4,33 +4,14 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { hostOf } from '@/utils/format';
 
 import type { DestinationOption } from './use-destinations';
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
-
-/** A small segment/merged pill so the upload strategy is legible at a glance on each chip/row. */
-export function ModeBadge({ uploadUnit }: { uploadUnit: 'segment' | 'merged' }) {
-  const theme = useTheme();
-  return (
-    <View style={[styles.badge, { backgroundColor: theme.background }]}>
-      <ThemedText type="caption2" themeColor="textSecondary" style={styles.badgeText}>
-        {uploadUnit}
-      </ThemedText>
-    </View>
-  );
-}
 
 /**
  * Horizontal, scrollable picker of paired upload destinations (§ destination pool). Shown on the
  * export screen so the user can change their mind about *where* to send a pulse right up to the
- * moment they tap Upload. Each chip names the host, its segment/merged mode, and its expiry; the
+ * moment they tap Upload. Each chip names the host and its expiry; the
  * selected one is outlined in the accent color. Selection is presentational only — nothing is
  * committed until the Upload button claims the selected destination.
  */
@@ -59,7 +40,7 @@ export function DestinationSelector({
             onPress={() => onSelect(d.id)}
             accessibilityRole="radio"
             accessibilityState={{ selected }}
-            accessibilityLabel={`Upload to ${hostOf(d.server)}, ${d.uploadUnit}, ${d.expiryLabel}`}
+            accessibilityLabel={`Upload to ${hostOf(d.server)}, ${d.expiryLabel}`}
             style={({ pressed }) => [
               styles.chip,
               {
@@ -75,12 +56,9 @@ export function DestinationSelector({
                 {hostOf(d.server)}
               </ThemedText>
             </View>
-            <View style={styles.chipMeta}>
-              <ModeBadge uploadUnit={d.uploadUnit} />
-              <ThemedText type="caption2" themeColor="textSecondary">
-                {d.expiryLabel}
-              </ThemedText>
-            </View>
+            <ThemedText type="caption2" themeColor="textSecondary">
+              {d.expiryLabel}
+            </ThemedText>
           </Pressable>
         );
       })}
@@ -109,12 +87,5 @@ const styles = StyleSheet.create({
   },
   chipHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
   host: { flexShrink: 1 },
-  chipMeta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  badge: {
-    paddingHorizontal: Spacing.one,
-    paddingVertical: 1,
-    borderRadius: 6,
-  },
-  badgeText: { textTransform: 'uppercase', letterSpacing: 0.5 },
   pressed: { opacity: 0.85 },
 });

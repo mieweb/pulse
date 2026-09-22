@@ -35,3 +35,12 @@ export function formatRelativeDate(ms: number): string {
 export function formatClipCount(count: number): string {
   return `${count} ${count === 1 ? 'clip' : 'clips'}`;
 }
+
+/** A server URL → its host for display (e.g. "vault.example.org"); the raw string if unparseable. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}

@@ -100,12 +100,12 @@ export function useRecorder(initialDraftId?: string) {
   // fileType 'mov' on iOS: a `.mp4`-named output arms Apple's movieFragmentInterval bug — clips
   // >10s consolidate with an audio sample entry AVFoundation refuses to read back, playing back
   // SILENT in preview/merge/transcription. Full RCA in #157. Android ignores fileType (CameraX
-  // always writes a real MP4). Segments are persisted and uploaded as `{segmentId}.mp4` either way.
+  // always writes a real MP4). Segments are persisted as `{segmentId}.mp4` either way.
   // targetBitRate ~5 Mbps: the mobile-feed sweet spot for 1080p. CAVEAT (measured on-device,
   // see PR #142): VisionCamera applies this inside the session-configuration batch, where it
   // can silently fail to land — real 1080p clips have probed at ~8 Mbps (the encoder default
   // scaled to the pixel count). The pin stays as intent, but nothing downstream may ASSUME it:
-  // the upload contract gate (#142) and the pulsevault web-ready backstop own the guarantee.
+  // the contract gate (#142), the merge pin and the pulsevault web-ready backstop own the guarantee.
   const videoOutput = useVideoOutput({
     targetResolution: CommonResolutions.FHD_16_9,
     targetBitRate: 5_000_000,
@@ -447,10 +447,10 @@ export function useRecorder(initialDraftId?: string) {
         return;
       }
 
-      // Normalize hostile imports before they enter the draft — and fail CLOSED: stored
-      // segments are uploaded byte-for-byte by segment destinations, so a clip that can't be
-      // probed or conformed (or whose conform fails output verification — e.g. an Android
-      // encoder fallback) is rejected rather than persisted off-contract.
+      // Normalize hostile imports before they enter the draft — and fail CLOSED: every stored
+      // clip must meet the reels contract, so a clip that can't be probed or conformed (or
+      // whose conform fails output verification — e.g. an Android encoder fallback) is
+      // rejected rather than persisted off-contract.
       let sourceUri = picked.uri;
       let normalizedPath: string | null = null;
       try {

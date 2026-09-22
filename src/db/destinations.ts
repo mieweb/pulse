@@ -3,11 +3,7 @@ import { desc, eq } from 'drizzle-orm';
 
 import { db } from './client';
 import { uploadDestinations } from './schema';
-import {
-  deleteDestinationToken,
-  getDestinationToken,
-  setDestinationToken,
-} from './secure-token';
+import { deleteDestinationToken, getDestinationToken, setDestinationToken } from './secure-token';
 
 /**
  * A server the device has paired with (via a `pulsecam://` deep link) but no draft has
@@ -20,7 +16,6 @@ export type PairedDestination = {
   server: string;
   token: string | null;
   artifactId: string;
-  uploadUnit: 'segment' | 'merged';
 };
 
 /** The non-secret portion, persisted in the `upload_destinations` table. The token (a live
@@ -33,7 +28,6 @@ export const destinationsQuery = db
     id: uploadDestinations.id,
     server: uploadDestinations.server,
     artifactId: uploadDestinations.artifactId,
-    uploadUnit: uploadDestinations.uploadUnit,
     createdAt: uploadDestinations.createdAt,
   })
   .from(uploadDestinations)
@@ -41,14 +35,13 @@ export const destinationsQuery = db
 
 /**
  * Add a paired destination to the pool. Deduped by `(server, artifactId)` — re-scanning the
- * same link (same server-minted artifact) refreshes that row's token/mode in place instead of
+ * same link (same server-minted artifact) refreshes that row's token in place instead of
  * piling up duplicates. Returns the row id (existing or freshly minted).
  */
 export async function addDestination(dest: PairedDestination): Promise<string> {
   const meta: PairedDestinationMeta = {
     server: dest.server,
     artifactId: dest.artifactId,
-    uploadUnit: dest.uploadUnit,
   };
   const existing = await db
     .select({ id: uploadDestinations.id })
@@ -59,7 +52,7 @@ export async function addDestination(dest: PairedDestination): Promise<string> {
   if (match) {
     await db
       .update(uploadDestinations)
-      .set({ server: meta.server, uploadUnit: meta.uploadUnit })
+      .set({ server: meta.server })
       .where(eq(uploadDestinations.id, id));
   } else {
     await db.insert(uploadDestinations).values({ id, ...meta });
@@ -74,7 +67,6 @@ export async function getDestination(id: string): Promise<PairedDestination | nu
     .select({
       server: uploadDestinations.server,
       artifactId: uploadDestinations.artifactId,
-      uploadUnit: uploadDestinations.uploadUnit,
     })
     .from(uploadDestinations)
     .where(eq(uploadDestinations.id, id));

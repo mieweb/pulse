@@ -13,11 +13,10 @@ export type Destination = {
   server: string;
   token: string | null;
   artifactId: string;
-  uploadUnit: 'segment' | 'merged';
   resourceUrl: string | null;
 };
 
-/** The merged video a merged-unit session uploads: the draft's persisted export (`drafts/{id}/export.mp4`). */
+/** The video a session uploads: the draft's persisted export (`drafts/{id}/export.mp4`). */
 export type MergedOutput = { path: string; durationMs: number };
 
 /**
@@ -30,7 +29,7 @@ export type UploadSession = {
   draftId: string;
   destination: Destination;
   segments: Segment[];
-  /** Present for merged-unit runs; `null` for segment-unit. */
+  /** The export to upload; `null` only if the merge wasn't done at enqueue (the run then fails). */
   merged: MergedOutput | null;
   /**
    * The pool destination id to remove once this run finishes (single-use), or
@@ -45,10 +44,10 @@ export type UploadProgress = { bytesSent: number; totalBytes: number };
  * What an in-flight upload is actually doing. A run spends real time before (and
  * between) byte transfers — preparing the export and building/uploading the small
  * related artifacts — and each of those used to render as an indistinguishable
- * `Uploading… 0%`. Only `video` (merged unit) and `clip` (segment unit) carry
- * meaningful byte/unit progress; the rest are label-only.
+ * `Uploading… 0%`. Only `video` carries meaningful byte progress; the rest are
+ * label-only.
  */
-export type UploadPhase = 'preparing' | 'captions' | 'manifest' | 'thumbnail' | 'video' | 'clip';
+export type UploadPhase = 'preparing' | 'captions' | 'manifest' | 'thumbnail' | 'video';
 
 /**
  * Live, per-draft upload state the UI subscribes to via `useSyncExternalStore`.
@@ -57,19 +56,11 @@ export type UploadPhase = 'preparing' | 'captions' | 'manifest' | 'thumbnail' | 
  */
 export type LiveUploadState =
   | { status: 'idle' }
-  | {
-      status: 'uploading';
-      phase: UploadPhase;
-      progress: number;
-      /** 1-based position of the clip in flight — present only for `phase: 'clip'`. */
-      current?: number;
-      /** Total clips in the run — present only for `phase: 'clip'`. */
-      total?: number;
-    }
+  | { status: 'uploading'; phase: UploadPhase; progress: number }
   | { status: 'done'; resourceUrl: string }
   | { status: 'error'; reason: string; retryable: boolean };
 
-/** One artifact to hand a transport — a session anchor (video/manifest) or a related sub-artifact. */
+/** One artifact to hand a transport — the session anchor (the video) or a related sub-artifact. */
 export type UploadArtifactSpec = {
   artifactId: string;
   filename: string;
