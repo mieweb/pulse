@@ -380,7 +380,7 @@ class BackgroundUploadManager {
    * Rebuild an upload session from a persisted draft row (destination + token + segments + merged
    * export), or a failure `reason` if it can't be resumed off-screen — a missing destination, an
    * expired token, or a merged run with no persisted export of these clips (a backstop — the
-   * draft is locked while uploading, so its export can't be invalidated under the run).
+   * draft is locked while uploading, so its clips and export can't change under the run).
    */
   private async reconstructSession(
     row: Draft,

@@ -143,12 +143,6 @@ export function exportFileExists(draftId: string): boolean {
   return new File(absolutize(exportRelPath(draftId))).exists;
 }
 
-/** Delete the draft's persisted export file, if any. */
-export function deleteExportFile(draftId: string): void {
-  const file = new File(absolutize(exportRelPath(draftId)));
-  if (file.exists) file.delete();
-}
-
 /**
  * Move a finished merge output (RNVT's cache) into place as the draft's persisted export,
  * replacing any previous one; returns its absolute URI. The merge itself wrote elsewhere, so

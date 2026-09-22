@@ -4,7 +4,6 @@ import * as Crypto from 'expo-crypto';
 import {
   absolutize,
   deleteDraftDir,
-  deleteExportFile,
   deleteSegmentFile,
   editedThumbRelPath,
   thumbRelPath,
@@ -149,16 +148,13 @@ export async function assertNotUploading(draftId: string): Promise<void> {
 }
 
 /**
- * Entry point of every clip mutation (add/delete/trim/reset/reorder): refuse while uploading,
- * then drop the persisted merged export — it was cut from the clip set about to change.
+ * Entry point of every clip mutation (add/delete/trim/reset/reorder): refuse while uploading.
+ * The persisted merged export is deliberately left alone — the export screen compares its
+ * signature with the clips on arrival, so edits that are undone (reorder back, reset a trim,
+ * delete an added clip) reuse it, and anything still changed merges again.
  */
 async function beginClipMutation(draftId: string): Promise<void> {
   await assertNotUploading(draftId);
-  deleteExportFile(draftId);
-  await db
-    .update(drafts)
-    .set({ mergedSignature: null, mergedDurationMs: null })
-    .where(eq(drafts.id, draftId));
   await resetFailedUploadState(draftId);
 }
 

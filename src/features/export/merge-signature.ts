@@ -19,9 +19,10 @@ export const MERGE_VERSION = 1;
 
 /**
  * Content key of a draft's merged export: the merge settings version + the ordered effective
- * files. `segmentSignature` already changes on add/delete/reorder/trim/reset (every edit writes a
- * new `effFile`) and is the merged-transcript staleness key, so video and captions invalidate in
- * lockstep.
+ * files. Originals are never rewritten and every trim writes a new `effFile`, so equal
+ * signatures mean identical content: it changes on add/delete/reorder/trim, and returns to its
+ * old value when those are undone (reset a trim → back to the original file). It is also the
+ * merged-transcript staleness key, so video and captions follow the clips in lockstep.
  */
 export const mergedSignature = (segments: Segment[], version: number = MERGE_VERSION): string =>
   `${version}|${segmentSignature(segments)}`;
@@ -35,9 +36,9 @@ export type PersistedExport = {
 
 /**
  * The persisted export's duration if it is a valid export of exactly `segments` — the file is
- * on disk AND its recorded signature matches the current clips — else `null` (merge again). The
- * read-side safety net for a mutation path that forgot to invalidate, or a merge that landed
- * after one.
+ * on disk AND its recorded signature matches the current clips — else `null` (merge again).
+ * This is the only freshness check: clip edits don't touch the export, so this is what decides
+ * reuse vs re-merge when the export screen opens.
  */
 export function currentExportDuration(
   persisted: PersistedExport,

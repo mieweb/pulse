@@ -85,6 +85,31 @@ describe('resolveMergedExport', () => {
     expect(mockRow).toMatchObject({ signature: mergedSignature(trimmed), durationMs: 1500 });
   });
 
+  // Undoing edits restores the exact effective files, so the saved video is reused.
+  it.each([
+    ['reordering back', [seg('b'), seg('a')]],
+    ['resetting a trim', [seg('a', { editedFilename: 'a.edited.1.mp4' }), seg('b')]],
+    ['deleting an added clip', [seg('a'), seg('b'), seg('c')]],
+  ])('reuses the export after %s', async (_label, edited) => {
+    await resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'));
+    // The edited arrangement is never exported (the user goes straight back), then undone.
+    expect(mergedSignature(edited)).not.toBe(mergedSignature(clips));
+    const merge = mergeTo('/cache/m2.mp4');
+    await expect(resolveMergedExport('d1', [seg('a'), seg('b')], merge)).resolves.toEqual({
+      path: EXPORT,
+      durationMs: 2000,
+    });
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it('only remembers the last merge — an exported edit replaces it', async () => {
+    await resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'));
+    await resolveMergedExport('d1', [seg('b'), seg('a')], mergeTo('/cache/m2.mp4'));
+    const merge = mergeTo('/cache/m3.mp4');
+    await resolveMergedExport('d1', clips, merge);
+    expect(merge).toHaveBeenCalledTimes(1);
+  });
+
   it('re-merges when the stored file is gone', async () => {
     await resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'));
     mockFile.exists = false;

@@ -44,7 +44,6 @@ jest.mock('./client', () => {
 jest.mock('@/utils/file-store', () => ({
   absolutize: (p: string) => `file:///docs/${p}`,
   deleteDraftDir: jest.fn(),
-  deleteExportFile: jest.fn(),
   deleteSegmentFile: jest.fn(),
   editedThumbRelPath: (p: string) => p.replace(/\.mp4$/, '.thumb.jpg'),
   thumbRelPath: (d: string, s: string) => `drafts/${d}/segments/${s}.thumb.jpg`,
@@ -54,7 +53,7 @@ jest.mock('./secure-token', () => ({ deleteDraftToken: jest.fn(), setDraftToken:
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'uuid' }));
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
-import { deleteDraftDir, deleteExportFile } from '@/utils/file-store';
+import { deleteDraftDir } from '@/utils/file-store';
 
 import {
   addSegment,
@@ -100,34 +99,24 @@ describe('draft lock while uploading', () => {
     mockSelects.push(...before, uploading);
     await expect(mutate()).rejects.toThrow(/uploading/);
     expect(mockWrites).toEqual([]);
-    expect(deleteExportFile).not.toHaveBeenCalled();
     expect(deleteDraftDir).not.toHaveBeenCalled();
   });
 });
 
-describe('persisted export invalidation', () => {
-  const CLIP_MUTATIONS = MUTATIONS.filter(
-    ([name]) => name !== 'renameDraft' && name !== 'deleteDraft',
-  );
-
-  it.each(CLIP_MUTATIONS)(
-    '%s drops the export and its signature',
+describe('persisted export', () => {
+  // Edits leave the export alone — the export screen decides reuse vs re-merge by signature, so
+  // an undone edit gets the saved video back (see merged-export.test.ts).
+  it.each(MUTATIONS.filter(([name]) => name !== 'deleteDraft'))(
+    '%s leaves the export and its signature alone',
     async (_name, mutate, before, after) => {
       mockSelects.push(...before, idle, ...after);
       await mutate();
-      expect(deleteExportFile).toHaveBeenCalledWith('d1');
-      expect(mockWrites).toContainEqual({
-        op: 'update',
-        set: { mergedSignature: null, mergedDurationMs: null },
-      });
+      const touchesExport = mockWrites.some(
+        (w) => typeof w.set === 'object' && w.set !== null && 'mergedSignature' in w.set,
+      );
+      expect(touchesExport).toBe(false);
     },
   );
-
-  it('renameDraft keeps the export — the video did not change', async () => {
-    mockSelects.push(idle);
-    await renameDraft('d1', 'New name');
-    expect(deleteExportFile).not.toHaveBeenCalled();
-  });
 
   it('deleteDraft removes it with the draft dir', async () => {
     mockSelects.push(idle);

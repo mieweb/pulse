@@ -36,8 +36,9 @@ export const drafts = sqliteTable('drafts', {
   }).$type<UploadStatus>(),
   // The persisted merged export at `drafts/{id}/export.mp4` (see `exportRelPath`): the
   // `mergedSignature` of the clip set it was merged from, and its true duration (feeds the beat
-  // manifest). Written only after the file is in place, cleared by every clip mutation — a
-  // mismatch with the current clips (or a missing file) means "merge again". Null = no export.
+  // manifest). Written only after the file is in place. Clip edits leave it alone: the export
+  // screen reuses it only while the signature matches the current clips (so undoing edits gets
+  // it back), and a mismatch or missing file means "merge again". Null = no export.
   mergedSignature: text('merged_signature'),
   mergedDurationMs: integer('merged_duration_ms'),
   // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
