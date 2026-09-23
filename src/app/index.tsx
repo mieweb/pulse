@@ -283,6 +283,21 @@ export default function HomeScreen() {
                 {themePref === 'system' ? 'Auto' : themeMode === 'dark' ? 'Dark' : 'Light'}
               </ThemedText>
             </Pressable>
+            <Pressable
+              onPress={() => router.push('/about')}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="About"
+              accessibilityHint="Shows the version, build details and debug logs"
+              style={({ pressed }) => [
+                styles.headerButton,
+                pressed && { backgroundColor: theme.backgroundElement },
+              ]}>
+              <Icon name="info.circle" size={20} tintColor={theme.text} />
+              <ThemedText type="smallBold" style={styles.headerButtonLabel}>
+                About
+              </ThemedText>
+            </Pressable>
           </View>
         </View>
       )}
