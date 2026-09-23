@@ -101,9 +101,7 @@ export function decideImport(probe: VideoProbeResult): ImportDecision {
   const display = displaySize(probe);
   const offCanvas = display.width !== CANVAS_WIDTH || display.height !== CANVAS_HEIGHT;
   if (offCanvas) {
-    reasons.push(
-      `${display.width}x${display.height} off the ${CANVAS_WIDTH}x${CANVAS_HEIGHT} canvas`,
-    );
+    reasons.push(`${display.width}x${display.height} off the ${CANVAS_WIDTH}x${CANVAS_HEIGHT} canvas`);
   }
 
   const fps = effectiveFps(probe);
@@ -115,9 +113,7 @@ export function decideImport(probe: VideoProbeResult): ImportDecision {
   }
 
   if (probe.bitrate > NORMALIZE_MAX_BITRATE) {
-    reasons.push(
-      `${Math.round(probe.bitrate / 1_000_000)} Mbps exceeds ${NORMALIZE_MAX_BITRATE / 1_000_000}`,
-    );
+    reasons.push(`${Math.round(probe.bitrate / 1_000_000)} Mbps exceeds ${NORMALIZE_MAX_BITRATE / 1_000_000}`);
   }
 
   const audioHostile = probe.hasAudio && probe.audioCodec !== 'aac';

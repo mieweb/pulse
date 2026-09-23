@@ -3,7 +3,11 @@ import { desc, eq } from 'drizzle-orm';
 
 import { db } from './client';
 import { uploadDestinations } from './schema';
-import { deleteDestinationToken, getDestinationToken, setDestinationToken } from './secure-token';
+import {
+  deleteDestinationToken,
+  getDestinationToken,
+  setDestinationToken,
+} from './secure-token';
 
 /**
  * A server the device has paired with (via a `pulsecam://` deep link) but no draft has

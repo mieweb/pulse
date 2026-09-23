@@ -653,13 +653,7 @@ class BackgroundUploadManager {
     const result = await this.uploadOne(
       draftId,
       destination,
-      {
-        artifactId: destination.artifactId,
-        filename: `${draftId}.mp4`,
-        kind: 'video',
-        name: draftName,
-        file,
-      },
+      { artifactId: destination.artifactId, filename: `${draftId}.mp4`, kind: 'video', name: draftName, file },
       destination.resourceUrl,
       checksum,
       signal,

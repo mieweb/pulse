@@ -289,7 +289,10 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
       orderedIds.map((id, i) => sql`when ${segments.id} = ${id} then ${i}`),
       sql` `,
     )} else ${segments.order} end`;
-    await tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, orderedIds));
+    await tx
+      .update(segments)
+      .set({ order: finalOrder })
+      .where(inArray(segments.id, orderedIds));
     const [first] = await tx.select().from(segments).where(eq(segments.id, orderedIds[0]));
     if (first) {
       await tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId));

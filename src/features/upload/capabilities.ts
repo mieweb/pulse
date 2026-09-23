@@ -14,7 +14,8 @@ export type Capabilities = {
 type CapabilitiesRejectionReason = 'unreachable' | 'version-too-old' | 'version-too-new';
 
 export type CapabilitiesResult =
-  { ok: true; capabilities: Capabilities } | { ok: false; reason: CapabilitiesRejectionReason };
+  | { ok: true; capabilities: Capabilities }
+  | { ok: false; reason: CapabilitiesRejectionReason };
 
 async function fetchCapabilities(server: string): Promise<Capabilities> {
   const res = await fetch(`${server}/capabilities`, {
