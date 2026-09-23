@@ -16,10 +16,9 @@ import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim'
  *   the merge engine's zero-re-encode fast path instead of a selective conform.
  * - 10-bit / HDR (HLG, PQ) — hardware H.264 encoders reject 10-bit input; SDR displays
  *   need the tone cast anyway once clips are mixed with SDR recordings
- * - display geometry off the app's fixed portrait canvas (1080×1920) — the export and
- *   every segment UPLOAD are portrait reels by contract, so landscape/odd-size imports
- *   are scale-fit + letterboxed onto the canvas ONCE at import (WYSIWYG in the editor,
- *   portrait segments on segmented destinations, format-uniform import-only merges)
+ * - display geometry off the app's fixed portrait canvas (1080×1920) — the export is a
+ *   portrait reel by contract, so landscape/odd-size imports are scale-fit + letterboxed
+ *   onto the canvas ONCE at import (WYSIWYG in the editor, format-uniform import-only merges)
  * - frame rate rounding past the 30-fps target — the same rounding the merge pin compares
  *   with (VFR averages, 60/120 slo-mo, screen recordings); 29.97 NTSC passes untouched
  * - bitrate far above the recorder's own — e.g. raw 4K masters; bounded to the recorder rate

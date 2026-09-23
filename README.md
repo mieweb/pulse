@@ -42,7 +42,7 @@ flowchart LR
 
 ### What is a Beat?
 
-A **Beat** is one clip's exact slot on the merged timeline — `{ segmentId, order, startMs, endMs }`. The **beat manifest** records every clip's start/end so any moment in the merged video can be traced back to the segment it came from (and later deep-linked — e.g. HLS chapter jumps). Beats are **contiguous** — each beat's `endMs` equals the next beat's `startMs` — and sum **exactly** to the Pulse's true duration.
+A **Beat** is a timestamp range inside the Pulse's one video: where one recorded clip starts and ends — `{ segmentId, order, startMs, endMs }`. The **beat manifest** records every clip's start/end so any moment in the video can be traced back to the segment it came from (and later deep-linked — e.g. HLS chapter jumps). Beats are **contiguous** — each beat's `endMs` equals the next beat's `startMs` — and sum **exactly** to the Pulse's true duration.
 
 ```mermaid
 flowchart TB
@@ -50,7 +50,7 @@ flowchart TB
         direction LR
         s0["Clip 0"] --> s1["Clip 1"] --> s2["Clip 2"]
     end
-    subgraph tl["One merged timeline · 0 → durationMs"]
+    subgraph tl["One video · 0 → durationMs"]
         direction LR
         b0["Beat 0<br/>0 – 4200 ms"] --- b1["Beat 1<br/>4200 – 9100 ms"] --- b2["Beat 2<br/>9100 – 15000 ms"]
     end
@@ -101,7 +101,7 @@ flowchart TB
 
 - Pair with a server by scanning a QR / opening a `pulsecam://` deep link — trust-on-first-use confirmation, capability negotiation against the server's `/capabilities` endpoint
 - TUS v1 resumable uploads with exponential backoff; interrupted uploads resume from the server's true byte offset, even after an app relaunch
-- Two upload strategies, negotiated per server: **merged** (one video + captions + beat-timecode manifest + thumbnail) or **segment** (per-segment clips + an ordering manifest)
+- A Pulse uploads as one video, plus its captions (WebVTT), beat manifest and thumbnail — each declaring `relatedTo` the video
 - Bearer tokens stored in the secure keychain, never in the database
 
 ## Platform support

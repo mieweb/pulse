@@ -15,7 +15,6 @@ describe('parseUploadDeepLink', () => {
         artifactId: ARTIFACT_ID,
         server: 'https://vault.example.org',
         token: 'secret',
-        uploadUnit: null,
       },
     });
   });
@@ -26,7 +25,7 @@ describe('parseUploadDeepLink', () => {
     );
     expect(result).toEqual({
       ok: true,
-      link: { artifactId: ARTIFACT_ID, server: 'https://vault.example.org', token: null, uploadUnit: null },
+      link: { artifactId: ARTIFACT_ID, server: 'https://vault.example.org', token: null },
     });
   });
 
@@ -87,7 +86,6 @@ describe('parseUploadDeepLink', () => {
         artifactId: ARTIFACT_ID,
         server: 'https://vault.example.org/pulsevault',
         token: null,
-        uploadUnit: null,
       },
     });
   });
@@ -99,27 +97,15 @@ describe('parseUploadDeepLink', () => {
     expect(result).toEqual({ ok: false, reason: 'invalid-link' });
   });
 
-  it('accepts an explicit uploadUnit override, either value', () => {
-    for (const uploadUnit of ['segment', 'merged']) {
+  it('ignores an uploadUnit param from an older server, whatever its value', () => {
+    for (const uploadUnit of ['segment', 'merged', 'bogus']) {
       const result = parseUploadDeepLink(
         `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=https%3A%2F%2Fvault.example.org&uploadUnit=${uploadUnit}`,
       );
       expect(result).toEqual({
         ok: true,
-        link: {
-          artifactId: ARTIFACT_ID,
-          server: 'https://vault.example.org',
-          token: null,
-          uploadUnit,
-        },
+        link: { artifactId: ARTIFACT_ID, server: 'https://vault.example.org', token: null },
       });
     }
-  });
-
-  it('rejects an invalid uploadUnit value', () => {
-    const result = parseUploadDeepLink(
-      `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=https%3A%2F%2Fvault.example.org&uploadUnit=bogus`,
-    );
-    expect(result).toEqual({ ok: false, reason: 'invalid-link' });
   });
 });

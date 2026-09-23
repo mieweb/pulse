@@ -7,7 +7,7 @@ import type { Segment } from '@/db/schema';
 import { useNow } from '@/hooks/use-now';
 
 import { EXPIRY_CHECK_INTERVAL_MS, isTokenExpired } from './capability-token';
-import { type DestinationOption, useDestinations } from './use-destinations';
+import { useDestinations } from './use-destinations';
 import { uploads } from './upload-manager';
 import type { Destination } from './types';
 import { useDraftUploadState } from './use-uploads';
@@ -44,8 +44,7 @@ export function useUpload(
   // success. Kept on the ref so a Retry after a failure still carries it; a re-claim overwrites it.
   const consumedIdRef = useRef<string | null>(null);
 
-  const hasDestination =
-    !!draft?.uploadServer && !!draft.uploadArtifactId && !!draft.uploadUnit;
+  const hasDestination = !!draft?.uploadServer && !!draft.uploadArtifactId;
 
   // The bearer token lives in expo-secure-store, not the (reactive) drizzle row — loaded into
   // local state keyed off which draft is showing, and set directly in `claim` so the first upload
@@ -69,7 +68,6 @@ export function useUpload(
             server: draft!.uploadServer!,
             token: draftToken,
             artifactId: draft!.uploadArtifactId!,
-            uploadUnit: draft!.uploadUnit!,
             resourceUrl: draft!.uploadResourceUrl,
           }
         : null,
@@ -133,14 +131,12 @@ export function useUpload(
         server: option.server,
         token: option.token,
         artifactId: option.artifactId,
-        uploadUnit: option.uploadUnit,
         resourceUrl: null,
       };
       await setUploadDestination(draftId, {
         server: option.server,
         token: option.token,
         artifactId: option.artifactId,
-        uploadUnit: option.uploadUnit,
       });
       setDraftTokenState(option.token);
       consumedIdRef.current = option.id;
@@ -148,11 +144,6 @@ export function useUpload(
     },
     [destinations, draftId, start],
   );
-
-  // The destination whose host/mode the UI should name right now: the draft's own claimed
-  // destination once a run is underway/finished, otherwise the pool option currently selected.
-  const activeDestination: Destination | DestinationOption | null =
-    destination && state.status !== 'idle' ? destination : selectedDestination;
 
   return {
     state,
@@ -162,7 +153,6 @@ export function useUpload(
     selectedId,
     setSelectedId,
     selectedDestination,
-    activeDestination,
     start,
     retry: start,
     cancel,

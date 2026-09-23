@@ -108,12 +108,11 @@ export async function importTrimmedFile(
 }
 
 /**
- * The upload contract gate's conformed copy of a clip file (final extension — any case,
- * `.mov`/`.m4v` legacy included — replaced with `.upload.mp4`), written by
- * `ensureContractFile` next to its source so kill-resume reuses identical bytes.
- * Path-derived from the source (like edited thumbs), so it follows revisions automatically.
+ * Where older installs' segment uploads wrote a clip's conformed copy (final extension — any
+ * case, `.mov`/`.m4v` legacy included — replaced with `.upload.mp4`). Nothing writes these any
+ * more; kept only so `deleteSegmentFile` still sweeps copies left on upgraded devices.
  */
-export function uploadCopyRelPath(relPath: string): string {
+function uploadCopyRelPath(relPath: string): string {
   return relPath.replace(/\.[^./]+$/, '') + '.upload.mp4';
 }
 
@@ -121,7 +120,7 @@ export function uploadCopyRelPath(relPath: string): string {
 export function deleteSegmentFile(relPath: string): void {
   const file = new File(absolutize(relPath));
   if (file.exists) file.delete();
-  // Sweep the upload gate's conformed sibling with its source — every lifecycle op
+  // Sweep a legacy `.upload.mp4` sibling with its source — every lifecycle op
   // (delete/re-edit/reset) routes through here, so the copy can never outlive the clip.
   if (!relPath.endsWith('.upload.mp4')) {
     const sibling = new File(absolutize(uploadCopyRelPath(relPath)));

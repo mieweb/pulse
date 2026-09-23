@@ -10,6 +10,7 @@ import {
 } from '@/utils/file-store';
 import { generateThumbnailFile } from '@/utils/video';
 import { db } from './client';
+import type { PairedDestination } from './destinations';
 import type { Draft, Segment } from './schema';
 import { drafts, segments, uploadArtifacts } from './schema';
 import { deleteDraftToken, setDraftToken } from './secure-token';
@@ -23,14 +24,6 @@ type NewSegment = {
   originalFilename: string;
   durationMs: number;
   thumbnail?: string | null;
-};
-
-/** A validated deep-link + `/capabilities` lookup result, ready to pair with a draft. */
-type UploadDestination = {
-  server: string;
-  token: string | null;
-  artifactId: string;
-  uploadUnit: NonNullable<Draft['uploadUnit']>;
 };
 
 /** One row per draft with its segment count, trim-aware duration, and cover clip. */
@@ -327,21 +320,20 @@ export async function deleteDraft(draftId: string): Promise<void> {
 /**
  * Pair a draft with an upload destination (from a validated deep link +
  * `/capabilities` lookup) — a draft counts as paired once `uploadServer`/
- * `uploadArtifactId`/`uploadUnit` are set. Resets any prior upload progress
+ * `uploadArtifactId` are set. Resets any prior upload progress
  * (`uploadResourceUrl`/`uploadStatus`/`captionsUploadStatus`)
  * since a new destination invalidates an in-flight upload to the old one.
  * The bearer token is written to expo-secure-store, not this row (§ token security).
  */
 export async function setUploadDestination(
   draftId: string,
-  destination: UploadDestination,
+  destination: PairedDestination,
 ): Promise<void> {
   await db
     .update(drafts)
     .set({
       uploadServer: destination.server,
       uploadArtifactId: destination.artifactId,
-      uploadUnit: destination.uploadUnit,
       uploadResourceUrl: null,
       uploadStatus: 'idle',
       captionsUploadStatus: null,
@@ -349,8 +341,8 @@ export async function setUploadDestination(
     })
     .where(eq(drafts.id, draftId));
   await setDraftToken(draftId, destination.token);
-  // A new destination invalidates any sub-artifacts (segment videos, merged captions/
-  // manifest/thumbnail) uploaded to the old one — they'd resume against the wrong server otherwise.
+  // A new destination invalidates any sub-artifacts (captions/manifest/thumbnail) uploaded to
+  // the old one — they'd resume against the wrong server otherwise.
   await db.delete(uploadArtifacts).where(eq(uploadArtifacts.draftId, draftId));
 }
 
@@ -389,14 +381,14 @@ export async function setCaptionsUploadStatus(
     .where(eq(drafts.id, draftId));
 }
 
-// Upload sub-artifacts (segment/captions/manifest/thumbnail resume identity) ----------------
+// Upload sub-artifacts (captions/manifest/thumbnail resume identity) ------------------------
 
 /**
  * Stable local key for an upload session's sub-artifacts (§ `upload_artifacts`). A closed union so
- * a typo can't silently reserve a distinct row that never matches on resume. Merged mode:
- * `"captions"` | `"manifest"` (beat manifest) | `"thumbnail"`. Segmented mode: one `:video` per clip.
+ * a typo can't silently reserve a distinct row that never matches on resume:
+ * `"captions"` | `"manifest"` (beat manifest) | `"thumbnail"`.
  */
-export type UploadArtifactKey = 'captions' | 'manifest' | 'thumbnail' | `${string}:video`;
+export type UploadArtifactKey = 'captions' | 'manifest' | 'thumbnail';
 
 /** A sub-artifact's identity/progress, or `null` if this `localKey` hasn't been reserved yet. */
 export async function getUploadArtifact(

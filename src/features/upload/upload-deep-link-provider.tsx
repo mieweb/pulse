@@ -5,6 +5,7 @@ import { Alert, AppState } from 'react-native';
 
 import { addDestination } from '@/db/destinations';
 import { useToast } from '@/features/toast/toast-provider';
+import { hostOf } from '@/utils/format';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
@@ -17,14 +18,6 @@ const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> 
     'This upload link needs a newer version of Pulse. Update the app and try again.',
   'invalid-link': 'This upload link looks damaged. Ask for a new one and try again.',
 };
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
 
 /**
  * Trust-on-first-use gate (PROTOCOL.md §3): asks the user to confirm the
@@ -118,16 +111,12 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             Alert.alert("Can't connect", CAPABILITIES_REJECTION_MESSAGE[capResult.reason]);
             return;
           }
-          // The link's own `uploadUnit` (if present) is a per-session override of the
-          // deployment-wide value `/capabilities` reports (PROTOCOL.md §3, §8) — prefer it.
-          // `/capabilities` is still fetched regardless, for the protocol-version check above.
           // Added to the device-wide pool (not a single slot) — any draft can pick it at
           // upload time, and several servers can be paired at once.
           return addDestination({
             server: link.server,
             token: link.token,
             artifactId: link.artifactId,
-            uploadUnit: link.uploadUnit ?? capResult.capabilities.uploadUnit,
           }).then(() => {
             showToast(`Connected to ${host} — pick it when you upload`);
           });

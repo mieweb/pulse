@@ -28,7 +28,7 @@ import { drafts, segments } from './schema';
  *   - Old NON-DESTRUCTIVE trim points are intentionally dropped: the full pristine clip is
  *     imported and the user re-trims in the new (destructive) editor.
  *   - Old per-draft upload configs are NOT migrated — the new pairing model needs an
- *     artifactId/uploadUnit that the legacy `{server, token}` config never had; re-pair instead.
+ *     artifactId that the legacy `{server, token}` config never had; re-pair instead.
  *
  * Idempotent + crash-safe: inserts are `onConflictDoNothing` (ids preserved), file moves skip
  * already-moved clips, and completion is tracked by the data-migration runner — a crash mid-way

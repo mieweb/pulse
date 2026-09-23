@@ -9,9 +9,8 @@ import { decideImport } from './import-normalization';
  * conforms. Throws when the clip has no video stream or can't be probed/conformed: callers
  * fail closed.
  *
- * Guards the two ingress/egress points that bypass `importClip`'s gate: `.pulse` bundle media
- * (foreign installs can ship pre-contract clips) and segment-unit uploads (stored files can
- * predate the contract — old drafts, iOS codec-pin races).
+ * Guards the ingress point that bypasses `importClip`'s gate: `.pulse` bundle media (foreign
+ * installs can ship pre-contract clips).
  *
  * Container layout (faststart) is deliberately NOT part of this gate: raw recorder files are
  * moov-at-end by AVFoundation constraint (see the codec-pin note in use-recorder.ts) and the

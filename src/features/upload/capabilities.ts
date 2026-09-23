@@ -9,7 +9,6 @@ export type Capabilities = {
   protocolVersion: number;
   minSupportedVersion: number;
   maxSupportedVersion: number;
-  uploadUnit: 'segment' | 'merged';
 };
 
 type CapabilitiesRejectionReason = 'unreachable' | 'version-too-old' | 'version-too-new';
@@ -26,8 +25,7 @@ async function fetchCapabilities(server: string): Promise<Capabilities> {
   const body = (await res.json()) as Partial<Capabilities>;
   if (
     typeof body.minSupportedVersion !== 'number' ||
-    typeof body.maxSupportedVersion !== 'number' ||
-    (body.uploadUnit !== 'segment' && body.uploadUnit !== 'merged')
+    typeof body.maxSupportedVersion !== 'number'
   ) {
     throw new Error('Server returned an unexpected /capabilities response');
   }
@@ -35,7 +33,6 @@ async function fetchCapabilities(server: string): Promise<Capabilities> {
     protocolVersion: body.protocolVersion ?? body.minSupportedVersion,
     minSupportedVersion: body.minSupportedVersion,
     maxSupportedVersion: body.maxSupportedVersion,
-    uploadUnit: body.uploadUnit,
   };
 }
 

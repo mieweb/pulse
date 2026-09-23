@@ -12,12 +12,11 @@ import {
   isTokenExpired,
 } from './capability-token';
 
-/** One non-expired destination in the pool, ready to render (host/mode/expiry) or upload to. */
+/** One non-expired destination in the pool, ready to render (host/expiry) or upload to. */
 export type DestinationOption = {
   id: string;
   server: string;
   artifactId: string;
-  uploadUnit: 'segment' | 'merged';
   token: string | null;
   /** Millisecond `exp` for a decodable token, else `null` (tokenless = no known expiry). */
   expiresAtMs: number | null;
@@ -66,7 +65,6 @@ export function useDestinations() {
           id: r.id,
           server: r.server,
           artifactId: r.artifactId,
-          uploadUnit: r.uploadUnit,
           token: r.token,
           expiresAtMs: expiresAtMs(r.token),
           expiryLabel: formatExpiry(r.token, now),
