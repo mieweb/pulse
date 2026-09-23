@@ -95,7 +95,8 @@ export default function ExportScreen() {
     router.push(`/subtitles?draftId=${draftId}&videoUri=${encodeURIComponent(state.outputPath)}`);
   };
 
-  // Uploading needs the video, so the Upload button waits for the merge.
+  // Uploading needs the video, so the Upload button waits for the merge. It only shows a spinner
+  // while the merge runs — a failed merge has its own Retry above, so the button just stays disabled.
   const uploadReady = state.status === 'done';
   const selectedHost = upload.selectedDestination ? hostOf(upload.selectedDestination.server) : '';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
@@ -184,7 +185,7 @@ export default function ExportScreen() {
           (!upload.selectedId || !uploadReady) && styles.disabled,
           pressed && styles.pressed,
         ]}>
-        {!uploadReady ? (
+        {state.status === 'merging' ? (
           <>
             <ActivityIndicator color={theme.onAccent} />
             <ThemedText style={{ color: theme.onAccent }}>Preparing video…</ThemedText>
