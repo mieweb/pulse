@@ -17,7 +17,7 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkCapabilities } from './capabilities';
@@ -32,6 +32,29 @@ const DIST = process.env.PV_CORE
 const SERVER_SCRIPT = path.join(ROOT, 'scripts/pv-test-server.mjs');
 const ENABLED = process.env.PULSE_INTEGRATION === '1';
 const HAVE_DIST = existsSync(DIST);
+
+/**
+ * The server build's spec revision (`pulseProtocol.version` in its package.json, which is where
+ * the server reads it too), known up front so tests of newer protocol features are reported as
+ * skipped against an older server rather than passing without running. Releases from before the
+ * field speak 1.0.
+ */
+function serverRevision(): [major: number, minor: number] {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(path.dirname(DIST), '../package.json'), 'utf8'));
+    const [major, minor] = String(pkg.pulseProtocol?.version ?? '1.0')
+      .split('.')
+      .map(Number);
+    return [major, minor];
+  } catch {
+    return [1, 0];
+  }
+}
+const [SERVER_MAJOR, SERVER_MINOR] = serverRevision();
+
+/** `it` if the server speaks protocol `major.minor` or later, else `it.skip`. */
+const itSince = (major: number, minor: number) =>
+  SERVER_MAJOR > major || (SERVER_MAJOR === major && SERVER_MINOR >= minor) ? it : it.skip;
 
 /** Minimal MP4-family header (ftyp box) so the server's sniffer accepts the video. */
 function makeMp4(size: number): Buffer {
@@ -111,18 +134,11 @@ describeIf('pulsevault integration (real server, real wire)', () => {
   let child: ChildProcess;
   let origin: string;
 
-  /** The server's spec revision as a number (2.1 → 2.1); protocol 1 servers don't report one. */
-  let revision = 1;
-
   beforeAll(async () => {
     ({ child, origin } = await spawnServer());
     // As the app does at startup: every request says which build this is (Pulse-Client) and
     // every upload records it (appVersion).
     setClientIdentity({ version: '2.1.0', build: '45', platform: 'ios' });
-    const caps = (await (await fetch(`${origin}/pulsevault/capabilities`)).json()) as {
-      protocolRevision?: string;
-    };
-    revision = Number(caps.protocolRevision ?? 1);
   });
 
   afterAll(async () => {
@@ -221,8 +237,7 @@ describeIf('pulsevault integration (real server, real wire)', () => {
     }
   });
 
-  it('records which app build made each upload (protocol 2.1+)', async () => {
-    if (revision < 2.1) return; // an older server has no appVersion to report
+  itSince(2, 1)('records which app build made each upload (protocol 2.1+)', async () => {
     const link = await pair();
     const video = makeMp4(16 * 1024);
     await upload(link, video, {
@@ -239,18 +254,20 @@ describeIf('pulsevault integration (real server, real wire)', () => {
     expect(complete?.appVersion).toBe('2.1.0 (45)');
   });
 
-  it('tells an app that is too old to update, instead of failing partway (protocol 2.1+)', async () => {
-    if (revision < 2.1) return; // older servers don't read Pulse-Client
-    const link = await pair();
-    const res = await fetch(`${link.server}/upload`, {
-      method: 'POST',
-      headers: {
-        'Tus-Resumable': '1.0.0',
-        'Upload-Length': '16',
-        'Pulse-Client': 'Pulse/1.9.0 (30; ios); protocol=1',
-        Authorization: `Bearer ${link.token}`,
-      },
-    });
-    expect(res.status).toBe(426);
-  });
+  itSince(2, 1)(
+    'tells an app that is too old to update, instead of failing partway (protocol 2.1+)',
+    async () => {
+      const link = await pair();
+      const res = await fetch(`${link.server}/upload`, {
+        method: 'POST',
+        headers: {
+          'Tus-Resumable': '1.0.0',
+          'Upload-Length': '16',
+          'Pulse-Client': 'Pulse/1.9.0 (30; ios); protocol=1',
+          Authorization: `Bearer ${link.token}`,
+        },
+      });
+      expect(res.status).toBe(426);
+    },
+  );
 });
