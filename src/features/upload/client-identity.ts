@@ -1,11 +1,12 @@
-import pkg from '../../../package.json';
+import { APP_PROTOCOL } from './protocol.gen';
 
 /**
  * Which upload-protocol majors this app speaks (PROTOCOL.md §7), from `package.json`
- * `pulseProtocol` — the one place it's written down. The compatibility page and the About page
- * read the same field. 1–2: protocol 2 only removed `uploadUnit`, which this app ignores.
+ * `pulseProtocol` — the one place it's written down — via the generated `protocol.gen.ts`, so
+ * the bundle doesn't carry the whole package.json. The compatibility page reads the same field.
+ * 1–2: protocol 2 only removed `uploadUnit`, which this app ignores.
  */
-export const APP_PROTOCOL: { min: number; max: number } = pkg.pulseProtocol;
+export { APP_PROTOCOL };
 
 /** `1` or `1–2`, for display. */
 export const protocolRangeLabel = ({ min, max }: { min: number; max: number }) =>

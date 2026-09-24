@@ -32,7 +32,7 @@ jobs:
         run: npx tsc --noEmit
       - name: Lint
         run: npm run lint
-      - name: Protocol types match the pinned protocol
+      - name: Protocol types match the pinned protocol and package.json
         run: node scripts/gen-protocol-types.mjs --check
       - name: Unit tests
         run: npx jest --ci
