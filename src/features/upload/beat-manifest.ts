@@ -1,25 +1,16 @@
 import type { Segment } from '@/db/schema';
 import { effMs, segmentOffsets } from '@/utils/segment-window';
 
-/** One recorded segment's precise placement on the video's timeline (for future HLS deep-links). */
-export type Beat = {
-  /** The local segment id this timecode range corresponds to. */
-  segmentId: string;
-  /** 0-based position of the segment in the video. */
-  order: number;
-  /** Start of the segment on the video's timeline (ms). */
-  startMs: number;
-  /** End of the segment on the video's timeline (ms). Equals the next beat's `startMs`. */
-  endMs: number;
-};
+import type { BeatManifest } from './protocol.gen';
 
-export type BeatManifest = {
-  version: 1;
-  type: 'beat-manifest';
-  /** True duration of the video (ms). */
-  durationMs: number;
-  beats: Beat[];
-};
+/**
+ * The manifest's shape comes from the protocol (`beat-manifest.schema.json` in the pinned
+ * pulsevault, generated into `protocol.gen.ts`), so the app can't drift from what servers expect.
+ */
+export type { BeatManifest };
+
+/** One recorded clip's placement on the video's timeline (for future HLS deep-links). */
+export type Beat = BeatManifest['beats'][number];
 
 /**
  * Build the video's beat manifest: precise per-segment start/end timecodes on the video's

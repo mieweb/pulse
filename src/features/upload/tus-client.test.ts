@@ -6,6 +6,7 @@ import {
   type UploadChunk,
   uploadViaTus,
 } from './tus-client';
+import { setClientIdentity } from './client-identity';
 
 const SERVER = 'https://vault.example.test/pulsevault';
 const ARTIFACT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -711,5 +712,83 @@ describe('cancelTusUpload', () => {
       statusCode: 500,
       retryable: true,
     });
+  });
+});
+
+describe('client identity and protocol checks (PROTOCOL.md §7.2)', () => {
+  const created = () =>
+    new Response(null, { status: 201, headers: { location: `${SERVER}/upload/abc` } });
+  const headAt = (offset: number) =>
+    new Response(null, { status: 200, headers: { 'upload-offset': String(offset) } });
+
+  it('sends Pulse-Client on every request and appVersion in Upload-Metadata', async () => {
+    setClientIdentity({ version: '2.1.0', build: '45', platform: 'ios' });
+    const { fetchImpl, calls } = createFetchStub({ POST: [created()], HEAD: [headAt(0)] });
+    const chunks = createChunkStub([chunkOk(8)]);
+    await uploadViaTus({
+      server: SERVER,
+      token: 'tok',
+      artifactId: ARTIFACT_ID,
+      filename: 'draft.mp4',
+      kind: 'video',
+      file: fakeFile(8) as never,
+      fetchImpl,
+      uploadChunk: chunks.uploadChunk,
+    });
+    const expected = 'Pulse/2.1.0 (45; ios); protocol=1-2';
+    for (const call of calls) {
+      expect((call.init?.headers as Record<string, string>)['Pulse-Client']).toBe(expected);
+    }
+    expect(chunks.calls[0]?.headers['Pulse-Client']).toBe(expected);
+    const metadata = (calls[0]?.init?.headers as Record<string, string>)['Upload-Metadata'];
+    const appVersion = metadata
+      .split(',')
+      .find((pair) => pair.startsWith('appVersion '))
+      ?.split(' ')[1];
+    expect(appVersion && Buffer.from(appVersion, 'base64').toString('utf8')).toBe('2.1.0 (45)');
+  });
+
+  it('turns 426 Upgrade Required into a terminal "update Pulse" error, without retrying', async () => {
+    const body = JSON.stringify({
+      error: 'This server needs a client that speaks upload protocol 3.',
+      minSupportedVersion: 3,
+      maxSupportedVersion: 3,
+    });
+    const { fetchImpl, calls } = createFetchStub({
+      POST: [new Response(body, { status: 426, headers: JSON_HEADERS })],
+    });
+    const failure = await uploadViaTus({
+      server: SERVER,
+      token: null,
+      artifactId: ARTIFACT_ID,
+      filename: 'draft.mp4',
+      kind: 'video',
+      file: fakeFile(8) as never,
+      fetchImpl,
+      uploadChunk: createChunkStub([]).uploadChunk,
+    }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(TusUploadError);
+    expect((failure as TusUploadError).retryable).toBe(false);
+    expect((failure as TusUploadError).statusCode).toBe(426);
+    expect((failure as TusUploadError).message).toBe(
+      'This server needs a newer version of Pulse. Update the app and try again.',
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it('treats a 426 on a PATCH the same way', async () => {
+    const { fetchImpl } = createFetchStub({ POST: [created()], HEAD: [headAt(0)] });
+    const failure = await uploadViaTus({
+      server: SERVER,
+      token: null,
+      artifactId: ARTIFACT_ID,
+      filename: 'draft.mp4',
+      kind: 'video',
+      file: fakeFile(8) as never,
+      fetchImpl,
+      uploadChunk: createChunkStub([{ status: 426 }]).uploadChunk,
+    }).catch((e: unknown) => e);
+    expect((failure as TusUploadError).retryable).toBe(false);
+    expect((failure as TusUploadError).statusCode).toBe(426);
   });
 });

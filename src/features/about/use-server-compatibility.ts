@@ -30,8 +30,10 @@ export function useServerCompatibility(): ServerCompat[] {
               server,
               host,
               status: 'compatible',
-              minVersion: result.capabilities.minSupportedVersion,
-              maxVersion: result.capabilities.maxSupportedVersion,
+              protocol: result.protocol,
+              ...(result.capabilities.protocolRevision
+                ? { revision: result.capabilities.protocolRevision }
+                : {}),
             }
           : {
               server,

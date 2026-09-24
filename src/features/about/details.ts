@@ -1,9 +1,17 @@
+import { protocolRangeLabel } from '@/features/upload/client-identity';
+
 import { type BuildInfo, commitLabel, utcLabel, versionLabel } from './build-info';
 
 /** One paired server's compatibility with this app, from a live `/capabilities` check. */
 export type ServerCompat = { server: string; host: string } & (
   | { status: 'checking' }
-  | { status: 'compatible'; minVersion: number; maxVersion: number }
+  | {
+      status: 'compatible';
+      /** The protocol major the app and this server both speak. */
+      protocol: number;
+      /** The server's spec revision (`2.1`), if it reports one — protocol 1 servers don't. */
+      revision?: string;
+    }
   | { status: 'app-too-old' | 'app-too-new' | 'unreachable' }
 );
 
@@ -15,9 +23,7 @@ export function compatLabel(compat: ServerCompat): string {
     case 'checking':
       return 'Checking…';
     case 'compatible':
-      return compat.minVersion === compat.maxVersion
-        ? `Compatible · protocol ${compat.minVersion}`
-        : `Compatible · protocol ${compat.minVersion}–${compat.maxVersion}`;
+      return `Compatible · protocol ${compat.revision ?? compat.protocol}`;
     case 'app-too-old':
       return 'Needs a newer version of Pulse';
     case 'app-too-new':
@@ -39,7 +45,7 @@ export function formatDetails({
 }: {
   build: BuildInfo;
   device: DeviceInfo;
-  protocol: number;
+  protocol: { min: number; max: number };
   servers: ServerCompat[];
 }): string {
   const lines = [
@@ -50,7 +56,7 @@ export function formatDetails({
     `Device: ${[device.model, [device.os, device.osVersion].filter(Boolean).join(' ')]
       .filter(Boolean)
       .join(' · ')}`,
-    `Upload protocol: v${protocol}`,
+    `Upload protocol: v${protocolRangeLabel(protocol)}`,
     servers.length === 0 ? 'Paired servers: none' : 'Paired servers:',
     ...servers.map((s) => `  ${s.host} — ${compatLabel(s)}`),
   ];

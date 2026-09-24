@@ -1,28 +1,37 @@
-// This app's own wire-protocol version — checked against the server's
-// advertised [minSupportedVersion, maxSupportedVersion] range from
-// /capabilities before pairing proceeds. Bump alongside any breaking change
-// to how this app talks to a pulsevault-compatible server. Shown on the About page.
-export const APP_PROTOCOL_VERSION = 1;
+import { APP_PROTOCOL, clientHeaders } from './client-identity';
+import type { CapabilitiesResponse } from './protocol.gen';
+
 const CAPABILITIES_TIMEOUT_MS = 8000;
 
-export type Capabilities = {
-  protocolVersion: number;
-  minSupportedVersion: number;
-  maxSupportedVersion: number;
-};
+/**
+ * What the app needs from `GET /capabilities` (PROTOCOL.md §2). Names and types come from the
+ * pinned protocol schema (`protocol.gen.ts`); `protocolRevision` is optional because servers
+ * speaking protocol 1 predate it.
+ */
+export type Capabilities = Pick<
+  CapabilitiesResponse,
+  'protocolVersion' | 'minSupportedVersion' | 'maxSupportedVersion'
+> &
+  Partial<Pick<CapabilitiesResponse, 'protocolRevision'>>;
 
 type CapabilitiesRejectionReason = 'unreachable' | 'version-too-old' | 'version-too-new';
 
 export type CapabilitiesResult =
-  | { ok: true; capabilities: Capabilities }
+  | {
+      ok: true;
+      capabilities: Capabilities;
+      /** The protocol major both sides speak. */
+      protocol: number;
+    }
   | { ok: false; reason: CapabilitiesRejectionReason };
 
 async function fetchCapabilities(server: string): Promise<Capabilities> {
   const res = await fetch(`${server}/capabilities`, {
+    headers: clientHeaders(),
     signal: AbortSignal.timeout(CAPABILITIES_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-  const body = (await res.json()) as Partial<Capabilities>;
+  const body = (await res.json()) as Partial<CapabilitiesResponse>;
   if (
     typeof body.minSupportedVersion !== 'number' ||
     typeof body.maxSupportedVersion !== 'number'
@@ -33,10 +42,17 @@ async function fetchCapabilities(server: string): Promise<Capabilities> {
     protocolVersion: body.protocolVersion ?? body.minSupportedVersion,
     minSupportedVersion: body.minSupportedVersion,
     maxSupportedVersion: body.maxSupportedVersion,
+    ...(typeof body.protocolRevision === 'string'
+      ? { protocolRevision: body.protocolRevision }
+      : {}),
   };
 }
 
-/** Fetches `/capabilities` and checks this app's protocol version against the server's supported range in one step. */
+/**
+ * Fetches `/capabilities` and checks that this app's protocol range (`APP_PROTOCOL`) overlaps
+ * the server's. Pairing runs it, and so does every upload before it starts — the server may
+ * have been upgraded since pairing (PROTOCOL.md §7.2).
+ */
 export async function checkCapabilities(server: string): Promise<CapabilitiesResult> {
   let capabilities: Capabilities;
   try {
@@ -44,13 +60,17 @@ export async function checkCapabilities(server: string): Promise<CapabilitiesRes
   } catch {
     return { ok: false, reason: 'unreachable' };
   }
-  if (APP_PROTOCOL_VERSION < capabilities.minSupportedVersion) {
+  if (APP_PROTOCOL.max < capabilities.minSupportedVersion) {
     return { ok: false, reason: 'version-too-old' };
   }
-  if (APP_PROTOCOL_VERSION > capabilities.maxSupportedVersion) {
+  if (APP_PROTOCOL.min > capabilities.maxSupportedVersion) {
     return { ok: false, reason: 'version-too-new' };
   }
-  return { ok: true, capabilities };
+  return {
+    ok: true,
+    capabilities,
+    protocol: Math.min(APP_PROTOCOL.max, capabilities.maxSupportedVersion),
+  };
 }
 
 export const CAPABILITIES_REJECTION_MESSAGE: Record<CapabilitiesRejectionReason, string> = {

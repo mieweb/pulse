@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true # the protocol schemas the app's types are generated from
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -30,6 +32,8 @@ jobs:
         run: npx tsc --noEmit
       - name: Lint
         run: npm run lint
+      - name: Protocol types match the pinned protocol
+        run: node scripts/gen-protocol-types.mjs --check
       - name: Unit tests
         run: npx jest --ci
 

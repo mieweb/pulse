@@ -21,6 +21,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkCapabilities } from './capabilities';
+import { setClientIdentity } from './client-identity';
 import { parseUploadDeepLink, type UploadDeepLink } from './deep-link';
 import { TusUploadError, uploadViaTus, type ArtifactKind, type UploadChunk } from './tus-client';
 
@@ -110,8 +111,18 @@ describeIf('pulsevault integration (real server, real wire)', () => {
   let child: ChildProcess;
   let origin: string;
 
+  /** The server's spec revision as a number (2.1 → 2.1); protocol 1 servers don't report one. */
+  let revision = 1;
+
   beforeAll(async () => {
     ({ child, origin } = await spawnServer());
+    // As the app does at startup: every request says which build this is (Pulse-Client) and
+    // every upload records it (appVersion).
+    setClientIdentity({ version: '2.1.0', build: '45', platform: 'ios' });
+    const caps = (await (await fetch(`${origin}/pulsevault/capabilities`)).json()) as {
+      protocolRevision?: string;
+    };
+    revision = Number(caps.protocolRevision ?? 1);
   });
 
   afterAll(async () => {
@@ -208,5 +219,38 @@ describeIf('pulsevault integration (real server, real wire)', () => {
       expect(failure).toBeInstanceOf(TusUploadError);
       expect((failure as TusUploadError).retryable).toBe(false);
     }
+  });
+
+  it('records which app build made each upload (protocol 2.1+)', async () => {
+    if (revision < 2.1) return; // an older server has no appVersion to report
+    const link = await pair();
+    const video = makeMp4(16 * 1024);
+    await upload(link, video, {
+      artifactId: link.artifactId,
+      filename: 'draft.mp4',
+      kind: 'video',
+    });
+    const events = (await (await fetch(`${origin}/events`)).json()) as {
+      phase: string;
+      artifactId: string;
+      appVersion?: string;
+    }[];
+    const complete = events.find((e) => e.phase === 'complete' && e.artifactId === link.artifactId);
+    expect(complete?.appVersion).toBe('2.1.0 (45)');
+  });
+
+  it('tells an app that is too old to update, instead of failing partway (protocol 2.1+)', async () => {
+    if (revision < 2.1) return; // older servers don't read Pulse-Client
+    const link = await pair();
+    const res = await fetch(`${link.server}/upload`, {
+      method: 'POST',
+      headers: {
+        'Tus-Resumable': '1.0.0',
+        'Upload-Length': '16',
+        'Pulse-Client': 'Pulse/1.9.0 (30; ios); protocol=1',
+        Authorization: `Bearer ${link.token}`,
+      },
+    });
+    expect(res.status).toBe(426);
   });
 });

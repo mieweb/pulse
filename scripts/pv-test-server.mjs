@@ -4,7 +4,8 @@
 //
 // Besides the pulsevault routes under /pulsevault, it serves GET /pair, which mints a pairing
 // link exactly as a deployment's dashboard would (fresh artifactId, a token scoped to it,
-// `buildUploadLink`) and returns `{ link }`.
+// `buildUploadLink`) and returns `{ link }`, and GET /events, the artifact events it has seen
+// (what a deployment's `onArtifactEvent` would get).
 //
 // Prints "PV_PORT=<port>" on stdout once listening; exits when stdin closes, so a killed jest
 // run can't leak servers.
@@ -45,6 +46,8 @@ const storage = createLocalStorage({ workspaceDir });
 const validateAny = createChecksumValidator();
 const validateVideo = createChecksumValidator(createMp4Sniffer(storage));
 
+const events = [];
+
 const core = createPulseVaultCore({
   basePath: BASE_PATH,
   storage,
@@ -52,6 +55,7 @@ const core = createPulseVaultCore({
   validatePayload: (request, ctx) =>
     ctx.kind === 'video' ? validateVideo(request, ctx) : validateAny(request, ctx),
   authorize: createCapabilityAuthorize(lookupSecret, { issuer: ISSUER }),
+  onArtifactEvent: (event) => void events.push(event),
   logger: { info() {}, error() {} },
 });
 
@@ -71,6 +75,11 @@ const server = http.createServer((req, res) => {
     });
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ link }));
+    return;
+  }
+  if (req.method === 'GET' && req.url === '/events') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(events));
     return;
   }
   void core.handler(req, res, () => {
