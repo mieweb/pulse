@@ -6,18 +6,35 @@ import { conformToContract } from '@/utils/contract-gate';
 import {
   absolutize,
   deleteDraftDir,
+  editCoverRelPath,
   editedThumbRelPath,
   thumbRelPath,
   toFileUri,
   writeEditedBytes,
   writeOriginalBytes,
 } from '@/utils/file-store';
+import { editTimelineMs, parseEdit } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 import { isPulseManifest, MANIFEST_NAME } from './manifest';
 
 export type ImportResult = { draftIds: string[] };
 
 const BAD_FILE = 'This file isn’t a valid .pulse bundle.';
+
+/** Conform a stored clip to the reels contract in place; true when it had to be rewritten. */
+async function conformInPlace(rel: string): Promise<boolean> {
+  const conformed = await conformToContract(absolutize(rel));
+  if (!conformed) return false;
+  const dest = new File(absolutize(rel));
+  dest.delete();
+  await new File(toFileUri(conformed)).move(dest);
+  return true;
+}
+
+/** An editState with its crop removed (everything else — undo/redo included — kept). */
+function withoutCrop(editState: string): string {
+  return JSON.stringify({ ...JSON.parse(editState), crop: null });
+}
 const TOO_BIG = 'This .pulse bundle is too large to import.';
 
 // Our own exports are STORE-only (see pack.ts), so decompressed ≈ file size; a
@@ -82,48 +99,61 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         const segmentId = `${draftId}-${segIndex}`;
         const originalFilename = writeOriginalBytes(draftId, segmentId, origBytes);
 
-        let editedFilename: string | null = null;
-        let editedDurationMs: number | null = null;
-        let editState: string | null = null;
-        const editedBytes = seg.edited ? archive[seg.edited] : undefined;
-        if (editedBytes) {
-          editedFilename = writeEditedBytes(draftId, segmentId, editedBytes);
-          editedDurationMs = seg.editedDurationMs ?? null;
-          // Opaque to us; the editor ignores a value it can't use and opens fresh.
-          editState = typeof seg.editState === 'string' ? seg.editState : null;
-        }
-
         // Enforce the portrait reels contract on foreign media: bundles from older installs
         // can carry off-canvas / non-H.264 clips that would otherwise enter the draft unchecked.
         // Conform in place (before the thumbnail, so the cover reflects the stored pixels);
         // a clip that can't be conformed is dropped like one missing from the archive.
+        let originalConformed: boolean;
         try {
-          for (const rel of [originalFilename, editedFilename]) {
-            if (!rel) continue;
-            const conformed = await conformToContract(absolutize(rel));
-            if (conformed) {
-              const dest = new File(absolutize(rel));
-              dest.delete();
-              await new File(toFileUri(conformed)).move(dest);
-            }
-          }
+          originalConformed = await conformInPlace(originalFilename);
         } catch {
-          for (const rel of [originalFilename, editedFilename]) {
-            if (!rel) continue;
-            try {
-              new File(absolutize(rel)).delete();
-            } catch {}
-          }
+          try {
+            new File(absolutize(originalFilename)).delete();
+          } catch {}
           continue;
         }
 
-        // Thumbnails aren't shipped (deterministic derivatives) — regenerate the cover from the
-        // effective clip, mirroring the original/edited thumb-path split the editor uses.
-        const effective = editedFilename ?? originalFilename;
-        const coverRel = editedFilename
-          ? editedThumbRelPath(editedFilename)
-          : thumbRelPath(draftId, segmentId);
-        const ok = await generateThumbnailFile(absolutize(effective), absolutize(coverRel));
+        // An edit travels as settings (preferred — the recipient keeps editing and the export
+        // renders it) and, from older installs, also as a baked file. A crop is normalized to the
+        // original's frame, so it can't be trusted once conforming reshaped that frame: fall back
+        // to the baked file when there is one, else keep the rest of the edit without the crop.
+        let editState =
+          typeof seg.editState === 'string' && parseEdit(seg.editState) ? seg.editState : null;
+        const editedBytes = seg.edited ? archive[seg.edited] : undefined;
+        if (editState && originalConformed && parseEdit(editState)?.crop) {
+          editState = editedBytes ? null : withoutCrop(editState);
+        }
+
+        let editedFilename: string | null = null;
+        let editedDurationMs: number | null = null;
+        let coverRel = thumbRelPath(draftId, segmentId);
+        let ok: boolean;
+        if (editState) {
+          editedDurationMs = editTimelineMs(editState);
+          coverRel = editCoverRelPath(draftId, segmentId, Date.now());
+          ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(coverRel), {
+            editState,
+            startMs: parseEdit(editState)?.startMs ?? 0,
+          });
+        } else if (editedBytes) {
+          // A legacy baked edit: kept as the clip's file, played whole.
+          editedFilename = writeEditedBytes(draftId, segmentId, editedBytes);
+          editedDurationMs = seg.editedDurationMs ?? null;
+          try {
+            await conformInPlace(editedFilename);
+          } catch {
+            for (const rel of [originalFilename, editedFilename]) {
+              try {
+                new File(absolutize(rel)).delete();
+              } catch {}
+            }
+            continue;
+          }
+          coverRel = editedThumbRelPath(editedFilename);
+          ok = await generateThumbnailFile(absolutize(editedFilename), absolutize(coverRel));
+        } else {
+          ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(coverRel));
+        }
 
         segmentRows.push({
           id: segmentId,

@@ -38,6 +38,7 @@ import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDurationPadded } from '@/utils/format';
 import { closeToHome } from '@/utils/navigation';
+import { clipRender } from '@/utils/segment-window';
 
 // Ask for the full multi-camera device on the back so 0.5x / 1x / Tele are all reachable via
 // zoom; the front falls back to its single wide lens automatically.
@@ -99,6 +100,14 @@ export default function RecorderScreen() {
   // query, clear-draft) can strand an open preview with zero segments.
   if (previewId != null && segments.length === 0) setPreviewId(null);
   const preview = usePreview(segments, previewId);
+  // The active clip's geometry edit, which the preview applies as view transforms.
+  const activeRender = preview.active ? clipRender(preview.active) : null;
+  const previewEdit = activeRender && {
+    file: activeRender.file,
+    rotation: activeRender.rotation,
+    flipped: activeRender.flipped,
+    crop: activeRender.crop,
+  };
   const previewing = previewId != null;
   // True while a finger is dragging the playhead — the preview suppresses its play badge
   // then. Derived reset (not effect) so a preview closed mid-drag can't strand it true.
@@ -524,8 +533,8 @@ export default function RecorderScreen() {
                 if (!seg) return;
                 // Stay in the preview on this clip after the editor closes — edits are
                 // usually done together, so this saves a tap. Pause the underlying player
-                // while the editor is open; on save, usePreview reloads the clip's new
-                // effective file (its load effect keys on the edited filename).
+                // while the editor is open; on save, usePreview re-applies the clip's new
+                // settings (its load effect keys on the clip's render key).
                 preview.pause();
                 openTrim(seg);
               }}
@@ -533,10 +542,11 @@ export default function RecorderScreen() {
               // Only for an edited clip: back to the untouched original. No confirm — the edits
               // are one ✂ away, and undoing edits before ➡️ reuses the saved merge (#212).
               onReset={
-                preview.active?.editedFilename
+                preview.active?.editState || preview.active?.editedFilename
                   ? () => preview.activeId && resetSegment(preview.activeId)
                   : undefined
               }
+              edit={previewEdit}
             />
           </View>
         )}

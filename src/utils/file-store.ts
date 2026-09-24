@@ -11,8 +11,7 @@ import { Directory, File, Paths } from 'expo-file-system';
  * back bare paths, but expo's `File`, expo-video, whisper, sharing, etc. all want a URI. A value
  * that already has a scheme is returned unchanged.
  */
-export const toFileUri = (path: string): string =>
-  path.startsWith('/') ? `file://${path}` : path;
+export const toFileUri = (path: string): string => (path.startsWith('/') ? `file://${path}` : path);
 
 export function segmentRelPath(draftId: string, segmentId: string): string {
   return `drafts/${draftId}/segments/${segmentId}.mp4`;
@@ -42,6 +41,14 @@ export function thumbRelPath(draftId: string, segmentId: string): string {
  */
 export function editedThumbRelPath(editedRelPath: string): string {
   return editedRelPath.replace(/\.mp4$/, '.thumb.jpg');
+}
+
+/**
+ * An edited clip's cover (relative path), revision-stamped for the same reason as edited files:
+ * a fixed path would let expo-image serve the previous edit's frame from its cache.
+ */
+export function editCoverRelPath(draftId: string, segmentId: string, rev: number): string {
+  return `drafts/${draftId}/segments/${segmentId}.cover.${rev}.jpg`;
 }
 
 export function absolutize(relPath: string): string {
@@ -88,23 +95,6 @@ export async function copyIntoSegments(
   if (dest.exists) dest.delete();
   await new File(srcUri).copy(dest);
   return segmentRelPath(draftId, segmentId);
-}
-
-/**
- * Move an RNVT editor output (in app cache/files) into the draft's segments dir as a fresh
- * `.edited.{rev}.mp4` revision; returns its relative path (§ destructive trim). The prior
- * edit (if any) stays on disk untouched — `setEdited` deletes it only after the segment row
- * points at the new file, so a failed move never strands the row on a deleted file.
- */
-export async function importTrimmedFile(
-  srcUri: string,
-  draftId: string,
-  segmentId: string,
-): Promise<string> {
-  const rev = Date.now();
-  // RNVT's Android editor emits a bare path (iOS emits a file:// URI) — normalize for File.
-  await new File(toFileUri(srcUri)).move(editedSegmentDest(draftId, segmentId, rev));
-  return editedSegmentRelPath(draftId, segmentId, rev);
 }
 
 /**

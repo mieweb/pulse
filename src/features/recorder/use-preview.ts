@@ -10,16 +10,22 @@ import type { Segment } from '@/db/schema';
 import { absolutize } from '@/utils/file-store';
 import { clamp } from '@/utils/math';
 import {
+  clipRender,
   effFile,
   effMs,
   indexAtGlobalMs,
   inMs,
   outMs,
+  renderKey,
   segmentOffsets,
 } from '@/utils/segment-window';
 
 /** Tolerance for "the playhead sits at the clip's end" (togglePlay's restart-from-end check). */
 const END_EPSILON_MS = 60;
+/** How close to a trimmed out-point counts as reaching it (source ms). */
+const OUT_POINT_EPSILON_MS = 30;
+/** An out-point this close to the file's end is left to `playToEnd` (the file really ends). */
+const FILE_END_SLACK_MS = 100;
 
 /** Index of the selected segment, falling back to the first clip when the selection is gone
  * (e.g. its row was deleted). -1 while the preview is closed or the draft is empty. */
@@ -34,9 +40,10 @@ function resolveActiveIndex(
 }
 
 /**
- * In-recorder preview state: drives one `expo-video` player across a draft's segments
- * (each clip's effective file — edited if present, else original), tracks the active clip,
- * the source playhead, and a draft-global playhead for the bar cursor.
+ * In-recorder preview state: drives one `expo-video` player across a draft's segments,
+ * playing each clip as edited (`clipRender`: the original through its saved window, speed and
+ * mute — geometry is the view's job, see preview-modal), tracks the active clip, the source
+ * playhead, and a draft-global playhead for the bar cursor.
  *
  * Playback scope: a tapped segment plays only itself and parks at its end ('single');
  * the ▶ / surface tap plays through from the playhead to the draft's end, as do bar
@@ -105,10 +112,10 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
   const activeIndex = resolveActiveIndex(segments, anchorId, selectedId);
   const active = activeIndex >= 0 ? segments[activeIndex] : null;
   const activeId = active?.id ?? null;
-  // The active clip's effective file — changes when it's edited (a new `editedFilename`).
-  // The load effect keys on this so an edit to the CURRENT clip reloads it in place
+  // What the active clip renders to — changes when it's edited (new settings, or a legacy
+  // baked file). The load effect keys on this so an edit to the CURRENT clip re-applies in place
   // (e.g. returning from the RNVT editor while still in the preview).
-  const activeFile = active ? effFile(active) : null;
+  const activeKey = active ? renderKey(active) : null;
 
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
 
@@ -118,9 +125,22 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
     const last = segments.length - 1;
     return { offsets: offs, totalMs: last < 0 ? 0 : offs[last] + effMs(segments[last]) };
   }, [segments]);
+  // positionMs is SOURCE time; a clip occupies (source - inMs) / speed of the timeline.
   const globalMs = active
-    ? offsets[activeIndex] + clamp(positionMs - inMs(active), 0, effMs(active))
+    ? offsets[activeIndex] +
+      clamp((positionMs - inMs(active)) / clipRender(active).speed, 0, effMs(active))
     : 0;
+
+  // Start playback with the active clip's settings. On iOS, expo-video's playbackRate setter
+  // drives AVPlayer.rate, which STARTS playback — so the rate is only ever set right here,
+  // immediately before play(), never on a paused player.
+  const playActive = useCallback(() => {
+    if (!active) return;
+    const r = clipRender(active);
+    player.muted = r.muted;
+    if (player.playbackRate !== r.speed) player.playbackRate = r.speed;
+    player.play();
+  }, [player, active]);
 
   // Load the active clip into the player whenever the row changes, landing on the pending
   // scrub offset (bar drag across a boundary) or the clip's in-point.
@@ -152,7 +172,7 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       // and play() on a loading item is dropped; statusChange picks that case up.
       if (wantPlayRef.current && player.status === 'readyToPlay') {
         wantPlayRef.current = false;
-        player.play();
+        playActive();
       }
     };
 
@@ -185,7 +205,7 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, activeFile]);
+  }, [activeId, activeKey]);
 
   useEventListener(player, 'statusChange', ({ status }: { status: string }) => {
     if (status === 'error') {
@@ -201,7 +221,7 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
     advancingRef.current = false;
     if (wantPlayRef.current) {
       wantPlayRef.current = false;
-      player.play();
+      playActive();
     }
   });
 
@@ -228,14 +248,6 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
     }
   };
 
-  // Track the playhead. Advancing is playToEnd's job: under the destructive-edit model a
-  // clip's out-point IS its file's end, so playToEnd always fires — advancing here at an
-  // epsilon before the out-point only cut the last frames off every clip.
-  useEventListener(player, 'timeUpdate', ({ currentTime }: { currentTime: number }) => {
-    if (!active || swapInFlightRef.current || advancingRef.current) return;
-    setPositionMs(Math.round(currentTime * 1000));
-  });
-
   // Clip ran out — in 'single' scope park at ITS end; otherwise move on (or park at the
   // draft's end). Parking mirrors advance()'s end-of-draft branch (pause AT the out-point,
   // togglePlay's end check handles continuing), but lands 1ms shy of it: at exactly outMs
@@ -243,7 +255,7 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
   // NEXT segment at fraction 0 — the bar knob visibly hopped onto the next thumb's left
   // edge. 1ms back keeps the knob (and any late timeUpdate) inside the played clip, and is
   // still deep within END_EPSILON_MS so ▶ treats it as "at the end".
-  useEventListener(player, 'playToEnd', () => {
+  const onClipEnd = () => {
     if (!active || swapInFlightRef.current || advancingRef.current) return;
     if (scopeRef.current === 'single') {
       const parkMs = Math.max(inMs(active), outMs(active) - 1);
@@ -253,7 +265,43 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       return;
     }
     advance();
+  };
+
+  // A trimmed clip ends at its out-point, not the file's end — playToEnd never fires for it.
+  // Only for those clips (an untrimmed end is playToEnd's job: stopping an epsilon early cut
+  // the last frames off every clip).
+  const trimmedEnd = (s: Segment) => outMs(s) < s.durationMs - FILE_END_SLACK_MS;
+
+  // Track the playhead, and catch a trimmed out-point if the timer below was late.
+  useEventListener(player, 'timeUpdate', ({ currentTime }: { currentTime: number }) => {
+    if (!active || swapInFlightRef.current || advancingRef.current) return;
+    const ms = Math.round(currentTime * 1000);
+    setPositionMs(ms);
+    if (player.playing && trimmedEnd(active) && ms >= outMs(active) - OUT_POINT_EPSILON_MS) {
+      onClipEnd();
+    }
   });
+
+  // timeUpdate ticks every 250ms of wall time — at 2x that's half a second of source past the
+  // out-point. While a trimmed clip plays, time the out-point directly; re-armed on every
+  // position update, so buffering or a seek just reschedules it.
+  useEffect(() => {
+    if (!isPlaying || !active || !trimmedEnd(active)) return;
+    const r = clipRender(active);
+    const remainingMs = (r.outMs - player.currentTime * 1000) / r.speed;
+    const timer = setTimeout(
+      () => {
+        if (player.playing && player.currentTime * 1000 >= r.outMs - OUT_POINT_EPSILON_MS) {
+          onClipEnd();
+        }
+      },
+      Math.max(0, remainingMs),
+    );
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, activeId, activeKey, positionMs]);
+
+  useEventListener(player, 'playToEnd', onClipEnd);
 
   /** Make a clip the active one (thumb tap while previewing); plays from its in-point —
    *  same as tapping a thumb from the recorder, so a tap ALWAYS means "play this clip",
@@ -282,7 +330,7 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
         wantPlayRef.current = true;
         if (player.status === 'readyToPlay') {
           wantPlayRef.current = false;
-          player.play();
+          playActive();
         }
         return;
       }
@@ -294,7 +342,7 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       setPositionMs(inMs(target));
       setSelectedId(id);
     },
-    [player, activeId, active, segments],
+    [player, activeId, active, segments, playActive],
   );
 
   /** Pause playback without changing the selection (e.g. while the RNVT editor is open). */
@@ -342,9 +390,9 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
     wantPlayRef.current = true;
     if (player.status === 'readyToPlay') {
       wantPlayRef.current = false;
-      player.play();
+      playActive();
     }
-  }, [player, active, activeId, activeIndex, segments]);
+  }, [player, active, activeId, activeIndex, segments, playActive]);
 
   /** Seek to a draft-global offset (bar-cursor scrub); swaps the loaded clip when crossed. */
   const seekToGlobalMs = useCallback(
@@ -360,7 +408,8 @@ export function usePreview(segments: Segment[], anchorId: string | null) {
       const i = indexAtGlobalMs(segments, offsets, clamped);
       if (i < 0) return;
       const seg = segments[i];
-      const sourceMs = inMs(seg) + (clamped - offsets[i]);
+      // Timeline → source: a clip plays its window at its speed.
+      const sourceMs = inMs(seg) + (clamped - offsets[i]) * clipRender(seg).speed;
       // Keep the pending offset fresh: if a load is in flight, drag frames would otherwise
       // be dropped — begin() lands on the latest one instead.
       pendingSeekRef.current = sourceMs;

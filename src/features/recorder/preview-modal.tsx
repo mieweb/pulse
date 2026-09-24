@@ -4,10 +4,15 @@ import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
+import { probeVideo } from 'react-native-video-trim';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
+import { absolutize } from '@/utils/file-store';
+import { displaySize } from '@/utils/import-normalization';
+
+import { hasGeometry, previewGeometry, type GeometryEdit, type Size } from './preview-geometry';
 
 // Action badge diameter. With hitSlop 4 the effective tap target is 48pt (≥ the 44pt HIG
 // minimum); the ✂ and 🗑 badges sit a full Spacing.five apart so their hit areas can't overlap.
@@ -26,6 +31,29 @@ const PARK_BADGE_DELAY_MS = 150;
 // How long the transient ⏸ flash holds after playback starts before its fade-out begins.
 const PAUSE_FLASH_HOLD_MS = 600;
 
+// Display size of each source file, probed once. Originals are pinned to the portrait
+// 1080×1920 contract (recorder pin, import/.pulse conform), the default until a probe lands.
+const PORTRAIT: Size = { width: 1080, height: 1920 };
+const sourceSizes = new Map<string, Size>();
+
+function useSourceSize(file: string | null): Size {
+  const [, setProbed] = useState(0);
+  useEffect(() => {
+    if (!file || sourceSizes.has(file)) return;
+    let cancelled = false;
+    probeVideo(absolutize(file))
+      .then((probe) => {
+        sourceSizes.set(file, displaySize(probe));
+        if (!cancelled) setProbed((n) => n + 1);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [file]);
+  return (file && sourceSizes.get(file)) || PORTRAIT;
+}
+
 type Props = {
   player: VideoPlayer;
   isPlaying: boolean;
@@ -34,8 +62,10 @@ type Props = {
   onTogglePlay: () => void;
   onTrim: () => void;
   onDelete: () => void;
-  /** Reset the active clip to its original — passed only when that clip has been trimmed. */
+  /** Reset the active clip to its original — passed only when that clip has been edited. */
   onReset?: () => void;
+  /** The active clip's geometry edit (rotate / flip / crop) and the file it applies to. */
+  edit?: (GeometryEdit & { file: string }) | null;
 };
 
 /**
@@ -49,8 +79,10 @@ type Props = {
  * The video renders full-bleed:
  * `contentFit="contain"` letterboxes into the themed backdrop and lets the native player
  * honor each clip's rotation matrix (portrait upright) — sizing off iOS `videoTrack.size`
- * is untrustworthy (un-rotated naturalSize). No captions here — transcription now happens
- * once on the merged video at export time.
+ * is untrustworthy (un-rotated naturalSize). A clip with a geometry edit plays through view
+ * transforms instead (preview-geometry: rotate, mirror, crop, fitted like the export's canvas),
+ * as RNVT's editor previews it. No captions here — transcription now happens once on the
+ * merged video at export time.
  */
 export function PreviewModal({
   player,
@@ -60,9 +92,14 @@ export function PreviewModal({
   onTrim,
   onDelete,
   onReset,
+  edit,
 }: Props) {
   const theme = useTheme();
   const mode = useThemeMode();
+  const [stage, setStage] = useState<Size>({ width: 0, height: 0 });
+  const geometric = edit && hasGeometry(edit) ? edit : null;
+  const source = useSourceSize(geometric?.file ?? null);
+  const geometry = geometric ? previewGeometry(stage, source, geometric) : null;
   // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
   // not playing). Gating on !isPlaying alone flashed the badge through every clip switch:
   // selectSegment pauses for the swap, so the badge blinked for the load's duration.
@@ -115,13 +152,36 @@ export function PreviewModal({
         }}
         accessibilityRole="button"
         accessibilityLabel={isPlaying ? 'Pause' : 'Play'}>
-        <View style={styles.fill} pointerEvents="none">
-          <VideoView
-            style={StyleSheet.absoluteFill}
-            player={player}
-            contentFit="contain"
-            nativeControls={false}
-          />
+        <View
+          style={styles.fill}
+          pointerEvents="none"
+          onLayout={(e) => {
+            const { width, height } = e.nativeEvent.layout;
+            setStage({ width, height });
+          }}>
+          {/* One stable wrapper, so toggling an edit never remounts the video view: the whole
+              stage when unedited, else the cropped box (clips the transformed picture). */}
+          <View style={geometry ? [styles.cropBox, geometry.box] : StyleSheet.absoluteFill}>
+            <VideoView
+              style={
+                geometry
+                  ? {
+                      position: 'absolute',
+                      left: geometry.video.left,
+                      top: geometry.video.top,
+                      width: geometry.video.width,
+                      height: geometry.video.height,
+                      transform: geometry.video.transform,
+                    }
+                  : StyleSheet.absoluteFill
+              }
+              player={player}
+              contentFit="contain"
+              nativeControls={false}
+              // Android: a SurfaceView ignores view transforms and clipping.
+              surfaceType="textureView"
+            />
+          </View>
           {/* ONE badge for ▶ and ⏸ — the glyph swaps in place so a play tap doesn't unmount
               one glass pill and zoom in a fresh one. ⏸ wins while both states overlap (the
               tap→playingChange gap). Scale-only animation: the GlassPill is a
@@ -196,6 +256,7 @@ const styles = StyleSheet.create({
     marginVertical: Spacing.two,
   },
   fill: { flex: 1 },
+  cropBox: { position: 'absolute', overflow: 'hidden' },
   playOverlay: {
     position: 'absolute',
     top: 0,

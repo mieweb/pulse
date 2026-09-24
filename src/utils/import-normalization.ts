@@ -70,7 +70,7 @@ function effectiveFps(probe: VideoProbeResult): number {
 }
 
 /** Display (post-rotation) dimensions: a 90/270 rotation swaps coded width/height. */
-function displaySize(probe: VideoProbeResult): { width: number; height: number } {
+export function displaySize(probe: VideoProbeResult): { width: number; height: number } {
   const swapped = probe.rotation % 180 !== 0;
   return {
     width: swapped ? probe.height : probe.width,

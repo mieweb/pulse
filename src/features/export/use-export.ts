@@ -3,7 +3,7 @@ import VideoTrim, { merge, type Spec } from 'react-native-video-trim';
 
 import type { Segment } from '@/db/schema';
 import { absolutize } from '@/utils/file-store';
-import { effFile } from '@/utils/segment-window';
+import { canonicalEdit, effFile } from '@/utils/segment-window';
 
 import { mergedSignature, REELS_TARGET } from './merge-signature';
 import { resolveMergedExport } from './merged-export';
@@ -19,7 +19,9 @@ export type ExportState =
  * Headless concat of a draft's clips into a single mp4 via react-native-video-trim's `merge()`
  * (passthrough join for uniform pin-matching clips, selective outlier-conform for mixed,
  * re-encode fallback), always onto the pinned reels canvas (portrait 1080×1920 h264 — see
- * REELS_TARGET). Joins each clip's EFFECTIVE file (edited ?? original) in timeline order.
+ * REELS_TARGET). Joins each clip's file in timeline order, with its edit (trim, rotate / flip /
+ * crop, speed, mute) passed as `clipEdits` and rendered by the merge in the same pass — edits are
+ * stored as settings, so this is the one place they're encoded.
  * Single-clip drafts go through the engine too: a lone conforming clip is a near-free passthrough
  * remux, a lone landscape import gets conformed to portrait like any outlier. The job re-runs only
  * when the clip set actually changes (keyed on a file signature, not array identity) or on `run`.
@@ -37,6 +39,11 @@ export function useExport(draftId: string, segments: Segment[]) {
   // Stable across re-renders that don't change the actual clips, so the live query re-emitting
   // the same data doesn't kick off a second merge.
   const files = segments.map(effFile);
+  // Each clip's edit, rendered by the merge itself ("" = none; legacy baked clips are already
+  // rendered into their file).
+  const clipEdits = segments.map((s) =>
+    s.editedFilename ? '' : (canonicalEdit(s.editState) ?? ''),
+  );
   const signature = mergedSignature(segments);
 
   useEffect(() => {
@@ -63,7 +70,7 @@ export function useExport(draftId: string, segments: Segment[]) {
           // exported files must be faststart and the raw sources aren't (recorder files are
           // moov-at-end by AVFoundation constraint): the uniform fast path remuxes them
           // near-free on iOS with the moov relocated.
-          const result = await merge(urls, { outputExt: 'mp4', ...REELS_TARGET });
+          const result = await merge(urls, { outputExt: 'mp4', ...REELS_TARGET, clipEdits });
           // Emergency encoder fallback missed the pin (Android broken-encoder devices) — the
           // export is playable but off-contract; the vault's web-ready backstop owns the re-encode.
           if (result.degraded) {

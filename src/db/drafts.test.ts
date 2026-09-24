@@ -45,6 +45,8 @@ jest.mock('@/utils/file-store', () => ({
   absolutize: (p: string) => `file:///docs/${p}`,
   deleteDraftDir: jest.fn(),
   deleteSegmentFile: jest.fn(),
+  editCoverRelPath: (d: string, s: string, rev: number) =>
+    `drafts/${d}/segments/${s}.cover.${rev}.jpg`,
   editedThumbRelPath: (p: string) => p.replace(/\.mp4$/, '.thumb.jpg'),
   thumbRelPath: (d: string, s: string) => `drafts/${d}/segments/${s}.thumb.jpg`,
 }));
@@ -53,7 +55,8 @@ jest.mock('./secure-token', () => ({ deleteDraftToken: jest.fn(), setDraftToken:
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'uuid' }));
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
-import { deleteDraftDir } from '@/utils/file-store';
+import { deleteDraftDir, deleteSegmentFile } from '@/utils/file-store';
+import { generateThumbnailFile } from '@/utils/video';
 
 import {
   addSegment,
@@ -62,11 +65,24 @@ import {
   renameDraft,
   reorderSegments,
   resetEdit,
-  setEdited,
+  setEditState,
 } from './drafts';
 /* eslint-enable import/first */
 
 const SEG = { id: 's1', draftId: 'd1', originalFilename: 'o.mp4', editedFilename: null };
+// An editor state: a 2s window at 2x → 1s on the timeline.
+const EDIT = JSON.stringify({
+  v: 1,
+  startMs: 1000,
+  endMs: 3000,
+  rotation: 1,
+  flipped: false,
+  crop: null,
+  muted: false,
+  speed: 2,
+  undo: [],
+  redo: [],
+});
 const uploading = [{ status: 'uploading' }];
 const idle = [{ status: null }];
 
@@ -87,7 +103,7 @@ const MUTATIONS: Mutation[] = [
     [[{ maxOrder: 0 }]],
   ],
   ['deleteSegment', () => deleteSegment('s1'), [[SEG]], [[{ value: 0 }]]],
-  ['setEdited', () => setEdited('s1', 'e.mp4', 500, '{"v":1}'), [[SEG]], []],
+  ['setEditState', () => setEditState('s1', EDIT), [[SEG]], []],
   ['resetEdit', () => resetEdit('s1'), [[SEG]], []],
   ['reorderSegments', () => reorderSegments(['s1']), [[SEG]], [[SEG]]],
   ['renameDraft', () => renameDraft('d1', 'New name'), [], []],
@@ -130,20 +146,32 @@ describe('edit state', () => {
     mockWrites.find((w) => typeof w.set === 'object' && w.set !== null && 'editedFilename' in w.set)
       ?.set;
 
-  it('setEdited stores the editor settings with the edited file', async () => {
+  it('setEditState stores the settings and their timeline length, with no file', async () => {
     mockSelects.push([SEG], idle);
-    await setEdited('s1', 'e.mp4', 500, '{"v":1,"startMs":0,"endMs":500}');
+    await setEditState('s1', EDIT);
     expect(segmentUpdate()).toMatchObject({
-      editedFilename: 'e.mp4',
-      editedDurationMs: 500,
-      editState: '{"v":1,"startMs":0,"endMs":500}',
+      editState: EDIT,
+      editedDurationMs: 1000,
+      editedFilename: null,
     });
+    // The cover is rendered from the original at the edit's start, with the edit applied.
+    expect(generateThumbnailFile).toHaveBeenCalledWith(
+      'file:///docs/o.mp4',
+      expect.stringMatching(/segments\/s1\.cover\.\d+\.jpg$/),
+      { editState: EDIT, startMs: 1000 },
+    );
   });
 
-  it('setEdited without a reported state clears any older one', async () => {
-    mockSelects.push([SEG], idle);
-    await setEdited('s1', 'e.mp4', 500, null);
-    expect(segmentUpdate()).toMatchObject({ editState: null });
+  it('setEditState drops a legacy baked file and its cover once the row moves off them', async () => {
+    mockSelects.push([{ ...SEG, editedFilename: 'e.mp4', thumbnail: 'e.thumb.jpg' }], idle);
+    await setEditState('s1', EDIT);
+    expect(deleteSegmentFile).toHaveBeenCalledWith('e.mp4');
+    expect(deleteSegmentFile).toHaveBeenCalledWith('e.thumb.jpg');
+  });
+
+  it('setEditState rejects an unusable state without writing', async () => {
+    await expect(setEditState('s1', 'not json')).rejects.toThrow();
+    expect(mockWrites).toEqual([]);
   });
 
   it('resetEdit clears the editor settings so the next open starts fresh', async () => {
