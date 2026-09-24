@@ -22,6 +22,11 @@ export type BundleSegment = {
   edited: string | null;
   /** Effective duration of the edited file; null when not edited (mirrors the DB column). */
   editedDurationMs: number | null;
+  /**
+   * The editor settings that produced `edited` (RNVT's opaque `editState`), so the recipient
+   * can keep editing rather than only revert. Absent in bundles from older installs.
+   */
+  editState?: string | null;
 };
 
 /** One draft. Carries display metadata but no DB id — the importer mints a fresh one. */

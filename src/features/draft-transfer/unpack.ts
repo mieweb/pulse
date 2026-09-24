@@ -84,10 +84,13 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
 
         let editedFilename: string | null = null;
         let editedDurationMs: number | null = null;
+        let editState: string | null = null;
         const editedBytes = seg.edited ? archive[seg.edited] : undefined;
         if (editedBytes) {
           editedFilename = writeEditedBytes(draftId, segmentId, editedBytes);
           editedDurationMs = seg.editedDurationMs ?? null;
+          // Opaque to us; the editor ignores a value it can't use and opens fresh.
+          editState = typeof seg.editState === 'string' ? seg.editState : null;
         }
 
         // Enforce the portrait reels contract on foreign media: bundles from older installs
@@ -131,6 +134,7 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
           durationMs: seg.durationMs,
           editedFilename,
           editedDurationMs,
+          editState,
           thumbnail: ok ? coverRel : null,
         });
       }

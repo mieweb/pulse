@@ -222,11 +222,16 @@ export async function deleteSegment(segmentId: string): Promise<void> {
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
-/** Apply a destructive edit: point the segment at its new re-encoded file + duration. */
+/**
+ * Apply an edit: point the segment at its new re-encoded file + duration, and keep the editor
+ * settings that produced it (`editState`, null if the editor didn't report one) so the next open
+ * restores them.
+ */
 export async function setEdited(
   segmentId: string,
   editedFilename: string,
   editedDurationMs: number,
+  editState: string | null,
 ): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
@@ -237,7 +242,7 @@ export async function setEdited(
   const ok = await generateThumbnailFile(absolutize(editedFilename), absolutize(thumbRel));
   await db
     .update(segments)
-    .set({ editedFilename, editedDurationMs, thumbnail: ok ? thumbRel : seg.thumbnail })
+    .set({ editedFilename, editedDurationMs, editState, thumbnail: ok ? thumbRel : seg.thumbnail })
     .where(eq(segments.id, segmentId));
   // Replacing a prior edit — drop its files only now that the row points at the new revision,
   // so a failure above never leaves the segment referencing deleted files. Keep the old thumb
@@ -249,7 +254,10 @@ export async function setEdited(
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
-/** Reset a segment back to its pristine original — delete the edited file, clear the columns. */
+/**
+ * Reset a segment back to its pristine original — delete the edited file, clear the columns
+ * (including `editState`, so the editor next opens fresh).
+ */
 export async function resetEdit(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
@@ -259,7 +267,12 @@ export async function resetEdit(segmentId: string): Promise<void> {
   const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(thumbRel));
   await db
     .update(segments)
-    .set({ editedFilename: null, editedDurationMs: null, thumbnail: ok ? thumbRel : null })
+    .set({
+      editedFilename: null,
+      editedDurationMs: null,
+      editState: null,
+      thumbnail: ok ? thumbRel : null,
+    })
     .where(eq(segments.id, segmentId));
   // Drop the now-orphaned edited file and thumb only after the row no longer references them.
   if (seg.editedFilename) {
@@ -289,10 +302,7 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
       orderedIds.map((id, i) => sql`when ${segments.id} = ${id} then ${i}`),
       sql` `,
     )} else ${segments.order} end`;
-    await tx
-      .update(segments)
-      .set({ order: finalOrder })
-      .where(inArray(segments.id, orderedIds));
+    await tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, orderedIds));
     const [first] = await tx.select().from(segments).where(eq(segments.id, orderedIds[0]));
     if (first) {
       await tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId));

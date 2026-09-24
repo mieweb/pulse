@@ -87,7 +87,7 @@ const MUTATIONS: Mutation[] = [
     [[{ maxOrder: 0 }]],
   ],
   ['deleteSegment', () => deleteSegment('s1'), [[SEG]], [[{ value: 0 }]]],
-  ['setEdited', () => setEdited('s1', 'e.mp4', 500), [[SEG]], []],
+  ['setEdited', () => setEdited('s1', 'e.mp4', 500, '{"v":1}'), [[SEG]], []],
   ['resetEdit', () => resetEdit('s1'), [[SEG]], []],
   ['reorderSegments', () => reorderSegments(['s1']), [[SEG]], [[SEG]]],
   ['renameDraft', () => renameDraft('d1', 'New name'), [], []],
@@ -122,5 +122,37 @@ describe('persisted export', () => {
     mockSelects.push(idle);
     await deleteDraft('d1');
     expect(deleteDraftDir).toHaveBeenCalledWith('d1');
+  });
+});
+
+describe('edit state', () => {
+  const segmentUpdate = () =>
+    mockWrites.find((w) => typeof w.set === 'object' && w.set !== null && 'editedFilename' in w.set)
+      ?.set;
+
+  it('setEdited stores the editor settings with the edited file', async () => {
+    mockSelects.push([SEG], idle);
+    await setEdited('s1', 'e.mp4', 500, '{"v":1,"startMs":0,"endMs":500}');
+    expect(segmentUpdate()).toMatchObject({
+      editedFilename: 'e.mp4',
+      editedDurationMs: 500,
+      editState: '{"v":1,"startMs":0,"endMs":500}',
+    });
+  });
+
+  it('setEdited without a reported state clears any older one', async () => {
+    mockSelects.push([SEG], idle);
+    await setEdited('s1', 'e.mp4', 500, null);
+    expect(segmentUpdate()).toMatchObject({ editState: null });
+  });
+
+  it('resetEdit clears the editor settings so the next open starts fresh', async () => {
+    mockSelects.push([{ ...SEG, editedFilename: 'e.mp4' }], idle);
+    await resetEdit('s1');
+    expect(segmentUpdate()).toMatchObject({
+      editedFilename: null,
+      editedDurationMs: null,
+      editState: null,
+    });
   });
 });

@@ -13,7 +13,7 @@ import { useTheme, useThemeMode } from '@/hooks/use-theme';
 // minimum); the ✂ and 🗑 badges sit a full Spacing.five apart so their hit areas can't overlap.
 const BADGE_SIZE = 40;
 const BADGE_HIT_SLOP = 4;
-// The "Undo trim" pill is 28pt tall (the recorder timer pill's shape); 8pt slop keeps the tap
+// The "Revert Edits" pill is 28pt tall (the recorder timer pill's shape); 8pt slop keeps the tap
 // target at 44pt.
 const RESET_PILL_HEIGHT = 28;
 const RESET_HIT_SLOP = 8;
@@ -42,8 +42,9 @@ type Props = {
  * Full-bleed preview stage over the recorder — fills the area between the top bar and the
  * segment bar on a themed backdrop (the recorder covers the paused camera with the theme
  * background). Plays the draft through one shared player; tap toggles play, ✂ opens the RNVT
- * editor for the active clip, 🗑 deletes — centred in a row below the video — and ↺ (trimmed
- * clips only, "Undo trim", pinned to that row's left edge) resets the clip to its original. Closing and the
+ * editor for the active clip, 🗑 deletes — centred in a row below the video — and ↺ (edited
+ * clips only, "Revert Edits", pinned to that row's left edge) resets the clip to its original,
+ * dropping every edit at once (trim, crop, rotate, flip, mute, speed). Closing and the
  * position / total readout live in the recorder's top bar, so nothing floats over the video.
  * The video renders full-bleed:
  * `contentFit="contain"` letterboxes into the themed backdrop and lets the native player
@@ -141,17 +142,18 @@ export function PreviewModal({
       </Pressable>
 
       <View style={styles.actionRow}>
-        {/* "Undo trim" pinned to the row's far left, apart from ✂/🗑 — a different kind of action
-            (undo a saved trim), and pinning it out of the flow keeps ✂/🗑 centred either way. */}
+        {/* "Revert Edits" pinned to the row's far left, apart from ✂/🗑 — a different kind of
+            action (discard a clip's saved edits), and pinning it out of the flow keeps ✂/🗑
+            centred either way. */}
         {onReset && (
           <View style={styles.resetSlot} pointerEvents="box-none">
             <Pressable
               onPress={onReset}
               hitSlop={RESET_HIT_SLOP}
               accessibilityRole="button"
-              accessibilityLabel="Undo Trim">
+              accessibilityLabel="Revert Edits">
               <View style={[styles.resetPill, ControlScrim[mode]]}>
-                <Text style={styles.resetText}>Undo Trim</Text>
+                <Text style={styles.resetText}>Revert Edits</Text>
               </View>
             </Pressable>
           </View>

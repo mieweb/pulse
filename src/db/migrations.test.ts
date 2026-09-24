@@ -110,3 +110,22 @@ describe('0014_drop_upload_unit', () => {
     expect(columns('upload_destinations')).not.toContain('upload_unit');
   });
 });
+
+describe('0015_segment_edit_state', () => {
+  it('adds a nullable edit_state that existing edited clips start without', () => {
+    const db = new DatabaseSync(':memory:');
+    applyMigrations(db, (f) => f < '0015');
+    db.prepare(`INSERT INTO drafts (id) VALUES ('d1')`).run();
+    db.prepare(
+      `INSERT INTO segments (id, draft_id, sort_order, original_filename, duration_ms, edited_filename, edited_duration_ms)
+       VALUES ('s1', 'd1', 0, 'o.mp4', 1000, 'e.mp4', 500)`,
+    ).run();
+
+    applyMigrations(db, (f) => f.startsWith('0015'));
+
+    expect(db.prepare('SELECT edited_filename, edit_state FROM segments').get()).toEqual({
+      edited_filename: 'e.mp4',
+      edit_state: null,
+    });
+  });
+});

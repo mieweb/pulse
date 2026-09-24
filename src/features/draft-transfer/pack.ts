@@ -53,8 +53,9 @@ export async function exportDrafts(draftIds: string[], now: number): Promise<str
       const original = `${MEDIA_DIR}/d${draftIndex}-s${segIndex}.mp4`;
       files[original] = origBytes;
 
-      // Preserve full fidelity: ship the edited cut alongside the pristine original so the
-      // recipient gets an identical draft and can still reset the edit.
+      // Preserve full fidelity: ship the edited cut alongside the pristine original, plus the
+      // editor settings behind it, so the recipient gets an identical draft and can still reset
+      // or keep editing it.
       let edited: string | null = null;
       if (seg.editedFilename) {
         const editedBytes = await readRelBytes(seg.editedFilename);
@@ -70,6 +71,7 @@ export async function exportDrafts(draftIds: string[], now: number): Promise<str
         original,
         edited,
         editedDurationMs: edited ? seg.editedDurationMs : null,
+        editState: edited ? seg.editState : null,
       });
     }
 

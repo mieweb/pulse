@@ -106,6 +106,13 @@
       "when": 1790093993908,
       "tag": "0014_drop_upload_unit",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1790268161814,
+      "tag": "0015_segment_edit_state",
+      "breakpoints": true
     }
   ]
 }
