@@ -53,7 +53,7 @@
     "react-native-screens": "~4.26.0",
     "react-native-sortables": "^1.10.0",
     "react-native-svg": "15.15.4",
-    "react-native-video-trim": "git+https://github.com/morepriyam/react-native-video-trim.git#e7a00bba888185114f5060afee8fcc7a2cb53067",
+    "react-native-video-trim": "git+https://github.com/morepriyam/react-native-video-trim.git#893011fe99d4ce973973bd85733eb84e510563c4",
     "react-native-vision-camera": "^5.2.2",
     "react-native-vision-camera-worklets": "^5.2.2",
     "react-native-web": "~0.21.0",
