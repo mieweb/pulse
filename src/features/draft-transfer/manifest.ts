@@ -18,13 +18,16 @@ export type BundleSegment = {
   durationMs: number;
   /** Archive path of the pristine original clip (always present). */
   original: string;
-  /** Archive path of the destructive-edit output, or null if the clip was never edited. */
+  /**
+   * Archive path of a legacy baked edit (edited before edits were stored as settings), else
+   * null. Bundles from older installs may carry one alongside `editState`.
+   */
   edited: string | null;
   /** Effective duration of the edited file; null when not edited (mirrors the DB column). */
   editedDurationMs: number | null;
   /**
-   * The editor settings that produced `edited` (RNVT's opaque `editState`), so the recipient
-   * can keep editing rather than only revert. Absent in bundles from older installs.
+   * The clip's edit as settings (RNVT's opaque `editState`), applied to `original` at play and
+   * export time. Absent in bundles from older installs.
    */
   editState?: string | null;
 };

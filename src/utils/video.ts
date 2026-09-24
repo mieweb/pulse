@@ -23,21 +23,25 @@ function whenReady(player: Player): Promise<void> {
 }
 
 /**
- * Extract the first frame of a clip as a jpeg via RNVT's native `getFrameAt` and move it to
- * `destAbsUri` (its persisted home in the draft dir). Returns false on failure, leaving the
- * caller to store a null thumbnail (the runtime `generateThumbnail` fallback then covers it).
+ * Extract a clip's cover frame as a jpeg via RNVT's native `getFrameAt` and move it to
+ * `destAbsUri` (its persisted home in the draft dir): the first frame, or — for an edited clip —
+ * the frame at the edit's start, rotated / flipped / cropped as the edit renders it. Returns
+ * false on failure, leaving the caller to store a null thumbnail (the runtime
+ * `generateThumbnail` fallback then covers it).
  */
 export async function generateThumbnailFile(
   videoAbsUri: string,
   destAbsUri: string,
+  edit?: { editState: string; startMs: number },
 ): Promise<boolean> {
   try {
     const { outputPath } = await getFrameAt(videoAbsUri, {
-      time: 0,
+      time: edit?.startMs ?? 0,
       format: 'jpeg',
       quality: 80,
       maxWidth: 192,
       maxHeight: 256,
+      editState: edit?.editState,
     });
     const dest = new File(destAbsUri);
     if (dest.exists) dest.delete();

@@ -5,9 +5,11 @@ import {
   absolutize,
   deleteDraftDir,
   deleteSegmentFile,
+  editCoverRelPath,
   editedThumbRelPath,
   thumbRelPath,
 } from '@/utils/file-store';
+import { editTimelineMs, parseEdit } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
@@ -223,40 +225,45 @@ export async function deleteSegment(segmentId: string): Promise<void> {
 }
 
 /**
- * Apply an edit: point the segment at its new re-encoded file + duration, and keep the editor
- * settings that produced it (`editState`, null if the editor didn't report one) so the next open
- * restores them.
+ * Save an edit as settings: the editor's `editState` (applied when the clip plays, and by the
+ * export's merge), its timeline length (`editedDurationMs`, for the draft-list SQL), and a cover
+ * rendered from the original with the edit applied. Nothing is encoded. Replaces any earlier edit
+ * — a legacy baked file included, dropped once the row no longer points at it.
  */
-export async function setEdited(
-  segmentId: string,
-  editedFilename: string,
-  editedDurationMs: number,
-  editState: string | null,
-): Promise<void> {
+export async function setEditState(segmentId: string, editState: string): Promise<void> {
+  const edit = parseEdit(editState);
+  const durationMs = editTimelineMs(editState);
+  if (!edit || durationMs == null) throw new Error('The editor returned an unusable edit');
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
   await beginClipMutation(seg.draftId);
-  // Cover the edited file's first frame at its revision-paired thumb path (the pristine thumb
-  // stays on disk untouched, ready for a reset).
-  const thumbRel = editedThumbRelPath(editedFilename);
-  const ok = await generateThumbnailFile(absolutize(editedFilename), absolutize(thumbRel));
+  const coverRel = editCoverRelPath(seg.draftId, segmentId, Date.now());
+  const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(coverRel), {
+    editState,
+    startMs: edit.startMs,
+  });
   await db
     .update(segments)
-    .set({ editedFilename, editedDurationMs, editState, thumbnail: ok ? thumbRel : seg.thumbnail })
+    .set({
+      editState,
+      editedDurationMs: durationMs,
+      editedFilename: null,
+      thumbnail: ok ? coverRel : seg.thumbnail,
+    })
     .where(eq(segments.id, segmentId));
-  // Replacing a prior edit — drop its files only now that the row points at the new revision,
-  // so a failure above never leaves the segment referencing deleted files. Keep the old thumb
-  // as the cover fallback if the new one failed to generate.
-  if (seg.editedFilename && seg.editedFilename !== editedFilename) {
-    deleteSegmentFile(seg.editedFilename);
-    if (ok) deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
+  // Drop replaced files only now that the row points away from them, so a failure above never
+  // leaves the segment referencing deleted files. The prior cover goes only if the new one took
+  // its place; the pristine thumb stays on disk, ready for a reset.
+  if (seg.editedFilename) deleteSegmentFile(seg.editedFilename);
+  if (ok && seg.thumbnail && seg.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
+    deleteSegmentFile(seg.thumbnail);
   }
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
 /**
- * Reset a segment back to its pristine original — delete the edited file, clear the columns
- * (including `editState`, so the editor next opens fresh).
+ * Reset a segment back to its pristine original — clear the edit (settings and any legacy baked
+ * file), so it plays whole and the editor next opens fresh.
  */
 export async function resetEdit(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));

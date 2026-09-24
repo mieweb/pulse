@@ -2,11 +2,10 @@ import { useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
 import VideoTrim, { showEditor, type Spec } from 'react-native-video-trim';
 
-import { deleteSegment, setEdited } from '@/db/drafts';
+import { deleteSegment, setEditState } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
 import { Accent } from '@/constants/theme';
-import { absolutize, importTrimmedFile } from '@/utils/file-store';
-import { getDurationMs } from '@/utils/video';
+import { absolutize } from '@/utils/file-store';
 
 import {
   editStateSpeed,
@@ -21,12 +20,10 @@ const Native = VideoTrim as Spec;
 /**
  * Drives react-native-video-trim's full-screen editor (trim + crop/rotate/flip/mute/speed).
  * Tap a clip → `openTrim` opens the editor on the PRISTINE original with the clip's saved
- * `editState` applied (settings and undo/redo history), so it reopens where the user left off;
- * on save, RNVT's output (passthrough copy for pure cuts, re-encode for transform edits) is
- * moved into the draft as a fresh `.edited.{rev}.mp4` revision and recorded, with the new
- * `editState`, via `setEdited`
- * (originals stay untouched, every save renders from the original). The editor's trash button
- * deletes the clip.
+ * `editState` applied (settings and undo/redo history), so it reopens where the user left off.
+ * Save encodes nothing (`renderOnSave: false`): the editor closes at once and hands back the new
+ * `editState`, stored via `setEditState` — the preview applies it live and the export's merge
+ * renders it, once. The editor's trash button deletes the clip.
  */
 export function useVideoTrim(draftId: string | null) {
   // The editor is fire-and-forget (showEditor) and its events carry no correlation id, so we
@@ -47,24 +44,19 @@ export function useVideoTrim(draftId: string | null) {
 
   useEffect(() => {
     const subs = [
-      Native.onFinishTrimming(({ outputPath, duration, editState }) => {
+      Native.onSaveEditState(({ editState }) => {
         const segmentId = pendingSegmentId.current;
-        const dId = draftIdRef.current;
         pendingSegmentId.current = null;
-        if (!segmentId || !dId) return;
+        if (!segmentId || !draftIdRef.current) return;
         void (async () => {
           try {
-            const editedRel = await importTrimmedFile(outputPath, dId, segmentId);
-            // Prefer the decoded file's duration (source of truth elsewhere); fall back to the
-            // event's reported ms.
-            const dur = (await getDurationMs(absolutize(editedRel))) || duration;
-            await setEdited(segmentId, editedRel, dur, editState ?? null);
+            await setEditState(segmentId, editState);
           } catch (e) {
-            console.warn('[trim] failed to apply edit', e);
-            Alert.alert('Edit failed', 'Could not save the trimmed clip. Please try again.');
+            console.warn('[trim] failed to save edit', e);
+            Alert.alert('Edit failed', 'Could not save the edit. Please try again.');
             return;
           }
-          const speeds = withCustomSpeed(customSpeeds.current, editStateSpeed(editState ?? null));
+          const speeds = withCustomSpeed(customSpeeds.current, editStateSpeed(editState));
           if (speeds !== customSpeeds.current) {
             customSpeeds.current = speeds;
             void saveCustomSpeeds(speeds).catch(() => {});
@@ -97,9 +89,6 @@ export function useVideoTrim(draftId: string | null) {
     if (!draftIdRef.current) return;
     pendingSegmentId.current = segment.id;
     showEditor(absolutize(segment.originalFilename), {
-      enablePreciseTrimming: true, // frame-accurate; pure cuts are passthrough (no re-encode), transforms re-encode
-      saveToPhoto: false, // we keep the file ourselves → no photo permission needed
-      outputExt: 'mp4',
       theme: 'dark',
       trimmerColor: Accent,
       handleIconColor: '#FFFFFF',
@@ -107,6 +96,7 @@ export function useVideoTrim(draftId: string | null) {
       headerTextColor: '#FFFFFF',
       enableCancelDialog: false, // Cancel/Save dismiss immediately — no "are you sure?" prompts
       enableSaveDialog: false,
+      renderOnSave: false, // Save = store the settings; the export's merge renders them
       // enableEditTools defaults true (crop/rotate/flip/mute/speed exposed).
       editState: segment.editState ?? undefined,
       speedOptions: speedMenu(customSpeeds.current),
