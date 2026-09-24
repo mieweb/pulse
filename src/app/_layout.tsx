@@ -4,9 +4,13 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { MigrationGate } from '@/db/migrate';
+import { installLogCapture } from '@/features/logs/logger';
 import { ToastProvider } from '@/features/toast/toast-provider';
 import { UploadDeepLinkProvider } from '@/features/upload/upload-deep-link-provider';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/hooks/use-theme';
+
+// Before anything renders, so the debug log (About → Share logs) sees the whole session.
+installLogCapture();
 
 export default function RootLayout() {
   return (
@@ -37,6 +41,7 @@ function ThemedNavigation() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="recorder" options={{ presentation: 'fullScreenModal' }} />
             <Stack.Screen name="export" options={{ presentation: 'fullScreenModal' }} />
+            <Stack.Screen name="about" options={{ presentation: 'modal' }} />
             <Stack.Screen
               name="onboarding"
               options={{ presentation: 'fullScreenModal', gestureEnabled: false }}

@@ -1,8 +1,8 @@
 // This app's own wire-protocol version — checked against the server's
 // advertised [minSupportedVersion, maxSupportedVersion] range from
 // /capabilities before pairing proceeds. Bump alongside any breaking change
-// to how this app talks to a pulsevault-compatible server.
-const APP_PROTOCOL_VERSION = 1;
+// to how this app talks to a pulsevault-compatible server. Shown on the About page.
+export const APP_PROTOCOL_VERSION = 1;
 const CAPABILITIES_TIMEOUT_MS = 8000;
 
 export type Capabilities = {
