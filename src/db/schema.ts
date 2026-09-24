@@ -74,8 +74,9 @@ export const segments = sqliteTable(
     editedFilename: text('edited_filename'),
     editedDurationMs: integer('edited_duration_ms'),
     // The editor settings (trim range, rotation, flip, crop, mute, speed) that produced
-    // `editedFilename`, as RNVT's opaque `editState` JSON — handed back to the editor on the
-    // next open. Null when unedited, or edited before the editor reported it.
+    // `editedFilename`, plus the editor's undo/redo history, as RNVT's opaque `editState` JSON —
+    // handed back to the editor on the next open. Null when unedited, or edited before the
+    // editor reported it.
     editState: text('edit_state'),
     // First-frame jpeg cover (relative path), written by the recorder/importer/editor.
     // Shown on segment-bar thumbs and draft cards (the draft cover is the first clip's
