@@ -55,3 +55,6 @@ modules/*/android/build/
 
 # local scratch / reference clones (e.g. upstream mieweb/pulse)
 /tmp
+
+# Pages site built locally by scripts/build-compat-page.mjs
+_site/
