@@ -30,7 +30,8 @@ import { isTokenExpired } from './capability-token';
 import { keepAlive } from './keep-alive';
 import { uploadNotify } from './notify';
 import { tusServerTransport } from './transports/tus-server-transport';
-import type { ArtifactKind } from './tus-client';
+import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
+import { type ArtifactKind, TusUploadError } from './tus-client';
 import type {
   Destination,
   LiveUploadState,
@@ -425,6 +426,15 @@ class BackgroundUploadManager {
     this.setLive(draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
     await setUploadProgress(draftId, { status: 'uploading' });
     try {
+      // The server may have been upgraded since this destination was paired (PROTOCOL.md §7.2):
+      // check again before sending anything, and stop with the pairing message if the two no
+      // longer speak a common protocol. An unreachable server is left to the upload's retries.
+      const compat = await checkCapabilities(session.destination.server, controller.signal);
+      if (!compat.ok && compat.reason !== 'unreachable') {
+        throw new TusUploadError(CAPABILITIES_REJECTION_MESSAGE[compat.reason], {
+          retryable: false,
+        });
+      }
       const resourceUrl = await this.uploadPulse(session, controller.signal);
       // Displaced-run guard BEFORE any terminal write: if a cancel removed this session while the
       // final transfer was resolving, resurrecting 'uploaded'/'done' here would overrule it —

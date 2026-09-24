@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -36,7 +37,7 @@ import { useServerCompatibility } from '@/features/about/use-server-compatibilit
 import { logEntries, writeLogExport } from '@/features/logs/logger';
 import { CloseButton } from '@/features/recorder/close-button';
 import { useToast } from '@/features/toast/toast-provider';
-import { APP_PROTOCOL_VERSION } from '@/features/upload/capabilities';
+import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/client-identity';
 import { useTheme } from '@/hooks/use-theme';
 
 const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
@@ -45,6 +46,11 @@ const device: DeviceInfo = {
   osVersion: Device.osVersion,
   model: Device.modelName,
 };
+
+/** The generated compatibility table (GitHub Pages), with this app's row highlighted. */
+const COMPATIBILITY_URL = `https://mieweb.github.io/pulse/compatibility.html?app=${encodeURIComponent(
+  build.version,
+)}&protocol=${APP_PROTOCOL.min}-${APP_PROTOCOL.max}`;
 
 /**
  * About (#155): version, build number, commit and build date — all injected at build time by
@@ -59,7 +65,7 @@ export default function AboutScreen() {
   const [sharing, setSharing] = useState(false);
   const logCount = useMemo(() => logEntries().length, []);
 
-  const details = () => formatDetails({ build, device, protocol: APP_PROTOCOL_VERSION, servers });
+  const details = () => formatDetails({ build, device, protocol: APP_PROTOCOL, servers });
 
   const copyDetails = () => {
     void Clipboard.setStringAsync(details()).then(
@@ -123,20 +129,23 @@ export default function AboutScreen() {
         </Section>
 
         <Section title="Compatibility" surface={surface}>
-          <Row
-            label="Upload protocol"
-            value={`v${APP_PROTOCOL_VERSION}`}
-            last={servers.length === 0}
-          />
+          <Row label="Upload protocol" value={`v${protocolRangeLabel(APP_PROTOCOL)}`} />
           {servers.length === 0 ? (
             <ThemedText type="caption1" themeColor="textSecondary" style={styles.note}>
               No servers paired yet.
             </ThemedText>
           ) : (
-            servers.map((s, i) => (
-              <ServerRow key={s.server} compat={s} last={i === servers.length - 1} />
-            ))
+            servers.map((s) => <ServerRow key={s.server} compat={s} />)
           )}
+          <Pressable
+            onPress={() => void Linking.openURL(COMPATIBILITY_URL)}
+            accessibilityRole="link"
+            accessibilityLabel="Compatibility and docs"
+            accessibilityHint="Opens which Pulse and PulseVault versions work together"
+            style={({ pressed }) => [styles.inlineButton, pressed && styles.pressed]}>
+            <Icon name="link" size={18} tintColor={theme.accent} />
+            <ThemedText themeColor="accent">Compatibility & docs</ThemedText>
+          </Pressable>
         </Section>
 
         <Section title="Debug logs" surface={surface}>
@@ -215,7 +224,8 @@ function Row({ label, value, last = false }: { label: string; value: string; las
   );
 }
 
-function ServerRow({ compat, last }: { compat: ServerCompat; last: boolean }) {
+/** A paired server and its compatibility. Always followed by the docs link, so it keeps its divider. */
+function ServerRow({ compat }: { compat: ServerCompat }) {
   const theme = useTheme();
   const ok = compat.status === 'compatible';
   const checking = compat.status === 'checking';
@@ -223,7 +233,7 @@ function ServerRow({ compat, last }: { compat: ServerCompat; last: boolean }) {
     <View
       style={[
         styles.row,
-        !last && { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth },
+        { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth },
       ]}
       accessible
       accessibilityLabel={`${compat.host}: ${compatLabel(compat)}`}>

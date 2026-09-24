@@ -1,16 +1,25 @@
+import Constants from 'expo-constants';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { MigrationGate } from '@/db/migrate';
+import { type BuildConfig, readBuildInfo } from '@/features/about/build-info';
 import { installLogCapture } from '@/features/logs/logger';
 import { ToastProvider } from '@/features/toast/toast-provider';
+import { setClientIdentity } from '@/features/upload/client-identity';
 import { UploadDeepLinkProvider } from '@/features/upload/upload-deep-link-provider';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/hooks/use-theme';
 
 // Before anything renders, so the debug log (About → Share logs) sees the whole session.
 installLogCapture();
+
+// Every request to a server says which build this is (`Pulse-Client`) and every upload records it
+// (`appVersion`) — PROTOCOL.md §7.2.
+const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
+setClientIdentity({ version: build.version, build: build.buildNumber, platform: Platform.OS });
 
 export default function RootLayout() {
   return (

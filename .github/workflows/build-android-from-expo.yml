@@ -39,7 +39,8 @@ on:
         default: internal
 
 permissions:
-  contents: read
+  contents: write # tag the release (see the last step)
+  actions: write # rebuild the Pages compatibility table after tagging
 
 jobs:
   android:
@@ -122,3 +123,22 @@ jobs:
           play_json_key_base64: ${{ secrets.GOOGLE_PLAY_JSON_KEY_BASE64 }}
           package_name:         com.mieweb.pulse
           track:                ${{ inputs.track }}
+
+      # ── Tag the release (feeds the compatibility page) ────────────────────
+      # app-v<version> marks the commit this store build came from. The Pages site reads each
+      # tag's package.json `pulseProtocol` to build the app ↔ server compatibility table, so it's
+      # rebuilt right after. Created through the API: no git credentials needed; the other
+      # platform's build finds the tag already there and skips.
+      - name: Tag the release
+        if: inputs.upload_to_play
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="app-v$(node -p "require('./app.json').expo.version")"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "${tag} already exists"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${tag}" -f "sha=${GITHUB_SHA}"
+            echo "Tagged ${GITHUB_SHA} as ${tag}"
+            gh workflow run deploy-pages.yml --ref main
+          fi

@@ -1,9 +1,21 @@
 name: Deploy GitHub Pages
 
+# The site is pages/ plus the generated compatibility page and protocol reference
+# (scripts/build-compat-page.mjs). It's rebuilt whenever something it's generated from changes:
+# the pages themselves, the app's protocol range (package.json), the pinned pulsevault, a new
+# app release tag (the build workflows dispatch this after tagging), and nightly for new
+# pulsevault releases on npm.
 on:
   push:
     branches: [main]
-    paths: ["pages/**"]
+    paths:
+      - "pages/**"
+      - "package.json"
+      - "pulsevault-mieweb"
+      - "scripts/build-compat-page.mjs"
+      - ".github/workflows/deploy-pages.yml"
+  schedule:
+    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -23,9 +35,20 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true # the pinned protocol: schemas, openapi.json, PROTOCOL.md
+          fetch-depth: 0 # the app-v* release tags
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Build the site
+        run: |
+          cp -R pages _site
+          node scripts/build-compat-page.mjs --out _site
+          npx --yes @redocly/cli@2 build-docs _site/protocol/openapi.json -o _site/protocol/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: pages
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

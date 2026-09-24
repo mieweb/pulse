@@ -26,8 +26,8 @@ describe('compatLabel', () => {
     const labels = (
       [
         { ...server('a'), status: 'checking' },
-        { ...server('a'), status: 'compatible', minVersion: 1, maxVersion: 1 },
-        { ...server('a'), status: 'compatible', minVersion: 1, maxVersion: 2 },
+        { ...server('a'), status: 'compatible', protocol: 1 },
+        { ...server('a'), status: 'compatible', protocol: 2, revision: '2.1' },
         { ...server('a'), status: 'app-too-old' },
         { ...server('a'), status: 'app-too-new' },
         { ...server('a'), status: 'unreachable' },
@@ -36,7 +36,7 @@ describe('compatLabel', () => {
     expect(labels).toEqual([
       'Checking…',
       'Compatible · protocol 1',
-      'Compatible · protocol 1–2',
+      'Compatible · protocol 2.1',
       'Needs a newer version of Pulse',
       'Server needs an update',
       "Couldn't reach it",
@@ -49,9 +49,9 @@ describe('formatDetails', () => {
     const text = formatDetails({
       build,
       device,
-      protocol: 1,
+      protocol: { min: 1, max: 2 },
       servers: [
-        { ...server('vault.example.org'), status: 'compatible', minVersion: 1, maxVersion: 1 },
+        { ...server('vault.example.org'), status: 'compatible', protocol: 2, revision: '2.1' },
         { ...server('old.example.org'), status: 'app-too-new' },
       ],
     });
@@ -62,9 +62,9 @@ describe('formatDetails', () => {
         'Built: 2026-09-24 14:05 UTC',
         'Built against PulseVault: dd03d8c',
         'Device: iPhone 15 Pro · iOS 18.1',
-        'Upload protocol: v1',
+        'Upload protocol: v1–2',
         'Paired servers:',
-        '  vault.example.org — Compatible · protocol 1',
+        '  vault.example.org — Compatible · protocol 2.1',
         '  old.example.org — Server needs an update',
       ].join('\n'),
     );
@@ -74,7 +74,7 @@ describe('formatDetails', () => {
     const text = formatDetails({
       build,
       device: { os: 'Android', osVersion: null, model: null },
-      protocol: 1,
+      protocol: { min: 1, max: 2 },
       servers: [],
     });
     expect(text).toContain('Device: Android');

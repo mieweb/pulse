@@ -1,10 +1,14 @@
 import type { File } from 'expo-file-system';
+import { CAPABILITIES_REJECTION_MESSAGE } from './capabilities';
+import { appVersionLabel, clientHeaders } from './client-identity';
+import type { UploadMetadata } from './protocol.gen';
 
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 500;
 const TUS_VERSION = '1.0.0';
 
-export type ArtifactKind = 'video' | 'project' | 'captions' | 'thumbnail';
+/** The artifact kinds of the protocol (`Upload-Metadata.kind`), from the generated protocol types. */
+export type ArtifactKind = NonNullable<UploadMetadata['kind']>;
 
 export type TusUploadProgress = { bytesSent: number; totalBytes: number };
 
@@ -157,11 +161,26 @@ function buildUploadMetadata(opts: {
     const encodedName = base64EncodeUtf8(opts.name);
     if (encodedName) parts.push(`name ${encodedName}`);
   }
+  // Which app build made this upload (protocol 2.1); older servers ignore the key.
+  const appVersion = appVersionLabel();
+  if (appVersion) parts.push(`appVersion ${base64Encode(appVersion)}`);
   return parts.join(',');
 }
 
+/** Headers every request carries: `Pulse-Client` (PROTOCOL.md §7.2), plus the token if any. */
 function authHeaders(token: string | null): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return { ...clientHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+/**
+ * `426 Upgrade Required`: the server needs a newer protocol than this app speaks (PROTOCOL.md
+ * §7.2). Terminal, with the same message pairing shows, so the user knows to update the app.
+ */
+function upgradeRequiredError(): TusUploadError {
+  return new TusUploadError(CAPABILITIES_REJECTION_MESSAGE['version-too-old'], {
+    retryable: false,
+    statusCode: 426,
+  });
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -197,6 +216,7 @@ async function withRetry<T>(fn: () => Promise<T>, signal: AbortSignal | undefine
 }
 
 async function statusError(res: Response, fallbackMessage: string): Promise<TusUploadError> {
+  if (res.status === 426) return upgradeRequiredError();
   let message = fallbackMessage;
   try {
     const body = (await res.json()) as { error?: string };
@@ -212,6 +232,7 @@ async function statusError(res: Response, fallbackMessage: string): Promise<TusU
 }
 
 function statusErrorFromChunk(result: ChunkUploadResult, fallbackMessage: string): TusUploadError {
+  if (result.status === 426) return upgradeRequiredError();
   const retryable = result.status >= 500 || result.status === 429;
   return new TusUploadError(fallbackMessage, { retryable, statusCode: result.status });
 }
