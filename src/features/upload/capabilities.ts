@@ -25,10 +25,11 @@ export type CapabilitiesResult =
     }
   | { ok: false; reason: CapabilitiesRejectionReason };
 
-async function fetchCapabilities(server: string): Promise<Capabilities> {
+async function fetchCapabilities(server: string, signal?: AbortSignal): Promise<Capabilities> {
+  const timeout = AbortSignal.timeout(CAPABILITIES_TIMEOUT_MS);
   const res = await fetch(`${server}/capabilities`, {
     headers: clientHeaders(),
-    signal: AbortSignal.timeout(CAPABILITIES_TIMEOUT_MS),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const body = (await res.json()) as Partial<CapabilitiesResponse>;
@@ -52,12 +53,18 @@ async function fetchCapabilities(server: string): Promise<Capabilities> {
  * Fetches `/capabilities` and checks that this app's protocol range (`APP_PROTOCOL`) overlaps
  * the server's. Pairing runs it, and so does every upload before it starts — the server may
  * have been upgraded since pairing (PROTOCOL.md §7.2).
+ *
+ * Never rejects, except with an `AbortError` when `signal` aborts (an upload cancelled mid-check).
  */
-export async function checkCapabilities(server: string): Promise<CapabilitiesResult> {
+export async function checkCapabilities(
+  server: string,
+  signal?: AbortSignal,
+): Promise<CapabilitiesResult> {
   let capabilities: Capabilities;
   try {
-    capabilities = await fetchCapabilities(server);
+    capabilities = await fetchCapabilities(server, signal);
   } catch {
+    if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
     return { ok: false, reason: 'unreachable' };
   }
   if (APP_PROTOCOL.max < capabilities.minSupportedVersion) {

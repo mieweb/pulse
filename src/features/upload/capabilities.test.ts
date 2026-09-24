@@ -83,4 +83,32 @@ describe('checkCapabilities', () => {
     const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
     expect((init.headers as Record<string, string>)['Pulse-Client']).toMatch(/; protocol=1-2$/);
   });
+
+  describe('with a cancel signal', () => {
+    /** A fetch that hangs until its signal aborts, like a slow server. */
+    const hang = () =>
+      jest.spyOn(globalThis, 'fetch').mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+            );
+          }),
+      );
+
+    it('stops waiting as soon as the signal aborts, with an AbortError', async () => {
+      hang();
+      const controller = new AbortController();
+      const check = checkCapabilities('https://vault.example.org', controller.signal);
+      controller.abort();
+      await expect(check).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
+    it('still reports a failed request as unreachable when the signal is live', async () => {
+      jest.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Network request failed'));
+      await expect(
+        checkCapabilities('https://vault.example.org', new AbortController().signal),
+      ).resolves.toEqual({ ok: false, reason: 'unreachable' });
+    });
+  });
 });

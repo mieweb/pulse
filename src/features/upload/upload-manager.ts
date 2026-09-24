@@ -429,9 +429,11 @@ class BackgroundUploadManager {
       // The server may have been upgraded since this destination was paired (PROTOCOL.md §7.2):
       // check again before sending anything, and stop with the pairing message if the two no
       // longer speak a common protocol. An unreachable server is left to the upload's retries.
-      const compat = await checkCapabilities(session.destination.server);
+      const compat = await checkCapabilities(session.destination.server, controller.signal);
       if (!compat.ok && compat.reason !== 'unreachable') {
-        throw new TusUploadError(CAPABILITIES_REJECTION_MESSAGE[compat.reason], { retryable: false });
+        throw new TusUploadError(CAPABILITIES_REJECTION_MESSAGE[compat.reason], {
+          retryable: false,
+        });
       }
       const resourceUrl = await this.uploadPulse(session, controller.signal);
       // Displaced-run guard BEFORE any terminal write: if a cancel removed this session while the
