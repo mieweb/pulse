@@ -3,7 +3,7 @@
  * and the pulsevault commit it was built against. The values come from `extra.build`, which
  * `app.config.ts` injects at build time — nothing here is maintained by hand.
  *
- * Pure (no React Native imports) so it's unit tested; `about-data.ts` feeds it the real config.
+ * Pure (no React Native imports) so it's unit tested; the app passes it `Constants.expoConfig`.
  */
 
 /** The shape `app.config.ts` writes to `extra.build`. */
