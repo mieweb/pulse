@@ -1,0 +1,1 @@
+ALTER TABLE `segments` ADD `edit_state` text;

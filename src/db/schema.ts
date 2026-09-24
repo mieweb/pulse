@@ -45,11 +45,13 @@ export const drafts = sqliteTable('drafts', {
 
 /**
  * A clip on the timeline. The `originalFilename` recording/import is never mutated.
- * Editing is DESTRUCTIVE via react-native-video-trim: the editor (trim + transforms)
- * writes a new re-encoded file, stored as `editedFilename`. Re-editing always re-opens
- * the pristine original (no compounding loss); reset = delete the edited file + null
- * the edited columns. The effective file is `editedFilename ?? originalFilename` and the
- * effective duration is `editedDurationMs ?? durationMs`.
+ * Editing goes through react-native-video-trim: the editor (trim + transforms) writes a new
+ * re-encoded file, stored as `editedFilename`, and reports the settings that produced it,
+ * stored as `editState`. Re-editing always re-opens the pristine original (no compounding
+ * loss) with `editState` applied, so the user picks up where they left off; reset = delete
+ * the edited file + null the edited columns. The effective file is
+ * `editedFilename ?? originalFilename` and the effective duration is
+ * `editedDurationMs ?? durationMs`.
  */
 export const segments = sqliteTable(
   'segments',
@@ -71,6 +73,10 @@ export const segments = sqliteTable(
     // Re-encoded editor output (relative path) + its duration; null until edited.
     editedFilename: text('edited_filename'),
     editedDurationMs: integer('edited_duration_ms'),
+    // The editor settings (trim range, rotation, flip, crop, mute, speed) that produced
+    // `editedFilename`, as RNVT's opaque `editState` JSON — handed back to the editor on the
+    // next open. Null when unedited, or edited before the editor reported it.
+    editState: text('edit_state'),
     // First-frame jpeg cover (relative path), written by the recorder/importer/editor.
     // Shown on segment-bar thumbs and draft cards (the draft cover is the first clip's
     // thumbnail) and uploaded as the merged session's thumbnail artifact.
