@@ -6,8 +6,10 @@ import { segmentOffsets } from '@/utils/segment-window';
 // track-metrics reads spacing from the theme, which imports react-native — out of reach for
 // this pure-node runner. The mapping only needs the numbers, so stub the spacing scale.
 jest.mock('@/constants/theme', () => ({ Spacing: { two: 8, three: 12 } }));
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { msToPx, pxToMs } = require('./track-mapping') as typeof import('./track-mapping');
 const { STEP, THUMB_WIDTH } = require('./track-metrics') as typeof import('./track-metrics');
+/* eslint-enable @typescript-eslint/no-require-imports */
 
 // Minimal Segment factory — only the fields the mapping reads.
 const seg = (over: Partial<Segment>): Segment =>

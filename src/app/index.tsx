@@ -20,7 +20,8 @@ import { useTheme, useThemeToggle } from '@/hooks/use-theme';
 // Dev-only seeding controls, behind a `__DEV__`-guarded require so the component and `@/dev/seed`
 // (with its perf fixtures) are dead-code-eliminated from the production bundle, not just hidden.
 const DevSeedRow = __DEV__
-  ? (require('@/dev/dev-seed-row') as typeof import('@/dev/dev-seed-row')).DevSeedRow
+  ? // eslint-disable-next-line @typescript-eslint/no-require-imports -- must stay conditional (see above)
+    (require('@/dev/dev-seed-row') as typeof import('@/dev/dev-seed-row')).DevSeedRow
   : null;
 
 type DraftRef = { id: string; name: string | null; anchor: Anchor };
