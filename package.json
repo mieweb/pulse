@@ -13,7 +13,6 @@
     "expo": "~57.0.22",
     "expo-asset": "~57.0.16",
     "expo-audio": "~57.0.5",
-    "expo-background-task": "~57.0.17",
     "expo-build-properties": "~57.0.17",
     "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.17",
@@ -36,7 +35,6 @@
     "expo-status-bar": "~57.0.1",
     "expo-symbols": "~57.0.3",
     "expo-system-ui": "~57.0.4",
-    "expo-task-manager": "~57.0.17",
     "expo-video": "~57.0.4",
     "expo-web-browser": "~57.0.3",
     "fflate": "^0.8.3",
@@ -91,6 +89,13 @@
           "expo-call-detector",
           "whisper.rn",
           "react-native-background-actions"
+        ]
+      }
+    },
+    "autolinking": {
+      "ios": {
+        "buildFromSource": [
+          "expo-file-system"
         ]
       }
     }

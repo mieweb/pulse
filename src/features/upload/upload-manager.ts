@@ -2,75 +2,106 @@ import * as Crypto from 'expo-crypto';
 import { Directory, File, Paths } from 'expo-file-system';
 import { getInfoAsync } from 'expo-file-system/legacy';
 
-import { deleteDestination, getDestinationIdByArtifactId } from '@/db/destinations';
+import { deleteDestination } from '@/db/destinations';
 import {
+  burnUploadPairing,
   getDraftName,
-  getDraftUploadStatus,
-  getResumableDrafts,
-  getUploadArtifact,
-  draftQuery,
-  segmentsForDraft,
-  setCaptionsUploadStatus,
-  setUploadProgress,
-  type UploadArtifactKey,
-  upsertUploadArtifact,
+  getUploadedDraftIds,
+  getUploadingDraftIds,
+  markUploaded,
+  setUploadDestination,
 } from '@/db/drafts';
-import type { Draft } from '@/db/schema';
-import { getDraftToken } from '@/db/secure-token';
+import { deleteViewLink, getViewLink, setViewLink } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
-import { loadMergedExport } from '@/features/export/merged-export';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
 import { absolutize, toFileUri } from '@/utils/file-store';
-import { effMs } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 
 import { buildBeatManifest } from './beat-manifest';
-import { isTokenExpired } from './capability-token';
+import { expiresAtMs, isTokenExpired } from './capability-token';
+import { checkCapabilities } from './capabilities';
 import { keepAlive } from './keep-alive';
+import {
+  cancelOrphanedUploadTasks,
+  cleanupStaleUploadTempFiles,
+  uploadChunkNative,
+} from './native-chunk-upload';
 import { uploadNotify } from './notify';
-import { tusServerTransport } from './transports/tus-server-transport';
-import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
-import { type ArtifactKind, TusUploadError } from './tus-client';
+import { type ArtifactKind, cancelTusUpload, TusUploadError, uploadViaTus } from './tus-client';
+import {
+  describeError,
+  formatBytes,
+  formatRate,
+  formatSeconds,
+  shortId,
+  uploadLog,
+} from './upload-log';
 import type {
   Destination,
   LiveUploadState,
+  UploadPhase,
   UploadProgress,
   UploadSession,
-  UploadTransport,
 } from './types';
+import { requestViewLink } from './view-link';
 
-const EXPIRED_PAIRING_MESSAGE = 'Upload link expired — ask the operator for a new pairing link.';
+/** Every failure spends the link, so the way to try again is a new one. */
+const NEW_LINK = 'scan a new link to try again.';
 
-/** How long a finished run's one-shot `done` live state survives without being acknowledged. */
-const DONE_STATE_TTL_MS = 60_000;
+/** Failures that need more than a new link say so themselves, and are shown as-is. */
+const STOPPED_MESSAGE = {
+  expired: `Upload link expired — ${NEW_LINK}`,
+  'version-too-old':
+    'This server needs a newer version of Pulse — update the app, then scan a new link.',
+  'version-too-new':
+    'This server hasn’t been updated for this version of Pulse yet — scan a new link once it is.',
+  'video-missing': 'The video is no longer available — reopen the draft, then scan a new link.',
+} as const;
 
-class ExpiredPairingError extends Error {
-  readonly retryable = false;
-  constructor() {
-    super(EXPIRED_PAIRING_MESSAGE);
-    this.name = 'ExpiredPairingError';
+/** Names the step a failure happened in, after the reason. */
+const PHASE_NAME: Record<UploadPhase, string> = {
+  preparing: 'Preparing',
+  captions: 'Captions',
+  manifest: 'Beat manifest',
+  thumbnail: 'Thumbnail',
+  video: 'Video',
+};
+
+/** How long to wait for a view link after an upload; the upload has already finished by then. */
+const VIEW_LINK_TIMEOUT_MS = 15_000;
+
+/** Where a run writes its captions, beat manifest and generated thumbnail before uploading them. */
+const TEMP_DIR_NAME = 'uploads';
+
+/** A failure whose message is the whole toast (see `STOPPED_MESSAGE`). */
+class UploadStoppedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UploadStoppedError';
   }
 }
 
 /** Stable idle reference so `useSyncExternalStore`'s `getSnapshot` returns `===` for untouched drafts. */
 const IDLE: LiveUploadState = { status: 'idle' };
 
-type RetryableError = Error & { retryable: boolean };
-type ErrorDescription = { reason: string; retryable: boolean };
+/**
+ * A finished upload's watch link. A read-only view link (protocol 2.2) is `shareable` and kept
+ * across restarts until it expires. Without one, the link carries the pairing token, which can
+ * also delete the video — so it's only for opening in the user's own browser, held for this
+ * session and never offered for copying (a tokenless link carries no secret, and is shareable).
+ */
+export type WatchLink = {
+  url: string;
+  /** When it stops working, in ms since the epoch; `null` if unknown (tokenless or opaque). */
+  expiresAt: number | null;
+  shareable: boolean;
+};
 
-function describeError(err: unknown): ErrorDescription {
-  if (err && typeof err === 'object' && 'retryable' in err) {
-    const retryableError = err as RetryableError;
-    return {
-      reason: retryableError.message ?? 'Upload failed',
-      retryable: retryableError.retryable,
-    };
-  }
-  if (err instanceof Error && err.name === 'AbortError') {
-    return { reason: 'Cancelled', retryable: true };
-  }
-  return { reason: err instanceof Error ? err.message : 'Upload failed', retryable: true };
+/** The uploaded video's link, tokened so it opens without signing in. */
+function watchUrlOf(destination: Destination): string {
+  const url = `${destination.server}/artifacts/${destination.artifactId}`;
+  return destination.token ? `${url}?token=${encodeURIComponent(destination.token)}` : url;
 }
 
 /**
@@ -95,59 +126,107 @@ async function md5Checksum(file: File): Promise<string> {
   return `md5:${info.md5}`;
 }
 
-/** Writes text to a fresh temp file under the cache dir so it can be uploaded like any other File. */
-function writeTempTextFile(name: string, contents: string): File {
-  const dir = new Directory(Paths.cache, 'uploads');
+function tempFile(name: string): File {
+  const dir = new Directory(Paths.cache, TEMP_DIR_NAME);
   dir.create({ intermediates: true, idempotent: true });
   const file = new File(dir, name);
   if (file.exists) file.delete();
+  return file;
+}
+
+/** Writes text to a fresh temp file under the cache dir so it can be uploaded like any other File. */
+function writeTempTextFile(name: string, contents: string): File {
+  const file = tempFile(name);
   file.write(contents);
   return file;
 }
 
-/** The session anchor (the video) or a related sub-artifact — the input to `uploadOne`. */
+/** Best-effort bearer DELETE of uploads a run created; a missed one ages out via server retention. */
+async function discard(urls: readonly string[], token: string | null): Promise<void> {
+  await Promise.all(
+    urls.map((url) =>
+      cancelTusUpload(url, token).catch((err) => {
+        uploadLog.warn(`couldn’t delete an upload: ${describeError(err)}`);
+      }),
+    ),
+  );
+}
+
+/** The server's host for the log — the pairing link's path and query stay out. */
+function hostOf(server: string): string {
+  try {
+    return new URL(server).host;
+  } catch {
+    return 'an unknown server';
+  }
+}
+
+/** `draft 1a2b3c4d` — how the log names a draft. */
+const draftLabel = (draftId: string) => `draft ${shortId(draftId)}`;
+
+/** The video or one of its related artifacts — the input to `uploadOne`. */
 type ArtifactInput = {
   artifactId: string;
   filename: string;
   kind: ArtifactKind;
   relatedTo?: string;
-  /** Free-form display title (the draft name). Set only on the session anchor. */
+  checksum?: string;
+  /** Free-form display title (the draft name). Set only on the video. */
   name?: string;
   file: File;
+};
+
+/** What one run owns while it's live: the handles its cancel and cleanup need. */
+type Run = {
+  session: UploadSession;
+  signal: AbortSignal;
+  /** Every upload URL this run created, so cancel and failure can DELETE them. */
+  created: string[];
+  /** Temp files this run wrote, deleted when it settles. */
+  temps: File[];
 };
 
 /**
  * The app-wide, screen-independent upload engine. A module-scope singleton
  * (created once at import, exported as `uploads`) that owns a queue of upload
  * sessions and drives them to completion regardless of which screen is mounted
- * or whether the app is foregrounded — the piece that replaces the orchestration
- * that used to live inside the `useUpload` React hook.
+ * or whether the app is foregrounded.
  *
- * Durable state (destination, resume identity, status) lives in SQLite; this
- * holds only what SQLite doesn't: the in-flight AbortControllers, the live
- * byte-progress the UI subscribes to (never persisted per-tick), a run-lock, and
- * the enqueued sessions. Because the queue of pending work is really the set of
- * drafts with an `uploading` status in SQLite, a session is crash-safe: after a
- * kill it is rebuilt from the row, the clip table, and the draft's persisted
- * merged export (`drafts/{id}/export.mp4`). The draft is locked while its run is
- * live (see `assertNotUploading`), so nothing it reads can change under it.
+ * One link, one upload: claiming a destination spends it. Within an upload only
+ * TUS retries (`withRetry` in tus-client, resuming from the server's offset). When
+ * TUS can't continue — retries exhausted, a terminal response, an expired token —
+ * the upload fails and leaves nothing behind: the draft is unpaired, what the run
+ * created on the server DELETEd, and the user told why. The
+ * upload lives as long as the app does; sessions are held only in memory, and a
+ * kill fails the draft on the next launch (`prepareLaunch`).
+ *
+ * Races between a cancel and a finish are decided by the database: `markUploaded`
+ * and `burnUploadPairing` only act on a draft that is still `uploading`, and
+ * whichever lands first wins.
  */
 class BackgroundUploadManager {
-  private readonly transport: UploadTransport = tusServerTransport;
-
   private readonly listeners = new Set<() => void>();
   private readonly live = new Map<string, LiveUploadState>();
   private readonly sessions = new Map<string, UploadSession>();
   private readonly controllers = new Map<string, AbortController>();
-  private readonly currentUpload = new Map<
-    string,
-    { artifactId: string; resourceUrl: string | null }
-  >();
-  /** Drafts whose run failed — kept in `sessions` so `retry` can re-run them, but skipped by the drain. */
-  private readonly failed = new Set<string>();
+  private readonly created = new Map<string, string[]>();
+  private readonly watchLinks = new Map<string, WatchLink>();
+  /** Drafts with a claim in flight, so a double tap uploads once — and a cancel mid-claim sticks. */
+  private readonly claiming = new Map<string, { cancelled: boolean }>();
   private running = false;
-  /** Set when a new upload is enqueued while a drain is already running, so it isn't stranded. */
-  private wake = false;
+  /** The launch check — nothing claims or uploads until it has settled. */
+  private launch: Promise<void> | null = null;
+
+  /**
+   * Foreground failure surface, registered by the upload provider at startup
+   * (inverted dependency — this module stays React-free). A failure is a toast
+   * in the foreground and `uploadNotify.failed` in the background (which no-ops
+   * in the foreground, so they never double up).
+   */
+  private showToast: ((message: string) => void) | null = null;
+  registerToast(showToast: (message: string) => void): void {
+    this.showToast = showToast;
+  }
 
   // ---- subscription surface (useSyncExternalStore) ----
 
@@ -160,6 +239,10 @@ class BackgroundUploadManager {
 
   readonly getDraftState = (draftId: string): LiveUploadState => this.live.get(draftId) ?? IDLE;
 
+  /** The draft's last finished upload's link this session, whether or not it still works. */
+  readonly getWatchLink = (draftId: string): WatchLink | null =>
+    this.watchLinks.get(draftId) ?? null;
+
   private emit(): void {
     for (const cb of this.listeners) cb();
   }
@@ -171,438 +254,410 @@ class BackgroundUploadManager {
   }
 
   /**
-   * Prefix a failure reason with the phase in flight when it happened, so an
-   * error during captions vs the video no longer produces the same generic
-   * context. Reads the live state, so it must run BEFORE the
-   * error state overwrites it.
+   * What to tell the user about a failure: the instruction first — the toast shows two lines —
+   * then the reason and the step it happened in. Reads the live state for the step, so it must
+   * run BEFORE the state resets.
    */
-  private failureReason(draftId: string, reason: string): string {
-    const live = this.live.get(draftId);
-    if (live?.status !== 'uploading') return reason;
-    switch (live.phase) {
-      case 'preparing':
-        return `Preparation failed: ${reason}`;
-      case 'captions':
-        return `Captions upload failed: ${reason}`;
-      case 'manifest':
-        return `Manifest upload failed: ${reason}`;
-      case 'thumbnail':
-        return `Thumbnail upload failed: ${reason}`;
-      case 'video':
-        return `Video upload failed: ${reason}`;
-      default:
-        return reason;
+  private failureMessage(draftId: string, err: unknown): string {
+    if (err instanceof UploadStoppedError) return err.message;
+    // 426 Upgrade Required mid-upload: the server was upgraded past this app (PROTOCOL.md §7.2).
+    if (err instanceof TusUploadError && err.statusCode === 426) {
+      return STOPPED_MESSAGE['version-too-old'];
     }
+    const reason = err instanceof Error && err.message ? err.message : 'Unknown error';
+    const live = this.live.get(draftId);
+    const detail = live?.status === 'uploading' ? `${PHASE_NAME[live.phase]}: ${reason}` : reason;
+    return `Upload failed — ${NEW_LINK} (${detail})`;
   }
 
   // ---- public API ----
 
-  /** Queue a draft's upload and start draining if not already. Ignored if the draft is already in flight. */
-  enqueue(session: UploadSession): void {
-    if (this.controllers.has(session.draftId)) return;
-    // Dead on arrival — surface the expired pairing immediately instead of flashing 'uploading'
-    // and churning the DB status before the run inevitably fails inside `uploadOne`.
-    if (isTokenExpired(session.destination.token, Date.now())) {
-      this.setLive(session.draftId, {
-        status: 'error',
-        reason: EXPIRED_PAIRING_MESSAGE,
-        retryable: false,
-      });
-      void setUploadProgress(session.draftId, { status: 'failed' });
+  /**
+   * Once per launch, before anything uploads: cancel transfers an earlier process
+   * left in the iOS background session, clear upload temp files, and fail every
+   * draft still marked `uploading` — the app was killed mid-upload. What that upload
+   * created on the server is left to retention (its URLs died with the process).
+   * Idempotent: every call returns the same promise.
+   */
+  prepareLaunch(): Promise<void> {
+    this.launch ??= this.settleLaunch();
+    return this.launch;
+  }
+
+  private async settleLaunch(): Promise<void> {
+    const orphaned = await cancelOrphanedUploadTasks();
+    if (orphaned > 0) {
+      uploadLog.info(`launch: cancelled ${orphaned} upload task(s) an earlier run left behind`);
+    }
+    cleanupStaleUploadTempFiles();
+    try {
+      const temps = new Directory(Paths.cache, TEMP_DIR_NAME);
+      if (temps.exists) temps.delete();
+    } catch {
+      // Locked — the next launch tries again.
+    }
+    try {
+      // Claims wait for this check, so nothing in this process is running any of these.
+      let interrupted = 0;
+      for (const draftId of await getUploadingDraftIds()) {
+        if (await burnUploadPairing(draftId)) interrupted++;
+      }
+      if (interrupted > 0) {
+        uploadLog.warn(`launch: ${interrupted} upload(s) stopped when the app did; unpaired`);
+        const what = interrupted === 1 ? 'An upload' : `${interrupted} uploads`;
+        this.showToast?.(`${what} didn’t finish — ${NEW_LINK}`);
+        // The launch may be in the background (iOS relaunches the app for a finished transfer).
+        void uploadNotify.failed();
+      }
+    } catch (err) {
+      // Best-effort: a draft left `uploading` stays locked until the next launch settles it.
+      uploadLog.warn(`launch check failed: ${describeError(err)}`);
+    }
+    // Not part of the check claims wait for: nothing uploads with these.
+    void this.restoreViewLinks();
+  }
+
+  /** Bring back the view links of uploaded drafts that still work, and forget expired ones. */
+  private async restoreViewLinks(): Promise<void> {
+    try {
+      for (const draftId of await getUploadedDraftIds()) {
+        const link = await getViewLink(draftId);
+        if (!link) continue;
+        if (link.expiresAt <= Date.now()) {
+          await deleteViewLink(draftId);
+          continue;
+        }
+        // An upload this session already set a newer one.
+        if (!this.watchLinks.has(draftId)) {
+          this.watchLinks.set(draftId, { ...link, shareable: true });
+        }
+      }
+    } catch {
+      // Best-effort: a link that can't be read just isn't offered.
+    }
+    this.emit();
+  }
+
+  /**
+   * Spend a pool destination on a draft and start uploading it. The draft is written
+   * `uploading` FIRST, then the pool row is removed: a kill between the two leaves an
+   * `uploading` draft the launch check fails cleanly. The pool delete is the arbiter
+   * when two drafts claim one link — the loser unpairs itself. A double tap on the
+   * same draft is ignored.
+   */
+  async claim(params: {
+    draftId: string;
+    destinationId: string;
+    destination: Destination;
+    segments: UploadSession['segments'];
+    merged: UploadSession['merged'];
+  }): Promise<void> {
+    const { draftId, destinationId, destination, segments, merged } = params;
+    if (this.claiming.has(draftId) || this.getDraftState(draftId).status !== 'idle') return;
+    const pending = { cancelled: false };
+    this.claiming.set(draftId, pending);
+    uploadLog.info(
+      `${draftLabel(draftId)}: upload to ${hostOf(destination.server)} ` +
+        `(video ${shortId(destination.artifactId)})`,
+    );
+    try {
+      await this.launch;
+      await setUploadDestination(draftId, destination);
+      if (!(await deleteDestination(destinationId))) {
+        uploadLog.warn(`${draftLabel(draftId)}: another draft used that link first`);
+        await burnUploadPairing(draftId, destination.artifactId);
+        return;
+      }
+      // Cancelled (from Home's ⋯ menu) after the pairing landed: the cancel unpaired it already.
+      if (pending.cancelled) return;
+      this.enqueue({ draftId, destination, segments, merged });
+    } catch (err) {
+      // The pairing or the pool write failed: undo the pairing (if it landed) rather than leave
+      // the draft locked with nothing uploading it.
+      uploadLog.warn(`${draftLabel(draftId)}: couldn’t start: ${describeError(err)}`);
+      await burnUploadPairing(draftId, destination.artifactId).catch(() => false);
+      this.showToast?.('Couldn’t start the upload — try again.');
+    } finally {
+      this.claiming.delete(draftId);
+    }
+  }
+
+  private enqueue(session: UploadSession): void {
+    const { draftId, destination } = session;
+    if (this.sessions.has(draftId)) return;
+    // Dead on arrival — the link expired between picking it and tapping Upload.
+    if (isTokenExpired(destination.token, Date.now())) {
+      uploadLog.warn(`${draftLabel(draftId)}: the link expired before the upload started`);
+      void this.fail(draftId, destination, new UploadStoppedError(STOPPED_MESSAGE.expired), []);
       return;
     }
-    this.failed.delete(session.draftId);
-    this.sessions.set(session.draftId, session);
+    this.sessions.set(draftId, session);
+    // A new upload replaces the draft's previous one.
+    this.watchLinks.delete(draftId);
+    void deleteViewLink(draftId).catch(() => {});
     // Ask for notification permission now — a foreground moment (the user just tapped Upload) — so
     // the background completion/failure banner can fire later without prompting mid-upload.
     void uploadNotify.ensurePermission();
-    this.setLive(session.draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
-    void setUploadProgress(session.draftId, { status: 'uploading' });
-    void this.ensureRunning();
-  }
-
-  /**
-   * Re-run a failed upload. Reuses the in-memory session if present, otherwise reconstructs it from
-   * durable state — so the uploads inbox can retry a run that failed before the app was relaunched.
-   */
-  async retry(draftId: string): Promise<void> {
-    if (this.controllers.has(draftId)) return;
-    let session = this.sessions.get(draftId);
-    if (!session) {
-      const [row] = await draftQuery(draftId);
-      if (!row) return;
-      const result = await this.reconstructSession(row);
-      if (!result.ok) {
-        // Can't rebuild the run (expired token / evicted export) — surface it rather than silently
-        // no-op, so the user sees a clear reason and can re-pair / re-export.
-        this.setLive(draftId, { status: 'error', reason: result.reason, retryable: false });
-        await setUploadProgress(draftId, { status: 'failed' });
-        return;
-      }
-      session = result.session;
-    }
-    this.failed.delete(draftId);
-    this.sessions.set(draftId, session);
     this.setLive(draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
-    void setUploadProgress(draftId, { status: 'uploading' });
     void this.ensureRunning();
   }
 
-  /** Abort + server-cancel whatever's in flight for a draft, and drop it from the queue. */
+  /** Abort a draft's upload, unpair it, and DELETE what the run created. */
   async cancel(draftId: string): Promise<void> {
-    // A COMPLETED upload has nothing to cancel — and resetting its row would strip the
-    // 'uploaded' marker that keeps a later clip edit from wiping its (finished) upload state.
-    // Only bail when nothing is actually live, so the reset keeps un-wedging stuck rows.
-    if (!this.sessions.has(draftId) && !this.controllers.has(draftId)) {
-      const status = await getDraftUploadStatus(draftId);
-      if (status === 'uploaded') return;
-    }
+    const token = this.sessions.get(draftId)?.destination.token ?? null;
+    const created = this.created.get(draftId) ?? [];
+    uploadLog.info(`${draftLabel(draftId)}: cancelled; deleting ${created.length} upload(s)`);
+    const pendingClaim = this.claiming.get(draftId);
+    if (pendingClaim) pendingClaim.cancelled = true;
     this.controllers.get(draftId)?.abort();
-    const session = this.sessions.get(draftId);
-    // Target whatever's actually in flight — a sub-artifact may not be the session anchor —
-    // falling back to the anchor only if nothing had started uploading yet.
-    const target =
-      this.currentUpload.get(draftId)?.resourceUrl ?? session?.destination.resourceUrl ?? null;
-    const token = session?.destination.token ?? null;
-    // Drop it from the queue and reset durable + live state FIRST — before the network round-trip
-    // below. You often cancel *because* the network died, so a slow/failing server-cancel must not
-    // leave the row stuck 'uploading'; the resume path (`hydrateFromDb`) would otherwise resurrect
-    // and complete the run the user just cancelled.
     this.sessions.delete(draftId);
-    this.failed.delete(draftId);
     this.controllers.delete(draftId);
-    this.currentUpload.delete(draftId);
-    await setUploadProgress(draftId, { status: 'idle' });
-    this.setLive(draftId, { status: 'idle' });
-    // Best-effort server-side cancel (TUS DELETE); its failure must not revert the reset above. A
-    // stale server-side "uploading" sidecar is the documented un-wedge gap (re-pair / fresh id).
-    if (target) {
-      try {
-        await this.transport.cancel(target, token);
-      } catch {
-        // Network down / already gone — the local reset stands.
-      }
-    }
-  }
-
-  /** Dismiss a finished run's `done` state back to idle (after the one-time watch prompt). */
-  acknowledge(draftId: string): void {
-    if (this.getDraftState(draftId).status === 'done') this.setLive(draftId, { status: 'idle' });
+    this.created.delete(draftId);
+    // The burn only clears a draft that is still `uploading` — a finish that landed first keeps
+    // its `uploaded` row, and the upload stands.
+    const burned = await burnUploadPairing(draftId);
+    if (this.getDraftState(draftId).status === 'uploading') this.setLive(draftId, IDLE);
+    if (burned) void discard(created, token);
   }
 
   /**
-   * Idempotent drain trigger — safe to call from every wake-up (app launch,
-   * AppState→active, a new enqueue). If a drain is already running it returns
-   * immediately; otherwise it drains the queue to empty, one session at a time.
+   * Idempotent drain trigger — safe to call from every wake-up (AppState→active, a
+   * new enqueue). If a drain is already running it returns immediately; otherwise
+   * it drains the queue to empty, one session at a time.
    */
   async ensureRunning(): Promise<void> {
-    // Already draining — record that new work arrived so the active loop picks it up before exiting,
-    // instead of stranding an upload enqueued in the moment the drain was winding down.
-    if (this.running) {
-      this.wake = true;
-      return;
-    }
+    if (this.running) return;
     this.running = true;
     // Whether the Android foreground service is up. Started once (lazily, only for real work) and
-    // stopped once when the whole drain finishes — NOT per do-while iteration, so back-to-back
-    // uploads don't stop+restart the service (which Android 12+ can block when backgrounded, and
-    // which flashes the notification off/on).
+    // stopped once when the whole drain finishes — NOT per session, so back-to-back uploads don't
+    // stop+restart the service (which Android 12+ can block when backgrounded, and which flashes
+    // the notification off/on).
     let keepAliveStarted = false;
     try {
-      do {
-        this.wake = false;
-        await this.hydrateFromDb();
-        // Nothing to do — crucially, DON'T start the Android foreground service for an empty queue
-        // (that would flash a notification on every foreground and fail Play review).
-        if (!this.nextPending()) continue;
+      await this.launch;
+      for (;;) {
+        if (!this.nextPending()) break;
         if (!keepAliveStarted) {
-          // Hold the process alive while draining (Android foreground service; no-op elsewhere) so a
-          // backgrounded run isn't frozen/killed.
+          // Hold the process alive while draining (Android foreground service; no-op elsewhere) so
+          // a backgrounded run isn't frozen/killed.
           await keepAlive.begin();
           keepAliveStarted = true;
         }
-        for (;;) {
-          const session = this.nextPending();
-          if (!session) break;
-          void keepAlive.note(this.notificationText());
-          await this.runSession(session);
-        }
-      } while (this.wake || this.nextPending());
+        // Picked after the await: a cancel while the service was starting removed its session.
+        const session = this.nextPending();
+        if (!session) break;
+        void keepAlive.note(this.notificationText());
+        await this.runSession(session);
+      }
     } finally {
       if (keepAliveStarted) await keepAlive.end();
       this.running = false;
     }
+    // An upload enqueued while `keepAlive.end()` was in flight (a real native call on Android)
+    // found `running` still set and returned — pick it up now, or it would sit at "Preparing…".
+    if (this.nextPending()) void this.ensureRunning();
   }
 
   private notificationText(): string {
-    // Failed drafts stay in `sessions` (so `retry` can reuse them) but aren't in flight — exclude
-    // them from the count so the notification doesn't read "Uploading 3 pulses…" for one live run.
-    const n = this.sessions.size - this.failed.size;
+    const n = this.sessions.size;
     return n <= 1 ? 'Uploading your pulse…' : `Uploading ${n} pulses…`;
-  }
-
-  /**
-   * Rebuild sessions for drafts left mid-upload (status still `uploading`) that aren't already in
-   * memory — the after-kill/relaunch resume path. Everything a run needs is reconstructed from
-   * durable state: destination + resume URL from the drizzle row, token from secure-store, segments
-   * from the clip table, and the video from the draft's persisted export. A run that can't
-   * be rebuilt (expired token, no valid export) is settled to failed rather than restarted.
-   */
-  private async hydrateFromDb(): Promise<void> {
-    const rows = await getResumableDrafts();
-    for (const row of rows) {
-      if (this.sessions.has(row.id) || this.controllers.has(row.id)) continue;
-      const result = await this.reconstructSession(row);
-      if (!result.ok) {
-        // Can't resume off-screen (expired token / evicted export). Settle it to `failed` so the UI
-        // surfaces the reason — and so it stops being re-hydrated on every drain — instead of
-        // leaving a perpetual 'uploading' ring that never progresses and can't be cleared.
-        this.setLive(row.id, { status: 'error', reason: result.reason, retryable: false });
-        await setUploadProgress(row.id, { status: 'failed' });
-        continue;
-      }
-      this.sessions.set(row.id, result.session);
-      this.setLive(row.id, { status: 'uploading', phase: 'preparing', progress: 0 });
-    }
-  }
-
-  /**
-   * Rebuild an upload session from a persisted draft row (destination + token + segments + export),
-   * or a failure `reason` if it can't be resumed off-screen — a missing destination, an expired
-   * token, or no persisted export of these clips (a backstop — the draft is locked while
-   * uploading, so its clips and export can't change under the run).
-   */
-  private async reconstructSession(
-    row: Draft,
-  ): Promise<{ ok: true; session: UploadSession } | { ok: false; reason: string }> {
-    if (!row.uploadServer || !row.uploadArtifactId) {
-      return { ok: false, reason: 'Upload destination is missing — re-pair to upload.' };
-    }
-    const token = await getDraftToken(row.id);
-    if (isTokenExpired(token, Date.now())) return { ok: false, reason: EXPIRED_PAIRING_MESSAGE };
-    // The same clip set the export screen merges and uploads (zero-length clips can't be joined).
-    const segments = (await segmentsForDraft(row.id)).filter((s) => effMs(s) > 0);
-    const merged = await loadMergedExport(row.id, segments);
-    if (!merged) {
-      return {
-        ok: false,
-        reason: 'The video is no longer available — reopen the draft to re-export, then upload.',
-      };
-    }
-    // Re-link the single-use pool destination (that id isn't persisted on the session) so a resumed
-    // run still removes it on success — otherwise a spent destination lingers in the pool and gets
-    // reused against an already-consumed server-minted artifactId (409).
-    const consumedDestinationId = await getDestinationIdByArtifactId(row.uploadArtifactId);
-    return {
-      ok: true,
-      session: {
-        draftId: row.id,
-        destination: {
-          server: row.uploadServer,
-          token,
-          artifactId: row.uploadArtifactId,
-          resourceUrl: row.uploadResourceUrl,
-        },
-        segments,
-        merged,
-        consumedDestinationId,
-      },
-    };
   }
 
   private nextPending(): UploadSession | null {
     for (const [draftId, session] of this.sessions) {
-      if (!this.controllers.has(draftId) && !this.failed.has(draftId)) return session;
+      if (!this.controllers.has(draftId)) return session;
     }
     return null;
   }
 
-  // ---- per-session orchestration (moved verbatim in behaviour from the old useUpload hook) ----
+  /**
+   * The upload failed and can't continue: unpair the draft, tell the user why — a toast in the
+   * foreground, a notification in the background — and DELETE what the run created. The unpairing
+   * is scoped to this upload's link, so it never touches a newer claim; and a cancel that already
+   * unpaired the draft owns the outcome, so this does nothing then. The DELETEs aren't awaited:
+   * a slow server must not hold up the next upload.
+   */
+  private async fail(
+    draftId: string,
+    destination: Destination,
+    err: unknown,
+    created: readonly string[],
+  ): Promise<void> {
+    const message = this.failureMessage(draftId, err);
+    const live = this.live.get(draftId);
+    const step = live?.status === 'uploading' ? PHASE_NAME[live.phase] : 'Starting';
+    uploadLog.warn(
+      `${draftLabel(draftId)}: failed (${step}): ${describeError(err)}; ` +
+        `deleting ${created.length} upload(s)`,
+    );
+    if (!(await burnUploadPairing(draftId, destination.artifactId))) return;
+    this.setLive(draftId, IDLE);
+    this.showToast?.(message);
+    void uploadNotify.failed();
+    void discard(created, destination.token);
+  }
+
+  // ---- per-session orchestration ----
 
   private async runSession(session: UploadSession): Promise<void> {
-    const { draftId } = session;
+    const { draftId, destination } = session;
     const controller = new AbortController();
+    const run: Run = { session, signal: controller.signal, created: [], temps: [] };
     this.controllers.set(draftId, controller);
-    this.setLive(draftId, { status: 'uploading', phase: 'preparing', progress: 0 });
-    await setUploadProgress(draftId, { status: 'uploading' });
+    this.created.set(draftId, run.created);
+    const started = Date.now();
     try {
       // The server may have been upgraded since this destination was paired (PROTOCOL.md §7.2):
       // check again before sending anything, and stop with the pairing message if the two no
       // longer speak a common protocol. An unreachable server is left to the upload's retries.
-      const compat = await checkCapabilities(session.destination.server, controller.signal);
+      const compat = await checkCapabilities(destination.server, controller.signal);
+      uploadLog.info(
+        `${draftLabel(draftId)}: server check: ` +
+          (compat.ok
+            ? `protocol ${compat.capabilities.protocolRevision ?? compat.protocol}, ` +
+              `view links ${compat.capabilities.viewLinks ? 'yes' : 'no'}`
+            : compat.reason),
+      );
       if (!compat.ok && compat.reason !== 'unreachable') {
-        throw new TusUploadError(CAPABILITIES_REJECTION_MESSAGE[compat.reason], {
-          retryable: false,
-        });
+        throw new UploadStoppedError(STOPPED_MESSAGE[compat.reason]);
       }
-      const resourceUrl = await this.uploadPulse(session, controller.signal);
-      // Displaced-run guard BEFORE any terminal write: if a cancel removed this session while the
-      // final transfer was resolving, resurrecting 'uploaded'/'done' here would overrule it —
-      // cancel owns all state from the moment it removed this run from the map.
-      if (this.sessions.get(draftId) !== session) return;
-      await setUploadProgress(draftId, { status: 'uploaded', resourceUrl });
-      this.setLive(draftId, { status: 'done', resourceUrl });
-      // `done` is a one-shot signal for the export screen's watch prompt; if no screen is around
-      // to `acknowledge` it (the run finished on Home / in the background), expire it so it
-      // doesn't sit in the live map forever and pop a stale prompt on a much-later screen visit.
-      // `acknowledge` no-ops unless the state is still `done`, so this can't clobber a new run.
-      setTimeout(() => this.acknowledge(draftId), DONE_STATE_TTL_MS);
-      // Tell the user their pulse landed — only surfaces if the app is backgrounded / off-screen.
+      const draftName = await this.uploadPulse(run);
+      // Recorded as uploaded the moment the bytes are in — nothing (a view link) comes first.
+      if (!(await markUploaded(draftId, destination.artifactId))) {
+        // A cancel unpaired the draft while the last bytes landed, and its outcome stands: reset
+        // (unless the cancel already did) and DELETE what this run created, as the cancel does.
+        uploadLog.info(`${draftLabel(draftId)}: finished after a cancel; discarding it`);
+        if (!controller.signal.aborted) this.setLive(draftId, IDLE);
+        void discard(run.created, destination.token);
+        return;
+      }
+      // Watch / Copy link live in the draft's ⋯ menu on Home, for as long as the link works.
+      const direct: WatchLink = {
+        url: watchUrlOf(destination),
+        expiresAt: expiresAtMs(destination.token),
+        shareable: destination.token === null,
+      };
+      this.watchLinks.set(draftId, direct);
+      this.setLive(draftId, IDLE);
+      uploadLog.info(`${draftLabel(draftId)}: uploaded in ${formatSeconds(Date.now() - started)}`);
+      // Tell the user it landed: a toast wherever they are, a notification in the background.
+      this.showToast?.(draftName ? `Uploaded “${draftName}”` : 'Your pulse is uploaded');
       void uploadNotify.complete();
-      // Single-use: remove the consumed pool destination now the run finished.
-      if (session.consumedDestinationId) {
-        await deleteDestination(session.consumedDestinationId);
-      }
-      if (this.sessions.get(draftId) === session) {
-        this.sessions.delete(draftId);
-        this.failed.delete(draftId);
+      // A shareable link, asked for now while the pairing token is still valid (PROTOCOL.md
+      // §6.4) — off the drain, so a slow server holds up nothing.
+      if (compat.ok && compat.capabilities.viewLinks) {
+        void this.shareableLink(draftId, destination, direct);
       }
     } catch (err) {
-      // Every branch below is identity-guarded: a cancel may have cleared the maps AND a fresh
-      // session for the same draft may have been enqueued inside the abort window — a displaced
-      // run must neither tear down the fresh run's entries nor write its own terminal state over it.
-      if (err instanceof Error && err.name === 'AbortError') {
-        // Cancelled via cancel() — that path owns resetting status/live to idle;
-        // don't race it by overwriting with an error state or keeping the session as "failed".
-        if (this.sessions.get(draftId) === session) {
-          this.sessions.delete(draftId);
-          this.failed.delete(draftId);
-        }
-      } else if (this.sessions.get(draftId) === session) {
-        const { reason, retryable } = describeError(err);
-        this.setLive(draftId, {
-          status: 'error',
-          reason: this.failureReason(draftId, reason),
-          retryable,
-        });
-        await setUploadProgress(draftId, { status: 'failed' });
-        // Tell the user it failed — only surfaces if the app is backgrounded / off-screen.
-        void uploadNotify.failed();
-        // Keep the session (in `failed`) so `retry` can re-run it; the drain skips it.
-        this.failed.add(draftId);
-      }
+      // A cancel aborted this run and owns its cleanup.
+      if (controller.signal.aborted) return;
+      await this.fail(draftId, destination, err, run.created);
     } finally {
-      if (this.controllers.get(draftId) === controller) {
-        this.controllers.delete(draftId);
-        this.currentUpload.delete(draftId);
+      for (const file of run.temps) {
+        try {
+          if (file.exists) file.delete();
+        } catch {
+          // The launch sweep clears the folder anyway.
+        }
       }
+      // Identity-guarded: a cancel may have cleared these, and a new claim for the same draft
+      // may already have its own entries.
+      if (this.controllers.get(draftId) === controller) this.controllers.delete(draftId);
+      if (this.sessions.get(draftId) === session) this.sessions.delete(draftId);
+      if (this.created.get(draftId) === run.created) this.created.delete(draftId);
     }
   }
 
-  private async uploadOne(
+  /**
+   * Swap a finished upload's direct link for a read-only view link, and keep that across
+   * restarts. Keeps the direct link when the server doesn't answer in time, or a newer upload of
+   * the draft has replaced it meanwhile.
+   */
+  private async shareableLink(
     draftId: string,
     destination: Destination,
-    artifact: ArtifactInput,
-    resourceUrl: string | null,
-    checksum: string | undefined,
-    signal: AbortSignal,
-    onProgress?: (progress: UploadProgress) => void,
-    // Fired the instant the server assigns a resource URL — the caller persists it so an app kill
-    // mid-transfer can resume via HEAD+PATCH. WITHOUT this the resume path has no handle and
-    // re-creates the upload, which the server rejects as a duplicate reserve (409).
-    persistResourceUrl?: (url: string) => void,
-  ): Promise<{ resourceUrl: string }> {
-    // Re-checked before every artifact (not just at the start of a run) — a token fine at the
-    // start can go stale partway through a session.
-    if (isTokenExpired(destination.token, Date.now())) throw new ExpiredPairingError();
-    this.currentUpload.set(draftId, { artifactId: artifact.artifactId, resourceUrl });
-    const result = await this.transport.run({
-      destination,
-      artifact: {
-        artifactId: artifact.artifactId,
-        filename: artifact.filename,
-        kind: artifact.kind,
-        relatedTo: artifact.relatedTo,
-        checksum,
-        name: artifact.name,
-        file: artifact.file,
-        resourceUrl,
-      },
-      signal,
-      onProgress,
-      onResourceCreated: (url) => {
-        this.currentUpload.set(draftId, { artifactId: artifact.artifactId, resourceUrl: url });
-        persistResourceUrl?.(url);
-      },
+    direct: WatchLink,
+  ): Promise<void> {
+    const viewLink = await requestViewLink({
+      server: destination.server,
+      artifactId: destination.artifactId,
+      token: destination.token,
+      signal: AbortSignal.timeout(VIEW_LINK_TIMEOUT_MS),
     });
-    this.currentUpload.set(draftId, {
-      artifactId: artifact.artifactId,
-      resourceUrl: result.resourceUrl,
-    });
-    return result;
+    uploadLog.info(`${draftLabel(draftId)}: view link ${viewLink ? 'received' : 'not available'}`);
+    if (!viewLink || this.watchLinks.get(draftId) !== direct) return;
+    this.watchLinks.set(draftId, { ...viewLink, shareable: true });
+    this.emit();
+    await setViewLink(draftId, viewLink).catch(() => {});
   }
 
-  /** Reserve → upload → persist a session-related artifact (captions / beat manifest / thumbnail). */
-  private async uploadRelatedArtifact(
-    draftId: string,
-    destination: Destination,
-    localKey: UploadArtifactKey,
-    spec: { filename: string; kind: ArtifactKind; file: File },
-    signal: AbortSignal,
+  /** Set a run's live state — unless it was cancelled, whose reset stands. */
+  private setRunLive(run: Run, state: LiveUploadState): void {
+    if (!run.signal.aborted) this.setLive(run.session.draftId, state);
+  }
+
+  private async uploadOne(
+    run: Run,
+    artifact: ArtifactInput,
+    onProgress?: (progress: UploadProgress) => void,
   ): Promise<void> {
-    const existing = await getUploadArtifact(draftId, localKey);
-    const artifactId = existing?.artifactId ?? Crypto.randomUUID();
-    if (!existing) await upsertUploadArtifact(draftId, localKey, { artifactId });
-    const result = await this.uploadOne(
-      draftId,
-      destination,
-      {
-        artifactId,
-        filename: spec.filename,
-        kind: spec.kind,
-        relatedTo: destination.artifactId,
-        file: spec.file,
+    const { destination } = run.session;
+    // Re-checked before every artifact (not just at the start of a run) — a token fine at the
+    // start can go stale partway through a session.
+    if (isTokenExpired(destination.token, Date.now())) {
+      throw new UploadStoppedError(STOPPED_MESSAGE.expired);
+    }
+    await uploadViaTus({
+      server: destination.server,
+      token: destination.token,
+      ...artifact,
+      signal: run.signal,
+      uploadChunk: uploadChunkNative,
+      log: uploadLog,
+      onProgress,
+      onResourceCreated: (url) => {
+        // Created after a cancel already DELETEd this run's uploads — DELETE this one too.
+        if (run.signal.aborted) void discard([url], destination.token);
+        else run.created.push(url);
       },
-      existing?.resourceUrl ?? null,
-      undefined,
-      signal,
-      undefined,
-      // Persist this sub-artifact's resource URL at creation so a kill mid-transfer resumes it via
-      // HEAD instead of re-creating (409).
-      (url) => void upsertUploadArtifact(draftId, localKey, { artifactId, resourceUrl: url }),
-    );
-    await upsertUploadArtifact(draftId, localKey, { artifactId, resourceUrl: result.resourceUrl });
+    });
   }
 
   /** The draft's cover: the first clip's persisted jpeg, or a frame from the video. */
-  private async resolveThumbnailFile(
-    session: UploadSession,
-    mergedPath: string,
-  ): Promise<File | null> {
+  private async resolveThumbnailFile(run: Run, videoPath: string): Promise<File | null> {
+    const { session } = run;
     const firstThumb = session.segments[0]?.thumbnail;
     if (firstThumb) {
       const persisted = new File(absolutize(firstThumb));
       if (persisted.exists) return persisted;
     }
-    const dir = new Directory(Paths.cache, 'uploads');
-    dir.create({ intermediates: true, idempotent: true });
-    const out = new File(dir, `${session.draftId}.jpg`);
-    if (out.exists) out.delete();
-    const ok = await generateThumbnailFile(toFileUri(mergedPath), out.uri);
+    const out = tempFile(`${session.draftId}.jpg`);
+    run.temps.push(out);
+    const ok = await generateThumbnailFile(toFileUri(videoPath), out.uri);
     return ok && out.exists ? out : null;
   }
 
   /**
    * Upload a pulse: its captions, beat manifest and thumbnail (each `relatedTo` the video), then
-   * the video itself — the session anchor, named by the pairing link's `artifactId`.
+   * the video itself, named by the pairing link's `artifactId`. The related artifacts get a fresh
+   * artifactId every upload. Resolves the draft's name, which the video carries as its title.
    */
-  private async uploadPulse(session: UploadSession, signal: AbortSignal): Promise<string> {
-    const { draftId, destination, segments, merged } = session;
-    if (!merged) throw new Error('Export is not ready yet');
+  private async uploadPulse(run: Run): Promise<string | undefined> {
+    const { draftId, destination, segments, merged } = run.session;
     // merged.path is a bare filesystem path on Android (RNVT) — normalize to a file:// URI or the
     // File API rejects it outright ("URI is not absolute").
     const file = new File(toFileUri(merged.path));
-    // The draft's title rides the video — the session anchor.
+    // The draft's title rides the video.
     const draftName = await getDraftName(draftId);
     // Backstop: the persisted export lives in the draft dir (safe from cache sweeps) and the draft
-    // is locked while uploading, so a missing file means something outside the app removed it —
-    // surface an actionable reason rather than crashing in `bytes()`.
-    if (!file.exists) {
-      throw new Error(
-        'The video is no longer available — reopen the draft to re-export, then upload.',
-      );
-    }
+    // is locked while uploading, so a missing file means something outside the app removed it.
+    if (!file.exists) throw new UploadStoppedError(STOPPED_MESSAGE['video-missing']);
+    const hashStarted = Date.now();
     const checksum = await md5Checksum(file);
+    const videoBytes = file.size ?? 0;
+    uploadLog.info(
+      `video: ${formatBytes(videoBytes)}, checksum took ${formatSeconds(Date.now() - hashStarted)}`,
+    );
 
     // The small related artifacts go FIRST. The big video PATCH is the only network step that
     // survives iOS backgrounding (native background URLSession) — JS-driven fetches freeze the
@@ -610,83 +665,82 @@ class BackgroundUploadManager {
     // the verification HEAD + status write left when the OS wakes the app for the completed
     // background transfer, instead of stalling at "100%" with captions/manifest/thumbnail
     // (all a few KB each) still queued behind a suspended JS thread.
+    const related = (filename: string, kind: ArtifactKind, relatedFile: File) =>
+      this.uploadOne(run, {
+        artifactId: Crypto.randomUUID(),
+        filename,
+        kind,
+        relatedTo: destination.artifactId,
+        file: relatedFile,
+      });
 
     // Captions: the draft's transcript of the video (hand-edit if present, else auto).
     const row = await getDraftTranscriptRow(draftId);
     const lines = parseTranscriptLines(row?.editedLines ?? row?.lines);
     if (lines.length > 0) {
-      this.setLive(draftId, { status: 'uploading', phase: 'captions', progress: 0 });
-      await setCaptionsUploadStatus(draftId, 'uploading');
+      this.setRunLive(run, { status: 'uploading', phase: 'captions', progress: 0 });
       const vttFile = writeTempTextFile(`${draftId}.vtt`, linesToVtt(lines));
-      await this.uploadRelatedArtifact(
-        draftId,
-        destination,
-        'captions',
-        { filename: `${draftId}.vtt`, kind: 'captions', file: vttFile },
-        signal,
-      );
-      await setCaptionsUploadStatus(draftId, 'uploaded');
+      run.temps.push(vttFile);
+      await related(`${draftId}.vtt`, 'captions', vttFile);
     }
 
     // Beat manifest: each recorded clip's start/end on the video's timeline (groundwork for HLS).
-    this.setLive(draftId, { status: 'uploading', phase: 'manifest', progress: 0 });
+    this.setRunLive(run, { status: 'uploading', phase: 'manifest', progress: 0 });
     const manifestFile = writeTempTextFile(
       `${draftId}-beats.pulse`,
       JSON.stringify(buildBeatManifest(segments, merged.durationMs)),
     );
-    await this.uploadRelatedArtifact(
-      draftId,
-      destination,
-      'manifest',
-      { filename: `${draftId}-beats.pulse`, kind: 'project', file: manifestFile },
-      signal,
-    );
+    run.temps.push(manifestFile);
+    await related(`${draftId}-beats.pulse`, 'project', manifestFile);
 
     // Thumbnail (poster frame).
-    this.setLive(draftId, { status: 'uploading', phase: 'thumbnail', progress: 0 });
-    const thumbFile = await this.resolveThumbnailFile(session, merged.path);
-    if (thumbFile) {
-      await this.uploadRelatedArtifact(
-        draftId,
-        destination,
-        'thumbnail',
-        { filename: `${draftId}.jpg`, kind: 'thumbnail', file: thumbFile },
-        signal,
-      );
-    }
+    this.setRunLive(run, { status: 'uploading', phase: 'thumbnail', progress: 0 });
+    const thumbFile = await this.resolveThumbnailFile(run, merged.path);
+    if (thumbFile) await related(`${draftId}.jpg`, 'thumbnail', thumbFile);
 
     // The video itself — LAST, so it's the only thing still moving when backgrounded.
     // Throttle progress to at most one store update / 200ms — the native task ticks fast; the
     // final (EOF) tick always goes through so the bar still reaches 100%.
-    this.setLive(draftId, { status: 'uploading', phase: 'video', progress: 0 });
+    this.setRunLive(run, { status: 'uploading', phase: 'video', progress: 0 });
     let lastTick = 0;
-    const result = await this.uploadOne(
-      draftId,
-      destination,
-      { artifactId: destination.artifactId, filename: `${draftId}.mp4`, kind: 'video', name: draftName, file },
-      destination.resourceUrl,
-      checksum,
-      signal,
+    // A line at each quarter, so a stall shows as a long gap between two of them.
+    let nextQuarter = 0.25;
+    const videoStarted = Date.now();
+    await this.uploadOne(
+      run,
+      {
+        artifactId: destination.artifactId,
+        filename: `${draftId}.mp4`,
+        kind: 'video',
+        checksum,
+        name: draftName,
+        file,
+      },
       ({ bytesSent, totalBytes }) => {
         const done = totalBytes > 0 && bytesSent >= totalBytes;
         const now = Date.now();
+        if (totalBytes > 0 && nextQuarter < 1 && bytesSent / totalBytes >= nextQuarter) {
+          uploadLog.info(
+            `video: ${Math.round(nextQuarter * 100)}% (${formatBytes(bytesSent)}) after ` +
+              formatSeconds(now - videoStarted),
+          );
+          while (nextQuarter < 1 && bytesSent / totalBytes >= nextQuarter) nextQuarter += 0.25;
+        }
         if (!done && now - lastTick < 200) return;
         lastTick = now;
-        this.setLive(draftId, {
+        this.setRunLive(run, {
           status: 'uploading',
           phase: 'video',
           progress: totalBytes ? bytesSent / totalBytes : 0,
         });
       },
-      // Persist the video's resource URL the moment it's created (the anchor lives on the draft
-      // row) so an app kill DURING the video transfer resumes via HEAD+PATCH rather than
-      // re-creating the upload — which the server rejects as a duplicate reserve (409).
-      (url) => void setUploadProgress(draftId, { status: 'uploading', resourceUrl: url }),
     );
-    // Re-persist after the video lands (same URL); the final 'uploaded' status write lives in
-    // `runSession`, after its displaced-run guard — see the comment there.
-    await setUploadProgress(draftId, { status: 'uploading', resourceUrl: result.resourceUrl });
-    return result.resourceUrl;
+    const videoMs = Date.now() - videoStarted;
+    uploadLog.info(
+      `video: done, ${formatBytes(videoBytes)} in ${formatSeconds(videoMs)} ` +
+        `(${formatRate(videoBytes, videoMs)} overall)`,
+    );
+    return draftName;
   }
 }
 

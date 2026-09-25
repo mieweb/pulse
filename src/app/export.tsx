@@ -1,20 +1,10 @@
 import { useEvent } from 'expo';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import * as Clipboard from 'expo-clipboard';
-import * as Linking from 'expo-linking';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  BackHandler,
-  Modal,
-  Pressable,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Pressable, StyleSheet, View } from 'react-native';
 import { shareAsync } from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -35,7 +25,6 @@ import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { CaptionOverlay } from '@/features/transcription/caption-overlay';
 import { ModelSwitcherModal } from '@/features/transcription/model-switcher-modal';
 import type { TranscriptLine } from '@/features/transcription/whisper';
-import { useToast } from '@/features/toast/toast-provider';
 import { DestinationSelector } from '@/features/upload/destination-selector';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
 import { useUpload } from '@/features/upload/use-upload';
@@ -87,7 +76,6 @@ export default function ExportScreen() {
     borderColor: theme.border,
     borderWidth: StyleSheet.hairlineWidth,
   } as const;
-  const { showToast } = useToast();
 
   // Open the merged-video caption editor (only meaningful once the merge is done).
   const openCaptionEditor = () => {
@@ -120,37 +108,6 @@ export default function ExportScreen() {
     });
     return () => sub.remove();
   }, [uploading, close]);
-
-  const watchUrl = upload.destination
-    ? `${upload.destination.server}/artifacts/${upload.destination.artifactId}${
-        upload.destination.token ? `?token=${encodeURIComponent(upload.destination.token)}` : ''
-      }`
-    : null;
-
-  // A finished upload is surfaced exactly once — a themed prompt (see the modal in the JSX
-  // below) offering to watch the video in the browser — then acknowledged so no "uploaded"
-  // button lingers in the draft (§ post-upload UX). `done` only occurs for a run completed this
-  // session (see `useUpload`), so this can't fire for a draft that was uploaded some other time.
-  // "Copy link" puts the watch URL on the clipboard for sharing into chats/notes — previously
-  // the URL was reachable only by opening the browser (#69's missing-watch-link gap). A custom
-  // modal, not Alert.alert: an alert's Cancel row renders identically to the real actions,
-  // reading as a third action — the modal dismisses via an explicit ✕ instead.
-  const acknowledgeDone = upload.acknowledgeDone;
-  // setStringAsync resolves boolean (true on success); the toast only confirms a real copy.
-  const copyLink = useCallback(
-    (url: string) => {
-      Clipboard.setStringAsync(url).then(
-        (ok) => {
-          if (ok) showToast('Link copied');
-        },
-        () => {},
-      );
-    },
-    [showToast],
-  );
-
-  // Every path out of the prompt acknowledges, which flips status off 'done' and hides it.
-  const uploadPromptVisible = upload.state.status === 'done' && watchUrl != null;
 
   const runShare = async () => {
     if (state.status !== 'done' || busy) return;
@@ -363,13 +320,12 @@ export default function ExportScreen() {
         )}
 
         {/* The UPLOAD section. The merge always runs (above) and the Upload button waits on
-            `state.status === 'done'`. Shown while there's something actionable: destinations to pick, a run
-            in flight (or its error/expiry notice). A previously-uploaded draft with nothing to
-            pick shows no upload UI at all (§ post-upload UX — no persistent buttons). */}
-        {(upload.destinations.length > 0 ||
-          uState.status === 'uploading' ||
-          uState.status === 'error' ||
-          (upload.destination && upload.destinationExpired)) && (
+            `state.status === 'done'`. Shown while there's something actionable: destinations to
+            pick, or a run in flight. A failed upload is a toast, not UI here — the draft is
+            unpaired again, and scanning a new link is the retry. A previously-uploaded draft
+            with nothing to pick shows no upload UI at all (§ post-upload UX — no persistent
+            buttons). */}
+        {(upload.destinations.length > 0 || uState.status === 'uploading') && (
           <View style={styles.uploadSection}>
             <ThemedText
               type="caption1"
@@ -394,130 +350,13 @@ export default function ExportScreen() {
                 </Pressable>
               </View>
             ) : (
-              // Idle or error: pick a destination and upload (or retry the claimed one). A prior
-              // error shows its own Retry (same destination) plus the selector to re-pick a
-              // different destination — re-claiming is the escape hatch for a dead session.
-              <>
-                {uState.status === 'error' && (
-                  // Compact banner, not a button: title + reason share one card, with Retry as
-                  // a small pill only when retrying can actually help. A non-retryable
-                  // rejection is information, so nothing about it should look pressable.
-                  <View
-                    style={[styles.errorBanner, elementSurface]}
-                    accessibilityRole="alert"
-                    accessibilityLabel={`${uState.retryable ? 'Upload failed' : 'Upload rejected by server'}. ${uState.reason}`}>
-                    <Icon name="exclamationmark.triangle.fill" size={16} tintColor={theme.accent} />
-                    <View style={styles.errorBody}>
-                      <ThemedText type="smallBold">
-                        {uState.retryable ? 'Upload failed' : 'Rejected by server'}
-                      </ThemedText>
-                      <ThemedText type="caption1" themeColor="textSecondary" numberOfLines={2}>
-                        {uState.reason}
-                      </ThemedText>
-                    </View>
-                    {uState.retryable && (
-                      <Pressable
-                        onPress={() => void upload.retry()}
-                        accessibilityRole="button"
-                        accessibilityLabel="Retry upload"
-                        style={({ pressed }) => [
-                          styles.smallButton,
-                          { backgroundColor: theme.accent },
-                          pressed && styles.pressed,
-                        ]}>
-                        <Icon name="arrow.clockwise" size={14} tintColor={theme.onAccent} />
-                        <ThemedText type="small" style={{ color: theme.onAccent }}>
-                          Retry
-                        </ThemedText>
-                      </Pressable>
-                    )}
-                  </View>
-                )}
-
-                {upload.destinations.length > 0
-                  ? selectorAndUpload
-                  : upload.destination &&
-                    upload.destinationExpired && (
-                      <View style={[styles.button, elementSurface]}>
-                        <Icon
-                          name="exclamationmark.triangle.fill"
-                          size={18}
-                          tintColor={theme.textSecondary}
-                        />
-                        <ThemedText themeColor="textSecondary">Upload link expired</ThemedText>
-                      </View>
-                    )}
-              </>
+              selectorAndUpload
             )}
           </View>
         )}
       </View>
 
       <ModelSwitcherModal visible={modelSheetVisible} onClose={() => setModelSheetVisible(false)} />
-
-      {/* Upload-complete prompt — see the comment block above `acknowledgeDone`. The
-          `watchUrl` guard narrows it to a string for the handlers; `visible` still gates
-          presentation on `status === 'done'`. */}
-      {watchUrl != null && (
-        <Modal
-          visible={uploadPromptVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={acknowledgeDone}>
-          <View style={styles.promptBackdrop}>
-            <Pressable
-              style={StyleSheet.absoluteFill}
-              onPress={acknowledgeDone}
-              accessibilityLabel="Close"
-            />
-            <View
-              style={[
-                styles.promptCard,
-                { backgroundColor: theme.background, borderColor: theme.border },
-              ]}>
-              <View style={styles.promptHeader}>
-                <ThemedText type="subtitle" style={styles.promptTitle}>
-                  Upload complete
-                </ThemedText>
-                <CloseButton onPress={acknowledgeDone} />
-              </View>
-              <ThemedText themeColor="textSecondary">Watch the video in your browser?</ThemedText>
-              <View style={styles.promptActions}>
-                <Pressable
-                  onPress={() => {
-                    copyLink(watchUrl);
-                    acknowledgeDone();
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Copy link"
-                  style={({ pressed }) => [
-                    styles.promptButton,
-                    elementSurface,
-                    pressed && styles.pressed,
-                  ]}>
-                  <Icon name="link" size={16} tintColor={theme.text} />
-                  <ThemedText>Copy link</ThemedText>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    void Linking.openURL(watchUrl);
-                    acknowledgeDone();
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Watch"
-                  style={({ pressed }) => [
-                    styles.promptButton,
-                    { backgroundColor: theme.accent },
-                    pressed && styles.pressed,
-                  ]}>
-                  <Icon name="play.fill" size={16} tintColor={theme.onAccent} />
-                  <ThemedText style={{ color: theme.onAccent }}>Watch</ThemedText>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      )}
     </ThemedView>
   );
 }
@@ -717,15 +556,6 @@ const styles = StyleSheet.create({
     borderRadius: 17,
   },
   uploadSection: { alignSelf: 'stretch', gap: Spacing.two, marginTop: Spacing.two },
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    paddingVertical: Spacing.two,
-    paddingHorizontal: Spacing.three,
-    borderRadius: 14,
-  },
-  errorBody: { flex: 1, gap: Spacing.half },
   uploadSectionLabel: { letterSpacing: 0.5 },
   button: {
     flexDirection: 'row',
@@ -737,40 +567,4 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.85 },
   disabled: { opacity: 0.35 },
-  // Upload-complete prompt (the custom modal replacing the old Alert).
-  promptBackdrop: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: Spacing.four,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  promptCard: {
-    borderRadius: 20,
-    // Hairline outline + shadow (the action-menu card treatment): in dark mode the themed
-    // surface is pure black on a dimmed-black backdrop — without the outline there's no
-    // separation at all.
-    borderWidth: StyleSheet.hairlineWidth,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
-    padding: Spacing.four,
-    gap: Spacing.three,
-    maxWidth: 420,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  promptHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  promptTitle: { flex: 1 },
-  promptActions: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.one },
-  promptButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.one,
-    height: 44,
-    borderRadius: 14,
-  },
 });

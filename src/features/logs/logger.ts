@@ -1,4 +1,5 @@
 import { Directory, File, Paths } from 'expo-file-system';
+import { AppState } from 'react-native';
 
 import { formatEntry, LogBuffer, type LogLevel, MAX_ENTRIES, splitEntries } from './log-buffer';
 
@@ -97,6 +98,10 @@ export function installLogCapture(): void {
       previous(error, isFatal);
     });
   }
+
+  // When the app leaves and returns to the screen, so an upload stall can be told apart from
+  // the app being in the background.
+  AppState.addEventListener('change', (state) => log('info', `[app] ${state}`));
 
   log('info', '--- app started ---');
 }

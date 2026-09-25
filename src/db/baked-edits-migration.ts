@@ -16,8 +16,8 @@ type BakedRow = {
 /**
  * Which clips can drop their baked file: edited before edits became settings-only, so they carry
  * both the baked `editedFilename` and the `editState` that produced it. The settings alone now
- * render the same clip (preview live, export in the merge). A draft mid-upload is deferred — its
- * export was merged from the baked files, and a clip mutation would break the resumed upload.
+ * render the same clip (preview live, export in the merge). A draft mid-upload is deferred — it's
+ * locked (see `assertNotUploading`) until the launch check fails the upload a kill left behind.
  */
 export function planBakedEditDrops(rows: readonly BakedRow[]): {
   drops: { id: string; editedFilename: string; editedDurationMs: number }[];

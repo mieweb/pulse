@@ -1,0 +1,107 @@
+diff --git a/node_modules/expo-file-system/ios/FileSystemDownloadTask.swift b/node_modules/expo-file-system/ios/FileSystemDownloadTask.swift
+index 0698aa2..3e0bc8e 100644
+--- a/node_modules/expo-file-system/ios/FileSystemDownloadTask.swift
++++ b/node_modules/expo-file-system/ios/FileSystemDownloadTask.swift
+@@ -33,6 +33,9 @@ protocol NetworkTaskDelegate: AnyObject {
+   )
+ 
+   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?)
++
++  // Pulse patch: see the dispatcher's forwarding below.
++  func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics)
+ }
+ 
+ extension NetworkTaskDelegate {
+@@ -59,6 +62,8 @@ extension NetworkTaskDelegate {
+     downloadTask: URLSessionDownloadTask,
+     didFinishDownloadingTo location: URL
+   ) {}
++
++  func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {}
+ }
+ 
+ final class NetworkTaskSessionDispatcher: NSObject, URLSessionDataDelegate, URLSessionDownloadDelegate {
+@@ -139,6 +144,13 @@ final class NetworkTaskSessionDispatcher: NSObject, URLSessionDataDelegate, URLS
+     )
+   }
+ 
++  // Pulse patch: forwards the task's metrics (which HTTP version each attempt used, and more) to
++  // its delegate. URLSession sends them just before `didCompleteWithError`, which unregisters the
++  // delegate; metrics arriving after that are dropped.
++  func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
++    delegate(for: session, task: task)?.urlSession(session, task: task, didFinishCollecting: metrics)
++  }
++
+   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+     let key = makeKey(session: session, task: task)
+     delegate(for: session, task: task)?.urlSession(session, task: task, didCompleteWithError: error)
+diff --git a/node_modules/expo-file-system/ios/FileSystemModule.swift b/node_modules/expo-file-system/ios/FileSystemModule.swift
+index 7af943c..a16a93e 100644
+--- a/node_modules/expo-file-system/ios/FileSystemModule.swift
++++ b/node_modules/expo-file-system/ios/FileSystemModule.swift
+@@ -81,6 +81,21 @@ public final class FileSystemModule: Module {
+       self.downloadStore.cancel(uuid: downloadUuid)
+     }
+ 
++    // Pulse patch: cancels the upload tasks an earlier process left in the background session
++    // (after a crash or an iOS memory kill), which would otherwise hold up new uploads to the same
++    // host. Download tasks share the session and are left alone. Resolves how many it cancelled.
++    AsyncFunction("cancelBackgroundUploadTasks") { (promise: Promise) in
++      #if os(iOS)
++      NetworkTaskSessionManager.shared.session(for: .background).getAllTasks { tasks in
++        let uploads = tasks.filter { $0 is URLSessionUploadTask }
++        uploads.forEach { $0.cancel() }
++        promise.resolve(uploads.count)
++      }
++      #else
++      promise.resolve(0)
++      #endif
++    }
++
+     AsyncFunction("pickDirectoryAsync") { (initialUri: URL?, promise: Promise) in
+       #if os(iOS)
+       filePickingHandler.presentDocumentPicker(
+diff --git a/node_modules/expo-file-system/ios/FileSystemUploadTask.swift b/node_modules/expo-file-system/ios/FileSystemUploadTask.swift
+index 455a66e..edcb156 100644
+--- a/node_modules/expo-file-system/ios/FileSystemUploadTask.swift
++++ b/node_modules/expo-file-system/ios/FileSystemUploadTask.swift
+@@ -121,6 +121,27 @@ class FileSystemUploadTask: SharedObject {
+     }
+   }
+ 
++  // Pulse patch: one entry per network attempt URLSession made for this task (a dropped connection
++  // it retried is a second attempt), so the app can log which HTTP version carried the upload.
++  fileprivate func emitMetrics(_ metrics: URLSessionTaskMetrics) {
++    let attempts: [[String: Any]] = metrics.transactionMetrics.map { transaction in
++      var attempt: [String: Any] = [
++        "protocol": transaction.networkProtocolName ?? "unknown",
++        "reusedConnection": transaction.isReusedConnection,
++        "bodyBytesSent": transaction.countOfRequestBodyBytesSent
++      ]
++      if let start = transaction.fetchStartDate, let end = transaction.responseEndDate ?? transaction.requestEndDate {
++        attempt["durationMs"] = Int(end.timeIntervalSince(start) * 1000)
++      }
++      return attempt
++    }
++    let payload: [String: Any] = [
++      "attempts": attempts,
++      "durationMs": Int(metrics.taskInterval.duration * 1000)
++    ]
++    emit(event: "metrics", payload: payload)
++  }
++
+   fileprivate func finishTask() {
+     cleanup()
+   }
+@@ -262,6 +283,11 @@ class UploadTaskDelegate: NSObject, NetworkTaskDelegate {
+     sharedObject?.emitProgress(bytesSent: totalBytesSent, totalBytes: totalBytesExpectedToSend)
+   }
+ 
++  // Pulse patch: network metrics (see `emitMetrics`).
++  func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
++    sharedObject?.emitMetrics(metrics)
++  }
++
+   // Collect response body
+   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+     responseBody.append(data)

@@ -24,6 +24,7 @@ import { checkCapabilities } from './capabilities';
 import { setClientIdentity } from './client-identity';
 import { parseUploadDeepLink, type UploadDeepLink } from './deep-link';
 import { TusUploadError, uploadViaTus, type ArtifactKind, type UploadChunk } from './tus-client';
+import { requestViewLink } from './view-link';
 
 const ROOT = path.resolve(__dirname, '../../..');
 const DIST = process.env.PV_CORE
@@ -223,6 +224,41 @@ describeIf('pulsevault integration (real server, real wire)', () => {
       expect(Buffer.compare(got.bytes, bytes)).toBe(0);
     }
   });
+
+  itSince(2, 2)(
+    "mints a read-only view link that opens the video and can't delete it (protocol 2.2+)",
+    async () => {
+      const link = await pair();
+      const caps = await checkCapabilities(link.server);
+      expect(caps.ok && caps.capabilities.viewLinks).toBe(true);
+      const video = makeMp4(16 * 1024);
+      await upload(link, video, {
+        artifactId: link.artifactId,
+        filename: 'draft.mp4',
+        kind: 'video',
+      });
+
+      const view = await requestViewLink({
+        server: link.server,
+        artifactId: link.artifactId,
+        token: link.token,
+      });
+      expect(view).not.toBeNull();
+      expect(view!.expiresAt).toBeGreaterThan(Date.now());
+
+      const watched = await fetch(view!.url);
+      expect(watched.status).toBe(200);
+      expect(Buffer.compare(Buffer.from(await watched.arrayBuffer()), video)).toBe(0);
+
+      // Safe to share: it can't delete the video.
+      const viewToken = new URL(view!.url).searchParams.get('token');
+      const removed = await fetch(`${link.server}/artifacts/${link.artifactId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${viewToken}` },
+      });
+      expect(removed.status).toBe(403);
+    },
+  );
 
   it("refuses an upload without the pairing token, or with another pulse's token — terminally", async () => {
     const link = await pair();
