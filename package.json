@@ -91,6 +91,13 @@
           "react-native-background-actions"
         ]
       }
+    },
+    "autolinking": {
+      "ios": {
+        "buildFromSource": [
+          "expo-file-system"
+        ]
+      }
     }
   },
   "scripts": {
