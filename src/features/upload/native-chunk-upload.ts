@@ -3,6 +3,7 @@ import { Directory, File, FileMode, Paths, UploadType } from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import type { UploadChunk } from './tus-client';
+import { describeError, formatBytes, formatRate, formatSeconds, uploadLog } from './upload-log';
 
 function randomId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -135,9 +136,12 @@ function prepareChunkSource(
  * would require patching `expo-file-system`'s native upload task, not just
  * this module. Accepted as a residual risk: it requires a compromised or
  * MITM'd paired server to trigger, matching the fetch layer before this fix.
+ *
+ * Logs one line per PATCH: its range, result, time and speed.
  */
 export const uploadChunkNative: UploadChunk = async ({
   resourceUrl,
+  kind,
   offset,
   chunkBytes,
   totalBytes,
@@ -147,6 +151,9 @@ export const uploadChunkNative: UploadChunk = async ({
   onProgress,
 }) => {
   const { file: source, cleanup } = prepareChunkSource(file, offset, chunkBytes, totalBytes);
+  const range = `${kind} PATCH ${formatBytes(offset)} → ${formatBytes(offset + chunkBytes)}`;
+  const started = Date.now();
+  let sent = 0;
   try {
     const result = await source.upload(resourceUrl, {
       httpMethod: 'PATCH',
@@ -156,9 +163,22 @@ export const uploadChunkNative: UploadChunk = async ({
       signal,
       // Native task ticks (URLSession/OkHttp didSendBodyData) — relative to
       // this PATCH's body, which is exactly the contract of the callback.
-      onProgress: onProgress ? ({ bytesSent }) => onProgress(bytesSent) : undefined,
+      onProgress: ({ bytesSent }) => {
+        sent = bytesSent;
+        onProgress?.(bytesSent);
+      },
     });
+    const ms = Date.now() - started;
+    uploadLog.info(
+      `${range}: HTTP ${result.status} in ${formatSeconds(ms)}, ${formatRate(chunkBytes, ms)}`,
+    );
     return { status: result.status, headers: result.headers };
+  } catch (err) {
+    const ms = Date.now() - started;
+    const where = `after ${formatSeconds(ms)} with ${formatBytes(sent)} sent`;
+    if (signal?.aborted) uploadLog.info(`${range}: cancelled ${where}`);
+    else uploadLog.warn(`${range}: failed ${where}: ${describeError(err)}`);
+    throw err;
   } finally {
     cleanup();
   }

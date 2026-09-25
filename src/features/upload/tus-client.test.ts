@@ -427,6 +427,49 @@ describe('uploadViaTus', () => {
     ]);
   });
 
+  it('logs the create, each retry with its reason, and where a resume picks up', async () => {
+    const file = fakeFile(20);
+    const { fetchImpl } = createFetchStub({
+      POST: [
+        new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc123def' } }),
+      ],
+      HEAD: [
+        new Response(null, { status: 200, headers: { 'upload-offset': '0' } }),
+        new Response(null, { status: 200, headers: { 'upload-offset': '12' } }),
+      ],
+    });
+    const chunks = createChunkStub([{ status: 409 }, chunkOk(20)]);
+    const kinds: string[] = [];
+    const lines: string[] = [];
+    const log = {
+      info: (message: string) => lines.push(`info ${message}`),
+      warn: (message: string) => lines.push(`warn ${message}`),
+    };
+
+    await uploadViaTus({
+      server: SERVER,
+      token: null,
+      artifactId: ARTIFACT_ID,
+      filename: 'clip.mp4',
+      kind: 'video',
+      file: file as never,
+      fetchImpl,
+      uploadChunk: (params) => {
+        kinds.push(params.kind);
+        return chunks.uploadChunk(params);
+      },
+      log,
+    });
+
+    expect(kinds).toEqual(['video', 'video']);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toBe('info video: created upload for aaaaaaaa (20 B)');
+    expect(lines[1]).toMatch(
+      /^warn video: attempt 1 of 5 failed: Upload failed \(409\); retrying in 0\.\d s$/,
+    );
+    expect(lines[2]).toBe('info video: resuming, the server has 12 B of 20 B');
+  });
+
   it('treats a create 409 as terminal', async () => {
     const file = fakeFile(20);
     const { fetchImpl, calls } = createFetchStub({
