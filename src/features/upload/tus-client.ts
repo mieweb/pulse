@@ -2,6 +2,7 @@ import type { File } from 'expo-file-system';
 import { CAPABILITIES_REJECTION_MESSAGE } from './capabilities';
 import { appVersionLabel, clientHeaders } from './client-identity';
 import type { UploadMetadata } from './protocol.gen';
+import { describeError, formatBytes, formatSeconds, shortId, type UploadLog } from './upload-log';
 
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 500;
@@ -26,6 +27,8 @@ export type ChunkUploadResult = { status: number; headers: Record<string, string
  */
 export type UploadChunk = (params: {
   resourceUrl: string;
+  /** Which artifact this PATCH carries, for the log. */
+  kind: ArtifactKind;
   offset: number;
   chunkBytes: number;
   totalBytes: number;
@@ -83,6 +86,8 @@ export type TusUploadOptions = {
   fetchImpl?: typeof fetch;
   /** Performs the actual byte-carrying PATCH for one chunk. Required — pass `uploadChunkNative` from `./native-chunk-upload` at the real call site; tests inject a fake. */
   uploadChunk: UploadChunk;
+  /** Where to log what happens (creates, resumes, retries); nothing is logged without it. */
+  log?: UploadLog;
 };
 
 export type TusUploadResult = { resourceUrl: string };
@@ -195,8 +200,16 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Retries `fn` with exponential backoff + jitter, but only for transient failures — a terminal `TusUploadError` is rethrown immediately. */
-async function withRetry<T>(fn: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+/**
+ * Retries `fn` with exponential backoff + jitter, but only for transient failures — a terminal
+ * `TusUploadError` is rethrown immediately. Each retry and a final give-up are logged under `label`.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  signal: AbortSignal | undefined,
+  log: UploadLog | undefined,
+  label: string,
+): Promise<T> {
   let attempt = 0;
   for (;;) {
     try {
@@ -205,10 +218,17 @@ async function withRetry<T>(fn: () => Promise<T>, signal: AbortSignal | undefine
       if (isAbortError(err)) throw err;
       if (err instanceof TusUploadError && !err.retryable) throw err;
       attempt += 1;
-      if (attempt >= MAX_RETRY_ATTEMPTS) throw err;
+      if (attempt >= MAX_RETRY_ATTEMPTS) {
+        log?.warn(`${label}: giving up after ${attempt} attempts: ${describeError(err)}`);
+        throw err;
+      }
       const backoff = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-      const jitter = Math.random() * backoff * 0.5;
-      await sleep(backoff + jitter, signal);
+      const delay = backoff + Math.random() * backoff * 0.5;
+      log?.warn(
+        `${label}: attempt ${attempt} of ${MAX_RETRY_ATTEMPTS} failed: ${describeError(err)}; ` +
+          `retrying in ${formatSeconds(delay)}`,
+      );
+      await sleep(delay, signal);
     }
   }
 }
@@ -396,11 +416,18 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
   // HEAD-then-send-chunks is retried as ONE unit, not as separately retried
   // steps — a retry after a transient failure MUST re-HEAD first to learn the
   // real offset before any further bytes move (see offset discipline above).
+  let attempt = 0;
   const transfer = (resourceUrl: string) =>
     withRetry(
       async () => {
         const { token, signal } = opts;
         let offset = await fetchOffset(resourceUrl, token, totalBytes, signal, fetchImpl);
+        attempt += 1;
+        if (attempt > 1) {
+          opts.log?.info(
+            `${opts.kind}: resuming, the server has ${formatBytes(offset)} of ${formatBytes(totalBytes)}`,
+          );
+        }
         opts.onProgress?.({ bytesSent: offset, totalBytes });
 
         while (offset < totalBytes) {
@@ -417,6 +444,7 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
           const patchStart = offset;
           const result = await opts.uploadChunk({
             resourceUrl,
+            kind: opts.kind,
             offset,
             chunkBytes,
             totalBytes,
@@ -450,12 +478,22 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
         }
       },
       opts.signal,
+      opts.log,
+      opts.kind,
     );
 
   // Every call creates its own upload and only ever resumes within itself — there is no resume
   // input. (A create retried after its 201 was lost meets its own reservation as a terminal 409;
   // only an idempotent create on the server could tell the two apart.)
-  const resourceUrl = await withRetry(() => createUpload(opts, fetchImpl), opts.signal);
+  const resourceUrl = await withRetry(
+    () => createUpload(opts, fetchImpl),
+    opts.signal,
+    opts.log,
+    `${opts.kind} create`,
+  );
+  opts.log?.info(
+    `${opts.kind}: created upload for ${shortId(opts.artifactId)} (${formatBytes(totalBytes)})`,
+  );
   opts.onResourceCreated?.(resourceUrl);
   await transfer(resourceUrl);
   return { resourceUrl };

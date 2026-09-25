@@ -211,6 +211,11 @@ const mockRequestViewLink = jest.fn<
     token: string | null;
   }) => Promise<{ url: string; expiresAt: number } | null>
 >(async () => null);
+// Upload lines go to the debug log in the app; keep them out of the test output.
+jest.mock('./upload-log', () => ({
+  ...jest.requireActual<typeof import('./upload-log')>('./upload-log'),
+  uploadLog: { info: jest.fn(), warn: jest.fn() },
+}));
 jest.mock('./view-link', () => ({
   requestViewLink: (opts: unknown) =>
     mockRequestViewLink(opts as { server: string; artifactId: string; token: string | null }),

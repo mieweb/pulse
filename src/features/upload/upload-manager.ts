@@ -29,6 +29,14 @@ import {
 } from './native-chunk-upload';
 import { uploadNotify } from './notify';
 import { type ArtifactKind, cancelTusUpload, TusUploadError, uploadViaTus } from './tus-client';
+import {
+  describeError,
+  formatBytes,
+  formatRate,
+  formatSeconds,
+  shortId,
+  uploadLog,
+} from './upload-log';
 import type {
   Destination,
   LiveUploadState,
@@ -135,8 +143,26 @@ function writeTempTextFile(name: string, contents: string): File {
 
 /** Best-effort bearer DELETE of uploads a run created; a missed one ages out via server retention. */
 async function discard(urls: readonly string[], token: string | null): Promise<void> {
-  await Promise.all(urls.map((url) => cancelTusUpload(url, token).catch(() => {})));
+  await Promise.all(
+    urls.map((url) =>
+      cancelTusUpload(url, token).catch((err) => {
+        uploadLog.warn(`couldn’t delete an upload: ${describeError(err)}`);
+      }),
+    ),
+  );
 }
+
+/** The server's host for the log — the pairing link's path and query stay out. */
+function hostOf(server: string): string {
+  try {
+    return new URL(server).host;
+  } catch {
+    return 'an unknown server';
+  }
+}
+
+/** `draft 1a2b3c4d` — how the log names a draft. */
+const draftLabel = (draftId: string) => `draft ${shortId(draftId)}`;
 
 /** The video or one of its related artifacts — the input to `uploadOne`. */
 type ArtifactInput = {
@@ -259,7 +285,10 @@ class BackgroundUploadManager {
   }
 
   private async settleLaunch(): Promise<void> {
-    await cancelOrphanedUploadTasks();
+    const orphaned = await cancelOrphanedUploadTasks();
+    if (orphaned > 0) {
+      uploadLog.info(`launch: cancelled ${orphaned} upload task(s) an earlier run left behind`);
+    }
     cleanupStaleUploadTempFiles();
     try {
       const temps = new Directory(Paths.cache, TEMP_DIR_NAME);
@@ -274,13 +303,15 @@ class BackgroundUploadManager {
         if (await burnUploadPairing(draftId)) interrupted++;
       }
       if (interrupted > 0) {
+        uploadLog.warn(`launch: ${interrupted} upload(s) stopped when the app did; unpaired`);
         const what = interrupted === 1 ? 'An upload' : `${interrupted} uploads`;
         this.showToast?.(`${what} didn’t finish — ${NEW_LINK}`);
         // The launch may be in the background (iOS relaunches the app for a finished transfer).
         void uploadNotify.failed();
       }
-    } catch {
+    } catch (err) {
       // Best-effort: a draft left `uploading` stays locked until the next launch settles it.
+      uploadLog.warn(`launch check failed: ${describeError(err)}`);
     }
     // Not part of the check claims wait for: nothing uploads with these.
     void this.restoreViewLinks();
@@ -325,19 +356,25 @@ class BackgroundUploadManager {
     if (this.claiming.has(draftId) || this.getDraftState(draftId).status !== 'idle') return;
     const pending = { cancelled: false };
     this.claiming.set(draftId, pending);
+    uploadLog.info(
+      `${draftLabel(draftId)}: upload to ${hostOf(destination.server)} ` +
+        `(video ${shortId(destination.artifactId)})`,
+    );
     try {
       await this.launch;
       await setUploadDestination(draftId, destination);
       if (!(await deleteDestination(destinationId))) {
+        uploadLog.warn(`${draftLabel(draftId)}: another draft used that link first`);
         await burnUploadPairing(draftId, destination.artifactId);
         return;
       }
       // Cancelled (from Home's ⋯ menu) after the pairing landed: the cancel unpaired it already.
       if (pending.cancelled) return;
       this.enqueue({ draftId, destination, segments, merged });
-    } catch {
+    } catch (err) {
       // The pairing or the pool write failed: undo the pairing (if it landed) rather than leave
       // the draft locked with nothing uploading it.
+      uploadLog.warn(`${draftLabel(draftId)}: couldn’t start: ${describeError(err)}`);
       await burnUploadPairing(draftId, destination.artifactId).catch(() => false);
       this.showToast?.('Couldn’t start the upload — try again.');
     } finally {
@@ -350,6 +387,7 @@ class BackgroundUploadManager {
     if (this.sessions.has(draftId)) return;
     // Dead on arrival — the link expired between picking it and tapping Upload.
     if (isTokenExpired(destination.token, Date.now())) {
+      uploadLog.warn(`${draftLabel(draftId)}: the link expired before the upload started`);
       void this.fail(draftId, destination, new UploadStoppedError(STOPPED_MESSAGE.expired), []);
       return;
     }
@@ -368,6 +406,7 @@ class BackgroundUploadManager {
   async cancel(draftId: string): Promise<void> {
     const token = this.sessions.get(draftId)?.destination.token ?? null;
     const created = this.created.get(draftId) ?? [];
+    uploadLog.info(`${draftLabel(draftId)}: cancelled; deleting ${created.length} upload(s)`);
     const pendingClaim = this.claiming.get(draftId);
     if (pendingClaim) pendingClaim.cancelled = true;
     this.controllers.get(draftId)?.abort();
@@ -445,6 +484,12 @@ class BackgroundUploadManager {
     created: readonly string[],
   ): Promise<void> {
     const message = this.failureMessage(draftId, err);
+    const live = this.live.get(draftId);
+    const step = live?.status === 'uploading' ? PHASE_NAME[live.phase] : 'Starting';
+    uploadLog.warn(
+      `${draftLabel(draftId)}: failed (${step}): ${describeError(err)}; ` +
+        `deleting ${created.length} upload(s)`,
+    );
     if (!(await burnUploadPairing(draftId, destination.artifactId))) return;
     this.setLive(draftId, IDLE);
     this.showToast?.(message);
@@ -460,11 +505,19 @@ class BackgroundUploadManager {
     const run: Run = { session, signal: controller.signal, created: [], temps: [] };
     this.controllers.set(draftId, controller);
     this.created.set(draftId, run.created);
+    const started = Date.now();
     try {
       // The server may have been upgraded since this destination was paired (PROTOCOL.md §7.2):
       // check again before sending anything, and stop with the pairing message if the two no
       // longer speak a common protocol. An unreachable server is left to the upload's retries.
       const compat = await checkCapabilities(destination.server, controller.signal);
+      uploadLog.info(
+        `${draftLabel(draftId)}: server check: ` +
+          (compat.ok
+            ? `protocol ${compat.capabilities.protocolRevision ?? compat.protocol}, ` +
+              `view links ${compat.capabilities.viewLinks ? 'yes' : 'no'}`
+            : compat.reason),
+      );
       if (!compat.ok && compat.reason !== 'unreachable') {
         throw new UploadStoppedError(STOPPED_MESSAGE[compat.reason]);
       }
@@ -473,6 +526,7 @@ class BackgroundUploadManager {
       if (!(await markUploaded(draftId, destination.artifactId))) {
         // A cancel unpaired the draft while the last bytes landed, and its outcome stands: reset
         // (unless the cancel already did) and DELETE what this run created, as the cancel does.
+        uploadLog.info(`${draftLabel(draftId)}: finished after a cancel; discarding it`);
         if (!controller.signal.aborted) this.setLive(draftId, IDLE);
         void discard(run.created, destination.token);
         return;
@@ -485,6 +539,7 @@ class BackgroundUploadManager {
       };
       this.watchLinks.set(draftId, direct);
       this.setLive(draftId, IDLE);
+      uploadLog.info(`${draftLabel(draftId)}: uploaded in ${formatSeconds(Date.now() - started)}`);
       // Tell the user it landed: a toast wherever they are, a notification in the background.
       this.showToast?.(draftName ? `Uploaded “${draftName}”` : 'Your pulse is uploaded');
       void uploadNotify.complete();
@@ -529,6 +584,7 @@ class BackgroundUploadManager {
       token: destination.token,
       signal: AbortSignal.timeout(VIEW_LINK_TIMEOUT_MS),
     });
+    uploadLog.info(`${draftLabel(draftId)}: view link ${viewLink ? 'received' : 'not available'}`);
     if (!viewLink || this.watchLinks.get(draftId) !== direct) return;
     this.watchLinks.set(draftId, { ...viewLink, shareable: true });
     this.emit();
@@ -557,6 +613,7 @@ class BackgroundUploadManager {
       ...artifact,
       signal: run.signal,
       uploadChunk: uploadChunkNative,
+      log: uploadLog,
       onProgress,
       onResourceCreated: (url) => {
         // Created after a cancel already DELETEd this run's uploads — DELETE this one too.
@@ -595,7 +652,12 @@ class BackgroundUploadManager {
     // Backstop: the persisted export lives in the draft dir (safe from cache sweeps) and the draft
     // is locked while uploading, so a missing file means something outside the app removed it.
     if (!file.exists) throw new UploadStoppedError(STOPPED_MESSAGE['video-missing']);
+    const hashStarted = Date.now();
     const checksum = await md5Checksum(file);
+    const videoBytes = file.size ?? 0;
+    uploadLog.info(
+      `video: ${formatBytes(videoBytes)}, checksum took ${formatSeconds(Date.now() - hashStarted)}`,
+    );
 
     // The small related artifacts go FIRST. The big video PATCH is the only network step that
     // survives iOS backgrounding (native background URLSession) — JS-driven fetches freeze the
@@ -641,6 +703,9 @@ class BackgroundUploadManager {
     // final (EOF) tick always goes through so the bar still reaches 100%.
     this.setRunLive(run, { status: 'uploading', phase: 'video', progress: 0 });
     let lastTick = 0;
+    // A line at each quarter, so a stall shows as a long gap between two of them.
+    let nextQuarter = 0.25;
+    const videoStarted = Date.now();
     await this.uploadOne(
       run,
       {
@@ -654,6 +719,13 @@ class BackgroundUploadManager {
       ({ bytesSent, totalBytes }) => {
         const done = totalBytes > 0 && bytesSent >= totalBytes;
         const now = Date.now();
+        if (totalBytes > 0 && nextQuarter < 1 && bytesSent / totalBytes >= nextQuarter) {
+          uploadLog.info(
+            `video: ${Math.round(nextQuarter * 100)}% (${formatBytes(bytesSent)}) after ` +
+              formatSeconds(now - videoStarted),
+          );
+          while (nextQuarter < 1 && bytesSent / totalBytes >= nextQuarter) nextQuarter += 0.25;
+        }
         if (!done && now - lastTick < 200) return;
         lastTick = now;
         this.setRunLive(run, {
@@ -662,6 +734,11 @@ class BackgroundUploadManager {
           progress: totalBytes ? bytesSent / totalBytes : 0,
         });
       },
+    );
+    const videoMs = Date.now() - videoStarted;
+    uploadLog.info(
+      `video: done, ${formatBytes(videoBytes)} in ${formatSeconds(videoMs)} ` +
+        `(${formatRate(videoBytes, videoMs)} overall)`,
     );
     return draftName;
   }
