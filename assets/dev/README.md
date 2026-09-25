@@ -70,6 +70,14 @@ Only one clip per distinct format is bundled (`portrait-h264`, `portrait-hevc`, 
 `portrait-4k`, `landscape-1080`, `landscape-4k`); the seed references them repeatedly and copies a
 fresh file per segment, so the bundle stays small (~7 MB) while each draft has 20 segments.
 
+## Large upload (`+ s5`)
+
+`Dev sample 5 (large upload)` repeats `portrait-1080p-30fps-h264.mp4` 20 times: one signature, so
+the lossless passthrough join keeps the merge fast, and the merged video is **~98 MB (~8 min)**.
+Use it to test uploads mid-transfer — backgrounding, airplane mode, cancel — which the ~12 MB
+`Dev sample 2` finishes too quickly for. It bundles no extra clip. Seed with **`+ s5`** on Home
+(idempotent; `clear` resets it).
+
 ## Wild-import clips (`import/`)
 
 [`import/`](import/) holds one clip per **hostile real-world import format** — the Photos-library
