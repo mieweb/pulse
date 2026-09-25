@@ -19,7 +19,7 @@ const NAME_MAX_LENGTH = 40;
 type Props = {
   id: string;
   /** Persisted upload status, so the card can show its own upload state on the cover. */
-  uploadStatus?: 'idle' | 'uploading' | 'uploaded' | 'failed' | null;
+  uploadStatus?: 'uploading' | 'uploaded' | null;
   name: string | null;
   /** Relative path of the draft's first clip; the cover frame's legacy runtime fallback. */
   firstSegmentFilename?: string | null;
@@ -63,17 +63,13 @@ export function DraftCard({
   const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
   const moreRef = useRef<View>(null);
 
-  // Live upload state (this session) takes precedence; otherwise fall back to the persisted status
-  // so an interrupted upload still reads correctly after a relaunch. Only two states surface on the
-  // card: the in-progress ring and the failed (!) badge — a COMPLETED upload deliberately shows
-  // nothing (a persisted 'uploaded' tick would sit on the card forever with no way to dismiss it;
-  // completion is surfaced by the export-screen prompt and the background notification instead).
+  // Only an upload in progress surfaces on the card, as a ring — from the live state, or the
+  // persisted status until the launch check settles a draft a killed app left `uploading`. A
+  // COMPLETED upload deliberately shows nothing (a persisted 'uploaded' tick would sit on the card
+  // forever with no way to dismiss it; completion is a toast or a background notification, and
+  // Watch / Copy link live in the ⋯ menu), and a failure is a toast, not a badge.
   const live = useDraftUploadState(id);
-  const liveMapped =
-    live.status === 'uploading' ? 'uploading' : live.status === 'error' ? 'failed' : null;
-  const upload =
-    liveMapped ??
-    (uploadStatus === 'failed' ? 'failed' : uploadStatus === 'uploading' ? 'uploading' : 'idle');
+  const uploading = live.status === 'uploading' || uploadStatus === 'uploading';
   const uploadProgress = live.status === 'uploading' ? live.progress : 0;
 
   return (
@@ -104,7 +100,7 @@ export function DraftCard({
         ) : (
           <Icon name="video.fill" size={18} tintColor={theme.textSecondary} />
         )}
-        {upload === 'uploading' && (
+        {uploading && (
           <View
             style={styles.uploadScrim}
             pointerEvents="none"
@@ -113,11 +109,6 @@ export function DraftCard({
             // backgrounded/resumed run is as legible here as on the export screen.
             accessibilityLabel={live.status === 'uploading' ? uploadPhaseLabel(live) : 'Uploading'}>
             <UploadRing progress={uploadProgress} />
-          </View>
-        )}
-        {upload === 'failed' && (
-          <View style={styles.uploadBadge} pointerEvents="none">
-            <Icon name="exclamationmark" size={11} tintColor="#fff" />
           </View>
         )}
       </View>
@@ -223,17 +214,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
-  },
-  uploadBadge: {
-    position: 'absolute',
-    top: 3,
-    right: 3,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
   },
   card: {
     flexDirection: 'row',

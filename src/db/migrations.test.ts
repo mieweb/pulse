@@ -129,3 +129,102 @@ describe('0015_segment_edit_state', () => {
     });
   });
 });
+
+describe('0016_single_shot_uploads', () => {
+  let db: DatabaseSync;
+
+  beforeEach(() => {
+    db = new DatabaseSync(':memory:');
+    applyMigrations(db, (f) => f < '0016');
+  });
+
+  const insertDraft = (id: string, uploadStatus: string | null) =>
+    db
+      .prepare(
+        `INSERT INTO drafts (id, upload_server, upload_artifact_id, upload_resource_url, upload_status, captions_upload_status)
+         VALUES (?, 'https://vault.example.org', ?, 'https://vault.example.org/upload/x', ?, 'uploaded')`,
+      )
+      .run(id, `${id}-artifact`, uploadStatus);
+  const draft = (id: string) =>
+    db
+      .prepare('SELECT upload_server, upload_artifact_id, upload_status FROM drafts WHERE id = ?')
+      .get(id);
+
+  it('unpairs failed and cancelled (idle) drafts, and ones a clip edit left paired', () => {
+    insertDraft('failed', 'failed');
+    insertDraft('idle', 'idle');
+    insertDraft('edited', null);
+
+    applyMigrations(db, (f) => f.startsWith('0016'));
+
+    for (const id of ['failed', 'idle', 'edited']) {
+      expect(draft(id)).toEqual({
+        upload_server: null,
+        upload_artifact_id: null,
+        upload_status: null,
+      });
+    }
+  });
+
+  it('leaves uploading and uploaded drafts paired', () => {
+    insertDraft('uploading', 'uploading');
+    insertDraft('uploaded', 'uploaded');
+
+    applyMigrations(db, (f) => f.startsWith('0016'));
+
+    expect(draft('uploading')).toEqual({
+      upload_server: 'https://vault.example.org',
+      upload_artifact_id: 'uploading-artifact',
+      upload_status: 'uploading',
+    });
+    expect(draft('uploaded')).toMatchObject({ upload_status: 'uploaded' });
+  });
+
+  it('removes every link a draft has used from the pool, and keeps the rest', () => {
+    const insertLink = (artifactId: string) =>
+      db
+        .prepare(
+          `INSERT INTO upload_destinations (id, server, artifact_id) VALUES (?, 'https://vault.example.org', ?)`,
+        )
+        .run(`link-${artifactId}`, artifactId);
+    for (const status of ['failed', 'idle', 'uploading', 'uploaded']) {
+      insertDraft(status, status);
+      insertLink(`${status}-artifact`);
+    }
+    insertDraft('edited', null);
+    insertLink('edited-artifact');
+    insertLink('unused-artifact');
+
+    applyMigrations(db, (f) => f.startsWith('0016'));
+
+    expect(
+      db
+        .prepare('SELECT artifact_id FROM upload_destinations ORDER BY artifact_id')
+        .all()
+        .map((r) => r.artifact_id),
+    ).toEqual(['unused-artifact']);
+  });
+
+  it('drops the resume state: upload_artifacts, upload_resource_url, captions_upload_status', () => {
+    db.prepare(`INSERT INTO drafts (id) VALUES ('d1')`).run();
+    db.prepare(
+      `INSERT INTO upload_artifacts (id, draft_id, local_key, artifact_id) VALUES ('d1:captions', 'd1', 'captions', 'a')`,
+    ).run();
+
+    applyMigrations(db, (f) => f.startsWith('0016'));
+
+    const columns = db
+      .prepare('PRAGMA table_info(drafts)')
+      .all()
+      .map((c) => c.name);
+    expect(columns).not.toContain('upload_resource_url');
+    expect(columns).not.toContain('captions_upload_status');
+    expect(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'upload_artifacts'`,
+        )
+        .get(),
+    ).toBeUndefined();
+  });
+});

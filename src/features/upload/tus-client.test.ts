@@ -250,6 +250,7 @@ describe('uploadViaTus', () => {
   it('reports resumed in-flight progress as offset + bytes sent this attempt, clamped to the total', async () => {
     const file = fakeFile(100);
     const { fetchImpl } = createFetchStub({
+      POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
       HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '40' } })],
     });
     // 70 sent on a 60-byte remainder would claim 110/100 — must clamp.
@@ -263,7 +264,6 @@ describe('uploadViaTus', () => {
       filename: 'clip.mp4',
       kind: 'video',
       file: file as never,
-      resourceUrl: `${SERVER}/upload/abc`,
       fetchImpl,
       uploadChunk,
       onProgress: ({ bytesSent }) => progress.push(bytesSent),
@@ -333,72 +333,7 @@ describe('uploadViaTus', () => {
     ]);
   });
 
-  it('resumes from a provided resourceUrl without creating a new upload, sending only what is missing', async () => {
-    const file = fakeFile(10);
-    const { fetchImpl, calls } = createFetchStub({
-      HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '5' } })],
-    });
-    const { uploadChunk, calls: chunkCalls } = createChunkStub([chunkOk(10)]);
-
-    const result = await uploadViaTus({
-      server: SERVER,
-      token: null,
-      artifactId: ARTIFACT_ID,
-      filename: 'clip.mp4',
-      kind: 'video',
-      file: file as never,
-      resourceUrl: `${SERVER}/upload/abc`,
-      fetchImpl,
-      uploadChunk,
-    });
-
-    expect(result.resourceUrl).toBe(`${SERVER}/upload/abc`);
-    expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
-    expect(chunkCalls).toHaveLength(1);
-    expect(chunkCalls[0].offset).toBe(5);
-    expect(chunkCalls[0].chunkBytes).toBe(5);
-    expect(chunkCalls[0].headers['Upload-Offset']).toBe('5');
-  });
-
-  it('recreates the upload when a persisted resume URL is gone server-side (404)', async () => {
-    const file = fakeFile(20);
-    const { fetchImpl, calls } = createFetchStub({
-      HEAD: [
-        // The stored resource URL: the server no longer knows it (retention
-        // cleanup / wiped storage) — must fall back to a fresh create, not
-        // surface a terminal "rejected".
-        new Response(null, { status: 404 }),
-        new Response(null, { status: 200, headers: { 'upload-offset': '0' } }),
-      ],
-      POST: [
-        new Response(null, { status: 201, headers: { location: '/pulsevault/upload/fresh' } }),
-      ],
-    });
-    const { uploadChunk, calls: chunkCalls } = createChunkStub([chunkOk(20)]);
-
-    const seen: string[] = [];
-    const result = await uploadViaTus({
-      server: SERVER,
-      token: 'tok',
-      artifactId: ARTIFACT_ID,
-      filename: 'clip.mp4',
-      kind: 'video',
-      file: file as never,
-      resourceUrl: `${SERVER}/upload/stale`,
-      onResourceCreated: (url) => seen.push(url),
-      fetchImpl,
-      uploadChunk,
-    });
-
-    expect(result.resourceUrl).toBe(`${SERVER}/upload/fresh`);
-    // Both URLs reported in order, so the caller's persisted mapping self-heals.
-    expect(seen).toEqual([`${SERVER}/upload/stale`, `${SERVER}/upload/fresh`]);
-    expect(calls.filter((c) => c.init?.method === 'POST')).toHaveLength(1);
-    expect(chunkCalls).toHaveLength(1);
-    expect(chunkCalls[0].offset).toBe(0);
-  });
-
-  it('does NOT recreate on a 404 for a URL the server handed out in this same run', async () => {
+  it('treats a 404 on the upload it just created as terminal, without creating another', async () => {
     const file = fakeFile(20);
     const { fetchImpl, calls } = createFetchStub({
       POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
@@ -459,6 +394,124 @@ describe('uploadViaTus', () => {
       [17, 10],
       [27, 3],
     ]);
+  });
+
+  it('retries a PATCH 409 (offset conflict) by re-HEADing and continuing from the server offset', async () => {
+    const file = fakeFile(20);
+    const { fetchImpl, calls } = createFetchStub({
+      POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
+      HEAD: [
+        new Response(null, { status: 200, headers: { 'upload-offset': '0' } }),
+        // The "failed" PATCH had actually landed its first 12 bytes.
+        new Response(null, { status: 200, headers: { 'upload-offset': '12' } }),
+      ],
+    });
+    const { uploadChunk, calls: chunkCalls } = createChunkStub([{ status: 409 }, chunkOk(20)]);
+
+    await uploadViaTus({
+      server: SERVER,
+      token: null,
+      artifactId: ARTIFACT_ID,
+      filename: 'clip.mp4',
+      kind: 'video',
+      file: file as never,
+      fetchImpl,
+      uploadChunk,
+    });
+
+    expect(calls.filter((c) => c.init?.method === 'POST')).toHaveLength(1);
+    expect(calls.filter((c) => c.init?.method === 'HEAD')).toHaveLength(2);
+    expect(chunkCalls.map((c) => [c.offset, c.chunkBytes])).toEqual([
+      [0, 20],
+      [12, 8],
+    ]);
+  });
+
+  it('treats a create 409 as terminal', async () => {
+    const file = fakeFile(20);
+    const { fetchImpl, calls } = createFetchStub({
+      POST: [new Response(JSON.stringify({ error: 'Already exists' }), { status: 409 })],
+    });
+    const { uploadChunk } = createChunkStub([]);
+
+    await expect(
+      uploadViaTus({
+        server: SERVER,
+        token: null,
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: file as never,
+        fetchImpl,
+        uploadChunk,
+      }),
+    ).rejects.toMatchObject({ retryable: false, statusCode: 409 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['empty', ''],
+    ['not a number', 'abc'],
+    ['negative', '-1'],
+    ['fractional', '1.5'],
+    ['exponent', '1e1'],
+    ['past the end of the file', '21'],
+    ['beyond a safe integer', '9007199254740993'],
+  ])('fails closed on a HEAD Upload-Offset that is %s, sending nothing', async (_, offset) => {
+    const file = fakeFile(20);
+    const { fetchImpl, calls } = createFetchStub({
+      POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
+      HEAD: [
+        new Response(null, {
+          status: 200,
+          headers: offset === undefined ? {} : { 'upload-offset': offset },
+        }),
+      ],
+    });
+    const { uploadChunk, calls: chunkCalls } = createChunkStub([]);
+
+    await expect(
+      uploadViaTus({
+        server: SERVER,
+        token: null,
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: file as never,
+        fetchImpl,
+        uploadChunk,
+      }),
+    ).rejects.toMatchObject({ name: 'TusUploadError', retryable: false });
+    expect(calls.filter((c) => c.init?.method === 'HEAD')).toHaveLength(1);
+    expect(chunkCalls).toHaveLength(0);
+  });
+
+  it('never advances past the end of the file on a PATCH offset: re-HEADs, which fails closed', async () => {
+    const file = fakeFile(20);
+    const { fetchImpl, calls } = createFetchStub({
+      POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
+      HEAD: [
+        new Response(null, { status: 200, headers: { 'upload-offset': '0' } }),
+        new Response(null, { status: 200, headers: { 'upload-offset': '30' } }),
+      ],
+    });
+    const { uploadChunk, calls: chunkCalls } = createChunkStub([chunkOk(30)]);
+
+    await expect(
+      uploadViaTus({
+        server: SERVER,
+        token: null,
+        artifactId: ARTIFACT_ID,
+        filename: 'clip.mp4',
+        kind: 'video',
+        file: file as never,
+        fetchImpl,
+        uploadChunk,
+      }),
+    ).rejects.toMatchObject({ retryable: false });
+    expect(calls.filter((c) => c.init?.method === 'HEAD')).toHaveLength(2);
+    expect(chunkCalls).toHaveLength(1);
   });
 
   it('does not retry a terminal (4xx) failure', async () => {

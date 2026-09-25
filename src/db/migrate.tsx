@@ -9,13 +9,18 @@ import migrations from '../../drizzle/migrations';
 import { db } from './client';
 import { runDataMigrations, type DataMigration } from './data-migrations';
 import { dropBakedEdits } from './baked-edits-migration';
+import { dropDraftTokens } from './draft-token-migration';
 import { legacyDraftsImport } from './legacy-migration';
 
 /**
  * All one-shot data migrations, in execution order. APPEND new tasks at the end — never
  * remove, rename, or reorder shipped entries (see data-migrations.ts for the task rules).
  */
-const DATA_MIGRATIONS: readonly DataMigration[] = [legacyDraftsImport, dropBakedEdits];
+const DATA_MIGRATIONS: readonly DataMigration[] = [
+  legacyDraftsImport,
+  dropBakedEdits,
+  dropDraftTokens,
+];
 
 const centered = { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 } as const;
 

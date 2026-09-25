@@ -1,0 +1,26 @@
+diff --git a/node_modules/expo-file-system/ios/FileSystemModule.swift b/node_modules/expo-file-system/ios/FileSystemModule.swift
+index 7af943c..a16a93e 100644
+--- a/node_modules/expo-file-system/ios/FileSystemModule.swift
++++ b/node_modules/expo-file-system/ios/FileSystemModule.swift
+@@ -81,6 +81,21 @@ public final class FileSystemModule: Module {
+       self.downloadStore.cancel(uuid: downloadUuid)
+     }
+ 
++    // Pulse patch: cancels the upload tasks an earlier process left in the background session
++    // (after a crash or an iOS memory kill), which would otherwise hold up new uploads to the same
++    // host. Download tasks share the session and are left alone. Resolves how many it cancelled.
++    AsyncFunction("cancelBackgroundUploadTasks") { (promise: Promise) in
++      #if os(iOS)
++      NetworkTaskSessionManager.shared.session(for: .background).getAllTasks { tasks in
++        let uploads = tasks.filter { $0 is URLSessionUploadTask }
++        uploads.forEach { $0.cancel() }
++        promise.resolve(uploads.count)
++      }
++      #else
++      promise.resolve(0)
++      #endif
++    }
++
+     AsyncFunction("pickDirectoryAsync") { (initialUri: URL?, promise: Promise) in
+       #if os(iOS)
+       filePickingHandler.presentDocumentPicker(

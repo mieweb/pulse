@@ -1,4 +1,6 @@
+import { requireOptionalNativeModule } from 'expo';
 import { Directory, File, FileMode, Paths, UploadType } from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import type { UploadChunk } from './tus-client';
 
@@ -6,27 +8,52 @@ function randomId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-const TUS_RESUME_DIR_NAME = 'tus-resume';
+const CHUNK_DIR_NAME = 'tus-chunks';
+/** The same scratch space's name from when uploads resumed across launches. */
+const LEGACY_CHUNK_DIR_NAME = 'tus-resume';
 
 /**
- * Deletes any leftover files under the cache dir's `tus-resume/` scratch
+ * Deletes any leftover files under the cache dir's `tus-chunks/` scratch
  * space. `prepareChunkSource`'s temp copy is only cleaned up in a `finally`
- * block, which never runs if the app process is killed outright (not just an
- * aborted upload) mid-resume — leaving a duplicate, unencrypted copy of
- * potentially sensitive video content sitting in app cache indefinitely.
- * Call once at app startup: any file found here by definition belongs to a
- * session that never got a chance to finish uploading, and the next resume
- * attempt always writes a fresh temp file from the current offset anyway, so
- * nothing here is ever needed after the process that wrote it is gone.
+ * block, which never runs if the app process is killed outright mid-upload —
+ * leaving a duplicate, unencrypted copy of potentially sensitive video content
+ * sitting in app cache indefinitely. Call once at app startup, before anything
+ * uploads: a kill ends its upload, so nothing here is ever needed after the
+ * process that wrote it is gone.
  */
 export function cleanupStaleUploadTempFiles(): void {
-  const dir = new Directory(Paths.cache, TUS_RESUME_DIR_NAME);
-  if (!dir.exists) return;
+  for (const name of [CHUNK_DIR_NAME, LEGACY_CHUNK_DIR_NAME]) {
+    const dir = new Directory(Paths.cache, name);
+    if (!dir.exists) continue;
+    try {
+      dir.delete();
+    } catch {
+      // Best-effort — a locked/missing file here just means it'll be retried
+      // next launch, not a reason to fail app startup.
+    }
+  }
+}
+
+/** The method this app adds to expo-file-system's native module (see `patches/`). */
+type FileSystemNativeModule = { cancelBackgroundUploadTasks?: () => Promise<number> };
+
+/**
+ * iOS only: cancels every upload task left in expo-file-system's background
+ * `URLSession` by an earlier process. Every PATCH runs in that one session,
+ * owned by `nsurlsessiond`, so a crash or iOS memory kill mid-upload leaves a
+ * transfer that keeps sending — and a new upload to the same host queues behind
+ * it at 0%. A kill ends its upload, so nothing left there is worth keeping.
+ * Call once at launch, before anything uploads. Download tasks share the session
+ * and are left alone. Resolves how many it cancelled; best-effort (0 when the
+ * native method isn't in the build).
+ */
+export async function cancelOrphanedUploadTasks(): Promise<number> {
+  if (Platform.OS !== 'ios') return 0;
+  const native = requireOptionalNativeModule<FileSystemNativeModule>('FileSystem');
   try {
-    dir.delete();
+    return (await native?.cancelBackgroundUploadTasks?.()) ?? 0;
   } catch {
-    // Best-effort — a locked/missing file here just means it'll be retried
-    // next launch, not a reason to fail app startup.
+    return 0;
   }
 }
 
@@ -43,8 +70,8 @@ const STAGING_READ_BYTES = 8 * 1024 * 1024;
  * Stages the bytes for one PATCH — `[offset, offset + chunkBytes)` — as a
  * file the native upload task can point at. The common case (a fresh upload,
  * offset 0, whole file in one PATCH) uploads `source` directly with no copy
- * at all. A resume (offset > 0) or an explicitly bounded chunk gets a temp
- * copy, streamed via `FileHandle` in `STAGING_READ_BYTES` reads so memory
+ * at all. A retry that resumes mid-file (offset > 0) or an explicitly bounded
+ * chunk gets a temp copy, streamed via `FileHandle` in `STAGING_READ_BYTES` reads so memory
  * stays bounded no matter how large the staged range is.
  */
 function prepareChunkSource(
@@ -55,7 +82,7 @@ function prepareChunkSource(
 ): { file: File; cleanup: () => void } {
   if (offset <= 0 && chunkBytes >= totalBytes) return { file: source, cleanup: () => {} };
 
-  const dir = new Directory(Paths.cache, TUS_RESUME_DIR_NAME);
+  const dir = new Directory(Paths.cache, CHUNK_DIR_NAME);
   dir.create({ intermediates: true, idempotent: true });
   const temp = new File(dir, `${randomId()}.bin`);
   if (temp.exists) temp.delete();

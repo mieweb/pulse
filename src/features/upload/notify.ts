@@ -38,8 +38,8 @@ async function requestPermission(): Promise<void> {
 
 /**
  * Present an immediate local notification — but only while the app isn't foregrounded. In the
- * foreground the in-app UI already communicates the result (the export-screen prompt and the
- * home-card badge), so an OS banner would just double up. This fills the real gap: a background /
+ * foreground the in-app toast already communicates the result, so an OS banner would just
+ * double up. This fills the real gap: a background /
  * off-screen upload that finishes or fails would otherwise be completely silent.
  *
  * On Android the `{ channelId }` trigger presents immediately on our channel; on iOS `null` does the
@@ -60,5 +60,6 @@ async function present(title: string, body: string): Promise<void> {
 export const uploadNotify = {
   ensurePermission,
   complete: () => present('Upload complete', 'Your pulse is on your server.'),
-  failed: () => present('Upload failed', 'An upload didn’t finish — open Pulse to retry.'),
+  failed: () =>
+    present('Upload failed', 'An upload didn’t finish — you’ll need a new link to try again.'),
 };
