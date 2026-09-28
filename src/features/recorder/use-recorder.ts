@@ -4,7 +4,6 @@ import {
   launchImageLibraryAsync,
   UIImagePickerPreferredAssetRepresentationMode,
 } from 'expo-image-picker';
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
@@ -42,8 +41,18 @@ import { importLog } from './import-log';
 import { getRecorderFormat, learnRecorderFormat } from './recorder-format';
 import { useCallState } from './use-call-state';
 
-/** Keep-awake tag held while an import converts. */
-const IMPORT_KEEP_AWAKE_TAG = 'pulse-import';
+/** Resolves once Pulse is in the foreground again (immediately if it already is). */
+function untilActive(): Promise<void> {
+  if (AppState.currentState === 'active') return Promise.resolve();
+  return new Promise((resolve) => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        sub.remove();
+        resolve();
+      }
+    });
+  });
+}
 
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
 // Android only cycles through the modes it can actually honor. The union type keeps 'cinematic'
@@ -459,9 +468,8 @@ export function useRecorder(initialDraftId?: string) {
       if (result.canceled || !picked) return;
       pickedUri = picked.uri;
       setIsImporting(true);
-      // Converting a long 4K clip takes a while: keep the screen from locking under it, and hold
-      // a background task (iOS grants ~30 s) so a quick app switch doesn't kill the encode.
-      void activateKeepAwakeAsync(IMPORT_KEEP_AWAKE_TAG).catch(() => {});
+      // Hold a background task (iOS grants ~30 s) so a quick app switch or screen lock doesn't
+      // kill the encode; a longer one is resumed below when Pulse is back in front.
       backgroundTask = CallDetector.beginBackgroundTask();
       const started = Date.now();
       importLog.info(
@@ -479,11 +487,31 @@ export function useRecorder(initialDraftId?: string) {
       // the reels contract, so a clip that can't be probed or conformed (or whose output fails
       // verification on every engine) is rejected rather than persisted off-contract.
       const target = await getRecorderFormat();
-      let conformed: ConformOutcome | null;
-      try {
-        conformed = await conformToContract(picked.uri, target);
-      } catch (e) {
-        const why = describeError(e);
+      let conformed: ConformOutcome | null = null;
+      let failure: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        leftForeground = false;
+        try {
+          conformed = await conformToContract(picked.uri, target);
+          failure = null;
+          break;
+        } catch (e) {
+          failure = e;
+          if (!leftForeground || attempt > 0) break;
+          // Leaving Pulse (app switch, screen lock) tears the hardware encoder down mid-way.
+          // Nothing is lost — the picked file is still here — so pick the conversion back up
+          // once Pulse is in front again instead of failing the import.
+          importLog.warn(
+            `interrupted after ${formatSeconds(Date.now() - started)} (${describeError(e)}) — ` +
+              'resuming when Pulse is back in front',
+          );
+          if (backgroundTask !== -1) CallDetector.endBackgroundTask(backgroundTask);
+          await untilActive();
+          backgroundTask = CallDetector.beginBackgroundTask();
+        }
+      }
+      if (failure) {
+        const why = describeError(failure);
         importLog.warn(
           `failed after ${formatSeconds(Date.now() - started)}: ${why}` +
             (leftForeground ? ' (Pulse left the foreground mid-conversion)' : ''),
@@ -523,7 +551,6 @@ export function useRecorder(initialDraftId?: string) {
       Alert.alert('Import failed', e instanceof Error ? e.message : 'Could not import the video.');
     } finally {
       appStateSub.remove();
-      void deactivateKeepAwake(IMPORT_KEEP_AWAKE_TAG).catch(() => {});
       if (backgroundTask !== -1) CallDetector.endBackgroundTask(backgroundTask);
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
       // for 4K): the clip now lives in the draft (or was rejected), so drop it.
