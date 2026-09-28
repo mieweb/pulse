@@ -1,5 +1,10 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { launchImageLibraryAsync, UIImagePickerPreferredAssetRepresentationMode } from 'expo-image-picker';
+import { File } from 'expo-file-system';
+import {
+  launchImageLibraryAsync,
+  UIImagePickerPreferredAssetRepresentationMode,
+} from 'expo-image-picker';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
@@ -27,12 +32,18 @@ import {
   getRecorderPrefs,
   setSetting,
 } from '@/db/settings';
+import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
 import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
-import { conformToContract } from '@/utils/contract-gate';
+import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
+import { importLog } from './import-log';
+import { getRecorderFormat, learnRecorderFormat } from './recorder-format';
 import { useCallState } from './use-call-state';
+
+/** Keep-awake tag held while an import converts. */
+const IMPORT_KEEP_AWAKE_TAG = 'pulse-import';
 
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
 // Android only cycles through the modes it can actually honor. The union type keeps 'cinematic'
@@ -389,6 +400,9 @@ export function useRecorder(initialDraftId?: string) {
       const originalFilename = await persistRecording(uri, id, segmentId);
       const durationMs = await getDurationMs(absolutize(originalFilename));
       await persistSegment(id, segmentId, originalFilename, durationMs);
+      // Imports are conformed to exactly what the recorder writes on this device (so mixed
+      // drafts merge without re-encoding) — keep that signature current.
+      void learnRecorderFormat(absolutize(originalFilename));
     } catch {
       // Recording died with no salvageable file (see the error probe above), or the persist
       // itself failed — nothing to keep.
@@ -403,12 +417,11 @@ export function useRecorder(initialDraftId?: string) {
   }
 
   // Pick an existing device video (system picker — no permission prompt) and add it as a
-  // segment, following the same persist path as a recording. Merge-friendly imports keep
-  // their original bytes (Passthrough); hostile ones (HDR/10-bit, off the portrait canvas,
-  // >30fps, exotic codecs, non-AAC audio) are normalized to the recorder's bounds — and
-  // baked onto the 1080×1920 canvas — first; the policy
-  // lives in decideImport (§ imports). Format-mismatched-but-benign clips remain the
-  // merge engine's selective path.
+  // segment, following the same persist path as a recording. Imports already in the recorder's
+  // exact format keep their original bytes; everything else is conformed ONCE, here, to the
+  // reels contract AND the recorder's own signature (coded orientation, fps, AAC layout), so a
+  // draft mixing recordings and imports merges with no re-encode. The policy lives in
+  // decideImport (§ imports), the engines and their verification in conformToContract.
   async function importClip() {
     if (isRecordingRef.current || isImporting) return;
     if (!libraryPermission?.granted) {
@@ -426,6 +439,14 @@ export function useRecorder(initialDraftId?: string) {
       const next = await requestLibraryPermission();
       if (!next.granted) return;
     }
+    let pickedUri: string | null = null;
+    let backgroundTask = -1;
+    // A hardware encode is torn down when the app leaves the foreground — remember whether it
+    // did, so a failure can say why instead of a generic "couldn't convert".
+    let leftForeground = false;
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') leftForeground = true;
+    });
     try {
       const result = await launchImageLibraryAsync({
         mediaTypes: ['videos'],
@@ -436,44 +457,81 @@ export function useRecorder(initialDraftId?: string) {
       });
       const picked = result.assets?.[0];
       if (result.canceled || !picked) return;
+      pickedUri = picked.uri;
       setIsImporting(true);
+      // Converting a long 4K clip takes a while: keep the screen from locking under it, and hold
+      // a background task (iOS grants ~30 s) so a quick app switch doesn't kill the encode.
+      void activateKeepAwakeAsync(IMPORT_KEEP_AWAKE_TAG).catch(() => {});
+      backgroundTask = CallDetector.beginBackgroundTask();
+      const started = Date.now();
+      importLog.info(
+        `picked ${picked.fileName ?? 'a video'}` +
+          (picked.fileSize ? ` (${formatBytes(picked.fileSize)})` : '') +
+          (picked.duration ? `, ${formatSeconds(picked.duration)}` : ''),
+      );
 
-      // Reject corrupt / zero-length picks before they enter the draft (one native probe,
-      // reused below for the duration). A thrown isValidFile probe is non-fatal — fall through;
-      // the contract probe below is the fail-closed one.
+      // AVFoundation's view of the clip, reused for the duration of a passthrough. Not a gate:
+      // the FFprobe-based contract probe below decides, so a file only FFmpeg can read still
+      // gets its chance.
       const info = await isValidFile(picked.uri).catch(() => null);
-      if (info && !info.isValid) {
-        Alert.alert('Import failed', 'That file isn’t a supported video.');
-        return;
-      }
 
-      // Normalize hostile imports before they enter the draft — and fail CLOSED: every stored
-      // clip must meet the reels contract, so a clip that can't be probed or conformed (or
-      // whose conform fails output verification — e.g. an Android encoder fallback) is
-      // rejected rather than persisted off-contract.
-      let sourceUri = picked.uri;
-      let normalizedPath: string | null = null;
+      // Conform before the clip enters the draft — and fail CLOSED: every stored clip must meet
+      // the reels contract, so a clip that can't be probed or conformed (or whose output fails
+      // verification on every engine) is rejected rather than persisted off-contract.
+      const target = await getRecorderFormat();
+      let conformed: ConformOutcome | null;
       try {
-        normalizedPath = await conformToContract(picked.uri);
-      } catch {
-        Alert.alert('Import failed', 'Could not convert that video for the timeline.');
+        conformed = await conformToContract(picked.uri, target);
+      } catch (e) {
+        const why = describeError(e);
+        importLog.warn(
+          `failed after ${formatSeconds(Date.now() - started)}: ${why}` +
+            (leftForeground ? ' (Pulse left the foreground mid-conversion)' : ''),
+        );
+        Alert.alert(
+          'Import failed',
+          leftForeground
+            ? 'The conversion was interrupted when Pulse left the screen. Try again and keep Pulse open until it finishes.'
+            : /no video stream|probe/i.test(why)
+              ? 'That file isn’t a video Pulse can read.'
+              : 'Could not convert that video for the timeline.',
+        );
         return;
       }
-      if (normalizedPath) sourceUri = normalizedPath;
+      if (conformed) {
+        importLog.info(
+          `converted with ${conformed.engine} in ${formatSeconds(Date.now() - started)}` +
+            (conformed.mergeMatch ? ', matches the recorder' : '') +
+            ` — ${conformed.notes.join('; ')}`,
+        );
+      } else {
+        importLog.info('already in the recorder format — kept as is');
+      }
 
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;
-      const originalFilename = await copyIntoSegments(sourceUri, id, segmentId);
+      const originalFilename = await copyIntoSegments(conformed?.path ?? picked.uri, id, segmentId);
       // The compress output lives in the OS-purgeable cache dir; drop it once copied.
-      if (normalizedPath) void deleteFile(normalizedPath).catch(() => {});
+      if (conformed) void deleteFile(conformed.path).catch(() => {});
       const durationMs =
-        normalizedPath === null && info && info.duration > 0
+        conformed === null && info && info.isValid && info.duration > 0
           ? info.duration
           : await getDurationMs(absolutize(originalFilename));
       await persistSegment(id, segmentId, originalFilename, durationMs);
     } catch (e) {
+      importLog.warn(`failed: ${describeError(e)}`);
       Alert.alert('Import failed', e instanceof Error ? e.message : 'Could not import the video.');
     } finally {
+      appStateSub.remove();
+      void deactivateKeepAwake(IMPORT_KEEP_AWAKE_TAG).catch(() => {});
+      if (backgroundTask !== -1) CallDetector.endBackgroundTask(backgroundTask);
+      // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
+      // for 4K): the clip now lives in the draft (or was rejected), so drop it.
+      if (pickedUri) {
+        try {
+          new File(pickedUri).delete();
+        } catch {}
+      }
       setIsImporting(false);
     }
   }
