@@ -41,19 +41,6 @@ import { importLog } from './import-log';
 import { getRecorderFormat, learnRecorderFormat } from './recorder-format';
 import { useCallState } from './use-call-state';
 
-/** Resolves once Pulse is in the foreground again (immediately if it already is). */
-function untilActive(): Promise<void> {
-  if (AppState.currentState === 'active') return Promise.resolve();
-  return new Promise((resolve) => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        sub.remove();
-        resolve();
-      }
-    });
-  });
-}
-
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
 // Android only cycles through the modes it can actually honor. The union type keeps 'cinematic'
 // on both platforms so persisted iOS prefs and shared UI maps still typecheck.
@@ -449,13 +436,7 @@ export function useRecorder(initialDraftId?: string) {
       if (!next.granted) return;
     }
     let pickedUri: string | null = null;
-    let backgroundTask = -1;
-    // A hardware encode is torn down when the app leaves the foreground — remember whether it
-    // did, so a failure can say why instead of a generic "couldn't convert".
-    let leftForeground = false;
-    const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') leftForeground = true;
-    });
+    let appStateSub: ReturnType<typeof AppState.addEventListener> | null = null;
     try {
       const result = await launchImageLibraryAsync({
         mediaTypes: ['videos'],
@@ -468,15 +449,30 @@ export function useRecorder(initialDraftId?: string) {
       if (result.canceled || !picked) return;
       pickedUri = picked.uri;
       setIsImporting(true);
-      // Hold a background task (iOS grants ~30 s) so a quick app switch or screen lock doesn't
-      // kill the encode; a longer one is resumed below when Pulse is back in front.
-      backgroundTask = CallDetector.beginBackgroundTask();
       const started = Date.now();
       importLog.info(
         `picked ${picked.fileName ?? 'a video'}` +
           (picked.fileSize ? ` (${formatBytes(picked.fileSize)})` : '') +
           (picked.duration ? `, ${formatSeconds(picked.duration)}` : ''),
       );
+
+      // Fail fast: leaving Pulse mid-import (app switch, screen lock) cancels it — iOS tears the
+      // hardware encoder down in the background anyway. The native conversion can't be stopped
+      // mid-flight, so its result is thrown away. Only a real move to the background counts;
+      // Control Center or a Face ID prompt ('inactive') doesn't.
+      let leftApp = false;
+      appStateSub = AppState.addEventListener('change', (state) => {
+        if (state === 'background') leftApp = true;
+      });
+      const cancelled = () => {
+        importLog.warn(
+          `cancelled after ${formatSeconds(Date.now() - started)}: Pulse left the screen`,
+        );
+        Alert.alert(
+          'Import cancelled',
+          'Pulse left the screen before the video finished converting. Try again and keep Pulse open until it’s done.',
+        );
+      };
 
       // AVFoundation's view of the clip, reused for the duration of a passthrough. Not a gate:
       // the FFprobe-based contract probe below decides, so a file only FFmpeg can read still
@@ -487,43 +483,27 @@ export function useRecorder(initialDraftId?: string) {
       // the reels contract, so a clip that can't be probed or conformed (or whose output fails
       // verification on every engine) is rejected rather than persisted off-contract.
       const target = await getRecorderFormat();
-      let conformed: ConformOutcome | null = null;
-      let failure: unknown = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        leftForeground = false;
-        try {
-          conformed = await conformToContract(picked.uri, target);
-          failure = null;
-          break;
-        } catch (e) {
-          failure = e;
-          if (!leftForeground || attempt > 0) break;
-          // Leaving Pulse (app switch, screen lock) tears the hardware encoder down mid-way.
-          // Nothing is lost — the picked file is still here — so pick the conversion back up
-          // once Pulse is in front again instead of failing the import.
-          importLog.warn(
-            `interrupted after ${formatSeconds(Date.now() - started)} (${describeError(e)}) — ` +
-              'resuming when Pulse is back in front',
-          );
-          if (backgroundTask !== -1) CallDetector.endBackgroundTask(backgroundTask);
-          await untilActive();
-          backgroundTask = CallDetector.beginBackgroundTask();
+      let conformed: ConformOutcome | null;
+      try {
+        conformed = await conformToContract(picked.uri, target);
+      } catch (e) {
+        if (leftApp) {
+          cancelled();
+          return;
         }
-      }
-      if (failure) {
-        const why = describeError(failure);
-        importLog.warn(
-          `failed after ${formatSeconds(Date.now() - started)}: ${why}` +
-            (leftForeground ? ' (Pulse left the foreground mid-conversion)' : ''),
-        );
+        const why = describeError(e);
+        importLog.warn(`failed after ${formatSeconds(Date.now() - started)}: ${why}`);
         Alert.alert(
           'Import failed',
-          leftForeground
-            ? 'The conversion was interrupted when Pulse left the screen. Try again and keep Pulse open until it finishes.'
-            : /no video stream|probe/i.test(why)
-              ? 'That file isn’t a video Pulse can read.'
-              : 'Could not convert that video for the timeline.',
+          /no video stream|probe/i.test(why)
+            ? 'That file isn’t a video Pulse can read.'
+            : 'Could not convert that video for the timeline.',
         );
+        return;
+      }
+      if (leftApp) {
+        if (conformed) void deleteFile(conformed.path).catch(() => {});
+        cancelled();
         return;
       }
       if (conformed) {
@@ -550,8 +530,7 @@ export function useRecorder(initialDraftId?: string) {
       importLog.warn(`failed: ${describeError(e)}`);
       Alert.alert('Import failed', e instanceof Error ? e.message : 'Could not import the video.');
     } finally {
-      appStateSub.remove();
-      if (backgroundTask !== -1) CallDetector.endBackgroundTask(backgroundTask);
+      appStateSub?.remove();
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
       // for 4K): the clip now lives in the draft (or was rejected), so drop it.
       if (pickedUri) {
