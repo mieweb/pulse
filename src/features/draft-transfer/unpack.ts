@@ -27,7 +27,7 @@ async function conformInPlace(rel: string): Promise<boolean> {
   if (!conformed) return false;
   const dest = new File(absolutize(rel));
   dest.delete();
-  await new File(toFileUri(conformed)).move(dest);
+  await new File(toFileUri(conformed.path)).move(dest);
   return true;
 }
 

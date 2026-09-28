@@ -116,6 +116,7 @@ function probeLikeNative(file: string): VideoProbeResult {
     width: v ? num(v.width) : -1,
     height: v ? num(v.height) : -1,
     rotation,
+    mirrored: false,
     nominalFps: parseFps(v?.r_frame_rate),
     averageFps: parseFps(v?.avg_frame_rate),
     bitrate: streamBitrate > 0 ? streamBitrate : num(j.format?.bit_rate),
@@ -126,6 +127,7 @@ function probeLikeNative(file: string): VideoProbeResult {
     audioSampleRate: num(a?.sample_rate),
     audioChannels: num(a?.channels),
     duration: durationSec >= 0 ? Math.round(durationSec * 1000) : -1,
+    videoDuration: -1,
     fileSize: num(j.format?.size),
   };
 }

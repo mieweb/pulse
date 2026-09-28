@@ -19,6 +19,7 @@ function probe(overrides: Partial<VideoProbeResult>): VideoProbeResult {
     width: 1920,
     height: 1080,
     rotation: 0,
+    mirrored: false,
     nominalFps: 30,
     averageFps: 30,
     bitrate: 3_000_000,
@@ -29,6 +30,7 @@ function probe(overrides: Partial<VideoProbeResult>): VideoProbeResult {
     audioSampleRate: 48000,
     audioChannels: 2,
     duration: 8000,
+    videoDuration: 8000,
     fileSize: 3_000_000,
     ...overrides,
   };
@@ -122,7 +124,7 @@ describe('decideImport against the wild-import fixture corpus', () => {
     const d = decideImport(probe({ rotation: 90, audioCodec: 'opus' }));
     expect(d).toEqual({
       action: 'normalize',
-      options: { copyVideo: true },
+      options: { engine: 'auto', copyVideo: true },
       reasons: ['audio codec opus'],
     });
   });
