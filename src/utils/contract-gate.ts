@@ -58,12 +58,30 @@ export async function conformToContract(
     if (signal?.aborted) throw new Error('Import cancelled');
   };
   stopIfCancelled();
-  const onAbort = () => cancelCompress();
-  signal?.addEventListener('abort', onAbort);
+  const work = conform(uri, target, stopIfCancelled);
+  if (!signal) return work;
+
+  // Reject the moment the signal aborts — never wait on the native side to confirm: a conversion
+  // interrupted by the app going to the background can stay stuck until iOS resumes it (if ever).
+  // cancelCompress() still stops it; a result that lands anyway is thrown away.
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      cancelCompress();
+      reject(new Error('Import cancelled'));
+    };
+    signal.addEventListener('abort', onAbort);
+  });
+  void work.then(
+    (outcome) => {
+      if (signal.aborted && outcome) void deleteFile(outcome.path).catch(() => {});
+    },
+    () => {},
+  );
   try {
-    return await conform(uri, target, stopIfCancelled);
+    return await Promise.race([work, aborted]);
   } finally {
-    signal?.removeEventListener('abort', onAbort);
+    signal.removeEventListener('abort', onAbort);
   }
 }
 
