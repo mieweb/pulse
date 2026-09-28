@@ -7,7 +7,8 @@ import Svg, { Circle } from 'react-native-svg';
 import type { Anchor } from '@/components/action-menu';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
-import { useDraftUploadState } from '@/features/upload/use-uploads';
+import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
+import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
 import { useTheme } from '@/hooks/use-theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -19,7 +20,7 @@ const NAME_MAX_LENGTH = 40;
 type Props = {
   id: string;
   /** Persisted upload status, so the card can show its own upload state on the cover. */
-  uploadStatus?: 'idle' | 'uploading' | 'uploaded' | 'failed' | null;
+  uploadStatus?: 'uploading' | 'uploaded' | null;
   name: string | null;
   /** Relative path of the draft's first clip; the cover frame's legacy runtime fallback. */
   firstSegmentFilename?: string | null;
@@ -63,18 +64,13 @@ export function DraftCard({
   const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
   const moreRef = useRef<View>(null);
 
-  // Live upload state (this session) takes precedence; otherwise fall back to the persisted status
-  // so an interrupted upload still reads correctly after a relaunch. Only two states surface on the
-  // card: the in-progress ring and the failed (!) badge — a COMPLETED upload deliberately shows
-  // nothing (a persisted 'uploaded' tick would sit on the card forever with no way to dismiss it;
-  // completion is surfaced by the export-screen prompt and the background notification instead).
+  // An upload in progress is a ring on the cover — from the live state, or the persisted status
+  // until the launch check settles a draft a killed app left `uploading`. A finished one gets a
+  // one-tap link button beside ⋯ (see `LinkPill`). A failure is a toast, not a badge.
   const live = useDraftUploadState(id);
-  const liveMapped =
-    live.status === 'uploading' ? 'uploading' : live.status === 'error' ? 'failed' : null;
-  const upload =
-    liveMapped ??
-    (uploadStatus === 'failed' ? 'failed' : uploadStatus === 'uploading' ? 'uploading' : 'idle');
+  const uploading = live.status === 'uploading' || uploadStatus === 'uploading';
   const uploadProgress = live.status === 'uploading' ? live.progress : 0;
+  const uploaded = uploadStatus === 'uploaded' && !uploading;
 
   return (
     <Pressable
@@ -84,8 +80,7 @@ export function DraftCard({
         styles.card,
         {
           // Rows highlight by fill swap (action-menu rows, home header buttons), not by dimming.
-          backgroundColor:
-            pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
+          backgroundColor: pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
           borderColor: theme.border,
         },
       ]}>
@@ -104,7 +99,7 @@ export function DraftCard({
         ) : (
           <Icon name="video.fill" size={18} tintColor={theme.textSecondary} />
         )}
-        {upload === 'uploading' && (
+        {uploading && (
           <View
             style={styles.uploadScrim}
             pointerEvents="none"
@@ -113,11 +108,6 @@ export function DraftCard({
             // backgrounded/resumed run is as legible here as on the export screen.
             accessibilityLabel={live.status === 'uploading' ? uploadPhaseLabel(live) : 'Uploading'}>
             <UploadRing progress={uploadProgress} />
-          </View>
-        )}
-        {upload === 'failed' && (
-          <View style={styles.uploadBadge} pointerEvents="none">
-            <Icon name="exclamationmark" size={11} tintColor="#fff" />
           </View>
         )}
       </View>
@@ -158,23 +148,63 @@ export function DraftCard({
           />
         </View>
       ) : (
-        onMore &&
         !editing && (
-          <Pressable
-            ref={moreRef}
-            onPress={() =>
-              moreRef.current?.measureInWindow((x, y, width, height) =>
-                onMore({ x, y, width, height }),
-              )
-            }
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel="Draft options"
-            style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]}>
-            <Icon name="ellipsis" size={18} tintColor={theme.textSecondary} />
-          </Pressable>
+          <View style={styles.trailing}>
+            {uploaded && <LinkPill draftId={id} name={name} />}
+            {onMore && (
+              <Pressable
+                ref={moreRef}
+                onPress={() =>
+                  moreRef.current?.measureInWindow((x, y, width, height) =>
+                    onMore({ x, y, width, height }),
+                  )
+                }
+                hitSlop={{ top: 10, bottom: 10, left: uploaded ? 2 : 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="Draft options"
+                style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]}>
+                <Icon name="ellipsis" size={18} tintColor={theme.textSecondary} />
+              </Pressable>
+            )}
+          </View>
         )
       )}
+    </Pressable>
+  );
+}
+
+/**
+ * An uploaded draft's one-tap link button beside ⋯, while its link still opens: Share (the share
+ * sheet) for a link that's safe to share, or Watch for one carrying the upload token. Nothing
+ * otherwise — not a button that could only say it can't. Its own component so only uploaded
+ * drafts run the link's expiry check.
+ */
+function LinkPill({ draftId, name }: { draftId: string; name: string | null }) {
+  const theme = useTheme();
+  const link = useWatchLink(draftId);
+  if (!link) return null;
+  const { url, shareable } = link;
+  return (
+    <Pressable
+      onPress={() =>
+        void (shareable
+          ? shareUploadLink(url, name ?? undefined).catch(() => {})
+          : watchUpload(url))
+      }
+      // Only a sliver toward ⋯, so the two tap targets don't overlap.
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 2 }}
+      accessibilityRole="button"
+      accessibilityLabel={shareable ? 'Share link' : 'Watch'}
+      style={({ pressed }) => [
+        styles.share,
+        { backgroundColor: pressed ? theme.border : theme.backgroundSelected },
+      ]}>
+      <Icon
+        name={shareable ? 'square.and.arrow.up' : 'play.fill'}
+        size={14}
+        tintColor={theme.text}
+      />
+      <ThemedText type="small">{shareable ? 'Share' : 'Watch'}</ThemedText>
     </Pressable>
   );
 }
@@ -224,17 +254,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
-  uploadBadge: {
-    position: 'absolute',
-    top: 3,
-    right: 3,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -275,6 +294,19 @@ const styles = StyleSheet.create({
     // the body height (which would nudge the subtitle).
     height: 24,
     padding: 0,
+  },
+  trailing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  share: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    height: 28,
+    paddingHorizontal: Spacing.two + Spacing.half,
+    borderRadius: 14,
   },
   more: {
     width: 28,

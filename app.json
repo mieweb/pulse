@@ -99,7 +99,6 @@
       ],
       "expo-status-bar",
       "expo-web-browser",
-      "expo-background-task",
       "./plugins/with-ios-local-notifications-only",
       "expo-notifications",
       "./plugins/with-upload-foreground-service",

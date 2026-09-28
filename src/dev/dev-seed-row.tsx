@@ -5,6 +5,7 @@ import { Spacing } from '@/constants/theme';
 import {
   clearDrafts,
   seedDraft,
+  seedLargeUpload,
   seedSpeedMixed,
   seedSpeedUniform,
   seedWildImports,
@@ -36,6 +37,11 @@ export function DevSeedRow() {
       <Pressable onPress={() => void seedWildImports()} hitSlop={8}>
         <ThemedText themeColor="accent" type="small">
           + s4
+        </ThemedText>
+      </Pressable>
+      <Pressable onPress={() => void seedLargeUpload()} hitSlop={8}>
+        <ThemedText themeColor="accent" type="small">
+          + s5
         </ThemedText>
       </Pressable>
       <Pressable onPress={() => void clearDrafts()} hitSlop={8}>

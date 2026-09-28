@@ -31,6 +31,7 @@ const TYPES = {
   'beat-manifest.schema.json': 'BeatManifest',
   'capability-token.schema.json': 'CapabilityTokenClaims',
   'pulse-client.schema.json': 'PulseClientHeader',
+  'view-link.schema.json': 'ViewLinkResponse',
 };
 
 let protocolVersion = 'unknown';

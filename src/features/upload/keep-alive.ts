@@ -36,8 +36,8 @@ function idleUntilStopped(): Promise<void> {
  * foreground service (react-native-background-actions) so the OS doesn't freeze/kill the process
  * when backgrounded — the whole multi-artifact pipeline keeps advancing, not just the in-flight
  * request. iOS is intentionally excluded: there the native URLSession background session carries the
- * in-flight transfer and `expo-background-task` handles after-kill resume, and a background-actions
- * service on iOS would lean on background modes Apple rejects for a non-audio app.
+ * in-flight transfer, and a background-actions service on iOS would lean on background modes Apple
+ * rejects for a non-audio app. On both, killing the app ends the upload.
  *
  * Play Store note: the service is started only while an upload is actually running and stopped the
  * moment the queue drains — never on launch — which is exactly what a `dataSync` foreground service

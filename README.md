@@ -100,13 +100,14 @@ flowchart TB
 ### Upload & pairing
 
 - Pair with a server by scanning a QR / opening a `pulsecam://` deep link — trust-on-first-use confirmation, capability negotiation against the server's `/capabilities` endpoint
-- TUS v1 resumable uploads with exponential backoff; interrupted uploads resume from the server's true byte offset, even after an app relaunch
+- TUS v1 uploads that retry with exponential backoff, resuming from the server's true byte offset; they carry on in the background, and a link is used once — if an upload can't finish (or the app is killed), it's cleaned up and a new link is the retry
 - A Pulse uploads as one video, plus its captions (WebVTT), beat manifest and thumbnail — each declaring `relatedTo` the video
+- A finished upload's Watch and Copy link live in the draft's ⋯ menu on Home. Copy link shares a read-only view link (servers on protocol 2.2+), never the upload token
 - Bearer tokens stored in the secure keychain, never in the database
 
 ## Platform support
 
-Pulse runs on **iOS and Android** from a single codebase. iOS is the original platform; Android has been brought to parity and verified end-to-end on device — recording, editing, merge/export, on-device captions, `.pulse` sharing, pairing, and resumable uploads (including upload survival through backgrounding, Doze, and app kills via a foreground service).
+Pulse runs on **iOS and Android** from a single codebase. iOS is the original platform; Android has been brought to parity and verified end-to-end on device — recording, editing, merge/export, on-device captions, `.pulse` sharing, pairing, and resumable uploads (including upload survival through backgrounding and Doze via a foreground service).
 
 Platform notes:
 

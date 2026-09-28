@@ -1,6 +1,7 @@
 // Boots the pulsevault submodule's BUILT core on an ephemeral port for the app's cross-repo
 // integration suite (src/features/upload/pv-integration.test.ts). Configured like a real
-// deployment: local-FS storage, the checksum + magic-byte validators, and capability tokens.
+// deployment: local-FS storage, the checksum + magic-byte validators, capability tokens, and
+// (from protocol 2.2) read-only view links.
 //
 // Besides the pulsevault routes under /pulsevault, it serves GET /pair, which mints a pairing
 // link exactly as a deployment's dashboard would (fresh artifactId, a token scoped to it,
@@ -30,6 +31,8 @@ const {
   createMp4Sniffer,
   createPulseVaultCore,
   issueCapabilityToken,
+  // Protocol 2.2+ only — absent from older builds, which then offer no view links.
+  createViewLinkIssuer,
 } = await import(distUrl.href);
 
 const BASE_PATH = '/pulsevault';
@@ -56,6 +59,16 @@ const core = createPulseVaultCore({
     ctx.kind === 'video' ? validateVideo(request, ctx) : validateAny(request, ctx),
   authorize: createCapabilityAuthorize(lookupSecret, { issuer: ISSUER }),
   onArtifactEvent: (event) => void events.push(event),
+  ...(createViewLinkIssuer
+    ? {
+        issueViewLink: createViewLinkIssuer({
+          keyId: KEY_ID,
+          secret: SECRET,
+          issuer: ISSUER,
+          expirySeconds: 3600,
+        }),
+      }
+    : {}),
   logger: { info() {}, error() {} },
 });
 

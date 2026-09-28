@@ -9,8 +9,6 @@ import { hostOf } from '@/utils/format';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
-import { cleanupStaleUploadTempFiles } from './native-chunk-upload';
-import { registerUploadResumeTask } from './resume-task';
 import { uploads } from './upload-manager';
 
 const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> = {
@@ -51,27 +49,26 @@ function confirmPairing(host: string): Promise<boolean> {
  * Any draft (a fresh recording or an existing one) can select it later from
  * its export screen, and several servers can be paired at once. Each
  * destination is single-use (one server-minted artifactId) and drops out of
- * the pool once its upload finishes or the user deletes it.
+ * the pool once a draft claims it or the user deletes it.
+ *
+ * It also starts the upload manager for the app's lifetime: the launch check,
+ * and the toast an upload failure shows in the foreground.
  */
 export function UploadDeepLinkProvider({ children }: { children: React.ReactNode }) {
   const url = useLinkingURL();
   const handledUrl = useRef<string | null>(null);
   const { showToast } = useToast();
 
-  // Best-effort sweep of orphaned tus-resume temp files from a previous
-  // launch that was killed mid-upload — see `cleanupStaleUploadTempFiles`.
-  // Then poke the upload manager: on launch it re-drives anything still queued,
-  // and on every foreground it resumes a run that stalled while backgrounded
-  // (the JS drain loop is suspended, not the native URLSession transfer).
+  // At launch, fail the uploads a killed app never finished (see `prepareLaunch`); on every
+  // foreground, poke the drain so an upload whose JS was suspended in the background carries on.
   useEffect(() => {
-    cleanupStaleUploadTempFiles();
-    void registerUploadResumeTask();
-    void uploads.ensureRunning();
+    uploads.registerToast(showToast);
+    void uploads.prepareLaunch();
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') void uploads.ensureRunning();
     });
     return () => sub.remove();
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     if (!url || url === handledUrl.current || !url.startsWith('pulsecam://')) return;

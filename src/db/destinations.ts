@@ -13,8 +13,8 @@ import {
  * A server the device has paired with (via a `pulsecam://` deep link) but no draft has
  * consumed yet. Device-wide, not per-draft — unlike `drafts.upload*` (drafts.ts), this
  * lives independently of any one draft so the user can pick *which* draft to send, and to
- * *which* destination, at upload time. A destination is single-use: uploading a draft to it
- * (and the upload finishing), or the user deleting it, removes it here.
+ * *which* destination, at upload time. A destination is single-use: a draft claiming it for
+ * an upload, or the user deleting it, removes it here.
  */
 export type PairedDestination = {
   server: string;
@@ -80,21 +80,15 @@ export async function getDestination(id: string): Promise<PairedDestination | nu
 }
 
 /**
- * The pool id of the destination for a given server-minted `artifactId`, or `null`. The resume
- * path uses it to re-link a killed upload to its single-use pool row (that linkage isn't persisted
- * on the session) so completing the resumed run still removes it. Deduped by `artifactId`
- * (server-unique in practice), so at most one row matches.
+ * Remove a destination from the pool (claimed by an upload, or deleted by the user). Returns
+ * whether this call removed it — when two drafts claim the same link, only one gets `true`.
  */
-export async function getDestinationIdByArtifactId(artifactId: string): Promise<string | null> {
+export async function deleteDestination(id: string): Promise<boolean> {
   const rows = await db
-    .select({ id: uploadDestinations.id })
-    .from(uploadDestinations)
-    .where(eq(uploadDestinations.artifactId, artifactId));
-  return rows[0]?.id ?? null;
-}
-
-/** Remove a destination from the pool (consumed by a finished upload, or deleted by the user). */
-export async function deleteDestination(id: string): Promise<void> {
-  await db.delete(uploadDestinations).where(eq(uploadDestinations.id, id));
-  await deleteDestinationToken(id);
+    .delete(uploadDestinations)
+    .where(eq(uploadDestinations.id, id))
+    .returning({ id: uploadDestinations.id });
+  // Best-effort: once the row is gone the link is spent, whatever happens to its token.
+  await deleteDestinationToken(id).catch(() => {});
+  return rows.length > 0;
 }

@@ -14,7 +14,9 @@ import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
+import { watchUpload } from '@/features/upload/link-actions';
 import { uploads } from '@/features/upload/upload-manager';
+import { useWatchLink } from '@/features/upload/use-uploads';
 import { useTheme, useThemeToggle } from '@/hooks/use-theme';
 
 // Dev-only seeding controls, behind a `__DEV__`-guarded require so the component and `@/dev/seed`
@@ -130,6 +132,22 @@ export default function HomeScreen() {
   const actionsDraftStatus = actionsDraft
     ? drafts.find((d) => d.id === actionsDraft.id)?.uploadStatus
     : null;
+  // An uploaded draft whose card offers Share (a link safe to share) also gets Watch here; one
+  // carrying the upload token is Watch on the card already. Only while the link still opens.
+  const watchLink = useWatchLink(actionsDraft?.id ?? null);
+  const watchAction: MenuAction[] = watchLink?.shareable
+    ? [
+        {
+          key: 'watch',
+          label: 'Watch',
+          icon: 'play.fill',
+          onPress: () => {
+            setActionsDraft(null);
+            void watchUpload(watchLink.url);
+          },
+        },
+      ]
+    : [];
   // An uploading draft is LOCKED (see `assertNotUploading`): Cancel is its only action.
   const menuActions: MenuAction[] = !actionsDraft
     ? []
@@ -147,6 +165,7 @@ export default function HomeScreen() {
           },
         ]
       : [
+          ...watchAction,
           {
             key: 'rename',
             label: 'Rename',
@@ -156,22 +175,6 @@ export default function HomeScreen() {
               setActionsDraft(null);
             },
           },
-          // Only for a draft whose upload failed (the ! badge) — re-drives it via the background
-          // manager (reusing/reconstructing the session) without reopening the export screen.
-          ...(actionsDraftStatus === 'failed'
-            ? [
-                {
-                  key: 'retry-upload',
-                  label: 'Retry upload',
-                  icon: 'arrow.clockwise',
-                  onPress: () => {
-                    const draftId = actionsDraft.id;
-                    setActionsDraft(null);
-                    void uploads.retry(draftId);
-                  },
-                } satisfies MenuAction,
-              ]
-            : []),
           {
             key: 'delete',
             label: 'Delete',

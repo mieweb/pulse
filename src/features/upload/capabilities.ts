@@ -12,7 +12,7 @@ export type Capabilities = Pick<
   CapabilitiesResponse,
   'protocolVersion' | 'minSupportedVersion' | 'maxSupportedVersion'
 > &
-  Partial<Pick<CapabilitiesResponse, 'protocolRevision'>>;
+  Partial<Pick<CapabilitiesResponse, 'protocolRevision' | 'viewLinks'>>;
 
 type CapabilitiesRejectionReason = 'unreachable' | 'version-too-old' | 'version-too-new';
 
@@ -46,6 +46,8 @@ async function fetchCapabilities(server: string, signal?: AbortSignal): Promise<
     ...(typeof body.protocolRevision === 'string'
       ? { protocolRevision: body.protocolRevision }
       : {}),
+    // Protocol 2.2: whether the server mints read-only view links (PROTOCOL.md §6.4).
+    ...(body.viewLinks === true ? { viewLinks: true } : {}),
   };
 }
 

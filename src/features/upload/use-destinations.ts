@@ -46,11 +46,17 @@ export function useDestinations() {
   useEffect(() => {
     let cancelled = false;
     const ids = idsKey ? idsKey.split(',') : [];
-    void Promise.all(ids.map((id) => getDestinationToken(id).then((t) => [id, t] as const))).then(
-      (entries) => {
-        if (!cancelled) setTokens(Object.fromEntries(entries));
-      },
-    );
+    // Each row on its own: a token that can't be read hides that row, not the whole pool.
+    void Promise.all(
+      ids.map((id) =>
+        getDestinationToken(id).then(
+          (token) => [[id, token] as const],
+          () => [],
+        ),
+      ),
+    ).then((entries) => {
+      if (!cancelled) setTokens(Object.fromEntries(entries.flat()));
+    });
     return () => {
       cancelled = true;
     };
@@ -59,6 +65,9 @@ export function useDestinations() {
   const destinations: DestinationOption[] = useMemo(
     () =>
       rows
+        // Only once its token has loaded: before that it would read as a tokenless link, and
+        // uploading with it would spend the link on a certain 401.
+        .filter((r) => r.id in tokens)
         .map((r) => ({ ...r, token: tokens[r.id] ?? null }))
         .filter((r) => !isTokenExpired(r.token, now))
         .map((r) => ({

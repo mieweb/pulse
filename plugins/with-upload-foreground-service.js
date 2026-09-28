@@ -14,7 +14,7 @@ const RNBA_SERVICE = 'com.asterinet.react.bgactions.RNBackgroundActionsTask';
  * starting it while a user's videos upload doesn't throw on Android 14+. The manager only runs the
  * service during an active upload and stops it on drain, which is what a `dataSync` service must do
  * to pass Play review. CNG-safe; survives prebuild. iOS needs nothing here — background uploads
- * there use the native URLSession session (expo-file-system) plus expo-background-task.
+ * there use the native URLSession session (expo-file-system).
  */
 module.exports = function withUploadForegroundService(config) {
   config = AndroidConfig.Permissions.withPermissions(config, [

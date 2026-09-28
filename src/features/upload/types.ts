@@ -1,41 +1,27 @@
-import type { File } from 'expo-file-system';
-
+import type { PairedDestination } from '@/db/destinations';
 import type { Segment } from '@/db/schema';
 
-import type { ArtifactKind } from './tus-client';
-
 /**
- * A paired upload destination resolved for a draft. The bearer `token` lives in
- * expo-secure-store (not the drizzle row); it's carried on the session so the
- * manager can upload without a re-fetch.
+ * The pairing a draft uploads under: the pool destination it claimed. The bearer
+ * `token` lives in expo-secure-store (not the drizzle row); it's carried on the
+ * session so the manager can upload without a re-fetch.
  */
-export type Destination = {
-  server: string;
-  token: string | null;
-  artifactId: string;
-  resourceUrl: string | null;
-};
+export type Destination = PairedDestination;
 
 /** The video a session uploads: the draft's persisted export (`drafts/{id}/export.mp4`). */
 export type MergedOutput = { path: string; durationMs: number };
 
 /**
- * One queued upload run for a draft. Captured at enqueue time — while the export
- * screen is foreground and the merge is done — and held in-memory by the manager
- * so the run survives navigation/backgrounding without the screen. After a kill
- * it is rebuilt from SQLite and the persisted export (see `reconstructSession`).
+ * One upload run for a draft. Captured at claim time — while the export screen is
+ * foreground and the merge is done — and held in memory only: the upload lives as
+ * long as the app does. After a kill there is nothing to resume from; the next
+ * launch fails the draft instead.
  */
 export type UploadSession = {
   draftId: string;
   destination: Destination;
   segments: Segment[];
-  /** The export to upload; `null` only if the merge wasn't done at enqueue (the run then fails). */
-  merged: MergedOutput | null;
-  /**
-   * The pool destination id to remove once this run finishes (single-use), or
-   * `null` for a draft whose destination came from an already-consumed session.
-   */
-  consumedDestinationId: string | null;
+  merged: MergedOutput;
 };
 
 export type UploadProgress = { bytesSent: number; totalBytes: number };
@@ -51,43 +37,10 @@ export type UploadPhase = 'preparing' | 'captions' | 'manifest' | 'thumbnail' | 
 
 /**
  * Live, per-draft upload state the UI subscribes to via `useSyncExternalStore`.
- * Held in-memory (progress ticks are high-frequency and never persisted); status
- * transitions are separately written to SQLite for resume/history.
+ * Held in-memory (progress ticks are high-frequency and never persisted). Finishing
+ * and failing are events (a toast, or a notification in the background), after
+ * which the draft is idle again — uploaded (with a watch link, see `getWatchLink`)
+ * or unpaired.
  */
 export type LiveUploadState =
-  | { status: 'idle' }
-  | { status: 'uploading'; phase: UploadPhase; progress: number }
-  | { status: 'done'; resourceUrl: string }
-  | { status: 'error'; reason: string; retryable: boolean };
-
-/** One artifact to hand a transport — the session anchor (the video) or a related sub-artifact. */
-export type UploadArtifactSpec = {
-  artifactId: string;
-  filename: string;
-  kind: ArtifactKind;
-  relatedTo?: string;
-  checksum?: string;
-  /** Free-form display title (the draft name). Set only on the session anchor. */
-  name?: string;
-  file: File;
-  /** A previously-created resource URL to resume, or `null` to create fresh. */
-  resourceUrl: string | null;
-};
-
-/**
- * Uploads a single artifact to its destination. The framework-agnostic seam the
- * background manager drives — `TusServerTransport` today (local backend), an
- * `S3MultipartTransport` later (direct-to-S3). Resumable + idempotent.
- */
-export type UploadTransport = {
-  run(params: {
-    destination: Destination;
-    artifact: UploadArtifactSpec;
-    signal: AbortSignal;
-    onProgress?: (progress: UploadProgress) => void;
-    /** Fired as soon as the resource URL is known, so the caller can track what's in flight. */
-    onResourceCreated?: (resourceUrl: string) => void;
-  }): Promise<{ resourceUrl: string }>;
-  /** Server-side cancel (TUS DELETE) of an in-flight resource. */
-  cancel(resourceUrl: string, token: string | null): Promise<void>;
-};
+  { status: 'idle' } | { status: 'uploading'; phase: UploadPhase; progress: number };
