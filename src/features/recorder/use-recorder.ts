@@ -456,13 +456,13 @@ export function useRecorder(initialDraftId?: string) {
           (picked.duration ? `, ${formatSeconds(picked.duration)}` : ''),
       );
 
-      // Fail fast: leaving Pulse mid-import (app switch, screen lock) cancels it — iOS tears the
-      // hardware encoder down in the background anyway. The native conversion can't be stopped
-      // mid-flight, so its result is thrown away. Only a real move to the background counts;
-      // Control Center or a Face ID prompt ('inactive') doesn't.
-      let leftApp = false;
+      // Fail fast: leaving Pulse mid-import (app switch, screen lock) cancels it on the spot —
+      // the native conversion is stopped, nothing is added, and the spinner is gone on return.
+      // Only a real move to the background counts; Control Center or a Face ID prompt
+      // ('inactive') doesn't.
+      const abort = new AbortController();
       appStateSub = AppState.addEventListener('change', (state) => {
-        if (state === 'background') leftApp = true;
+        if (state === 'background') abort.abort();
       });
       const cancelled = () => {
         importLog.warn(
@@ -485,9 +485,9 @@ export function useRecorder(initialDraftId?: string) {
       const target = await getRecorderFormat();
       let conformed: ConformOutcome | null;
       try {
-        conformed = await conformToContract(picked.uri, target);
+        conformed = await conformToContract(picked.uri, target, abort.signal);
       } catch (e) {
-        if (leftApp) {
+        if (abort.signal.aborted) {
           cancelled();
           return;
         }
@@ -501,7 +501,8 @@ export function useRecorder(initialDraftId?: string) {
         );
         return;
       }
-      if (leftApp) {
+      // Finished just as Pulse left: still cancelled, as promised.
+      if (abort.signal.aborted) {
         if (conformed) void deleteFile(conformed.path).catch(() => {});
         cancelled();
         return;

@@ -1,4 +1,10 @@
-import { compress, deleteFile, probeVideo, type CompressResult } from 'react-native-video-trim';
+import {
+  cancelCompress,
+  compress,
+  deleteFile,
+  probeVideo,
+  type CompressResult,
+} from 'react-native-video-trim';
 
 import { checkConform } from './conform-verify';
 import { decideImport, type RecorderFormat } from './import-normalization';
@@ -35,6 +41,9 @@ function describe(e: unknown): string {
  * on FFmpeg. A short result from the last-resort engine is accepted — a truncated source only
  * holds that much — and reported in `notes`.
  *
+ * `signal` cancels it: the running conversion is stopped natively (`cancelCompress`), no further
+ * engine is tried, and the call rejects with "Import cancelled" right away.
+ *
  * Container layout (faststart) is deliberately NOT part of this gate: raw recorder files are
  * moov-at-end by AVFoundation constraint (see the codec-pin note in use-recorder.ts) and the
  * vault's web-ready backstop owns progressive-playback normalization for raw segments; every
@@ -43,8 +52,28 @@ function describe(e: unknown): string {
 export async function conformToContract(
   uri: string,
   target?: RecorderFormat,
+  signal?: AbortSignal,
+): Promise<ConformOutcome | null> {
+  const stopIfCancelled = () => {
+    if (signal?.aborted) throw new Error('Import cancelled');
+  };
+  stopIfCancelled();
+  const onAbort = () => cancelCompress();
+  signal?.addEventListener('abort', onAbort);
+  try {
+    return await conform(uri, target, stopIfCancelled);
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+async function conform(
+  uri: string,
+  target: RecorderFormat | undefined,
+  stopIfCancelled: () => void,
 ): Promise<ConformOutcome | null> {
   const probe = await probeVideo(uri);
+  stopIfCancelled();
   // decideImport passes no-video files through (audio-only is fine for a library), but a
   // SEGMENT without a video stream can never satisfy the portrait contract — fail closed.
   if (!probe.hasVideo) throw new Error('Clip has no video stream.');
@@ -57,16 +86,24 @@ export async function conformToContract(
   for (const engine of ['auto', 'ffmpeg']) {
     // `auto` already ended on FFmpeg: re-running the same engine can't change the outcome.
     if (engine === 'ffmpeg' && lastEngine === 'ffmpeg') break;
+    stopIfCancelled();
     let result: CompressResult;
     try {
       result = await compress(uri, { ...decision.options, engine });
     } catch (e) {
+      stopIfCancelled();
       // A rejection means every engine inside the module (FFmpeg included) already failed.
       failures.push(`${engine}: ${describe(e)}`);
       lastEngine = 'ffmpeg';
       continue;
     }
     lastEngine = result.engine;
+    try {
+      stopIfCancelled();
+    } catch (e) {
+      void deleteFile(result.outputPath).catch(() => {});
+      throw e;
+    }
     if (result.fallbackReason) notes.push(`native engine fell back: ${result.fallbackReason}`);
 
     const output = await probeVideo(result.outputPath).catch(() => null);
