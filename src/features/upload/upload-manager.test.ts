@@ -65,16 +65,16 @@ jest.mock('@/db/destinations', () => {
 
 jest.mock('@/db/secure-token', () => {
   const state = {
-    links: new Map<string, { url: string; expiresAt: number }>(),
+    links: new Map<string, { url: string; expiresAt: number | null }>(),
     deleted: [] as string[],
   };
   return {
     __state: state,
-    getViewLink: jest.fn(async (id: string) => state.links.get(id) ?? null),
-    setViewLink: jest.fn(async (id: string, link: { url: string; expiresAt: number }) => {
+    getSavedLink: jest.fn(async (id: string) => state.links.get(id) ?? null),
+    setSavedLink: jest.fn(async (id: string, link: { url: string; expiresAt: number | null }) => {
       state.links.set(id, link);
     }),
-    deleteViewLink: jest.fn(async (id: string) => {
+    deleteSavedLink: jest.fn(async (id: string) => {
       state.links.delete(id);
       state.deleted.push(id);
     }),
@@ -169,13 +169,16 @@ jest.mock('./keep-alive', () => ({
   keepAlive: { begin: jest.fn(async () => {}), end: jest.fn(async () => {}), note: jest.fn() },
 }));
 const mockNotifyFailed = jest.fn(async () => {});
+const mockNotifyComplete = jest.fn<(linkCopied: boolean) => Promise<void>>(async () => {});
 jest.mock('./notify', () => ({
   uploadNotify: {
     ensurePermission: jest.fn(async () => {}),
-    complete: jest.fn(async () => {}),
+    complete: (linkCopied: boolean) => mockNotifyComplete(linkCopied),
     failed: () => mockNotifyFailed(),
   },
 }));
+const mockCopy = jest.fn<(text: string) => Promise<boolean>>(async () => true);
+jest.mock('expo-clipboard', () => ({ setStringAsync: (text: string) => mockCopy(text) }));
 
 jest.mock('./capabilities', () => ({
   ...(jest.requireActual('./capabilities') as object),
@@ -253,7 +256,7 @@ const db = (
 ).__state;
 const secure = (
   jest.requireMock('@/db/secure-token') as {
-    __state: { links: Map<string, { url: string; expiresAt: number }>; deleted: string[] };
+    __state: { links: Map<string, { url: string; expiresAt: number | null }>; deleted: string[] };
   }
 ).__state;
 const pool = (
@@ -338,6 +341,9 @@ beforeEach(() => {
   native.log.length = 0;
   mockToast.mockClear();
   mockNotifyFailed.mockClear();
+  mockNotifyComplete.mockClear();
+  mockCopy.mockReset();
+  mockCopy.mockImplementation(async () => true);
   mockUploadViaTus.mockReset();
   mockCancelTus.mockReset();
   mockCancelTus.mockImplementation(async () => {});
@@ -354,11 +360,14 @@ describe('launch check', () => {
   it('cancels orphaned transfers and clears temp files before anything uploads, then fails what a kill left uploading', async () => {
     // A draft a killed app left `uploading`, and one uploading live in this process.
     db.status.set('killed', 'uploading');
-    // Uploaded earlier, with a view link that still works and one that has expired.
+    // Uploaded earlier: a view link that still works, one that has expired, and a plain link
+    // from a server without tokens, which never expires.
     db.status.set('shared', 'uploaded');
     secure.links.set('shared', { url: 'https://v/shared', expiresAt: Date.now() + 60_000 });
     db.status.set('stale', 'uploaded');
     secure.links.set('stale', { url: 'https://v/stale', expiresAt: Date.now() - 1 });
+    db.status.set('plain', 'uploaded');
+    secure.links.set('plain', { url: 'https://v/plain', expiresAt: null });
     let releaseOrphans: () => void = () => {};
     native.cancelOrphans = () =>
       new Promise<number>((resolve) => {
@@ -391,10 +400,15 @@ describe('launch check', () => {
     expect(mockNotifyFailed).toHaveBeenCalled();
     // What the killed run created is left to server retention (its URLs died with it).
     expect(mockCancelTus).not.toHaveBeenCalled();
-    // View links come back after a restart until they expire; expired ones are forgotten.
+    // Saved links come back after a restart until they expire; expired ones are forgotten.
     await eventually(() => uploads.getWatchLink('shared') !== null);
     expect(uploads.getWatchLink('shared')).toMatchObject({
       url: 'https://v/shared',
+      shareable: true,
+    });
+    expect(uploads.getWatchLink('plain')).toEqual({
+      url: 'https://v/plain',
+      expiresAt: null,
       shareable: true,
     });
     expect(uploads.getWatchLink('stale')).toBeNull();
@@ -432,9 +446,9 @@ describe('upload', () => {
 
     expect(db.status.get('d1')).toBe('uploaded');
     // Finishing is an event: the draft is idle again, the user is told, and the tokened watch
-    // link is kept for Home's ⋯ menu.
+    // link is kept for the draft's Share button on Home.
     expect(uploads.getDraftState('d1').status).toBe('idle');
-    expect(mockToast).toHaveBeenCalledWith('Uploaded “My Draft”');
+    expect(mockToast).toHaveBeenCalledWith('Uploaded');
     // No view links on this server: the link carries the pairing token, so it's for the
     // user's own browser only — never offered for copying.
     expect(uploads.getWatchLink('d1')).toEqual({
@@ -442,21 +456,17 @@ describe('upload', () => {
       expiresAt: null,
       shareable: false,
     });
+    // It carries the pairing token, so it's never saved to outlive this session, nor copied.
+    expect(secure.links.has('d1')).toBe(false);
+    expect(mockCopy).not.toHaveBeenCalled();
+    expect(mockNotifyComplete).toHaveBeenCalledWith(false);
+    expect(uploads.getAnnouncement('d1')).toMatchObject({ copied: false });
     expect(mockRequestViewLink).not.toHaveBeenCalled();
     // A finished upload keeps everything it created; its temp files are gone.
     expect(mockCancelTus).not.toHaveBeenCalled();
     expect(files.deletedFiles).toEqual(
       expect.arrayContaining(['d1.vtt', 'd1-beats.pulse', 'd1.jpg']),
     );
-  });
-
-  it('names an unnamed draft’s upload as “your pulse”', async () => {
-    jest.mocked(getDraftName).mockResolvedValueOnce(undefined);
-    tusWith();
-    await claim('d0');
-    await eventually(() => db.status.get('d0') === 'uploaded');
-
-    expect(mockToast).toHaveBeenCalledWith('Your pulse is uploaded');
   });
 
   it('a terminal failure unpairs the draft, DELETEs what the run created, and says why', async () => {
@@ -652,7 +662,7 @@ describe('claim', () => {
     expect(db.status.get('r2')).toBeNull();
     // Not reachable from the UI (one export screen at a time), so the loser tells the user
     // nothing; the only toast is the winner's.
-    expect(mockToast.mock.calls).toEqual([['Uploaded “My Draft”']]);
+    expect(mockToast.mock.calls).toEqual([['Uploaded']]);
   });
 
   it('a cancel that lands mid-claim stops the upload before it starts', async () => {
@@ -729,6 +739,11 @@ describe('view links', () => {
     expect(uploads.getWatchLink('v1')).toEqual({ ...link, shareable: true });
     await eventually(() => secure.links.has('v1'));
     expect(secure.links.get('v1')).toEqual(link);
+    // The view link is what's copied, and the one announcement says so.
+    await eventually(() => mockToast.mock.calls.length > 0);
+    expect(mockCopy.mock.calls).toEqual([[link.url]]);
+    expect(mockToast.mock.calls).toEqual([['Share link copied to clipboard']]);
+    expect(mockNotifyComplete).toHaveBeenCalledWith(true);
   });
 
   it('records the upload before asking for a link, and a server that never answers holds up nothing', async () => {
@@ -738,13 +753,15 @@ describe('view links', () => {
     await claim('v0');
     await eventually(() => mockRequestViewLink.mock.calls.length > 0);
 
-    // Already uploaded and announced, with the direct link for the user's own browser.
+    // Already uploaded, with the direct link for the user's own browser. The announcement waits
+    // for the link to copy (up to its timeout), so nothing is announced yet.
     expect(db.status.get('v0')).toBe('uploaded');
-    expect(mockToast).toHaveBeenCalledWith('Uploaded “My Draft”');
     expect(uploads.getWatchLink('v0')).toMatchObject({ shareable: false });
+    expect(mockToast).not.toHaveBeenCalled();
     // The next upload isn't queued behind the unanswered request.
     await claim('v0b');
     await eventually(() => db.status.get('v0b') === 'uploaded');
+    expect(mockToast.mock.calls).toEqual([['Uploaded']]);
   });
 
   it('falls back to a link for the user alone when the server can’t mint one', async () => {
@@ -758,7 +775,7 @@ describe('view links', () => {
     expect(secure.links.has('v2')).toBe(false);
   });
 
-  it('shares a tokenless link, which carries no secret', async () => {
+  it('shares a tokenless link, which carries no secret, and keeps it across restarts', async () => {
     tusWith();
     pool.pool.add('open-link');
     await uploads.claim({
@@ -775,6 +792,34 @@ describe('view links', () => {
       expiresAt: null,
       shareable: true,
     });
+    await eventually(() => secure.links.has('v3'));
+    expect(secure.links.get('v3')).toEqual({
+      url: `${SERVER}/artifacts/art-open`,
+      expiresAt: null,
+    });
+    // Loom-style: it goes straight to the clipboard, and the toast says so.
+    await eventually(() => mockToast.mock.calls.length > 0);
+    expect(mockCopy.mock.calls).toEqual([[`${SERVER}/artifacts/art-open`]]);
+    expect(mockToast.mock.calls).toEqual([['Share link copied to clipboard']]);
+    expect(mockNotifyComplete).toHaveBeenCalledWith(true);
+    expect(uploads.getAnnouncement('v3')).toMatchObject({ copied: true });
+  });
+
+  it('says the upload landed but doesn’t claim a copy when the clipboard refuses', async () => {
+    mockCopy.mockImplementation(async () => false);
+    tusWith();
+    pool.pool.add('open-7');
+    await uploads.claim({
+      draftId: 'v7',
+      destinationId: 'open-7',
+      destination: { server: SERVER, token: null, artifactId: 'art-7' },
+      segments: [],
+      merged: { path: '/drafts/v7/export.mp4', durationMs: 1000 },
+    });
+    await eventually(() => mockToast.mock.calls.length > 0);
+
+    expect(mockToast.mock.calls).toEqual([['Uploaded']]);
+    expect(uploads.getAnnouncement('v7')).toMatchObject({ copied: false });
   });
 
   it('a new upload of the draft replaces its previous link', async () => {

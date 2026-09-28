@@ -15,7 +15,7 @@ import { db } from './client';
 import type { PairedDestination } from './destinations';
 import type { Draft, Segment } from './schema';
 import { drafts, segments } from './schema';
-import { deleteViewLink } from './secure-token';
+import { deleteSavedLink } from './secure-token';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
@@ -298,12 +298,12 @@ export async function renameDraft(draftId: string, name: string | null): Promise
   await db.update(drafts).set({ name, lastModified: now }).where(eq(drafts.id, draftId));
 }
 
-/** Delete a draft (segments cascade), its on-disk directory (clips + export) and its view link. */
+/** Delete a draft (segments cascade), its on-disk directory (clips + export) and its saved link. */
 export async function deleteDraft(draftId: string): Promise<void> {
   await assertNotUploading(draftId);
   await db.delete(drafts).where(eq(drafts.id, draftId));
   deleteDraftDir(draftId);
-  await deleteViewLink(draftId);
+  await deleteSavedLink(draftId);
 }
 
 // Upload pairing -------------------------------------------------------------------------------

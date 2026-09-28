@@ -11,11 +11,13 @@ import {
   markUploaded,
   setUploadDestination,
 } from '@/db/drafts';
-import { deleteViewLink, getViewLink, setViewLink } from '@/db/secure-token';
+import { deleteSavedLink, getSavedLink, setSavedLink } from '@/db/secure-token';
 import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { parseTranscriptLines } from '@/features/transcription/whisper';
+import { copyToClipboard } from '@/utils/clipboard';
 import { absolutize, toFileUri } from '@/utils/file-store';
+import { hostOf } from '@/utils/format';
 import { generateThumbnailFile } from '@/utils/video';
 
 import { buildBeatManifest } from './beat-manifest';
@@ -86,10 +88,10 @@ class UploadStoppedError extends Error {
 const IDLE: LiveUploadState = { status: 'idle' };
 
 /**
- * A finished upload's watch link. A read-only view link (protocol 2.2) is `shareable` and kept
- * across restarts until it expires. Without one, the link carries the pairing token, which can
- * also delete the video — so it's only for opening in the user's own browser, held for this
- * session and never offered for copying (a tokenless link carries no secret, and is shareable).
+ * A finished upload's watch link. A shareable one is kept across restarts: a read-only view link
+ * (protocol 2.2) until it expires, or the plain link from a server without tokens, which carries
+ * no secret. Otherwise the link carries the pairing token, which can also delete the video — so
+ * it's only for watching on this device, held for this session and never offered for sharing.
  */
 export type WatchLink = {
   url: string;
@@ -97,6 +99,18 @@ export type WatchLink = {
   expiresAt: number | null;
   shareable: boolean;
 };
+
+/**
+ * A finished upload, once the user has been told (see `announceFinish`): `seq` orders them, so a
+ * screen can tell one that happened while it was open from one before; `copied` says whether its
+ * link went to the clipboard.
+ */
+export type UploadAnnouncement = { seq: number; copied: boolean };
+
+/** Whether `link` still opens at `now` (ms since the epoch). */
+export function isLinkLive(link: WatchLink | null, now: number): link is WatchLink {
+  return link !== null && (link.expiresAt === null || link.expiresAt > now);
+}
 
 /** The uploaded video's link, tokened so it opens without signing in. */
 function watchUrlOf(destination: Destination): string {
@@ -152,15 +166,6 @@ async function discard(urls: readonly string[], token: string | null): Promise<v
   );
 }
 
-/** The server's host for the log — the pairing link's path and query stay out. */
-function hostOf(server: string): string {
-  try {
-    return new URL(server).host;
-  } catch {
-    return 'an unknown server';
-  }
-}
-
 /** `draft 1a2b3c4d` — how the log names a draft. */
 const draftLabel = (draftId: string) => `draft ${shortId(draftId)}`;
 
@@ -211,6 +216,8 @@ class BackgroundUploadManager {
   private readonly controllers = new Map<string, AbortController>();
   private readonly created = new Map<string, string[]>();
   private readonly watchLinks = new Map<string, WatchLink>();
+  private readonly announcements = new Map<string, UploadAnnouncement>();
+  private announcementSeq = 0;
   /** Drafts with a claim in flight, so a double tap uploads once — and a cancel mid-claim sticks. */
   private readonly claiming = new Map<string, { cancelled: boolean }>();
   private running = false;
@@ -242,6 +249,10 @@ class BackgroundUploadManager {
   /** The draft's last finished upload's link this session, whether or not it still works. */
   readonly getWatchLink = (draftId: string): WatchLink | null =>
     this.watchLinks.get(draftId) ?? null;
+
+  /** The draft's last finished upload the user was told about this session, if any. */
+  readonly getAnnouncement = (draftId: string): UploadAnnouncement | null =>
+    this.announcements.get(draftId) ?? null;
 
   private emit(): void {
     for (const cb of this.listeners) cb();
@@ -314,17 +325,17 @@ class BackgroundUploadManager {
       uploadLog.warn(`launch check failed: ${describeError(err)}`);
     }
     // Not part of the check claims wait for: nothing uploads with these.
-    void this.restoreViewLinks();
+    void this.restoreLinks();
   }
 
-  /** Bring back the view links of uploaded drafts that still work, and forget expired ones. */
-  private async restoreViewLinks(): Promise<void> {
+  /** Bring back the saved links of uploaded drafts that still work, and forget expired ones. */
+  private async restoreLinks(): Promise<void> {
     try {
       for (const draftId of await getUploadedDraftIds()) {
-        const link = await getViewLink(draftId);
+        const link = await getSavedLink(draftId);
         if (!link) continue;
-        if (link.expiresAt <= Date.now()) {
-          await deleteViewLink(draftId);
+        if (link.expiresAt !== null && link.expiresAt <= Date.now()) {
+          await deleteSavedLink(draftId);
           continue;
         }
         // An upload this session already set a newer one.
@@ -394,7 +405,7 @@ class BackgroundUploadManager {
     this.sessions.set(draftId, session);
     // A new upload replaces the draft's previous one.
     this.watchLinks.delete(draftId);
-    void deleteViewLink(draftId).catch(() => {});
+    void deleteSavedLink(draftId).catch(() => {});
     // Ask for notification permission now — a foreground moment (the user just tapped Upload) — so
     // the background completion/failure banner can fire later without prompting mid-upload.
     void uploadNotify.ensurePermission();
@@ -521,7 +532,7 @@ class BackgroundUploadManager {
       if (!compat.ok && compat.reason !== 'unreachable') {
         throw new UploadStoppedError(STOPPED_MESSAGE[compat.reason]);
       }
-      const draftName = await this.uploadPulse(run);
+      await this.uploadPulse(run);
       // Recorded as uploaded the moment the bytes are in — nothing (a view link) comes first.
       if (!(await markUploaded(draftId, destination.artifactId))) {
         // A cancel unpaired the draft while the last bytes landed, and its outcome stands: reset
@@ -531,23 +542,25 @@ class BackgroundUploadManager {
         void discard(run.created, destination.token);
         return;
       }
-      // Watch / Copy link live in the draft's ⋯ menu on Home, for as long as the link works.
+      // Watch / Share link: the draft's Share button on Home, while the link works.
       const direct: WatchLink = {
         url: watchUrlOf(destination),
         expiresAt: expiresAtMs(destination.token),
         shareable: destination.token === null,
       };
       this.watchLinks.set(draftId, direct);
+      // A plain link carries no secret, so it's kept across restarts too.
+      if (direct.shareable)
+        void setSavedLink(draftId, { url: direct.url, expiresAt: null }).catch(() => {});
       this.setLive(draftId, IDLE);
       uploadLog.info(`${draftLabel(draftId)}: uploaded in ${formatSeconds(Date.now() - started)}`);
-      // Tell the user it landed: a toast wherever they are, a notification in the background.
-      this.showToast?.(draftName ? `Uploaded “${draftName}”` : 'Your pulse is uploaded');
-      void uploadNotify.complete();
-      // A shareable link, asked for now while the pairing token is still valid (PROTOCOL.md
-      // §6.4) — off the drain, so a slow server holds up nothing.
-      if (compat.ok && compat.capabilities.viewLinks) {
-        void this.shareableLink(draftId, destination, direct);
-      }
+      // Off the drain, so a slow server holds up nothing.
+      void this.announceFinish(
+        draftId,
+        destination,
+        direct,
+        compat.ok && compat.capabilities.viewLinks === true,
+      );
     } catch (err) {
       // A cancel aborted this run and owns its cleanup.
       if (controller.signal.aborted) return;
@@ -569,15 +582,38 @@ class BackgroundUploadManager {
   }
 
   /**
+   * Tell the user a finished upload landed, Loom-style: its shareable link goes straight to the
+   * clipboard, and one toast (a notification in the background) says so. On a server with view
+   * links that first waits for one (at most `VIEW_LINK_TIMEOUT_MS`), so the link copied is the
+   * one to share. A link carrying the pairing token is never copied.
+   */
+  private async announceFinish(
+    draftId: string,
+    destination: Destination,
+    direct: WatchLink,
+    viewLinks: boolean,
+  ): Promise<void> {
+    const link = (viewLinks && (await this.shareableLink(draftId, destination, direct))) || direct;
+    // A newer upload of the draft took over meanwhile: still say this one landed, copy nothing.
+    const copied =
+      this.watchLinks.get(draftId) === link && link.shareable && (await copyToClipboard(link.url));
+    uploadLog.info(`${draftLabel(draftId)}: link ${copied ? 'copied' : 'not copied'}`);
+    this.showToast?.(copied ? 'Share link copied to clipboard' : 'Uploaded');
+    void uploadNotify.complete(copied);
+    this.announcements.set(draftId, { seq: ++this.announcementSeq, copied });
+    this.emit();
+  }
+
+  /**
    * Swap a finished upload's direct link for a read-only view link, and keep that across
-   * restarts. Keeps the direct link when the server doesn't answer in time, or a newer upload of
-   * the draft has replaced it meanwhile.
+   * restarts. Resolves the view link, or `null` — keeping the direct link — when the server
+   * doesn't answer in time, or a newer upload of the draft has replaced it meanwhile.
    */
   private async shareableLink(
     draftId: string,
     destination: Destination,
     direct: WatchLink,
-  ): Promise<void> {
+  ): Promise<WatchLink | null> {
     const viewLink = await requestViewLink({
       server: destination.server,
       artifactId: destination.artifactId,
@@ -585,10 +621,12 @@ class BackgroundUploadManager {
       signal: AbortSignal.timeout(VIEW_LINK_TIMEOUT_MS),
     });
     uploadLog.info(`${draftLabel(draftId)}: view link ${viewLink ? 'received' : 'not available'}`);
-    if (!viewLink || this.watchLinks.get(draftId) !== direct) return;
-    this.watchLinks.set(draftId, { ...viewLink, shareable: true });
+    if (!viewLink || this.watchLinks.get(draftId) !== direct) return null;
+    const link: WatchLink = { ...viewLink, shareable: true };
+    this.watchLinks.set(draftId, link);
     this.emit();
-    await setViewLink(draftId, viewLink).catch(() => {});
+    await setSavedLink(draftId, viewLink).catch(() => {});
+    return link;
   }
 
   /** Set a run's live state — unless it was cancelled, whose reset stands. */
@@ -640,9 +678,9 @@ class BackgroundUploadManager {
   /**
    * Upload a pulse: its captions, beat manifest and thumbnail (each `relatedTo` the video), then
    * the video itself, named by the pairing link's `artifactId`. The related artifacts get a fresh
-   * artifactId every upload. Resolves the draft's name, which the video carries as its title.
+   * artifactId every upload. The video carries the draft's name as its title.
    */
-  private async uploadPulse(run: Run): Promise<string | undefined> {
+  private async uploadPulse(run: Run): Promise<void> {
     const { draftId, destination, segments, merged } = run.session;
     // merged.path is a bare filesystem path on Android (RNVT) — normalize to a file:// URI or the
     // File API rejects it outright ("URI is not absolute").
@@ -740,7 +778,6 @@ class BackgroundUploadManager {
       `video: done, ${formatBytes(videoBytes)} in ${formatSeconds(videoMs)} ` +
         `(${formatRate(videoBytes, videoMs)} overall)`,
     );
-    return draftName;
   }
 }
 

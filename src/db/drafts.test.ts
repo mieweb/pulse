@@ -52,11 +52,11 @@ jest.mock('@/utils/file-store', () => ({
 }));
 jest.mock('@/utils/video', () => ({ generateThumbnailFile: jest.fn(async () => true) }));
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'uuid' }));
-jest.mock('./secure-token', () => ({ deleteViewLink: jest.fn(async () => {}) }));
+jest.mock('./secure-token', () => ({ deleteSavedLink: jest.fn(async () => {}) }));
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { deleteDraftDir, deleteSegmentFile } from '@/utils/file-store';
-import { deleteViewLink } from './secure-token';
+import { deleteSavedLink } from './secure-token';
 import { generateThumbnailFile } from '@/utils/video';
 
 import {
@@ -117,7 +117,7 @@ describe('draft lock while uploading', () => {
     await expect(mutate()).rejects.toThrow(/uploading/);
     expect(mockWrites).toEqual([]);
     expect(deleteDraftDir).not.toHaveBeenCalled();
-    expect(deleteViewLink).not.toHaveBeenCalled();
+    expect(deleteSavedLink).not.toHaveBeenCalled();
   });
 });
 
@@ -140,7 +140,7 @@ describe('persisted export', () => {
     mockSelects.push(idle);
     await deleteDraft('d1');
     expect(deleteDraftDir).toHaveBeenCalledWith('d1');
-    expect(deleteViewLink).toHaveBeenCalledWith('d1');
+    expect(deleteSavedLink).toHaveBeenCalledWith('d1');
   });
 });
 

@@ -59,7 +59,11 @@ async function present(title: string, body: string): Promise<void> {
 
 export const uploadNotify = {
   ensurePermission,
-  complete: () => present('Upload complete', 'Your pulse is on your server.'),
+  complete: (linkCopied: boolean) =>
+    present(
+      'Upload complete',
+      linkCopied ? 'Share link copied to clipboard.' : 'Your pulse is on your server.',
+    ),
   failed: () =>
     present('Upload failed', 'An upload didn’t finish — you’ll need a new link to try again.'),
 };

@@ -26,8 +26,11 @@ import { CaptionOverlay } from '@/features/transcription/caption-overlay';
 import { ModelSwitcherModal } from '@/features/transcription/model-switcher-modal';
 import type { TranscriptLine } from '@/features/transcription/whisper';
 import { DestinationSelector } from '@/features/upload/destination-selector';
+import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
+import { uploads } from '@/features/upload/upload-manager';
 import { useUpload } from '@/features/upload/use-upload';
+import { useUploadAnnouncement, useWatchLink } from '@/features/upload/use-uploads';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
@@ -94,6 +97,15 @@ export default function ExportScreen() {
   // cancelled: no caption edits here, and leaving skips the recorder underneath — an editable
   // timeline under a locked draft — for Home.
   const uploading = uState.status === 'uploading';
+  // An upload that finishes while this screen is open turns the UPLOAD section into Watch / Share
+  // link (the toast still says it uploaded, and that the link was copied). Only announcements
+  // newer than the one current when the screen opened count, so leaving the screen puts the
+  // usual upload UI back.
+  const announcement = useUploadAnnouncement(draftId ?? null);
+  const [seqAtOpen] = useState(() => (draftId ? (uploads.getAnnouncement(draftId)?.seq ?? 0) : 0));
+  const justFinished = announcement && announcement.seq > seqAtOpen ? announcement : null;
+  const finishedLink = useWatchLink(justFinished ? (draftId ?? null) : null);
+  const finished = justFinished && finishedLink ? { ...justFinished, link: finishedLink } : null;
   const close = useCallback(() => {
     if (!uploading) closeToHome();
     else if (router.canDismiss()) router.dismissAll();
@@ -325,7 +337,7 @@ export default function ExportScreen() {
             unpaired again, and scanning a new link is the retry. A previously-uploaded draft
             with nothing to pick shows no upload UI at all (§ post-upload UX — no persistent
             buttons). */}
-        {(upload.destinations.length > 0 || uState.status === 'uploading') && (
+        {(upload.destinations.length > 0 || uState.status === 'uploading' || finished) && (
           <View style={styles.uploadSection}>
             <ThemedText
               type="caption1"
@@ -349,6 +361,41 @@ export default function ExportScreen() {
                   <Icon name="xmark" size={16} tintColor={theme.textSecondary} />
                 </Pressable>
               </View>
+            ) : finished ? (
+              <>
+                <Pressable
+                  onPress={() => void watchUpload(finished.link.url)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Watch"
+                  style={({ pressed }) => [
+                    styles.button,
+                    { backgroundColor: theme.accent },
+                    pressed && styles.pressed,
+                  ]}>
+                  <Icon name="play.fill" size={18} tintColor={theme.onAccent} />
+                  <ThemedText style={{ color: theme.onAccent }}>Watch</ThemedText>
+                </Pressable>
+                {/* Only a link that's safe to share — never one carrying the upload token. */}
+                {finished.link.shareable && (
+                  <Pressable
+                    onPress={() => void shareUploadLink(finished.link.url).catch(() => {})}
+                    accessibilityRole="button"
+                    accessibilityLabel="Share link"
+                    style={({ pressed }) => [
+                      styles.button,
+                      elementSurface,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Icon name="square.and.arrow.up" size={18} tintColor={theme.text} />
+                    <ThemedText>Share link</ThemedText>
+                  </Pressable>
+                )}
+                {finished.copied && (
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.copiedNote}>
+                    Link copied automatically — paste it anywhere to share.
+                  </ThemedText>
+                )}
+              </>
             ) : (
               selectorAndUpload
             )}
@@ -567,4 +614,5 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.85 },
   disabled: { opacity: 0.35 },
+  copiedNote: { textAlign: 'center' },
 });

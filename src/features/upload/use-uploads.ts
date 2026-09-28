@@ -3,7 +3,7 @@ import { useCallback, useSyncExternalStore } from 'react';
 import { useNow } from '@/hooks/use-now';
 
 import { EXPIRY_CHECK_INTERVAL_MS } from './capability-token';
-import { type WatchLink, uploads } from './upload-manager';
+import { isLinkLive, type UploadAnnouncement, type WatchLink, uploads } from './upload-manager';
 import type { LiveUploadState } from './types';
 
 /**
@@ -32,5 +32,14 @@ export function useWatchLink(draftId: string | null): WatchLink | null {
   );
   const link = useSyncExternalStore(uploads.subscribe, getSnapshot);
   const now = useNow(EXPIRY_CHECK_INTERVAL_MS);
-  return link && (link.expiresAt === null || link.expiresAt > now) ? link : null;
+  return isLinkLive(link, now) ? link : null;
+}
+
+/** The draft's last finished upload the user was told about this session (see `UploadAnnouncement`). */
+export function useUploadAnnouncement(draftId: string | null): UploadAnnouncement | null {
+  const getSnapshot = useCallback(
+    () => (draftId ? uploads.getAnnouncement(draftId) : null),
+    [draftId],
+  );
+  return useSyncExternalStore(uploads.subscribe, getSnapshot);
 }

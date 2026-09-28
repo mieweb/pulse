@@ -1,6 +1,4 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import * as Clipboard from 'expo-clipboard';
-import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useState } from 'react';
@@ -15,8 +13,8 @@ import { deleteDraft, draftListQuery, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
-import { useToast } from '@/features/toast/toast-provider';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
+import { watchUpload } from '@/features/upload/link-actions';
 import { uploads } from '@/features/upload/upload-manager';
 import { useWatchLink } from '@/features/upload/use-uploads';
 import { useTheme, useThemeToggle } from '@/hooks/use-theme';
@@ -36,7 +34,6 @@ export default function HomeScreen() {
 
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { showToast } = useToast();
   const { data: drafts } = useLiveQuery(draftListQuery);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   // The draft whose action menu (rename, delete, …) is open; null when closed.
@@ -135,38 +132,22 @@ export default function HomeScreen() {
   const actionsDraftStatus = actionsDraft
     ? drafts.find((d) => d.id === actionsDraft.id)?.uploadStatus
     : null;
-  // A finished upload's link, offered for as long as it still opens (see `useWatchLink`).
-  // Copy link only for a link that's safe to share: never one carrying the pairing token.
+  // An uploaded draft whose card offers Share (a link safe to share) also gets Watch here; one
+  // carrying the upload token is Watch on the card already. Only while the link still opens.
   const watchLink = useWatchLink(actionsDraft?.id ?? null);
-  const watchActions: MenuAction[] = [];
-  if (watchLink) {
-    watchActions.push({
-      key: 'watch',
-      label: 'Watch',
-      icon: 'play.fill',
-      onPress: () => {
-        setActionsDraft(null);
-        void Linking.openURL(watchLink.url);
-      },
-    });
-    if (watchLink.shareable) {
-      watchActions.push({
-        key: 'copy-link',
-        label: 'Copy link',
-        icon: 'link',
-        onPress: () => {
-          setActionsDraft(null);
-          // setStringAsync resolves true on success; the toast only confirms a real copy.
-          Clipboard.setStringAsync(watchLink.url).then(
-            (ok) => {
-              if (ok) showToast('Link copied');
-            },
-            () => {},
-          );
+  const watchAction: MenuAction[] = watchLink?.shareable
+    ? [
+        {
+          key: 'watch',
+          label: 'Watch',
+          icon: 'play.fill',
+          onPress: () => {
+            setActionsDraft(null);
+            void watchUpload(watchLink.url);
+          },
         },
-      });
-    }
-  }
+      ]
+    : [];
   // An uploading draft is LOCKED (see `assertNotUploading`): Cancel is its only action.
   const menuActions: MenuAction[] = !actionsDraft
     ? []
@@ -184,7 +165,7 @@ export default function HomeScreen() {
           },
         ]
       : [
-          ...watchActions,
+          ...watchAction,
           {
             key: 'rename',
             label: 'Rename',
