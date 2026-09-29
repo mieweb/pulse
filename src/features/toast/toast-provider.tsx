@@ -2,11 +2,12 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { Platform } from 'react-native';
 import { FullWindowOverlay } from 'react-native-screens';
 
-import { Toast } from '@/components/toast';
+import { Toast, type ToastKind } from '@/components/toast';
 
 const TOAST_DURATION_MS = 3500;
 
-type ToastContextValue = { showToast: (message: string) => void };
+/** `error` for failures — without it a failure would carry the success checkmark. */
+type ToastContextValue = { showToast: (message: string, kind?: ToastKind) => void };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
@@ -24,8 +25,8 @@ const ToastContext = createContext<ToastContextValue | null>(null);
  * which is what lets e.g. export's "Link copied" show over the modal. Android's
  * modals stay in the same native hierarchy, so the plain sibling suffices.
  */
-function ToastSurface({ message }: { message: string }) {
-  const toast = <Toast key={message} message={message} />;
+function ToastSurface({ message, kind }: { message: string; kind: ToastKind }) {
+  const toast = <Toast key={message} message={message} kind={kind} />;
   if (Platform.OS === 'ios') {
     return <FullWindowOverlay>{toast}</FullWindowOverlay>;
   }
@@ -33,13 +34,13 @@ function ToastSurface({ message }: { message: string }) {
 }
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [message, setMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; kind: ToastKind } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showToast = useCallback((next: string) => {
+  const showToast = useCallback((message: string, kind: ToastKind = 'success') => {
     if (timerRef.current) clearTimeout(timerRef.current);
-    setMessage(next);
-    timerRef.current = setTimeout(() => setMessage(null), TOAST_DURATION_MS);
+    setToast({ message, kind });
+    timerRef.current = setTimeout(() => setToast(null), TOAST_DURATION_MS);
   }, []);
 
   useEffect(
@@ -52,7 +53,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      {message && <ToastSurface message={message} />}
+      {toast && <ToastSurface message={toast.message} kind={toast.kind} />}
     </ToastContext.Provider>
   );
 }

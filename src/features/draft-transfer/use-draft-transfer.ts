@@ -3,6 +3,8 @@ import { isAvailableAsync, shareAsync } from 'expo-sharing';
 import { useState } from 'react';
 import { Alert } from 'react-native';
 
+import { useToast } from '@/features/toast/toast-provider';
+
 import { exportDrafts } from './pack';
 import { importPulseFile } from './unpack';
 
@@ -18,6 +20,7 @@ function message(e: unknown): string {
  */
 export function useDraftTransfer() {
   const [state, setState] = useState<TransferState>('idle');
+  const { showToast } = useToast();
   const busy = state !== 'idle';
 
   /** Pack the selected drafts into a `.pulse` file and hand it to the system share sheet. */
@@ -35,7 +38,7 @@ export function useDraftTransfer() {
         dialogTitle: draftIds.length === 1 ? 'Share draft' : 'Share drafts',
       });
     } catch (e) {
-      Alert.alert('Export failed', message(e));
+      Alert.alert('Couldn’t export drafts', message(e));
     } finally {
       setState('idle');
     }
@@ -55,13 +58,10 @@ export function useDraftTransfer() {
     setState('importing');
     try {
       const { draftIds } = await importPulseFile(asset.uri);
-      Alert.alert(
-        'Import complete',
-        `${draftIds.length} draft${draftIds.length === 1 ? '' : 's'} imported.`,
-      );
+      showToast(`${draftIds.length} draft${draftIds.length === 1 ? '' : 's'} imported`);
       return draftIds;
     } catch (e) {
-      Alert.alert('Import failed', message(e));
+      Alert.alert('Couldn’t import drafts', message(e));
       return [];
     } finally {
       setState('idle');

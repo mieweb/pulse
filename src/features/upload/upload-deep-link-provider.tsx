@@ -27,7 +27,7 @@ function confirmPairing(host: string): Promise<boolean> {
   return new Promise((resolve) => {
     Alert.alert(
       'Connect to this server?',
-      `Pulse will pair with "${host}" and upload to it. Only continue if you recognize this server and opened or scanned this link yourself.`,
+      `Pulse will pair with “${host}” and upload to it. Only continue if you recognize this server and opened or scanned this link yourself.`,
       [
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
         { text: 'Connect', onPress: () => resolve(true) },
@@ -88,7 +88,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
 
     const result = parseUploadDeepLink(url);
     if (!result.ok) {
-      Alert.alert("Can't open this link", REJECTION_MESSAGE[result.reason]);
+      Alert.alert('Can’t open this link', REJECTION_MESSAGE[result.reason]);
       return;
     }
 
@@ -105,7 +105,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
       return checkCapabilities(link.server)
         .then((capResult) => {
           if (!capResult.ok) {
-            Alert.alert("Can't connect", CAPABILITIES_REJECTION_MESSAGE[capResult.reason]);
+            Alert.alert('Can’t connect', CAPABILITIES_REJECTION_MESSAGE[capResult.reason]);
             return;
           }
           // Added to the device-wide pool (not a single slot) — any draft can pick it at
@@ -122,7 +122,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
           // Let the same link be retried — nothing was persisted, so silently swallowing this
           // would leave the user stuck with no path forward but to restart the app.
           handledUrl.current = null;
-          Alert.alert("Can't connect", CAPABILITIES_REJECTION_MESSAGE.unreachable);
+          Alert.alert('Can’t connect', CAPABILITIES_REJECTION_MESSAGE.unreachable);
         });
     });
   }, [url, showToast]);

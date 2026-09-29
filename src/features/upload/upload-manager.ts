@@ -230,8 +230,8 @@ class BackgroundUploadManager {
    * in the foreground and `uploadNotify.failed` in the background (which no-ops
    * in the foreground, so they never double up).
    */
-  private showToast: ((message: string) => void) | null = null;
-  registerToast(showToast: (message: string) => void): void {
+  private showToast: ((message: string, kind?: 'success' | 'error') => void) | null = null;
+  registerToast(showToast: (message: string, kind?: 'success' | 'error') => void): void {
     this.showToast = showToast;
   }
 
@@ -316,7 +316,7 @@ class BackgroundUploadManager {
       if (interrupted > 0) {
         uploadLog.warn(`launch: ${interrupted} upload(s) stopped when the app did; unpaired`);
         const what = interrupted === 1 ? 'An upload' : `${interrupted} uploads`;
-        this.showToast?.(`${what} didn’t finish — ${NEW_LINK}`);
+        this.showToast?.(`${what} didn’t finish — ${NEW_LINK}`, 'error');
         // The launch may be in the background (iOS relaunches the app for a finished transfer).
         void uploadNotify.failed();
       }
@@ -387,7 +387,7 @@ class BackgroundUploadManager {
       // the draft locked with nothing uploading it.
       uploadLog.warn(`${draftLabel(draftId)}: couldn’t start: ${describeError(err)}`);
       await burnUploadPairing(draftId, destination.artifactId).catch(() => false);
-      this.showToast?.('Couldn’t start the upload — try again.');
+      this.showToast?.('Couldn’t start the upload — try again.', 'error');
     } finally {
       this.claiming.delete(draftId);
     }
@@ -503,7 +503,7 @@ class BackgroundUploadManager {
     );
     if (!(await burnUploadPairing(draftId, destination.artifactId))) return;
     this.setLive(draftId, IDLE);
-    this.showToast?.(message);
+    this.showToast?.(message, 'error');
     void uploadNotify.failed();
     void discard(created, destination.token);
   }

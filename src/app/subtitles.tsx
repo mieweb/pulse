@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Accent, Spacing } from '@/constants/theme';
+import { ControlScrim, Spacing } from '@/constants/theme';
 import { segmentsForDraft } from '@/db/drafts';
 import { clearEditedTranscript, getDraftTranscriptRow } from '@/db/transcripts';
 import { selectedModelQuery } from '@/db/settings';
@@ -35,7 +35,7 @@ import { useAutosaveTranscript } from '@/features/transcription/use-autosave-tra
 import { useSubtitleEditor, type Cue } from '@/features/transcription/use-subtitle-editor';
 import { parseTranscriptLines, type TranscriptLine } from '@/features/transcription/whisper';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { toFileUri } from '@/utils/file-store';
 import { effMs, segmentSignature } from '@/utils/segment-window';
 
@@ -75,8 +75,11 @@ export default function SubtitlesScreen() {
     return (
       <ThemedView style={[styles.fill, styles.centerAll]}>
         <ThemedText>Captions unavailable — export the video first.</ThemedText>
-        <Pressable onPress={() => router.back()} style={styles.linkBtn}>
-          <ThemedText style={{ color: Accent }}>Go back</ThemedText>
+        <Pressable
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.linkBtn, pressed && styles.pressedLink]}>
+          <ThemedText themeColor="accent">Go back</ThemedText>
         </Pressable>
       </ThemedView>
     );
@@ -257,20 +260,24 @@ function Editor({
   const [rowEdited, setRowEdited] = useState(savedJson != null);
   const showReset = (rowEdited || editor.dirty) && editor.cues.length > 0;
   const onResetToAuto = () => {
-    Alert.alert('Reset captions?', 'This discards your edits and restores the automatic captions.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reset',
-        style: 'destructive',
-        onPress: async () => {
-          clearSelection();
-          await clearEditedTranscript(draftId);
-          markCleared();
-          editor.reset(autoLines);
-          setRowEdited(false);
+    Alert.alert(
+      'Reset captions?',
+      'This discards your edits and restores the automatic captions.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            clearSelection();
+            await clearEditedTranscript(draftId);
+            markCleared();
+            editor.reset(autoLines);
+            setRowEdited(false);
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
@@ -284,7 +291,7 @@ function Editor({
           <View
             style={[styles.headerTitleWrap, { top: insets.top + Spacing.two }]}
             pointerEvents="none">
-            <ThemedText style={styles.headerTitle}>Captions</ThemedText>
+            <ThemedText type="headline">Captions</ThemedText>
           </View>
           <CloseButton onPress={() => router.back()} />
           <View style={styles.headerActions}>
@@ -296,22 +303,19 @@ function Editor({
               valueText={selectedModel ? selectedModel.label : 'Off'}
               disabled={false}
               onPress={() => setModelSheetVisible(true)}
-              theme={theme}
-              tintColor={selectedModel ? theme.accent : theme.text}
+              tintColor={selectedModel ? theme.accent : undefined}
             />
             <HeaderBtn
               name="arrow.uturn.backward"
               label="Undo"
               disabled={!editor.canUndo}
               onPress={editor.undo}
-              theme={theme}
             />
             <HeaderBtn
               name="arrow.uturn.forward"
               label="Redo"
               disabled={!editor.canRedo}
               onPress={editor.redo}
-              theme={theme}
             />
           </View>
         </View>
@@ -379,7 +383,9 @@ function Editor({
               }>
               <CueRow
                 cue={cue}
-                state={cue.id === editingId ? 'editing' : cue.id === selectedId ? 'selected' : 'view'}
+                state={
+                  cue.id === editingId ? 'editing' : cue.id === selectedId ? 'selected' : 'view'
+                }
                 playing={cue.id === playingId}
                 posCs={posCs}
                 theme={theme}
@@ -394,7 +400,7 @@ function Editor({
             <Pressable
               onPress={onResetToAuto}
               accessibilityRole="button"
-              style={styles.resetLink}>
+              style={({ pressed }) => [styles.resetLink, pressed && styles.pressedLink]}>
               <ThemedText type="footnote" themeColor="textSecondary">
                 Reset to automatic captions
               </ThemedText>
@@ -406,21 +412,20 @@ function Editor({
           <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.two }]}>
             <Pressable
               onPress={onAddCue}
-              style={[
+              accessibilityRole="button"
+              style={({ pressed }) => [
                 styles.footerBtn,
                 { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                pressed && styles.pressed,
               ]}>
-              <Icon name="plus" size={16} tintColor={theme.text} />
+              <Icon name="plus" size={18} tintColor={theme.text} />
               <ThemedText>Add cue</ThemedText>
             </Pressable>
           </View>
         )}
       </KeyboardAvoidingView>
 
-      <ModelSwitcherModal
-        visible={modelSheetVisible}
-        onClose={() => setModelSheetVisible(false)}
-      />
+      <ModelSwitcherModal visible={modelSheetVisible} onClose={() => setModelSheetVisible(false)} />
     </ThemedView>
   );
 }
@@ -433,7 +438,6 @@ function HeaderBtn({
   valueText,
   disabled,
   onPress,
-  theme,
   tintColor,
 }: {
   name: IconName;
@@ -446,9 +450,9 @@ function HeaderBtn({
   valueText?: string;
   disabled: boolean;
   onPress: () => void;
-  theme: ReturnType<typeof useTheme>;
   tintColor?: string;
 }) {
+  const mode = useThemeMode();
   return (
     <Pressable
       onPress={onPress}
@@ -459,12 +463,13 @@ function HeaderBtn({
       accessibilityHint={hint}
       accessibilityState={selected != null ? { disabled, selected } : { disabled }}
       accessibilityValue={valueText != null ? { text: valueText } : undefined}
-      style={[
+      style={({ pressed }) => [
         styles.headerBtn,
-        { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+        ControlScrim[mode],
         disabled && styles.headerBtnDisabled,
+        pressed && styles.pressed,
       ]}>
-      <Icon name={name} size={15} tintColor={tintColor ?? theme.text} />
+      <Icon name={name} size={20} weight="semibold" tintColor={tintColor ?? '#fff'} />
     </Pressable>
   );
 }
@@ -472,7 +477,10 @@ function HeaderBtn({
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   centerAll: { alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
-  linkBtn: { padding: Spacing.two },
+  // ≥44pt tall tap target (22pt line + 11 each side).
+  linkBtn: { paddingHorizontal: Spacing.three, paddingVertical: 11 },
+  pressed: { opacity: 0.85 },
+  pressedLink: { opacity: 0.6 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -488,12 +496,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerTitle: { fontSize: 17, fontWeight: '700' },
   headerActions: { flexDirection: 'row', gap: Spacing.two },
+  // Same 40pt scrim circle as the ✕ beside it (and export's captions button), so the header
+  // reads as one set.
   headerBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',

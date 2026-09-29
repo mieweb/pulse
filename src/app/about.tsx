@@ -1,13 +1,13 @@
 import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
 import { type ReactNode, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Linking,
   Platform,
   Pressable,
@@ -19,7 +19,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import {
   commitLabel,
@@ -35,10 +34,9 @@ import {
 } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
 import { logEntries, writeLogExport } from '@/features/logs/logger';
-import { CloseButton } from '@/features/recorder/close-button';
 import { useToast } from '@/features/toast/toast-provider';
 import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/client-identity';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 
 const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
 const device: DeviceInfo = {
@@ -48,6 +46,15 @@ const device: DeviceInfo = {
 };
 
 /** The generated compatibility table (GitHub Pages), with this app's row highlighted. */
+/**
+ * iOS page-sheet top corner radius (~36pt, measured on iOS 26) and the close icon's size. The ⓧ
+ * is centered on the corner's arc center — as far in from the right edge as down from the top —
+ * so it sits concentric with the rounded corner instead of crammed into it.
+ */
+const SHEET_CORNER_RADIUS = 36;
+const CLOSE_ICON_SIZE = 28;
+const CLOSE_INSET = SHEET_CORNER_RADIUS - CLOSE_ICON_SIZE / 2;
+
 const COMPATIBILITY_URL = `https://mieweb.github.io/pulse/compatibility.html?app=${encodeURIComponent(
   build.version,
 )}&protocol=${APP_PROTOCOL.min}-${APP_PROTOCOL.max}`;
@@ -60,9 +67,12 @@ const COMPATIBILITY_URL = `https://mieweb.github.io/pulse/compatibility.html?app
 export default function AboutScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
+  const mode = useThemeMode();
   const { showToast } = useToast();
   const servers = useServerCompatibility();
   const [sharing, setSharing] = useState(false);
+  // Content has scrolled under the header — show its hairline edge (iOS scroll-edge style).
+  const [scrolled, setScrolled] = useState(false);
   const logCount = useMemo(() => logEntries().length, []);
 
   const details = () => formatDetails({ build, device, protocol: APP_PROTOCOL, servers });
@@ -70,7 +80,7 @@ export default function AboutScreen() {
   const copyDetails = () => {
     void Clipboard.setStringAsync(details()).then(
       (ok) => ok && showToast('Details copied'),
-      () => showToast("Couldn't copy the details"),
+      () => showToast('Couldn’t copy the details', 'error'),
     );
   };
 
@@ -82,25 +92,64 @@ export default function AboutScreen() {
       const file = writeLogExport(details());
       await shareAsync(file.uri, { mimeType: 'text/plain', dialogTitle: 'Pulse logs' });
     } catch (e) {
-      Alert.alert('Couldn’t share logs', e instanceof Error ? e.message : 'Please try again.');
+      Alert.alert('Couldn’t share logs', e instanceof Error ? e.message : 'Try again.');
     } finally {
       setSharing(false);
     }
   };
 
-  const surface = { backgroundColor: theme.backgroundElement, borderColor: theme.border };
+  // Same elevation as the other sheets: in dark mode the sheet sits on the elevated surface and
+  // its cards step up one more level (a black sheet would merge into the screen behind it).
+  const sheetSurface = mode === 'dark' ? theme.backgroundElement : theme.background;
+  const surface = {
+    backgroundColor: mode === 'dark' ? theme.backgroundSelected : theme.backgroundElement,
+    borderColor: theme.border,
+  };
 
   return (
-    <ThemedView style={styles.fill}>
-      <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-        <ThemedText type="subtitle">About</ThemedText>
-        <CloseButton onPress={() => router.back()} />
+    <View style={[styles.fill, { backgroundColor: sheetSurface }]}>
+      {/* iOS presents `modal` as a page sheet that already starts below the status bar, but the
+          root provider's insets are the window's — adding insets.top there left a ~60pt dead band
+          above the content. Android presents it full-screen, so it still needs the inset. */}
+      <View
+        style={[
+          styles.header,
+          {
+            ...(Platform.OS === 'ios'
+              ? { paddingTop: CLOSE_INSET, paddingRight: CLOSE_INSET }
+              : { paddingTop: insets.top + Spacing.two }),
+            borderBottomColor: scrolled ? theme.border : 'transparent',
+          },
+        ]}>
+        {/* The same close control as the app's other sheets (destinations, On-device AI). */}
+        <Pressable
+          onPress={() => router.back()}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          style={({ pressed }) => pressed && styles.pressedIcon}>
+          <Icon name="xmark.circle.fill" size={CLOSE_ICON_SIZE} tintColor={theme.textSecondary} />
+        </Pressable>
       </View>
 
+      {/* No rubber-band when everything fits; when it doesn't (small phones, several paired
+          servers), content passes under the header's hairline instead of being sliced off. */}
       <ScrollView
+        alwaysBounceVertical={false}
+        scrollEventThrottle={16}
+        onScroll={(e) => setScrolled(e.nativeEvent.contentOffset.y > 0)}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}>
         <View style={styles.hero}>
-          <Image source={require('../../assets/images/icon.png')} style={styles.appIcon} />
+          {/* expo-image, not RN's Image: RN re-fetched and re-decoded the 1024px icon on every
+              open (in dev, over Wi-Fi from Metro), so it popped in late or never showed. The
+              memory+disk cache makes every open after the first instant. The icon's backdrop fades
+              to pure white at the top, so without the hairline its top edge vanishes on a white
+              sheet (the App Store outlines light icons the same way). */}
+          <Image
+            source={require('../../assets/images/icon.png')}
+            style={[styles.appIcon, { borderColor: theme.border }]}
+            cachePolicy="memory-disk"
+          />
           <ThemedText type="title3">Pulse</ThemedText>
           <ThemedText themeColor="textSecondary">Version {versionLabel(build)}</ThemedText>
         </View>
@@ -183,7 +232,7 @@ export default function AboutScreen() {
           <ThemedText style={{ color: theme.onAccent }}>Copy details</ThemedText>
         </Pressable>
       </ScrollView>
-    </ThemedView>
+    </View>
   );
 }
 
@@ -263,13 +312,19 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
   },
   content: { paddingHorizontal: Spacing.three, gap: Spacing.four },
   hero: { alignItems: 'center', gap: Spacing.one, marginTop: Spacing.two },
-  appIcon: { width: 72, height: 72, borderRadius: 16, marginBottom: Spacing.two },
+  appIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: Spacing.two,
+  },
   section: { gap: Spacing.two },
   sectionTitle: { marginLeft: Spacing.three, letterSpacing: 0.5 },
   card: { borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
@@ -301,4 +356,5 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   pressed: { opacity: 0.85 },
+  pressedIcon: { opacity: 0.6 },
 });

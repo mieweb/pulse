@@ -90,10 +90,17 @@ export function useMergedTranscription(
       try {
         if (!isModelReady(model)) {
           setState({ status: 'downloading', progress: 0 });
-          setTranscriptionStatus({ kind: 'downloading', bytesWritten: 0, totalBytes: model.approxBytes });
+          setTranscriptionStatus({
+            kind: 'downloading',
+            bytesWritten: 0,
+            totalBytes: model.approxBytes,
+          });
           await ensureModel(model, ({ bytesWritten, totalBytes }) => {
             if (!current) return;
-            setState({ status: 'downloading', progress: totalBytes ? bytesWritten / totalBytes : 0 });
+            setState({
+              status: 'downloading',
+              progress: totalBytes ? bytesWritten / totalBytes : 0,
+            });
             setTranscriptionStatus({ kind: 'downloading', bytesWritten, totalBytes });
           });
         }
@@ -115,7 +122,7 @@ export function useMergedTranscription(
         await markTranscriptError(draftId, signature, model.id).catch(() => {});
         setState({
           status: 'error',
-          message: e instanceof Error ? e.message : 'Could not transcribe the video.',
+          message: e instanceof Error ? e.message : 'Couldn’t transcribe the video.',
         });
       } finally {
         if (current) setTranscriptionStatus({ kind: 'idle' });

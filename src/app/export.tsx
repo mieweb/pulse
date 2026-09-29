@@ -127,7 +127,7 @@ export default function ExportScreen() {
     try {
       await shareAsync(toFileUri(state.outputPath), { mimeType: 'video/mp4' });
     } catch (e) {
-      Alert.alert('Share failed', e instanceof Error ? e.message : 'Could not share the video.');
+      Alert.alert('Couldn’t share the video', e instanceof Error ? e.message : 'Try again.');
     } finally {
       setBusy(false);
     }
@@ -215,6 +215,8 @@ export default function ExportScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={busy ? 'Sharing' : 'Share'}
                 accessibilityState={{ disabled: busy, busy }}
+                // 34pt pill + 5 each side = a 44pt tap target.
+                hitSlop={5}
                 style={({ pressed }) => [
                   styles.smallButton,
                   elementSurface,
@@ -246,6 +248,8 @@ export default function ExportScreen() {
                   disabled: photos.status !== 'idle',
                   busy: photos.status === 'saving',
                 }}
+                // 34pt pill + 5 each side = a 44pt tap target.
+                hitSlop={5}
                 style={({ pressed }) => [
                   styles.smallButton,
                   elementSurface,
@@ -281,6 +285,8 @@ export default function ExportScreen() {
                   disabled: docs.status !== 'idle',
                   busy: docs.status === 'saving',
                 }}
+                // 34pt pill + 5 each side = a 44pt tap target.
+                hitSlop={5}
                 style={({ pressed }) => [
                   styles.smallButton,
                   elementSurface,
@@ -355,20 +361,26 @@ export default function ExportScreen() {
                 <ThemedText>{uploadPhaseLabel(uState)}</ThemedText>
                 <Pressable
                   onPress={() => void upload.cancel()}
-                  hitSlop={8}
+                  // 16pt glyph + 14 each side = a 44pt tap target.
+                  hitSlop={14}
                   accessibilityRole="button"
-                  accessibilityLabel="Cancel upload">
+                  accessibilityLabel="Cancel upload"
+                  style={({ pressed }) => pressed && styles.pressedIcon}>
                   <Icon name="xmark" size={16} tintColor={theme.textSecondary} />
                 </Pressable>
               </View>
             ) : finished ? (
-              <>
+              // Side by side in one 52pt row — the same space the Upload button took, so the
+              // preview doesn't shrink when the upload finishes. The "link copied" toast
+              // covers what the old note under these buttons said.
+              <View style={styles.finishedRow}>
                 <Pressable
                   onPress={() => void watchUpload(finished.link.url)}
                   accessibilityRole="button"
                   accessibilityLabel="Watch"
                   style={({ pressed }) => [
                     styles.button,
+                    styles.rowButton,
                     { backgroundColor: theme.accent },
                     pressed && styles.pressed,
                   ]}>
@@ -383,6 +395,7 @@ export default function ExportScreen() {
                     accessibilityLabel="Share link"
                     style={({ pressed }) => [
                       styles.button,
+                      styles.rowButton,
                       elementSurface,
                       pressed && styles.pressed,
                     ]}>
@@ -390,12 +403,7 @@ export default function ExportScreen() {
                     <ThemedText>Share link</ThemedText>
                   </Pressable>
                 )}
-                {finished.copied && (
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.copiedNote}>
-                    Link copied automatically — paste it anywhere to share.
-                  </ThemedText>
-                )}
-              </>
+              </View>
             ) : (
               selectorAndUpload
             )}
@@ -506,6 +514,7 @@ function CaptionsButton({
     <Pressable
       onPress={status === 'no-model' ? onAddCaptions : onEditCaptions}
       hitSlop={8}
+      style={({ pressed }) => pressed && styles.pressed}
       accessibilityRole="button"
       accessibilityLabel={status === 'ready' && hasCaptions ? 'Edit captions' : 'Add captions'}>
       <View style={surface}>
@@ -613,6 +622,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   pressed: { opacity: 0.85 },
+  pressedIcon: { opacity: 0.6 },
   disabled: { opacity: 0.35 },
-  copiedNote: { textAlign: 'center' },
+  finishedRow: { flexDirection: 'row', gap: Spacing.two },
+  rowButton: { flex: 1 },
 });

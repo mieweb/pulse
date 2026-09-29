@@ -33,7 +33,7 @@ export function CloseButton({
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={style}>
+      style={({ pressed }) => [style, pressed && styles.pressed]}>
       {overVideo ? (
         <GlassPill style={styles.button}>{inner}</GlassPill>
       ) : (
@@ -52,4 +52,5 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   scrim: { borderWidth: StyleSheet.hairlineWidth },
+  pressed: { opacity: 0.85 },
 });

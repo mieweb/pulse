@@ -51,7 +51,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
       },
       {
         icon: 'scissors',
-        text: "Tap the scissors in a clip's preview to trim its start and end.",
+        text: 'Tap the scissors in a clip’s preview to trim its start and end.',
       },
       {
         icon: 'line.3.horizontal',

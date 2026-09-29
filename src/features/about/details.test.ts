@@ -39,7 +39,7 @@ describe('compatLabel', () => {
       'Compatible · protocol 2.1',
       'Needs a newer version of Pulse',
       'Server needs an update',
-      "Couldn't reach it",
+      'Couldn’t reach it',
     ]);
   });
 });
