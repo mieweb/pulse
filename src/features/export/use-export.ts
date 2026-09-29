@@ -5,6 +5,7 @@ import type { Segment } from '@/db/schema';
 import { absolutize } from '@/utils/file-store';
 import { canonicalEdit, effFile } from '@/utils/segment-window';
 
+import { mergeWithEditor } from './editor-merge';
 import { mergedSignature, REELS_TARGET } from './merge-signature';
 import { resolveMergedExport } from './merged-export';
 
@@ -52,6 +53,8 @@ export function useExport(draftId: string, segments: Segment[]) {
     // A late merge resolving after this effect re-ran (or the screen unmounted) must not clobber
     // newer state — only the most recent run is allowed to commit.
     let current = true;
+    // Leaving the screen or changing the clips cancels a pulse-editor merge in flight.
+    const abort = new AbortController();
 
     // Native emits normalized merge progress in [0,1]; reflect it into the loader. Subscribed for
     // the lifetime of this run and torn down in cleanup.
@@ -65,6 +68,20 @@ export function useExport(draftId: string, segments: Segment[]) {
       if (current) setState({ status: 'merging', progress: 0 });
       try {
         const { path, durationMs } = await resolveMergedExport(draftId, segments, async () => {
+          // pulse-editor merges what it supports so far (the fast join on iOS); anything else
+          // still goes through react-native-video-trim until pulse-editor covers it.
+          try {
+            return await mergeWithEditor(segments, abort.signal, (progress) => {
+              if (current) setState({ status: 'merging', progress });
+            });
+          } catch (e) {
+            if (abort.signal.aborted) throw e;
+            console.info(
+              `[export] pulse-editor merge not used, falling back to react-native-video-trim: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
           const urls = files.map(absolutize);
           // Single clips go through the engine too — not just for outlier conforming, but because
           // exported files must be faststart and the raw sources aren't (recorder files are
@@ -80,6 +97,7 @@ export function useExport(draftId: string, segments: Segment[]) {
         });
         if (current) setState({ status: 'done', outputPath: path, durationMs });
       } catch (e) {
+        if (abort.signal.aborted) return; // cancelled: the screen left or the clips changed
         console.warn('[export] merge failed', e);
         if (current) {
           setState({
@@ -92,6 +110,7 @@ export function useExport(draftId: string, segments: Segment[]) {
 
     return () => {
       current = false;
+      abort.abort();
       sub.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
