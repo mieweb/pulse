@@ -1,4 +1,4 @@
-import { deleteFile, extractAudio } from 'react-native-video-trim';
+import { extractAudio } from '@mieweb/pulse-editor';
 import { initWhisper, type WhisperContext } from 'whisper.rn';
 
 import { groupWordsIntoLines } from './group-lines';
@@ -43,9 +43,9 @@ const EMPTY_TRANSCRIPT: TranscriptResult = { language: '', text: '', lines: [] }
  * unavailable (e.g. its model hasn't downloaded yet offline) we fail **open** — assume speech and
  * let Whisper run — so a VAD hiccup never silently drops real captions.
  */
-async function isSilent(wavPath: string): Promise<boolean> {
+async function isSilent(pcm: ArrayBuffer): Promise<boolean> {
   try {
-    return !(await hasSpeech(wavPath));
+    return !(await hasSpeech(pcm));
   } catch {
     return false;
   }
@@ -112,11 +112,11 @@ async function loadContext(model: WhisperModel): Promise<WhisperContext> {
 /**
  * Transcribe a single video clip's audio on-device with the given model.
  *
- * Pipeline: extract the audio track to a 16-bit PCM WAV via react-native-video-trim (FFmpegKit's
- * default WAV codec is pcm_s16le, exactly what whisper.cpp wants), then run Whisper — which
- * auto-resamples to 16kHz and downmixes to mono. The temp WAV is removed afterwards. The model
- * is expected to be downloaded already (the manager handles the download phase); if not, it is
- * fetched here as a fallback.
+ * Pipeline: pulse-editor decodes the audio track in memory to what whisper.cpp takes — 16 kHz mono
+ * 16-bit PCM, downmixed and band-limited resampled natively — and the VAD gate and Whisper both
+ * read that one buffer (`detectSpeechData` / `transcribeData`): no temp file, no second decode.
+ * The model is expected to be downloaded already (the manager handles the download phase); if
+ * not, it is fetched here as a fallback.
  *
  * @param videoUri absolute file URI to the clip (the effective edited-or-original file).
  */
@@ -126,49 +126,46 @@ export async function transcribeVideo(
   options?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 ): Promise<TranscriptResult> {
   const { onProgress, signal } = options ?? {};
-  const { outputPath: wavPath } = await extractAudio(videoUri, { outputExt: 'wav' });
-  try {
-    // Pre-gate on voice activity: silent/noise-only clips make Whisper hallucinate (the
-    // multilingual model emits Chinese on noise, or canned subtitle credits on silence). Skip
-    // Whisper entirely and store an empty transcript so the clip settles instead of re-running.
-    if (await isSilent(wavPath)) return EMPTY_TRANSCRIPT;
+  const { data: pcm } = await extractAudio(videoUri);
+  // No audio track: nothing to caption.
+  if (pcm.byteLength === 0) return EMPTY_TRANSCRIPT;
+  // Pre-gate on voice activity: silent/noise-only clips make Whisper hallucinate (the
+  // multilingual model emits Chinese on noise, or canned subtitle credits on silence). Skip
+  // Whisper entirely and store an empty transcript so the clip settles instead of re-running.
+  if (await isSilent(pcm)) return EMPTY_TRANSCRIPT;
 
-    const ctx = await loadContext(model);
-    // `tokenTimestamps` is what lets `maxLen` split output by token; with `maxLen: 1` we get one
-    // word per segment (with per-word t0/t1), then regroup into caption lines ourselves.
-    // `language` honors the model: 'en' for the English-only models, 'auto' for the multilingual one.
-    //
-    // Speed knobs for the on-device hot path (captions, not subtitling a film):
-    // - `maxThreads`: whisper.rn defaults to 2–4; modern iPhones have 6 cores, so let inference use
-    //   them. whisper.cpp clamps to what's actually available, so over-asking on a 4-core device is
-    //   safe.
-    // - `beamSize: 1` + `bestOf: 1`: greedy, single-candidate decoding. Beam search / multi-candidate
-    //   sampling is the slow default; the quality delta on clear speech is negligible for captions.
-    const { stop, promise } = ctx.transcribe(wavPath, {
-      language: model.lang,
-      maxLen: WORD_PER_SEGMENT,
-      tokenTimestamps: true,
-      maxThreads: 6,
-      beamSize: 1,
-      bestOf: 1,
-      onProgress,
-    });
-    // Cancellation (export screen left, or the run superseded by a clip change): stop the native
-    // inference so it stops contending with a new recording/transcription AND so a later
-    // `releaseWhisper()` (model switch/delete) can't free the context out from under a live call.
-    const onAbort = () => void stop().catch(() => {});
-    signal?.addEventListener('abort', onAbort);
-    try {
-      const result = await promise;
-      return {
-        language: result.language,
-        text: result.result.trim(),
-        lines: groupWordsIntoLines(result.segments),
-      };
-    } finally {
-      signal?.removeEventListener('abort', onAbort);
-    }
+  const ctx = await loadContext(model);
+  // `tokenTimestamps` is what lets `maxLen` split output by token; with `maxLen: 1` we get one
+  // word per segment (with per-word t0/t1), then regroup into caption lines ourselves.
+  // `language` honors the model: 'en' for the English-only models, 'auto' for the multilingual one.
+  //
+  // Speed knobs for the on-device hot path (captions, not subtitling a film):
+  // - `maxThreads`: whisper.rn defaults to 2–4; modern iPhones have 6 cores, so let inference use
+  //   them. whisper.cpp clamps to what's actually available, so over-asking on a 4-core device is
+  //   safe.
+  // - Greedy, single-candidate decoding (`bestOf: 1`, and no `beamSize`: whisper.rn switches to
+  //   beam search for any beamSize, even 1). Same transcripts on our test clips, 8–15% faster.
+  const { stop, promise } = ctx.transcribeData(pcm, {
+    language: model.lang,
+    maxLen: WORD_PER_SEGMENT,
+    tokenTimestamps: true,
+    maxThreads: 6,
+    bestOf: 1,
+    onProgress,
+  });
+  // Cancellation (export screen left, or the run superseded by a clip change): stop the native
+  // inference so it stops contending with a new recording/transcription AND so a later
+  // `releaseWhisper()` (model switch/delete) can't free the context out from under a live call.
+  const onAbort = () => void stop().catch(() => {});
+  signal?.addEventListener('abort', onAbort);
+  try {
+    const result = await promise;
+    return {
+      language: result.language,
+      text: result.result.trim(),
+      lines: groupWordsIntoLines(result.segments),
+    };
   } finally {
-    await deleteFile(wavPath).catch(() => {});
+    signal?.removeEventListener('abort', onAbort);
   }
 }
