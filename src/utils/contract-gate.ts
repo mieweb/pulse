@@ -1,10 +1,5 @@
-import {
-  cancelCompress,
-  compress,
-  deleteFile,
-  probeVideo,
-  type CompressResult,
-} from 'react-native-video-trim';
+import { probe } from 'pulse-editor';
+import { cancelCompress, compress, deleteFile, type CompressResult } from 'react-native-video-trim';
 
 import { checkConform } from './conform-verify';
 import { decideImport, type RecorderFormat } from './import-normalization';
@@ -90,12 +85,12 @@ async function conform(
   target: RecorderFormat | undefined,
   stopIfCancelled: () => void,
 ): Promise<ConformOutcome | null> {
-  const probe = await probeVideo(uri);
+  const source = await probe(uri);
   stopIfCancelled();
   // decideImport passes no-video files through (audio-only is fine for a library), but a
   // SEGMENT without a video stream can never satisfy the portrait contract — fail closed.
-  if (!probe.hasVideo) throw new Error('Clip has no video stream.');
-  const decision = decideImport(probe, target);
+  if (!source.video) throw new Error('Clip has no video stream.');
+  const decision = decideImport(source, target);
   if (decision.action === 'passthrough') return null;
 
   const failures: string[] = [];
@@ -124,9 +119,9 @@ async function conform(
     }
     if (result.fallbackReason) notes.push(`native engine fell back: ${result.fallbackReason}`);
 
-    const output = await probeVideo(result.outputPath).catch(() => null);
+    const output = await probe(result.outputPath).catch(() => null);
     const check = output
-      ? checkConform(probe, output, result, target)
+      ? checkConform(source, output, result, target)
       : { fatal: ['output unreadable'], short: null, mergeMatch: false, mergeMisses: [] };
     const lastResort = result.engine === 'ffmpeg';
     if (check.fatal.length > 0 || (check.short && !lastResort)) {

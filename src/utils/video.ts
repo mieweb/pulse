@@ -1,6 +1,7 @@
 import { File } from 'expo-file-system';
 import { createVideoPlayer, VideoThumbnail } from 'expo-video';
-import { getFrameAt, isValidFile } from 'react-native-video-trim';
+import { probe } from 'pulse-editor';
+import { getFrameAt } from 'react-native-video-trim';
 
 import { toFileUri } from './file-store';
 
@@ -79,13 +80,13 @@ export async function generateThumbnail(uri: string): Promise<VideoThumbnail | u
 }
 
 /**
- * Native clip duration in ms via RNVT's `isValidFile` probe — no player to spin up. 0 on an
+ * Native clip duration in ms via pulse-editor's `probe` — no player to spin up. 0 on an
  * invalid/unreadable file (the clip is then skipped on playback and merge).
  */
 export async function getDurationMs(uri: string): Promise<number> {
   try {
-    const info = await isValidFile(uri);
-    return info.isValid && info.duration > 0 ? info.duration : 0;
+    const { durationMs } = await probe(uri);
+    return durationMs > 0 ? durationMs : 0;
   } catch (e) {
     console.warn('[video] duration failed for', uri, e);
     return 0;

@@ -1,4 +1,5 @@
-import type { CompressResult, VideoProbeResult } from 'react-native-video-trim';
+import type { ProbeResult } from 'pulse-editor';
+import type { CompressResult } from 'react-native-video-trim';
 
 import { decideImport, type RecorderFormat } from './import-normalization';
 
@@ -15,8 +16,8 @@ export type ConformCheck = {
 };
 
 /** Picture duration: the video stream's own when known (audio can outlast it), else the file's. */
-function pictureMs(p: VideoProbeResult): number {
-  return p.videoDuration > 0 ? p.videoDuration : p.duration;
+function pictureMs(p: ProbeResult): number {
+  return p.video && p.video.durationMs > 0 ? p.video.durationMs : p.durationMs;
 }
 
 /**
@@ -25,19 +26,19 @@ function pictureMs(p: VideoProbeResult): number {
  * app does.
  */
 export function checkConform(
-  source: VideoProbeResult,
-  output: VideoProbeResult,
+  source: ProbeResult,
+  output: ProbeResult,
   result: Pick<CompressResult, 'audioDropped'>,
   target?: RecorderFormat,
 ): ConformCheck {
   const fatal: string[] = [];
-  if (!output.hasVideo) {
+  if (!output.video) {
     fatal.push('no video stream in the output');
   } else {
     const contract = decideImport(output);
     if (contract.action !== 'passthrough') fatal.push(...contract.reasons);
   }
-  if (source.hasAudio && !output.hasAudio && !result.audioDropped) fatal.push('audio lost');
+  if (source.audio && !output.audio && !result.audioDropped) fatal.push('audio lost');
 
   let short: string | null = null;
   const want = pictureMs(source);
@@ -47,7 +48,7 @@ export function checkConform(
   }
 
   let mergeMisses: string[] = [];
-  if (target && output.hasVideo) {
+  if (target && output.video) {
     const merge = decideImport(output, target);
     if (merge.action !== 'passthrough') mergeMisses = merge.reasons;
   }

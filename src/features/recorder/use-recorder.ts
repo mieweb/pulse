@@ -7,7 +7,8 @@ import {
 import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
-import { isValidFile, deleteFile } from 'react-native-video-trim';
+import { probe } from 'pulse-editor';
+import { deleteFile } from 'react-native-video-trim';
 import {
   type CameraRef,
   CommonResolutions,
@@ -373,9 +374,8 @@ export function useRecorder(initialDraftId?: string) {
               const recordingUri = recordingPath.startsWith('file://')
                 ? recordingPath
                 : `file://${recordingPath}`;
-              void isValidFile(recordingUri).then(
-                (info) =>
-                  info.isValid && info.duration > 0 ? resolve(recordingPath) : reject(err),
+              void probe(recordingUri).then(
+                (info) => (info.durationMs > 0 ? resolve(recordingPath) : reject(err)),
                 () => reject(err),
               );
             },
@@ -474,11 +474,6 @@ export function useRecorder(initialDraftId?: string) {
         );
       };
 
-      // AVFoundation's view of the clip, reused for the duration of a passthrough. Not a gate:
-      // the FFprobe-based contract probe below decides, so a file only FFmpeg can read still
-      // gets its chance.
-      const info = await isValidFile(picked.uri).catch(() => null);
-
       // Conform before the clip enters the draft — and fail CLOSED: every stored clip must meet
       // the reels contract, so a clip that can't be probed or conformed (or whose output fails
       // verification on every engine) is rejected rather than persisted off-contract.
@@ -522,10 +517,7 @@ export function useRecorder(initialDraftId?: string) {
       const originalFilename = await copyIntoSegments(conformed?.path ?? picked.uri, id, segmentId);
       // The compress output lives in the OS-purgeable cache dir; drop it once copied.
       if (conformed) void deleteFile(conformed.path).catch(() => {});
-      const durationMs =
-        conformed === null && info && info.isValid && info.duration > 0
-          ? info.duration
-          : await getDurationMs(absolutize(originalFilename));
+      const durationMs = await getDurationMs(absolutize(originalFilename));
       await persistSegment(id, segmentId, originalFilename, durationMs);
     } catch (e) {
       importLog.warn(`failed: ${describeError(e)}`);
