@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import type { ProbeAudio, ProbeResult, ProbeVideo } from 'pulse-editor';
+import type { ProbeAudio, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
 
 import {
   CANVAS_HEIGHT,

@@ -27,7 +27,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { ProbeResult, ProbeVideo } from 'pulse-editor';
+import type { ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
 import type { CompressOptions } from 'react-native-video-trim';
 
 import { CANVAS_HEIGHT, CANVAS_WIDTH, decideImport } from './import-normalization';

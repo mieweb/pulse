@@ -1,4 +1,4 @@
-import type { ProbeAudio, ProbeResult, ProbeVideo } from 'pulse-editor';
+import type { ProbeAudio, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
 import type { CompressOptions } from 'react-native-video-trim';
 
 /**

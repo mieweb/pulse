@@ -1,4 +1,4 @@
-import type { ProbeResult } from 'pulse-editor';
+import type { ProbeResult } from '@mieweb/pulse-editor';
 import type { CompressResult } from 'react-native-video-trim';
 
 import { decideImport, type RecorderFormat } from './import-normalization';

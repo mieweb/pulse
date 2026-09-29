@@ -1,6 +1,6 @@
 import { File } from 'expo-file-system';
 import { createVideoPlayer, VideoThumbnail } from 'expo-video';
-import { probe } from 'pulse-editor';
+import { probe } from '@mieweb/pulse-editor';
 import { getFrameAt } from 'react-native-video-trim';
 
 import { toFileUri } from './file-store';

@@ -1,4 +1,4 @@
-import { probe } from 'pulse-editor';
+import { probe } from '@mieweb/pulse-editor';
 import { cancelCompress, compress, deleteFile, type CompressResult } from 'react-native-video-trim';
 
 import { checkConform } from './conform-verify';

@@ -16,7 +16,7 @@ const localModules = {
     __dirname,
     'modules/react-native-video-trim/src/index.tsx',
   ),
-  'pulse-editor': path.resolve(__dirname, 'modules/pulse-editor/src/index.tsx'),
+  '@mieweb/pulse-editor': path.resolve(__dirname, 'modules/pulse-editor/src/index.tsx'),
 };
 config.resolver.blockList = [
   ...[].concat(config.resolver.blockList ?? []),

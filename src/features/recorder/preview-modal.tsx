@@ -4,7 +4,7 @@ import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
-import { probe } from 'pulse-editor';
+import { probe } from '@mieweb/pulse-editor';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Spacing } from '@/constants/theme';

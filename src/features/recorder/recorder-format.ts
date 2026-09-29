@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { probe, type ProbeResult } from 'pulse-editor';
+import { probe, type ProbeResult } from '@mieweb/pulse-editor';
 
 import { getSetting, setSetting } from '@/db/settings';
 import { importLog } from './import-log';

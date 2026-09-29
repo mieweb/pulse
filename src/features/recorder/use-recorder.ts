@@ -7,7 +7,7 @@ import {
 import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
-import { probe } from 'pulse-editor';
+import { probe } from '@mieweb/pulse-editor';
 import { deleteFile } from 'react-native-video-trim';
 import {
   type CameraRef,
