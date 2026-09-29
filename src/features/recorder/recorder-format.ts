@@ -84,7 +84,16 @@ export async function getRecorderFormat(): Promise<RecorderFormat> {
 export async function learnRecorderFormat(uri: string): Promise<void> {
   try {
     const current = await getRecorderFormat();
-    const next = recorderFormatFromProbe(await probe(uri), current);
+    const probed = await probe(uri);
+    // What the recorder actually wrote: its bitrate lands above the 5 Mbps it asks for (#241).
+    const v = probed.video;
+    if (v) {
+      importLog.info(
+        `recorded ${v.codec} ${v.width}x${v.height} ${Math.round(v.fps)}fps ` +
+          `${(v.bitrate / 1e6).toFixed(1)} Mbps, ${(probed.durationMs / 1000).toFixed(1)}s`,
+      );
+    }
+    const next = recorderFormatFromProbe(probed, current);
     if (next && JSON.stringify(next) !== JSON.stringify(current)) {
       await setSetting(RECORDER_FORMAT_KEY, JSON.stringify(next));
       importLog.info(`recorder format learned: ${JSON.stringify(next)}`);
