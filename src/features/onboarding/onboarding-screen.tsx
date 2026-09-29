@@ -83,7 +83,11 @@ export function OnboardingScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={[styles.topBar, { paddingTop: insets.top + Spacing.two }]}>
-        <Pressable onPress={() => finish(false)} hitSlop={12} accessibilityRole="button">
+        <Pressable
+          onPress={() => finish(false)}
+          hitSlop={12}
+          accessibilityRole="button"
+          style={({ pressed }) => pressed && styles.pressedText}>
           <ThemedText type="smallBold" themeColor="textSecondary">
             Skip
           </ThemedText>
@@ -158,7 +162,7 @@ export function OnboardingScreen() {
             styles.cta,
             { backgroundColor: theme.accent, opacity: pressed ? 0.85 : 1 },
           ]}>
-          <ThemedText type="smallBold" style={{ color: theme.onAccent }}>
+          <ThemedText style={{ color: theme.onAccent }}>
             {isLast ? 'Start recording' : 'Next'}
           </ThemedText>
         </Pressable>
@@ -250,9 +254,11 @@ const styles = StyleSheet.create({
     height: 10,
   },
   dot: { height: 8, borderRadius: 4 },
+  pressedText: { opacity: 0.6 },
+  // The app's standard primary button (export, captions, About, permission gate).
   cta: {
     height: 52,
-    borderRadius: 26,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },

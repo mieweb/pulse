@@ -6,6 +6,8 @@ import { saveToLibraryAsync } from 'expo-media-library/legacy';
 import { useState } from 'react';
 import { Alert, Linking } from 'react-native';
 
+import { useToast } from '@/features/toast/toast-provider';
+
 export type SaveStatus = 'idle' | 'saving' | 'saved';
 
 /**
@@ -19,6 +21,7 @@ export function useSaveToPhotos() {
     granularPermissions: ['photo', 'video'],
   });
   const [status, setStatus] = useState<SaveStatus>('idle');
+  const { showToast } = useToast();
 
   async function save(fileUri: string) {
     if (status !== 'idle') return;
@@ -43,10 +46,11 @@ export function useSaveToPhotos() {
     try {
       await saveToLibraryAsync(fileUri);
       setStatus('saved');
-      Alert.alert('Saved to Photos', 'Your video is in the Photos app.');
+      // A toast, not an Alert — the button itself already flips to "Saved".
+      showToast('Saved to Photos');
     } catch (e) {
       setStatus('idle');
-      Alert.alert('Save failed', e instanceof Error ? e.message : 'Could not save the video.');
+      Alert.alert('Couldn’t save the video', e instanceof Error ? e.message : 'Try again.');
     }
   }
 

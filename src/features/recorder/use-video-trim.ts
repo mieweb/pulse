@@ -53,7 +53,7 @@ export function useVideoTrim(draftId: string | null) {
             await setEditState(segmentId, editState);
           } catch (e) {
             console.warn('[trim] failed to save edit', e);
-            Alert.alert('Edit failed', 'Could not save the edit. Please try again.');
+            Alert.alert('Couldn’t save the edit', 'Try again.');
             return;
           }
           const speeds = withCustomSpeed(customSpeeds.current, editStateSpeed(editState));
@@ -70,7 +70,7 @@ export function useVideoTrim(draftId: string | null) {
         if (!segmentId) return;
         deleteSegment(segmentId).catch((e) => {
           console.warn('[trim] failed to delete clip', e);
-          Alert.alert('Delete failed', 'Could not delete the clip. Please try again.');
+          Alert.alert('Couldn’t delete the clip', 'Try again.');
         });
       }),
       Native.onCancel(() => {
@@ -79,7 +79,7 @@ export function useVideoTrim(draftId: string | null) {
       Native.onError(({ message }) => {
         pendingSegmentId.current = null;
         console.warn('[trim] editor error', message);
-        Alert.alert('Edit failed', message || 'The editor reported an error.');
+        Alert.alert('Couldn’t edit the clip', message || 'The editor reported an error.');
       }),
     ];
     return () => subs.forEach((s) => s.remove());

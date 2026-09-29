@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon, type IconName } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { Accent, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { clock, cueLoad } from './cue-row';
 import { MIN_DUR_CS, type Cue } from './use-subtitle-editor';
@@ -33,7 +33,7 @@ export function CueToolbar({
   const canSplit = posCs > cue.t0 + MIN_DUR_CS && posCs < cue.t1 - MIN_DUR_CS;
   const load = cueLoad(cue);
   const labelColor =
-    load === 'bad' ? Accent : load === 'warn' ? theme.warning : theme.textSecondary;
+    load === 'bad' ? theme.accent : load === 'warn' ? theme.warning : theme.textSecondary;
 
   return (
     <View style={styles.strip}>
@@ -60,7 +60,7 @@ export function CueToolbar({
           label="Delete caption"
           theme={theme}
           onPress={onDelete}
-          tint={Accent}
+          tint={theme.accent}
         />
       </View>
     </View>
@@ -86,14 +86,16 @@ function ToolBtn({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      hitSlop={6}
+      // 30pt + 7 each side = a 44pt tap target.
+      hitSlop={7}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !!disabled }}
-      style={[
+      style={({ pressed }) => [
         styles.toolBtn,
         { backgroundColor: theme.backgroundElement, borderColor: theme.border },
         disabled && styles.toolDisabled,
+        pressed && styles.pressed,
       ]}>
       <Icon name={name} size={14} tintColor={tint ?? theme.text} />
     </Pressable>
@@ -120,4 +122,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   toolDisabled: { opacity: 0.35 },
+  pressed: { opacity: 0.85 },
 });

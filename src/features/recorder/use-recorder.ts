@@ -494,10 +494,10 @@ export function useRecorder(initialDraftId?: string) {
         const why = describeError(e);
         importLog.warn(`failed after ${formatSeconds(Date.now() - started)}: ${why}`);
         Alert.alert(
-          'Import failed',
+          'Couldn’t import the video',
           /no video stream|probe/i.test(why)
             ? 'That file isn’t a video Pulse can read.'
-            : 'Could not convert that video for the timeline.',
+            : 'Pulse couldn’t convert it for the timeline.',
         );
         return;
       }
@@ -529,7 +529,7 @@ export function useRecorder(initialDraftId?: string) {
       await persistSegment(id, segmentId, originalFilename, durationMs);
     } catch (e) {
       importLog.warn(`failed: ${describeError(e)}`);
-      Alert.alert('Import failed', e instanceof Error ? e.message : 'Could not import the video.');
+      Alert.alert('Couldn’t import the video', e instanceof Error ? e.message : 'Try again.');
     } finally {
       appStateSub?.remove();
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB

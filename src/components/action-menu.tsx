@@ -1,12 +1,11 @@
 import type { SymbolViewProps } from 'expo-symbols';
 import { Icon } from '@/components/icon';
-import { Modal, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { Modal, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 
 /** On-screen rect of the control the menu points at (from `measureInWindow`). */
 export type Anchor = { x: number; y: number; width: number; height: number };
@@ -40,6 +39,7 @@ const EST_ROW_HEIGHT = 48;
  */
 export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProps) {
   const theme = useTheme();
+  const mode = useThemeMode();
   const insets = useSafeAreaInsets();
   const { width: screenW, height: screenH } = useWindowDimensions();
 
@@ -58,7 +58,16 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Dismiss">
         {/* Swallow taps on the menu itself so they don't reach the backdrop. */}
         <Pressable onPress={() => {}} style={[styles.menu, { top, right, width: MENU_WIDTH }]}>
-          <ThemedView style={[styles.card, { borderColor: theme.border }]}>
+          {/* Dark mode: the elevated surface, like the sheets and toast — a pure-black menu
+              floating over the black screen with no dim only had its hairline to show it. */}
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: mode === 'dark' ? theme.backgroundElement : theme.background,
+                borderColor: theme.border,
+              },
+            ]}>
             {actions.map((action, i) => {
               const tint = action.destructive ? theme.accent : theme.text;
               return (
@@ -75,12 +84,14 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
                     },
                     pressed && { backgroundColor: theme.backgroundSelected },
                   ]}>
-                  <ThemedText style={[styles.rowLabel, { color: tint }]}>{action.label}</ThemedText>
+                  <ThemedText type="body" style={{ color: tint }}>
+                    {action.label}
+                  </ThemedText>
                   <Icon name={action.icon} size={18} tintColor={tint} />
                 </Pressable>
               );
             })}
-          </ThemedView>
+          </View>
         </Pressable>
       </Pressable>
     </Modal>
@@ -108,9 +119,5 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
-  },
-  rowLabel: {
-    fontSize: 16,
-    fontWeight: '500',
   },
 });

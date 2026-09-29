@@ -9,7 +9,9 @@ import { Icon } from './icon';
 import { ThemedText } from './themed-text';
 
 /** A single transient banner, positioned below the top safe area. Purely presentational — see `ToastProvider` for the queue/timing. */
-export function Toast({ message }: { message: string }) {
+export type ToastKind = 'success' | 'error';
+
+export function Toast({ message, kind = 'success' }: { message: string; kind?: ToastKind }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   // `Animated.Value` is mutable and meant to be read during render (its whole purpose is to
@@ -37,7 +39,11 @@ export function Toast({ message }: { message: string }) {
           styles.banner,
           { backgroundColor: theme.backgroundElement, borderColor: theme.border },
         ]}>
-        <Icon name="checkmark.circle.fill" size={18} tintColor={theme.accent} />
+        {kind === 'error' ? (
+          <Icon name="exclamationmark.circle.fill" size={18} tintColor={theme.warning} />
+        ) : (
+          <Icon name="checkmark.circle.fill" size={18} tintColor={theme.accent} />
+        )}
         <ThemedText type="subheadline" style={styles.message} numberOfLines={2}>
           {message}
         </ThemedText>

@@ -137,7 +137,12 @@ export function ModelSwitcherModal({
                 with more features coming.
               </ThemedText>
             </View>
-            <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Close">
+            <Pressable
+              onPress={onClose}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={({ pressed }) => pressed && styles.pressed}>
               <Icon name="xmark.circle.fill" size={28} tintColor={theme.textSecondary} />
             </Pressable>
           </View>
@@ -181,9 +186,18 @@ export function ModelSwitcherModal({
                 <Pressable
                   key={model.id}
                   onPress={() => choose(model.id)}
-                  style={[
+                  style={({ pressed }) => [
                     styles.row,
-                    { borderColor: theme.border, backgroundColor: onSheetSurface },
+                    {
+                      borderColor: theme.border,
+                      // Rows swap their fill on press (the app's row convention) — one level
+                      // above their resting fill, which in dark mode is already backgroundSelected.
+                      backgroundColor: pressed
+                        ? mode === 'dark'
+                          ? theme.border
+                          : theme.backgroundSelected
+                        : onSheetSurface,
+                    },
                     active && [styles.rowActive, { borderColor: theme.accent }],
                   ]}>
                   <View style={styles.rowText}>
@@ -215,7 +229,7 @@ export function ModelSwitcherModal({
               }}
               hitSlop={8}
               accessibilityRole="button"
-              style={styles.delete}>
+              style={({ pressed }) => [styles.delete, pressed && styles.pressed]}>
               <Icon name="trash" size={16} tintColor={theme.accent} />
               <ThemedText type="small" themeColor="accent" style={styles.deleteText}>
                 Remove model & free up space
@@ -275,4 +289,5 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   deleteText: { fontWeight: '700' },
+  pressed: { opacity: 0.6 },
 });

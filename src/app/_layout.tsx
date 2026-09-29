@@ -50,6 +50,10 @@ function ThemedNavigation() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="recorder" options={{ presentation: 'fullScreenModal' }} />
             <Stack.Screen name="export" options={{ presentation: 'fullScreenModal' }} />
+            {/* Explicit: a route pushed above a modal otherwise inherits `modal` (an iOS page
+                sheet), which left a dead band above the captions header and put its ✕ on a
+                different side than the other sheet. Full-screen matches export beneath it. */}
+            <Stack.Screen name="subtitles" options={{ presentation: 'fullScreenModal' }} />
             <Stack.Screen name="about" options={{ presentation: 'modal' }} />
             <Stack.Screen
               name="onboarding"

@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Accent, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { Cue } from './use-subtitle-editor';
 
@@ -62,9 +62,9 @@ export function CueRow({
   const active = state !== 'view';
   const tcColor =
     active || playing
-      ? Accent
+      ? theme.accent
       : load === 'bad'
-        ? Accent
+        ? theme.accent
         : load === 'warn'
           ? theme.warning
           : theme.textSecondary;
@@ -73,13 +73,20 @@ export function CueRow({
     <Pressable
       onPress={state === 'view' ? onSelect : state === 'selected' ? onBeginTextEdit : undefined}
       accessibilityLabel={state === 'view' ? 'Select caption' : 'Edit caption text'}
-      style={[
+      style={({ pressed }) => [
         styles.row,
-        { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-        playing && { borderColor: Accent },
-        active && { borderColor: Accent, borderWidth: 1.5, backgroundColor: theme.backgroundSelected },
+        {
+          backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
+          borderColor: theme.border,
+        },
+        playing && { borderColor: theme.accent },
+        active && {
+          borderColor: theme.accent,
+          borderWidth: ACTIVE_RING,
+          backgroundColor: theme.backgroundSelected,
+        },
       ]}>
-      <View style={styles.inner}>
+      <View style={[styles.inner, active && styles.innerActive]}>
         <ThemedText style={[styles.tc, { color: tcColor }]}>{clock(cue.t0)}</ThemedText>
         {state === 'editing' ? (
           <TextInput
@@ -131,7 +138,7 @@ function KaraokeText({
         <Text
           key={i}
           style={{
-            color: i === active ? Accent : i < active ? theme.text : theme.textSecondary,
+            color: i === active ? theme.accent : i < active ? theme.text : theme.textSecondary,
             fontWeight: i === active ? '600' : '400',
           }}>
           {(i > 0 ? ' ' : '') + w.text}
@@ -140,6 +147,11 @@ function KaraokeText({
     </ThemedText>
   );
 }
+
+// The selected row's accent ring. The inner padding gives back its extra width (see
+// innerActive), so selecting a row never changes its size and nudges the rows below.
+const ACTIVE_RING = 1.5;
+const RING_EXTRA = ACTIVE_RING - StyleSheet.hairlineWidth;
 
 const styles = StyleSheet.create({
   row: {
@@ -153,6 +165,10 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     paddingVertical: Spacing.two + 2,
     paddingHorizontal: Spacing.three,
+  },
+  innerActive: {
+    paddingVertical: Spacing.two + 2 - RING_EXTRA,
+    paddingHorizontal: Spacing.three - RING_EXTRA,
   },
   tc: { fontSize: 13, fontVariant: ['tabular-nums'], width: 38 },
   text: { flex: 1, fontSize: 15, lineHeight: 20 },

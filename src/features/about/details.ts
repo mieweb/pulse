@@ -29,7 +29,7 @@ export function compatLabel(compat: ServerCompat): string {
     case 'app-too-new':
       return 'Server needs an update';
     case 'unreachable':
-      return "Couldn't reach it";
+      return 'Couldn’t reach it';
   }
 }
 

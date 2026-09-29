@@ -38,7 +38,9 @@ export function LensSelector({
           key={preset.label}
           onPress={() => onSelect(preset)}
           disabled={disabled}
-          hitSlop={6}
+          // 28pt chip + 8 top/bottom = a 44pt tap target; sideways only half the 6pt gap, so
+          // neighbouring chips' targets never overlap.
+          hitSlop={{ top: 8, bottom: 8, left: 3, right: 3 }}
           accessibilityRole="button"
           accessibilityLabel={`Lens ${preset.label}`}
           style={({ pressed }) => [

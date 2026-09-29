@@ -18,7 +18,7 @@ import { hasGeometry, previewGeometry, type GeometryEdit, type Size } from './pr
 // minimum); the ✂ and 🗑 badges sit a full Spacing.five apart so their hit areas can't overlap.
 const BADGE_SIZE = 40;
 const BADGE_HIT_SLOP = 4;
-// The "Revert Edits" pill is 28pt tall (the recorder timer pill's shape); 8pt slop keeps the tap
+// The "Revert edits" pill is 28pt tall (the recorder timer pill's shape); 8pt slop keeps the tap
 // target at 44pt.
 const RESET_PILL_HEIGHT = 28;
 const RESET_HIT_SLOP = 8;
@@ -73,7 +73,7 @@ type Props = {
  * segment bar on a themed backdrop (the recorder covers the paused camera with the theme
  * background). Plays the draft through one shared player; tap toggles play, ✂ opens the RNVT
  * editor for the active clip, 🗑 deletes — centred in a row below the video — and ↺ (edited
- * clips only, "Revert Edits", pinned to that row's left edge) resets the clip to its original,
+ * clips only, "Revert edits", pinned to that row's left edge) resets the clip to its original,
  * dropping every edit at once (trim, crop, rotate, flip, mute, speed). Closing and the
  * position / total readout live in the recorder's top bar, so nothing floats over the video.
  * The video renders full-bleed:
@@ -202,7 +202,7 @@ export function PreviewModal({
       </Pressable>
 
       <View style={styles.actionRow}>
-        {/* "Revert Edits" pinned to the row's far left, apart from ✂/🗑 — a different kind of
+        {/* "Revert edits" pinned to the row's far left, apart from ✂/🗑 — a different kind of
             action (discard a clip's saved edits), and pinning it out of the flow keeps ✂/🗑
             centred either way. */}
         {onReset && (
@@ -211,9 +211,10 @@ export function PreviewModal({
               onPress={onReset}
               hitSlop={RESET_HIT_SLOP}
               accessibilityRole="button"
-              accessibilityLabel="Revert Edits">
+              accessibilityLabel="Revert edits"
+              style={({ pressed }) => pressed && styles.pressed}>
               <View style={[styles.resetPill, ControlScrim[mode]]}>
-                <Text style={styles.resetText}>Revert Edits</Text>
+                <Text style={styles.resetText}>Revert edits</Text>
               </View>
             </Pressable>
           </View>
@@ -222,7 +223,8 @@ export function PreviewModal({
           onPress={onTrim}
           hitSlop={BADGE_HIT_SLOP}
           accessibilityRole="button"
-          accessibilityLabel="Edit clip">
+          accessibilityLabel="Edit clip"
+          style={({ pressed }) => pressed && styles.pressed}>
           {/* Mode-aware scrim, not GlassPill: these sit on the THEMED backdrop, where glass
               has nothing to refract and a fixed dark scrim vanishes in dark mode. */}
           <View style={[styles.badge, ControlScrim[mode]]}>
@@ -233,7 +235,8 @@ export function PreviewModal({
           onPress={onDelete}
           hitSlop={BADGE_HIT_SLOP}
           accessibilityRole="button"
-          accessibilityLabel="Delete clip">
+          accessibilityLabel="Delete clip"
+          style={({ pressed }) => pressed && styles.pressed}>
           <View style={[styles.badge, ControlScrim[mode]]}>
             <Icon name="trash" size={20} weight="semibold" tintColor="#fff" />
           </View>
@@ -244,6 +247,7 @@ export function PreviewModal({
 }
 
 const styles = StyleSheet.create({
+  pressed: { opacity: 0.85 },
   stage: {
     flex: 1,
     alignSelf: 'stretch',

@@ -10,8 +10,7 @@ import { Spacing } from '@/constants/theme';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
-import { useTheme } from '@/hooks/use-theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatClipCount, formatDuration, formatRelativeDate } from '@/utils/format';
 
@@ -60,7 +59,9 @@ export function DraftCard({
   onSubmitName,
 }: Props) {
   const theme = useTheme();
-  const isDark = useColorScheme() === 'dark';
+  // The app's resolved mode (manual Light/Dark override, else OS) — not the OS scheme, which
+  // gave a light card a white shadow when Light was pinned on a dark-mode phone.
+  const isDark = useThemeMode() === 'dark';
   const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
   const moreRef = useRef<View>(null);
 
@@ -289,10 +290,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   nameInput: {
-    fontSize: 16,
-    // Match the name Text's line box exactly so swapping in the input never changes
-    // the body height (which would nudge the subtitle).
-    height: 24,
+    // Match the name Text (body: 17/22) exactly so swapping in the input never changes the
+    // text size or the body height (which would nudge the subtitle).
+    fontSize: 17,
+    height: 22,
     padding: 0,
   },
   trailing: {

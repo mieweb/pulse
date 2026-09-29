@@ -78,6 +78,7 @@ const ANDROID_GLYPHS: Partial<Record<string, LucideIcon>> = {
   'doc.on.doc': Copy,
   ellipsis: Ellipsis,
   exclamationmark: CircleAlert,
+  'exclamationmark.circle.fill': CircleAlert,
   'exclamationmark.triangle.fill': TriangleAlert,
   film: Film,
   folder: Folder,

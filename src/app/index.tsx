@@ -97,7 +97,7 @@ export default function HomeScreen() {
     setPendingRename({ id: draftId, name });
     renameDraft(draftId, name).catch(() => {
       setPendingRename(null);
-      Alert.alert('Rename failed', 'The draft name could not be saved.');
+      Alert.alert('Couldn’t rename the draft', 'Try again.');
     });
   };
 
@@ -120,7 +120,7 @@ export default function HomeScreen() {
                 next.delete(draft.id);
                 return next;
               });
-              Alert.alert('Delete failed', 'The draft could not be deleted.');
+              Alert.alert('Couldn’t delete the draft', 'Try again.');
             });
           },
         },
@@ -192,7 +192,11 @@ export default function HomeScreen() {
     <ThemedView style={styles.container}>
       {selectionMode ? (
         <View style={[styles.header, { paddingTop: insets.top + Spacing.three }]}>
-          <Pressable onPress={exitSelection} hitSlop={12} accessibilityRole="button">
+          <Pressable
+            onPress={exitSelection}
+            hitSlop={12}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.selectionAction, pressed && styles.pressedText]}>
             <ThemedText themeColor="accent">Cancel</ThemedText>
           </Pressable>
           <ThemedText type="smallBold">
@@ -202,15 +206,15 @@ export default function HomeScreen() {
             onPress={toggleSelectAll}
             hitSlop={12}
             accessibilityRole="button"
-            disabled={visibleDrafts.length === 0}>
+            disabled={visibleDrafts.length === 0}
+            style={({ pressed }) => [styles.selectionAction, pressed && styles.pressedText]}>
             <ThemedText themeColor={visibleDrafts.length === 0 ? 'textSecondary' : 'accent'}>
-              {allSelected ? 'Deselect All' : 'Select All'}
+              {allSelected ? 'Deselect all' : 'Select all'}
             </ThemedText>
           </Pressable>
         </View>
       ) : (
-        <View style={[styles.header, { paddingTop: insets.top + Spacing.three }]}>
-          <ThemedText type="title">Pulse</ThemedText>
+        <View style={[styles.header, styles.headerEnd, { paddingTop: insets.top + Spacing.three }]}>
           <View style={styles.headerActions}>
             <Pressable
               onPress={importDrafts}
@@ -242,23 +246,26 @@ export default function HomeScreen() {
                 Import
               </ThemedText>
             </Pressable>
-            {visibleDrafts.length > 0 && (
-              <Pressable
-                onPress={() => setSelectionMode(true)}
-                hitSlop={12}
-                accessibilityRole="button"
-                accessibilityLabel="Export drafts"
-                accessibilityHint="Select drafts to share as a .pulse file"
-                style={({ pressed }) => [
-                  styles.headerButton,
-                  pressed && { backgroundColor: theme.backgroundElement },
-                ]}>
-                <Icon name="square.and.arrow.up" size={20} tintColor={theme.text} />
-                <ThemedText type="smallBold" style={styles.headerButtonLabel}>
-                  Export
-                </ThemedText>
-              </Pressable>
-            )}
+            {/* Always rendered (disabled with no drafts) so Import doesn't slide over when the
+                first draft appears. */}
+            <Pressable
+              onPress={() => setSelectionMode(true)}
+              disabled={visibleDrafts.length === 0}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Export drafts"
+              accessibilityHint="Select drafts to share as a .pulse file"
+              accessibilityState={{ disabled: visibleDrafts.length === 0 }}
+              style={({ pressed }) => [
+                styles.headerButton,
+                visibleDrafts.length === 0 && styles.disabled,
+                pressed && { backgroundColor: theme.backgroundElement },
+              ]}>
+              <Icon name="square.and.arrow.up" size={20} tintColor={theme.text} />
+              <ThemedText type="smallBold" style={styles.headerButtonLabel}>
+                Export
+              </ThemedText>
+            </Pressable>
             <Pressable
               onPress={toggleTheme}
               hitSlop={12}
@@ -378,7 +385,7 @@ export default function HomeScreen() {
             {
               backgroundColor: theme.accent,
               bottom: insets.bottom + Spacing.four,
-              opacity: selectedIds.size === 0 || busy ? 0.4 : pressed ? 0.85 : 1,
+              opacity: selectedIds.size === 0 || busy ? 0.35 : pressed ? 0.85 : 1,
             },
           ]}>
           {transferState === 'exporting' ? (
@@ -427,6 +434,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.two,
   },
+  // No title — the actions alone, trailing-aligned. (Selection mode keeps space-between.)
+  headerEnd: { justifyContent: 'flex-end' },
+  // Same 44pt row as the normal header's buttons (`headerButton.minHeight`), so entering or
+  // leaving export selection doesn't change the header's height and shift the drafts.
+  selectionAction: { minHeight: 44, justifyContent: 'center' },
+  pressedText: { opacity: 0.6 },
+  disabled: { opacity: 0.35 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   // Shared header action: icon stacked above its label, with a ≥44×44pt touch target (HIG).
   headerButton: {

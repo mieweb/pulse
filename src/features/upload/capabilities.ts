@@ -83,7 +83,7 @@ export async function checkCapabilities(
 }
 
 export const CAPABILITIES_REJECTION_MESSAGE: Record<CapabilitiesRejectionReason, string> = {
-  unreachable: "Couldn't reach that server. Check the connection and try again.",
+  unreachable: 'Couldn’t reach that server. Check the connection and try again.',
   'version-too-old': 'This server needs a newer version of Pulse. Update the app and try again.',
-  'version-too-new': "This server hasn't been updated to work with this version of Pulse yet.",
+  'version-too-new': 'This server hasn’t been updated for this version of Pulse yet.',
 };
