@@ -12,10 +12,11 @@ export const REELS_TARGET = {
 } as const;
 
 /**
- * Bump whenever REELS_TARGET or any other merge setting changes, so a persisted export encoded
- * under the old settings stops matching and an app update never serves a stale encode.
+ * Bump whenever REELS_TARGET, the merge engine or any other merge setting changes, so a persisted
+ * export encoded under the old settings stops matching and an app update never serves a stale
+ * encode. 2: pulse-editor's merge replaced react-native-video-trim's.
  */
-export const MERGE_VERSION = 1;
+export const MERGE_VERSION = 2;
 
 /**
  * Content key of a draft's merged export: the merge settings version + the ordered effective
