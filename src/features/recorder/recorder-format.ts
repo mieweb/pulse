@@ -88,9 +88,12 @@ export async function learnRecorderFormat(uri: string): Promise<void> {
     // What the recorder actually wrote: its bitrate lands above the 5 Mbps it asks for (#241).
     const v = probed.video;
     if (v) {
+      // probe() reports an unknown value as -1.
+      const mbps = v.bitrate > 0 ? `${(v.bitrate / 1e6).toFixed(1)} Mbps` : 'unknown bitrate';
+      const length =
+        probed.durationMs > 0 ? `${(probed.durationMs / 1000).toFixed(1)}s` : 'unknown length';
       importLog.info(
-        `recorded ${v.codec} ${v.width}x${v.height} ${Math.round(v.fps)}fps ` +
-          `${(v.bitrate / 1e6).toFixed(1)} Mbps, ${(probed.durationMs / 1000).toFixed(1)}s`,
+        `recorded ${v.codec} ${v.width}x${v.height} ${v.fps > 0 ? Math.round(v.fps) : '?'}fps ${mbps}, ${length}`,
       );
     }
     const next = recorderFormatFromProbe(probed, current);

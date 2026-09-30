@@ -370,14 +370,14 @@ export function useRecorder(initialDraftId?: string) {
               // ends the recording with an error — but AVFoundation finalizes the movie on disk
               // first, so the file is usually complete up to the cut. VisionCamera surfaces every
               // such stop as an error; probe the file and treat a playable clip as a successful
-              // stop instead of dropping it. A dead / zero-length file, or one with no video
-              // track (the container can have a duration from its audio alone), still rejects.
+              // stop instead of dropping it. A dead file, or one whose video track is missing or
+              // empty (the container can have a duration from its audio alone), still rejects.
               const recordingUri = recordingPath.startsWith('file://')
                 ? recordingPath
                 : `file://${recordingPath}`;
               void probe(recordingUri).then(
                 (info) =>
-                  info.video && info.durationMs > 0 ? resolve(recordingPath) : reject(err),
+                  (info.video?.durationMs ?? 0) > 0 ? resolve(recordingPath) : reject(err),
                 () => reject(err),
               );
             },
