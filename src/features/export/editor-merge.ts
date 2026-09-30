@@ -8,7 +8,8 @@ import { clipRender } from '@/utils/segment-window';
 
 import { REELS_TARGET } from './merge-signature';
 
-/** Export video bitrate: the recorder's own, so a recorded draft joins without re-encoding. */
+/** Export video bitrate: the target the recorder is set to. Recordings land a little above it
+ * (#241), within the merge's allowance, so a recorded draft joins without re-encoding. */
 export const EXPORT_BITRATE = 5_000_000;
 
 /**
