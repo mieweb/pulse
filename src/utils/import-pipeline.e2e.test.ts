@@ -94,6 +94,19 @@ function num(value: unknown): number {
   return Number.isFinite(n) ? n : -1;
 }
 
+/** Whether ffprobe's display matrix mirrors the frame: a negative determinant, the test the
+ * native probes use. The matrix prints as rows of 16.16 fixed-point numbers. */
+function isMirrored(displayMatrix: unknown): boolean {
+  if (typeof displayMatrix !== 'string') return false;
+  const rows = displayMatrix
+    .trim()
+    .split('\n')
+    .map((row) => row.split(':')[1]?.trim().split(/\s+/).map(Number) ?? []);
+  const [a, b] = rows[0] ?? [];
+  const [c, d] = rows[1] ?? [];
+  return [a, b, c, d].every(Number.isFinite) && a! * d! - b! * c! < 0;
+}
+
 /** Desktop stand-in for pulse-editor's `probe()`: ffprobe mapped to the exact result shape. */
 function probeLikeNative(file: string): ProbeResult {
   const j = ffprobeJson(file);
@@ -114,7 +127,7 @@ function probeLikeNative(file: string): ProbeResult {
       width: num(v.width),
       height: num(v.height),
       rotation: ((-ccw % 360) + 360) % 360,
-      mirrored: false,
+      mirrored: isMirrored(dm?.displaymatrix),
       fps: avg > 0 ? avg : parseFps(v.r_frame_rate),
       bitrate: streamBitrate > 0 ? streamBitrate : num(j.format?.bit_rate),
       bitDepth: /10(le|be)?$/.test(v.pix_fmt ?? '') ? 10 : 8,
@@ -325,7 +338,8 @@ function findPlayheadFill(frame: Frame, box: Box): number {
 function mergeSignature(file: string): string {
   const p = probeLikeNative(file);
   const a = p.audio ? `${p.audio.codec}:${p.audio.sampleRate}:${p.audio.channels}` : 'none';
-  const v = p.video!;
+  const v = p.video;
+  if (!v) throw new Error(`mergeSignature: ${file} has no video stream`);
   return `${v.codec}:${v.width}x${v.height}r${v.rotation}@${Math.round(v.fps)}|${a}`;
 }
 
