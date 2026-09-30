@@ -11,6 +11,7 @@ config.resolver.sourceExts.push('sql');
 // like react-native always resolve to this app's single copy.
 const modulesDir = path.resolve(__dirname, 'modules');
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const SEP = '[\\\\/]';
 const localModules = {
   'react-native-video-trim': path.resolve(
     __dirname,
@@ -20,7 +21,10 @@ const localModules = {
 };
 config.resolver.blockList = [
   ...[].concat(config.resolver.blockList ?? []),
-  new RegExp(`^${escape(modulesDir)}/[^/]+/(node_modules|example)/.*`),
+  // Either path separator, so the pattern also matches Metro's paths on Windows.
+  new RegExp(
+    `^${modulesDir.split(path.sep).map(escape).join(SEP)}${SEP}[^\\\\/]+${SEP}(node_modules|example)${SEP}.*`,
+  ),
 ];
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
