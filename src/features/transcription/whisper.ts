@@ -64,17 +64,17 @@ let loadPromise: Promise<WhisperContext> | null = null;
 const WORD_PER_SEGMENT = 1;
 
 /**
- * Build a Whisper context, preferring on-device acceleration. `useGpu` runs inference on the
- * Metal GPU (iOS) — several times faster and far lighter on battery than the CPU path — with
- * Flash Attention on top. Older devices / simulators without a usable GPU throw on init, so we
- * fall back to the plain CPU context rather than failing transcription outright. Android has no
- * GPU backend in whisper.rn (the flag is ignored there), so Android always runs on CPU.
+ * Build a Whisper context on the Metal GPU with Flash Attention (iOS). whisper.rn already runs on
+ * the CPU when Metal isn't usable (simulators, GPUs older than Apple7), and Android has no GPU
+ * backend in whisper.rn (the flag is ignored there), so Android always runs on the CPU. If the GPU
+ * context still fails to load, retry on the CPU rather than failing transcription outright;
+ * `useGpu` defaults to true in whisper.rn, so the fallback has to turn it off explicitly.
  */
 async function initContext(filePath: string): Promise<WhisperContext> {
   try {
     return await initWhisper({ filePath, useGpu: true, useFlashAttn: true });
   } catch {
-    return initWhisper({ filePath });
+    return initWhisper({ filePath, useGpu: false });
   }
 }
 

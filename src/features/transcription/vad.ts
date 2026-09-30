@@ -61,9 +61,8 @@ let loadPromise: Promise<WhisperVadContext> | null = null;
 let unavailable = false;
 
 /**
- * Build a VAD context on the CPU. Silero is tiny: on the CPU it scores a 15 s clip in ~35 ms and
- * two minutes in ~0.3 s, while the GPU path either can't run its graph (whisper.cpp's Metal init
- * aborts) or, on iPhone, took 12.7 s. `useGpu` defaults to true in whisper.rn, so it's explicit.
+ * Build a VAD context on the CPU. whisper.rn 0.7.4 runs VAD on the CPU on both platforms whatever
+ * `useGpu` says; it defaults to true, so it's set to false here to say what actually happens.
  */
 function initVadContext(filePath: string): Promise<WhisperVadContext> {
   return initWhisperVad({ filePath, useGpu: false });
