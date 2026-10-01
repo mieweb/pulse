@@ -33,7 +33,11 @@ timeline.
 The `portrait-1080p-30fps-h264` clip mirrors **the recorder's stream format** (H.264/AAC 1080p30
 portrait; on iOS the container is QuickTime under a `.mp4` name). All have AAC audio and are ~12–24s
 so there's room to trim.
-Regenerate with [`scripts/make-dev-fixtures.sh`](../../scripts/make-dev-fixtures.sh).
+Like real recordings (checked on an iPhone 17 Pro Max and a Galaxy S24 Ultra), it and the speed
+set's `portrait-h264` have **no B-frames** and a keyframe every second, so edited drafts built from
+them take iOS's selective path as real ones do.
+Regenerate with [`scripts/make-dev-fixtures.sh`](../../scripts/make-dev-fixtures.sh) (`ONLY=<clip name>`
+regenerates one clip and leaves the rest).
 
 ## How to add / change clips
 
@@ -138,7 +142,7 @@ on a normal clone, so `+ seed` works out of the box — just have `git lfs` inst
 [`.lfsconfig`](../../.lfsconfig); fetch it only when regenerating:
 
 ```sh
-git lfs pull --include "fixtures/*.mov"   # the make-dev-fixtures script does this automatically
+git lfs pull --include "fixtures/*.mov" --exclude ""   # the scripts do this automatically
 ```
 
 They rarely change — regenerate with the script rather than hand-editing.

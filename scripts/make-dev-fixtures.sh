@@ -26,7 +26,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/assets/dev"
 # Master lives in the repo at fixtures/bbb_master.mov via Git LFS, but is excluded from normal
-# clones (.lfsconfig) since it's 400+ MB. Fetch on demand: git lfs pull --include "fixtures/*.mov"
+# clones (.lfsconfig) since it's 400+ MB. Fetch on demand: git lfs pull --include "fixtures/*.mov" --exclude ""
 # Override the path with BBB_MASTER=/path.
 SRC="${BBB_MASTER:-$ROOT/fixtures/bbb_master.mov}"
 MASTER_URL="https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov"
@@ -34,13 +34,15 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 command -v ffmpeg >/dev/null || { echo "ffmpeg not found (brew install ffmpeg)"; exit 1; }
 mkdir -p "$OUT"
-rm -f "$OUT"/*.mp4
+# ONLY=<clip name> regenerates just that clip and leaves the others alone.
+ONLY="${ONLY:-}"
+[ -z "$ONLY" ] && rm -f "$OUT"/*.mp4
 # Resolve the master. On a fresh clone the LFS-tracked file is a small pointer (fetchexclude),
 # so pull it on demand; if it's still not a real video, download it.
 is_real_video() { [ -f "$1" ] && [ "$(wc -c <"$1")" -gt 1000000 ]; }
 if ! is_real_video "$SRC"; then
   if [ -f "$SRC" ] && command -v git >/dev/null && git -C "$ROOT" rev-parse >/dev/null 2>&1; then
-    echo ">>> fetching master from Git LFS"; git -C "$ROOT" lfs pull --include "fixtures/*.mov" || true
+    echo ">>> fetching master from Git LFS"; git -C "$ROOT" lfs pull --include "fixtures/*.mov" --exclude "" || true
   fi
   if ! is_real_video "$SRC"; then
     echo ">>> downloading master to $SRC"; mkdir -p "$(dirname "$SRC")"; curl -L --fail -o "$SRC" "$MASTER_URL"
@@ -61,13 +63,20 @@ ROWS=(
   "landscape-4k-30fps-hevc|land|scale=3840:2160:flags=lanczos|30|hevc|mov|480|14"          # 4K landscape from Photos
 )
 
-encode_args() { # $1 codec -> echoes encoder flags
-  if [ "$1" = "h264" ]; then echo "-c:v libx264 -preset veryfast -crf 24 -profile:v high -pix_fmt yuv420p"
+# The recorder writes H.264 with no B-frames and a keyframe every second (checked on an iPhone 17
+# Pro Max and a Galaxy S24 Ultra); the recorder-match clip does too. x264 adds B-frames by default,
+# and a copied clip with B-frames sends iOS's merge to a full encode instead of the selective path.
+RECORDER_MATCH="portrait-1080p-30fps-h264"
+
+encode_args() { # $1 codec, $2 clip name -> echoes encoder flags
+  if [ "$1" = "h264" ] && [ "$2" = "$RECORDER_MATCH" ]; then echo "-c:v libx264 -preset veryfast -crf 24 -profile:v high -pix_fmt yuv420p -bf 0 -g 30"
+  elif [ "$1" = "h264" ]; then echo "-c:v libx264 -preset veryfast -crf 24 -profile:v high -pix_fmt yuv420p"
   else echo "-c:v libx265 -preset veryfast -crf 28 -pix_fmt yuv420p -tag:v hvc1"; fi
 }
 
 for row in "${ROWS[@]}"; do
   IFS='|' read -r name orient geom fps codec container start dur <<< "$row"
+  [ -n "$ONLY" ] && [ "$name" != "$ONLY" ] && continue
   out="$OUT/$name.mp4"
 
   # overlays drawn in DISPLAY orientation (before any transpose): filling bar + red playhead
@@ -79,7 +88,7 @@ for row in "${ROWS[@]}"; do
   if [ "$orient" = "portrait" ]; then
     # step 1: transpose display->coded-landscape, encode to temp
     ffmpeg -hide_banner -loglevel error -y -ss "$start" -t "$dur" -i "$SRC" \
-      -vf "${vf},transpose=1" $(encode_args "$codec") -c:a aac -b:a 128k "$TMP/$name.tmp.mov"
+      -vf "${vf},transpose=1" $(encode_args "$codec" "$name") -c:a aac -b:a 128k "$TMP/$name.tmp.mov"
     # step 2: stamp a 90 rotation matrix via stream copy (iPhone-style display matrix)
     ffmpeg -hide_banner -loglevel error -y -display_rotation 90 -i "$TMP/$name.tmp.mov" \
       -c copy -tag:v hvc1 -f "$container" -movflags +faststart "$out" 2>/dev/null \
@@ -87,7 +96,7 @@ for row in "${ROWS[@]}"; do
            -c copy -f "$container" -movflags +faststart "$out"
   else
     ffmpeg -hide_banner -loglevel error -y -ss "$start" -t "$dur" -i "$SRC" \
-      -vf "$vf" $(encode_args "$codec") -c:a aac -b:a 128k \
+      -vf "$vf" $(encode_args "$codec" "$name") -c:a aac -b:a 128k \
       -f "$container" -movflags +faststart "$out"
   fi
 done
