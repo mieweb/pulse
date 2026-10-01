@@ -78,6 +78,26 @@ Use it to test uploads mid-transfer — backgrounding, airplane mode, cancel —
 `Dev sample 2` finishes too quickly for. It bundles no extra clip. Seed with **`+ s5`** on Home
 (idempotent; `clear` resets it).
 
+## A/V sync clips (`sync/`, `+ s6` / `+ s7`)
+
+[`sync/`](sync/) holds two 12 s flash/click clips for **measuring** lip sync of an export instead
+of judging it by eye. Every second (t = 0.5, 1.5, … 11.5) a 2-frame white flash and a 5 ms click
+start at the same instant; a yellow bar fills along the bottom so position is visible while
+trimming. Recorder-shaped like the other portrait fixtures (coded 1920×1080 + 90° rotation,
+QuickTime, H.264 High 30 fps), mono AAC. Generate with
+[`scripts/make-sync-fixtures.sh`](../../scripts/make-sync-fixtures.sh).
+
+| draft                              | button | composition                 | merge path                              |
+| ---------------------------------- | ------ | --------------------------- | --------------------------------------- |
+| `Dev sample 6 (sync)`              | `+ s6` | 4× `sync-48k`               | join (video copied)                     |
+| `Dev sample 7 (sync, mixed audio)` | `+ s7` | `sync-48k` / `sync-44k` × 2 | iOS: full encode (audio layouts differ) |
+
+Edit the seeded draft (trim clip starts, set a clip to 2×, rotate or crop one) to measure those
+paths too. To measure: export on the phone, pull `drafts/<draft id>/export.mp4` back (draft ids
+`dev-seed-sync` / `dev-seed-sync-mixed`), and for every click take audio minus the start of the
+nearest flash (first frame brighter than mid-grey; first audio sample above 0.2). In sync is
+within a frame (33 ms); the merge fixes measured ≤ 3 ms on the emulator and macOS.
+
 ## Wild-import clips (`import/`)
 
 [`import/`](import/) holds one clip per **hostile real-world import format** — the Photos-library
@@ -112,7 +132,7 @@ bt2020 + HLG/PQ) rather than remastered HDR — which is exactly what trips AVFo
 
 The clips (~25 MB + ~23 MB `import/`) are stored in **Git LFS** (per-folder globs in
 [`.gitattributes`](../../.gitattributes): `assets/dev/*.mp4`, `assets/dev/speed/*.mp4`,
-`assets/dev/import/*.mp4` — new fixture subfolders need their own entry) and fetched
+`assets/dev/import/*.mp4`, `assets/dev/sync/*.mp4` — new fixture subfolders need their own entry) and fetched
 on a normal clone, so `+ seed` works out of the box — just have `git lfs` installed. The regen master
 (`fixtures/bbb_master.mov`, ~400 MB) is **also** in LFS but **excluded from normal clones** via
 [`.lfsconfig`](../../.lfsconfig); fetch it only when regenerating:
