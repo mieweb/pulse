@@ -14,7 +14,9 @@
 #                       (`Dev sample 7 (sync, mixed audio)`).
 #
 # Same portrait handling as the recorder and the other dev fixtures: a coded-landscape buffer +
-# a 90° rotation matrix in a QuickTime container, H.264 High 30 fps. A yellow bar fills along
+# a 90° rotation matrix in a QuickTime container, H.264 High 30 fps, and like the camera no
+# B-frames (x264 adds them by default; a copied clip that reorders frames sends iOS's merge to a
+# full encode, so with them an edited draft would never take the selective path). A yellow bar fills along
 # the bottom so position is visible while trimming.
 #
 # Requires: ffmpeg with libx264 (brew install ffmpeg).
@@ -45,7 +47,7 @@ for rate in 48000 44100; do
     -f lavfi -i "aevalsrc=${CLICK}:s=${rate}:d=${DUR}" \
     -f lavfi -i "color=c=yellow:s=1080x18:r=30:d=${DUR}" \
     -filter_complex "$VF" -map "[v]" -map 1:a \
-    -c:v libx264 -preset veryfast -crf 24 -profile:v high -pix_fmt yuv420p -g 30 \
+    -c:v libx264 -preset veryfast -crf 24 -profile:v high -pix_fmt yuv420p -g 30 -bf 0 \
     -c:a aac -b:a 128k -ac 1 "$TMP/$name.tmp.mov"
   ffmpeg -hide_banner -loglevel error -y -display_rotation 90 -i "$TMP/$name.tmp.mov" \
     -c copy -f mov -movflags +faststart "$OUT/$name.mp4"

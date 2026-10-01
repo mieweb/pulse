@@ -84,7 +84,7 @@ Use it to test uploads mid-transfer — backgrounding, airplane mode, cancel —
 of judging it by eye. Every second (t = 0.5, 1.5, … 11.5) a 2-frame white flash and a 5 ms click
 start at the same instant; a yellow bar fills along the bottom so position is visible while
 trimming. Recorder-shaped like the other portrait fixtures (coded 1920×1080 + 90° rotation,
-QuickTime, H.264 High 30 fps), mono AAC. Generate with
+QuickTime, H.264 High 30 fps, no B-frames like the camera), mono AAC. Generate with
 [`scripts/make-sync-fixtures.sh`](../../scripts/make-sync-fixtures.sh).
 
 | draft                              | button | composition                 | merge path                              |
