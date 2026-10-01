@@ -90,7 +90,7 @@ QuickTime, H.264 High 30 fps, no B-frames like the camera), mono AAC. Generate w
 | draft                              | button | composition                 | merge path                              |
 | ---------------------------------- | ------ | --------------------------- | --------------------------------------- |
 | `Dev sample 6 (sync)`              | `+ s6` | 4× `sync-48k`               | join (video copied)                     |
-| `Dev sample 7 (sync, mixed audio)` | `+ s7` | `sync-48k` / `sync-44k` × 2 | iOS: full encode (audio layouts differ) |
+| `Dev sample 7 (sync, mixed audio)` | `+ s7` | `sync-48k` / `sync-44k` × 2 | join, audio re-encoded to one rate |
 
 Edit the seeded draft (trim clip starts, set a clip to 2×, rotate or crop one) to measure those
 paths too. To measure: export on the phone, pull `drafts/<draft id>/export.mp4` back (draft ids

@@ -126,7 +126,7 @@ const SYNC = {
 // Dev sample 6: 4× the 48 kHz clip → one signature → joined without re-encoding video.
 const SYNC_MODULES: readonly number[] = [SYNC.k48, SYNC.k48, SYNC.k48, SYNC.k48];
 
-// Dev sample 7: 48 / 44.1 kHz alternating → the audio layouts differ, so iOS full-encodes.
+// Dev sample 7: 48 / 44.1 kHz alternating → the video joins; the audio is re-encoded to one rate.
 const SYNC_MIXED_MODULES: readonly number[] = [SYNC.k48, SYNC.k44, SYNC.k48, SYNC.k44];
 
 // --- Wild-import draft (§1.0b) ----------------------------------------------------------------
@@ -270,7 +270,7 @@ export function seedSync(): Promise<string | undefined> {
   return seedModules(SYNC_DRAFT_ID, 'Dev sample 6 (sync)', SYNC_MODULES);
 }
 
-/** Dev sample 7 — flash/click clips with mixed 48 / 44.1 kHz audio (iOS full encode). */
+/** Dev sample 7 — flash/click clips with mixed 48 / 44.1 kHz audio (joined, audio re-encoded). */
 export function seedSyncMixed(): Promise<string | undefined> {
   return seedModules(SYNC_MIXED_DRAFT_ID, 'Dev sample 7 (sync, mixed audio)', SYNC_MIXED_MODULES);
 }

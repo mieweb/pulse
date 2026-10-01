@@ -10,7 +10,7 @@
 #   - `sync-48k.mp4`  → 48 kHz mono AAC. Copies of it share one signature, so a draft of only
 #                       these joins without re-encoding video (`Dev sample 6 (sync)`).
 #   - `sync-44k.mp4`  → 44.1 kHz mono AAC (messaging-app audio). Mixed with the 48 kHz clip, the
-#                       audio layouts differ, which sends iOS down the full encode
+#                       join re-encodes the audio from both rates into the draft's layout
 #                       (`Dev sample 7 (sync, mixed audio)`).
 #
 # Same portrait handling as the recorder and the other dev fixtures: a coded-landscape buffer +
