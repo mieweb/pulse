@@ -22,6 +22,7 @@ import {
   type LensPreset,
   LensSelector,
 } from '@/features/recorder/lens-selector';
+import { MoveHandle } from '@/features/recorder/move-handle';
 import { PermissionGate } from '@/features/recorder/permission-gate';
 import { PreviewModal } from '@/features/recorder/preview-modal';
 import { RecordButton } from '@/features/recorder/record-button';
@@ -33,6 +34,10 @@ import { useRecorder } from '@/features/recorder/use-recorder';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
+import {
+  MOVE_HANDLE_GAP,
+  useRecordButtonPosition,
+} from '@/features/recorder/use-record-button-position';
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
@@ -124,6 +129,23 @@ export default function RecorderScreen() {
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
   const [dragging, setDragging] = useState(false);
+
+  // The record button can be dragged (by its move handle) anywhere below the top bar — e.g.
+  // under the thumb with the phone propped on a desk (#231). Top bar = top inset + its padding
+  // + the 40pt ✕.
+  const {
+    overlayRef,
+    homeRef: recordHomeRef,
+    ready: recordButtonReady,
+    onOverlayLayout,
+    remeasure: remeasureRecordHome,
+    groupStyle: recordGroupStyle,
+    handleGesture: moveHandleGesture,
+  } = useRecordButtonPosition({
+    insets,
+    topReserved: insets.top + Spacing.two + 40,
+    enabled: !previewing && !dragging,
+  });
 
   // While the Export screen is presented over this one, the recorder is unfocused — drop the
   // camera session so it isn't capturing (and burning power) behind the modal. Restored on return.
@@ -468,7 +490,11 @@ export default function RecorderScreen() {
         <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.background }]} />
       )}
 
-      <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="box-none">
+      <View
+        ref={overlayRef}
+        onLayout={onOverlayLayout}
+        style={[StyleSheet.absoluteFill, styles.overlay]}
+        pointerEvents="box-none">
         <View
           style={[
             styles.topBar,
@@ -552,6 +578,7 @@ export default function RecorderScreen() {
         )}
 
         <View
+          onLayout={remeasureRecordHome}
           style={[styles.bottom, { paddingBottom: insets.bottom + Spacing.three }]}
           pointerEvents="box-none">
           {/* Record button is hidden entirely while previewing — the preview surface owns the
@@ -570,12 +597,14 @@ export default function RecorderScreen() {
 
           {!previewing && (
             <View style={styles.buttonRow}>
-              <RecordButton
-                gesture={buttonGesture}
-                holdActive={holdActive}
-                isRecording={isRecording}
-                cameraReady={cameraReady}
-                dragging={dragging}
+              {/* The record button's default spot. The button itself floats over the overlay
+                  (below) so it can be moved anywhere; this keeps the layout and marks home. */}
+              <View
+                ref={recordHomeRef}
+                onLayout={remeasureRecordHome}
+                collapsable={false}
+                pointerEvents="none"
+                style={styles.recordHome}
               />
               {/* Faded out with the record button during a drag so the trash has clear space. */}
               <View style={[styles.importWrap, { opacity: dragging ? 0 : 1 }]}>
@@ -614,6 +643,20 @@ export default function RecorderScreen() {
             }
           />
         </View>
+
+        {/* Last child of the full-screen overlay, so it's on top and touchable anywhere. */}
+        {!previewing && recordButtonReady && (
+          <Animated.View style={[styles.recordGroup, recordGroupStyle]} pointerEvents="box-none">
+            <MoveHandle gesture={moveHandleGesture} hidden={dragging} />
+            <RecordButton
+              gesture={buttonGesture}
+              holdActive={holdActive}
+              isRecording={isRecording}
+              cameraReady={cameraReady}
+              dragging={dragging}
+            />
+          </Animated.View>
+        )}
       </View>
     </View>
   );
@@ -661,6 +704,16 @@ const styles = StyleSheet.create({
   // Full-width row; the record button is centered by the row itself, so its position can't
   // be disturbed by the + control.
   buttonRow: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
+  recordHome: { width: RECORD_BUTTON_SIZE, height: RECORD_BUTTON_SIZE },
+  // Placed at the overlay origin; useRecordButtonPosition translates it onto home + offset.
+  recordGroup: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: MOVE_HANDLE_GAP,
+  },
   // The + sits at the midpoint of the gap between the record button's right edge and the
   // screen edge: 75% marks the center of the right half, +19 shifts past the button's
   // half-width (38/2), -22 centers the 44pt circle on that point.

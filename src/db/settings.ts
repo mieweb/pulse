@@ -20,6 +20,8 @@ const THEME_PREFERENCE_KEY = 'appearance.theme';
 export const CAMERA_FACING_KEY = 'camera.facing';
 export const CAMERA_STABILIZATION_KEY = 'camera.stabilization';
 export const CAMERA_MUTED_KEY = 'camera.muted';
+/** Where the user dragged the record button (screen fractions); unset = default spot. */
+export const RECORD_BUTTON_POSITION_KEY = 'recorder.buttonPosition';
 
 /** Live-queryable: the selected transcription model id (a single settings row). */
 export const selectedModelQuery = db
@@ -82,6 +84,11 @@ export async function setSetting(key: string, value: string): Promise<void> {
     .insert(settings)
     .values({ key, value })
     .onConflictDoUpdate({ target: settings.key, set: { value } });
+}
+
+/** Remove a single settings value. */
+export async function deleteSetting(key: string): Promise<void> {
+  await db.delete(settings).where(eq(settings.key, key));
 }
 
 export type RecorderPrefs = {
