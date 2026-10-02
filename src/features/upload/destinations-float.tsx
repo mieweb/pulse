@@ -21,8 +21,9 @@ import { useDestinations } from './use-destinations';
 const DISMISS_DISTANCE = 80;
 const DISMISS_VELOCITY = 800;
 
-/** The home screen's + FAB (`styles.fab` in app/index.tsx): 60pt wide, `Spacing.four` from the right. */
-const FAB_CLEARANCE = Spacing.four + 60 + Spacing.three;
+/** The home screen's + FAB (`styles.fab` in app/index.tsx): 60pt square, `Spacing.four` from the right. */
+const FAB_SIZE = 60;
+const FAB_CLEARANCE = Spacing.four + FAB_SIZE + Spacing.three;
 /** Longest the pill gets on wide screens, so it stays a pill rather than a bar. */
 const PILL_MAX_WIDTH = 280;
 
@@ -200,7 +201,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: Spacing.four,
     right: FAB_CLEARANCE,
-    height: 44,
+    // Same height and bottom as the FAB, so the pill centres on the FAB's centre line.
+    height: FAB_SIZE,
+    justifyContent: 'center',
     alignItems: 'flex-start',
   },
   pill: {
