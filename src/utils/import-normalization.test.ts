@@ -118,7 +118,15 @@ describe('decideImport against the wild-import fixture corpus', () => {
     const d = decideImport(probe({ rotation: 270, audio: opus }));
     expect(d).toEqual({
       action: 'normalize',
-      options: { engine: 'auto', copyVideo: true },
+      options: {
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+        rotation: 0,
+        fps: NORMALIZE_TARGET_FPS,
+        bitrate: NORMALIZE_TARGET_BITRATE,
+        audio: { sampleRate: 48000, channels: 2 },
+        copyVideo: true,
+      },
       reasons: ['audio codec opus'],
     });
   });
@@ -127,7 +135,7 @@ describe('decideImport against the wild-import fixture corpus', () => {
     const d = decideImport(FIXTURES['opus-landscape-1080p-30-h264']);
     expect(d.action).toBe('normalize');
     if (d.action !== 'normalize') return;
-    expect(d.options.copyVideo).toBeUndefined();
+    expect(d.options.copyVideo).toBe(false);
     expect(d.reasons.join('; ')).toContain('audio codec opus');
     expect(d.reasons.join('; ')).toContain('off the 1080x1920 canvas');
   });
@@ -147,9 +155,9 @@ describe('decideImport against the wild-import fixture corpus', () => {
     const d = decideImport(FIXTURES[name]);
     expect(d.action).toBe('normalize');
     if (d.action !== 'normalize') return;
-    expect(d.options.copyVideo).toBeUndefined();
+    expect(d.options.copyVideo).toBe(false);
     expect(d.options.bitrate).toBe(NORMALIZE_TARGET_BITRATE);
-    expect(d.options.frameRate).toBe(NORMALIZE_TARGET_FPS);
+    expect(d.options.fps).toBe(NORMALIZE_TARGET_FPS);
     for (const fragment of expectedReasons) {
       expect(d.reasons.join('; ')).toContain(fragment);
     }
@@ -161,7 +169,6 @@ describe('decideImport against the wild-import fixture corpus', () => {
       if (d.action !== 'normalize' || d.options.copyVideo) continue;
       expect(d.options.width).toBe(CANVAS_WIDTH);
       expect(d.options.height).toBe(CANVAS_HEIGHT);
-      expect(d.options.letterbox).toBe(true);
     }
   });
 });
@@ -197,7 +204,7 @@ describe('decideImport edge cases beyond the corpus', () => {
     const d = decideImport(probe({ fps: 60, audio: opus }));
     expect(d.action).toBe('normalize');
     if (d.action === 'normalize') {
-      expect(d.options.copyVideo).toBeUndefined();
+      expect(d.options.copyVideo).toBe(false);
       expect(d.reasons.join('; ')).toContain('audio codec opus');
     }
   });
@@ -208,7 +215,6 @@ describe('decideImport edge cases beyond the corpus', () => {
     if (d.action === 'normalize') {
       expect(d.options.width).toBe(CANVAS_WIDTH);
       expect(d.options.height).toBe(CANVAS_HEIGHT);
-      expect(d.options.letterbox).toBe(true);
     }
   });
 

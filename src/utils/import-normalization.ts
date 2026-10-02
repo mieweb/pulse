@@ -1,5 +1,4 @@
-import type { ProbeAudio, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
-import type { CompressOptions } from 'react-native-video-trim';
+import type { ConformOptions, MergeAudio, ProbeAudio, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
 
 /**
  * Import normalization policy (§ imports).
@@ -68,7 +67,24 @@ export type RecorderFormat = {
 
 export type ImportDecision =
   | { action: 'passthrough' }
-  | { action: 'normalize'; options: Partial<CompressOptions>; reasons: string[] };
+  | { action: 'normalize'; options: ConformOptions; reasons: string[] };
+
+/** AAC sample rates, highest first (AAC-LC tops out at 48 kHz). */
+const AAC_RATES = [48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000];
+
+/**
+ * The audio layout a conform writes: the recorder's with a target; without one (upload and
+ * unpack gates) the source's own, at the nearest AAC rate at or below it and in a standard AAC
+ * layout (mono, stereo or 5.1; anything else becomes stereo).
+ */
+function conformAudio(audio: ProbeAudio | undefined, target?: RecorderFormat): MergeAudio {
+  if (target) return { sampleRate: target.audioSampleRate, channels: target.audioChannels };
+  if (!audio) return { sampleRate: 48000, channels: 2 };
+  return {
+    sampleRate: AAC_RATES.find((r) => r <= audio.sampleRate + 1) ?? 8000,
+    channels: [1, 2, 6].includes(audio.channels) ? audio.channels : 2,
+  };
+}
 
 /** True when the video is HDR (HLG or PQ): the conform must tone-map it, not just re-tag it. */
 function isHdr(video: ProbeVideo): boolean {
@@ -184,41 +200,25 @@ export function decideImport(probe: ProbeResult, target?: RecorderFormat): Impor
   const videoReasons = contractVideoReasons(video);
   if (target && videoReasons.length === 0) videoReasons.push(...mergeVideoReasons(video, target));
   const audio = audioReasons(probe.audio, target);
-  const audioTarget: Partial<CompressOptions> = target
-    ? { audioSampleRate: target.audioSampleRate, audioChannels: target.audioChannels }
-    : {};
+  // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to exactly
+  // CANVAS_WxH (display), H.264 8-bit SDR (HDR tone-mapped). With a merge target the pixels are
+  // written in the recorder's coded orientation under its rotation tag.
+  const options: ConformOptions = {
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+    rotation: target?.rotation ?? 0,
+    fps: NORMALIZE_TARGET_FPS,
+    bitrate: NORMALIZE_TARGET_BITRATE,
+    audio: conformAudio(probe.audio, target),
+    copyVideo: false,
+  };
 
   if (videoReasons.length === 0) {
     if (audio.length === 0) return { action: 'passthrough' };
     // Video is fine — conform only the audio track (e.g. Opus → AAC, 44.1 → 48 kHz) and
     // copy the video samples, so the cost is audio-sized.
-    return {
-      action: 'normalize',
-      options: { engine: 'auto', copyVideo: true, ...audioTarget },
-      reasons: audio,
-    };
+    return { action: 'normalize', options: { ...options, copyVideo: true }, reasons: audio };
   }
 
-  return {
-    action: 'normalize',
-    options: {
-      engine: 'auto',
-      // Explicit h264: never rely on the native default staying H.264 — this is the
-      // pipeline-wide codec guarantee for everything that gets re-encoded.
-      codec: 'h264',
-      bitrate: NORMALIZE_TARGET_BITRATE,
-      frameRate: NORMALIZE_TARGET_FPS,
-      // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to
-      // exactly CANVAS_WxH (display). With a merge target the pixels are written in the
-      // recorder's coded orientation under its rotation tag.
-      width: CANVAS_WIDTH,
-      height: CANVAS_HEIGHT,
-      letterbox: true,
-      // RNVT's compress still takes FFmpeg's counter-clockwise display-matrix degrees.
-      rotation: target ? (360 - target.rotation) % 360 : 0,
-      hdrToSdr: isHdr(video),
-      ...audioTarget,
-    },
-    reasons: [...videoReasons, ...audio],
-  };
+  return { action: 'normalize', options, reasons: [...videoReasons, ...audio] };
 }

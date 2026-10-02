@@ -8,7 +8,6 @@ import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
 import { probe } from '@mieweb/pulse-editor';
-import { deleteFile } from 'react-native-video-trim';
 import {
   type CameraRef,
   CommonResolutions,
@@ -56,6 +55,13 @@ export type CameraFacing = 'front' | 'back';
 /** Stopping the native recorder before it has actually started hangs the capture —
  * earlier stop requests are deferred to this boundary. */
 const MIN_RECORD_MS = 350;
+
+/** Delete a conform output; best-effort (it's in the purgeable cache dir anyway). */
+function discard(uri: string) {
+  try {
+    new File(uri).delete();
+  } catch {}
+}
 
 export function useRecorder(initialDraftId?: string) {
   const cameraRef = useRef<CameraRef>(null);
@@ -419,7 +425,8 @@ export function useRecorder(initialDraftId?: string) {
   // exact format keep their original bytes; everything else is conformed ONCE, here, to the
   // reels contract AND the recorder's own signature (coded orientation, fps, AAC layout), so a
   // draft mixing recordings and imports merges with no re-encode. The policy lives in
-  // decideImport (§ imports), the engines and their verification in conformToContract.
+  // decideImport (§ imports), the conversion (pulse-editor `conform`) and its verification in
+  // conformToContract.
   async function importClip() {
     if (isRecordingRef.current || isImporting) return;
     if (!libraryPermission?.granted) {
@@ -478,7 +485,7 @@ export function useRecorder(initialDraftId?: string) {
 
       // Conform before the clip enters the draft — and fail CLOSED: every stored clip must meet
       // the reels contract, so a clip that can't be probed or conformed (or whose output fails
-      // verification on every engine) is rejected rather than persisted off-contract.
+      // verification) is rejected rather than persisted off-contract.
       const target = await getRecorderFormat();
       let conformed: ConformOutcome | null;
       try {
@@ -500,7 +507,7 @@ export function useRecorder(initialDraftId?: string) {
       }
       // Finished just as Pulse left: still cancelled, as promised.
       if (abort.signal.aborted) {
-        if (conformed) void deleteFile(conformed.path).catch(() => {});
+        if (conformed) discard(conformed.path);
         cancelled();
         return;
       }
@@ -517,8 +524,8 @@ export function useRecorder(initialDraftId?: string) {
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;
       const originalFilename = await copyIntoSegments(conformed?.path ?? picked.uri, id, segmentId);
-      // The compress output lives in the OS-purgeable cache dir; drop it once copied.
-      if (conformed) void deleteFile(conformed.path).catch(() => {});
+      // The conform output lives in the OS-purgeable cache dir; drop it once copied.
+      if (conformed) discard(conformed.path);
       const durationMs = await getDurationMs(absolutize(originalFilename));
       await persistSegment(id, segmentId, originalFilename, durationMs);
     } catch (e) {

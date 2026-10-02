@@ -27,8 +27,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
-import type { CompressOptions } from 'react-native-video-trim';
+import type { ConformOptions, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
 
 import { CANVAS_HEIGHT, CANVAS_WIDTH, decideImport } from './import-normalization';
 
@@ -146,14 +145,14 @@ function probeLikeNative(file: string): ProbeResult {
  * The fork's iOS `compress()` argv, verbatim (ios/VideoTrim.swift), so the desktop run
  * exercises the same encoder + filter chain the device does (videotoolbox on both).
  */
-function compressArgs(input: string, options: Partial<CompressOptions>, output: string): string[] {
-  const bitrate = options.bitrate ?? -1;
-  const width = options.width ?? -1;
-  const height = options.height ?? -1;
-  const frameRate = options.frameRate ?? -1;
-  const codec = options.codec ?? 'h264';
-  const copyVideo = options.copyVideo ?? false;
-  const letterbox = options.letterbox ?? false;
+function compressArgs(input: string, options: ConformOptions, output: string): string[] {
+  const bitrate = options.bitrate;
+  const width = options.width;
+  const height = options.height;
+  const frameRate = options.fps;
+  const codec: string = 'h264';
+  const copyVideo = options.copyVideo;
+  const letterbox = true;
 
   const cmds: string[] = ['-i', input];
   if (copyVideo) {
@@ -183,8 +182,8 @@ function compressArgs(input: string, options: Partial<CompressOptions>, output: 
     if (frameRate > 0) cmds.push('-r', String(frameRate));
   }
   cmds.push('-c:a', 'aac');
-  if ((options.audioSampleRate ?? -1) > 0) cmds.push('-ar', String(options.audioSampleRate));
-  if ((options.audioChannels ?? -1) > 0) cmds.push('-ac', String(options.audioChannels));
+  cmds.push('-ar', String(options.audio.sampleRate));
+  cmds.push('-ac', String(options.audio.channels));
   // The fork appends faststart flags on every MP4-family output (copy and re-encode alike).
   cmds.push('-movflags', '+faststart');
   cmds.push(output);
@@ -411,7 +410,7 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
         expect(decision.action).toBe('normalize');
         if (decision.action !== 'normalize') return;
         if (expected === 'audio-only') expect(decision.options.copyVideo).toBe(true);
-        else expect(decision.options.copyVideo).toBeUndefined();
+        else expect(decision.options.copyVideo).toBe(false);
 
         const output = path.join(TMP, `norm-${name}`);
         ff(compressArgs(input, decision.options, output));

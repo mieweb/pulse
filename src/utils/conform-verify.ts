@@ -1,5 +1,4 @@
 import type { ProbeResult } from '@mieweb/pulse-editor';
-import type { CompressResult } from 'react-native-video-trim';
 
 import { decideImport, type RecorderFormat } from './import-normalization';
 
@@ -28,7 +27,6 @@ function pictureMs(p: ProbeResult): number {
 export function checkConform(
   source: ProbeResult,
   output: ProbeResult,
-  result: Pick<CompressResult, 'audioDropped'>,
   target?: RecorderFormat,
 ): ConformCheck {
   const fatal: string[] = [];
@@ -38,7 +36,7 @@ export function checkConform(
     const contract = decideImport(output);
     if (contract.action !== 'passthrough') fatal.push(...contract.reasons);
   }
-  if (source.audio && !output.audio && !result.audioDropped) fatal.push('audio lost');
+  if (source.audio && !output.audio) fatal.push('audio lost');
 
   let short: string | null = null;
   const want = pictureMs(source);
