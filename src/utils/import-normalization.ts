@@ -1,4 +1,4 @@
-import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim';
+import type { ConformOptions, MergeAudio, ProbeAudio, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
 
 /**
  * Import normalization policy (§ imports).
@@ -31,7 +31,7 @@ import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim'
  */
 
 /** The app's fixed portrait canvas — every stored segment displays exactly this
- * (reels contract; mirrors REELS_TARGET in use-export.ts). */
+ * (reels contract; mirrors REELS_TARGET in merge-signature.ts). */
 export const CANVAS_WIDTH = 1080;
 export const CANVAS_HEIGHT = 1920;
 /** Re-encode target: the recorder's own frame rate. Also the passthrough gate: a clip whose
@@ -48,8 +48,6 @@ export const NORMALIZE_MAX_BITRATE = 8_000_000;
  * output, uploads) is standardized on H.264 for universal browser playback — HEVC imports
  * are re-encoded once at import time rather than leaking into merged artifacts. */
 const NATIVE_VIDEO_CODECS = new Set(['h264']);
-/** HDR transfer functions: HLG (iPhone camera default) and PQ (HDR10 / Dolby Vision 8.x). */
-const HDR_TRANSFERS = new Set(['arib-std-b67', 'smpte2084']);
 
 /**
  * The recorder's copy-compatibility signature on this device (see recorder-format.ts): what
@@ -60,7 +58,7 @@ export type RecorderFormat = {
   /** Coded (pre-rotation) size, e.g. 1920×1080 for a portrait recording. */
   width: number;
   height: number;
-  /** Rotation tag in probeVideo's convention (normalized FFprobe display-matrix degrees). */
+  /** Clockwise display rotation (pulse-editor `probe` convention): 0, 90, 180 or 270. */
   rotation: number;
   /** The recorder's AAC track. */
   audioSampleRate: number;
@@ -69,33 +67,39 @@ export type RecorderFormat = {
 
 export type ImportDecision =
   | { action: 'passthrough' }
-  | { action: 'normalize'; options: Partial<CompressOptions>; reasons: string[] };
+  | { action: 'normalize'; options: ConformOptions; reasons: string[] };
+
+/** AAC sample rates, highest first (AAC-LC tops out at 48 kHz). */
+const AAC_RATES = [48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000];
 
 /**
- * True for 10-bit pixel formats. FFmpeg names these with a `10`/`10le`/`10be` bit-depth
- * suffix (yuv420p10le, p010le, ...) — matching the suffix rather than a bare `includes('10')`
- * keeps 8-bit chroma-subsampling names like `yuv410p` from being misclassified.
+ * The audio layout a conform writes: the recorder's with a target; without one (upload and
+ * unpack gates) the source's own, at the nearest AAC rate at or below it and in a standard AAC
+ * layout (mono, stereo or 5.1; anything else becomes stereo).
  */
-function is10Bit(pixelFormat: string): boolean {
-  return /10(le|be)?$/.test(pixelFormat);
+function conformAudio(audio: ProbeAudio | undefined, target?: RecorderFormat): MergeAudio {
+  if (target) return { sampleRate: target.audioSampleRate, channels: target.audioChannels };
+  if (!audio) return { sampleRate: 48000, channels: 2 };
+  return {
+    sampleRate: AAC_RATES.find((r) => r <= audio.sampleRate + 1) ?? 8000,
+    channels: [1, 2, 6].includes(audio.channels) ? audio.channels : 2,
+  };
 }
 
-/** True when the source is HDR-tagged (the conform must tone-map it, not just re-tag it). */
-export function isHdr(probe: VideoProbeResult): boolean {
-  return HDR_TRANSFERS.has(probe.colorTransfer);
-}
-
-/** Effective fps for the decision: average when known (catches VFR), else nominal. */
-function effectiveFps(probe: VideoProbeResult): number {
-  return probe.averageFps > 0 ? probe.averageFps : probe.nominalFps;
+/** True when the video is HDR (HLG or PQ): the conform must tone-map it, not just re-tag it. */
+function isHdr(video: ProbeVideo): boolean {
+  return video.transfer !== 'sdr';
 }
 
 /** Display (post-rotation) dimensions: a 90/270 rotation swaps coded width/height. */
-export function displaySize(probe: VideoProbeResult): { width: number; height: number } {
-  const swapped = probe.rotation % 180 !== 0;
+export function displaySize(video: Pick<ProbeVideo, 'width' | 'height' | 'rotation'>): {
+  width: number;
+  height: number;
+} {
+  const swapped = video.rotation % 180 !== 0;
   return {
-    width: swapped ? probe.height : probe.width,
-    height: swapped ? probe.width : probe.height,
+    width: swapped ? video.height : video.width,
+    height: swapped ? video.width : video.height,
   };
 }
 
@@ -108,23 +112,23 @@ export function isCanvasFormat(f: Pick<RecorderFormat, 'width' | 'height' | 'rot
 }
 
 /** Contract violations of the VIDEO stream (display-level; see module docs). */
-function contractVideoReasons(probe: VideoProbeResult): string[] {
+function contractVideoReasons(video: ProbeVideo): string[] {
   const reasons: string[] = [];
-  if (!NATIVE_VIDEO_CODECS.has(probe.videoCodec)) {
-    reasons.push(`video codec ${probe.videoCodec || 'unknown'}`);
+  if (!NATIVE_VIDEO_CODECS.has(video.codec)) {
+    reasons.push(`video codec ${video.codec || 'unknown'}`);
   }
-  if (is10Bit(probe.pixelFormat)) {
-    reasons.push(`10-bit pixel format ${probe.pixelFormat}`);
+  if (video.bitDepth > 8) {
+    reasons.push(`${video.bitDepth}-bit video`);
   }
-  if (isHdr(probe)) {
-    reasons.push(`HDR transfer ${probe.colorTransfer}`);
+  if (isHdr(video)) {
+    reasons.push(`HDR transfer ${video.transfer}`);
   }
   // A mirroring matrix displays fine in players but nothing downstream honors it (the merge
   // engine only understands pure rotations): bake the flip into the pixels once.
-  if (probe.mirrored) {
+  if (video.mirrored) {
     reasons.push('mirrored display matrix');
   }
-  const display = displaySize(probe);
+  const display = displaySize(video);
   if (display.width !== CANVAS_WIDTH || display.height !== CANVAS_HEIGHT) {
     reasons.push(
       `${display.width}x${display.height} off the ${CANVAS_WIDTH}x${CANVAS_HEIGHT} canvas`,
@@ -132,32 +136,31 @@ function contractVideoReasons(probe: VideoProbeResult): string[] {
   }
   // Round exactly like the merge pin does, so import passthrough and merge lossless-match can
   // never disagree about a clip's rate (fps -1 = unknown → rounds negative → passes).
-  const fps = effectiveFps(probe);
-  if (Math.round(fps) > NORMALIZE_TARGET_FPS) {
-    reasons.push(`${Math.round(fps)} fps rounds past the ${NORMALIZE_TARGET_FPS}-fps target`);
+  if (Math.round(video.fps) > NORMALIZE_TARGET_FPS) {
+    reasons.push(`${Math.round(video.fps)} fps rounds past the ${NORMALIZE_TARGET_FPS}-fps target`);
   }
-  if (probe.bitrate > NORMALIZE_MAX_BITRATE) {
+  if (video.bitrate > NORMALIZE_MAX_BITRATE) {
     reasons.push(
-      `${Math.round(probe.bitrate / 1_000_000)} Mbps exceeds ${NORMALIZE_MAX_BITRATE / 1_000_000}`,
+      `${Math.round(video.bitrate / 1_000_000)} Mbps exceeds ${NORMALIZE_MAX_BITRATE / 1_000_000}`,
     );
   }
   return reasons;
 }
 
 /** Where an otherwise-contract-clean video still differs from the recorder's signature. */
-function mergeVideoReasons(probe: VideoProbeResult, target: RecorderFormat): string[] {
+function mergeVideoReasons(video: ProbeVideo, target: RecorderFormat): string[] {
   const reasons: string[] = [];
   if (
-    probe.width !== target.width ||
-    probe.height !== target.height ||
-    probe.rotation !== target.rotation
+    video.width !== target.width ||
+    video.height !== target.height ||
+    video.rotation !== target.rotation
   ) {
     reasons.push(
-      `coded ${probe.width}x${probe.height} r${probe.rotation} differs from the recorder's ` +
+      `coded ${video.width}x${video.height} r${video.rotation} differs from the recorder's ` +
         `${target.width}x${target.height} r${target.rotation}`,
     );
   }
-  const fps = Math.round(effectiveFps(probe));
+  const fps = Math.round(video.fps);
   if (fps !== NORMALIZE_TARGET_FPS) {
     reasons.push(
       `${fps > 0 ? fps : 'unknown'} fps differs from the recorder's ${NORMALIZE_TARGET_FPS}`,
@@ -167,16 +170,15 @@ function mergeVideoReasons(probe: VideoProbeResult, target: RecorderFormat): str
 }
 
 /** Why the audio track needs a conform (empty when it's fine, or when there is none). */
-function audioReasons(probe: VideoProbeResult, target?: RecorderFormat): string[] {
-  if (!probe.hasAudio) return [];
-  if (probe.audioCodec !== 'aac') return [`audio codec ${probe.audioCodec || 'unknown'}`];
+function audioReasons(audio: ProbeAudio | undefined, target?: RecorderFormat): string[] {
+  if (!audio) return [];
+  if (audio.codec !== 'aac') return [`audio codec ${audio.codec || 'unknown'}`];
   if (
     target &&
-    (probe.audioSampleRate !== target.audioSampleRate ||
-      probe.audioChannels !== target.audioChannels)
+    (audio.sampleRate !== target.audioSampleRate || audio.channels !== target.audioChannels)
   ) {
     return [
-      `audio ${probe.audioSampleRate} Hz/${probe.audioChannels} ch differs from the recorder's ` +
+      `audio ${audio.sampleRate} Hz/${audio.channels} ch differs from the recorder's ` +
         `${target.audioSampleRate} Hz/${target.audioChannels} ch`,
     ];
   }
@@ -185,52 +187,38 @@ function audioReasons(probe: VideoProbeResult, target?: RecorderFormat): string[
 
 /**
  * Decide how an imported clip enters the draft: byte-for-byte passthrough, an audio-only
- * conform (video samples copied), or a full re-encode. Pure — feed it a `probeVideo()` result.
+ * conform (video samples copied), or a full re-encode. Pure — feed it a `probe()` result.
  *
  * Without `target`, only the reels contract is enforced (upload / unpack gates). With it, the
  * clip must also match the recorder's signature to pass through, and every conform writes that
  * signature (rotation tag, AAC rate/channels) so the merge can join it by copy.
  */
-export function decideImport(probe: VideoProbeResult, target?: RecorderFormat): ImportDecision {
-  if (!probe.hasVideo) return { action: 'passthrough' };
+export function decideImport(probe: ProbeResult, target?: RecorderFormat): ImportDecision {
+  const { video } = probe;
+  if (!video) return { action: 'passthrough' };
 
-  const videoReasons = contractVideoReasons(probe);
-  if (target && videoReasons.length === 0) videoReasons.push(...mergeVideoReasons(probe, target));
-  const audio = audioReasons(probe, target);
-  const audioTarget: Partial<CompressOptions> = target
-    ? { audioSampleRate: target.audioSampleRate, audioChannels: target.audioChannels }
-    : {};
+  const videoReasons = contractVideoReasons(video);
+  if (target && videoReasons.length === 0) videoReasons.push(...mergeVideoReasons(video, target));
+  const audio = audioReasons(probe.audio, target);
+  // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to exactly
+  // CANVAS_WxH (display), H.264 8-bit SDR (HDR tone-mapped). With a merge target the pixels are
+  // written in the recorder's coded orientation under its rotation tag.
+  const options: ConformOptions = {
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+    rotation: target?.rotation ?? 0,
+    fps: NORMALIZE_TARGET_FPS,
+    bitrate: NORMALIZE_TARGET_BITRATE,
+    audio: conformAudio(probe.audio, target),
+    copyVideo: false,
+  };
 
   if (videoReasons.length === 0) {
     if (audio.length === 0) return { action: 'passthrough' };
     // Video is fine — conform only the audio track (e.g. Opus → AAC, 44.1 → 48 kHz) and
     // copy the video samples, so the cost is audio-sized.
-    return {
-      action: 'normalize',
-      options: { engine: 'auto', copyVideo: true, ...audioTarget },
-      reasons: audio,
-    };
+    return { action: 'normalize', options: { ...options, copyVideo: true }, reasons: audio };
   }
 
-  return {
-    action: 'normalize',
-    options: {
-      engine: 'auto',
-      // Explicit h264: never rely on the native default staying H.264 — this is the
-      // pipeline-wide codec guarantee for everything that gets re-encoded.
-      codec: 'h264',
-      bitrate: NORMALIZE_TARGET_BITRATE,
-      frameRate: NORMALIZE_TARGET_FPS,
-      // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to
-      // exactly CANVAS_WxH (display). With a merge target the pixels are written in the
-      // recorder's coded orientation under its rotation tag.
-      width: CANVAS_WIDTH,
-      height: CANVAS_HEIGHT,
-      letterbox: true,
-      rotation: target?.rotation ?? 0,
-      hdrToSdr: isHdr(probe),
-      ...audioTarget,
-    },
-    reasons: [...videoReasons, ...audio],
-  };
+  return { action: 'normalize', options, reasons: [...videoReasons, ...audio] };
 }

@@ -53,7 +53,11 @@ function resolveActiveIndex(
  * the hook stays mounted with a stopped, unloaded player.
  */
 export function usePreview(segments: Segment[], anchorId: string | null) {
-  const player = useVideoPlayer(null);
+  // Sped-up / slowed clips keep their natural pitch, as the export renders them. expo-video
+  // documents this as the default, but its Android player starts with it off (chipmunk voices).
+  const player = useVideoPlayer(null, (p) => {
+    p.preservesPitch = true;
+  });
 
   // SDK 56: timeUpdateEventInterval defaults to 0, which means `timeUpdate` NEVER fires.
   // Both auto-advance and the playhead depend on it.

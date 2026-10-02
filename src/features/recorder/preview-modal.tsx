@@ -4,7 +4,7 @@ import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
-import { probeVideo } from 'react-native-video-trim';
+import { probe } from '@mieweb/pulse-editor';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Spacing } from '@/constants/theme';
@@ -41,9 +41,9 @@ function useSourceSize(file: string | null): Size {
   useEffect(() => {
     if (!file || sourceSizes.has(file)) return;
     let cancelled = false;
-    probeVideo(absolutize(file))
-      .then((probe) => {
-        sourceSizes.set(file, displaySize(probe));
+    probe(absolutize(file))
+      .then(({ video }) => {
+        if (video) sourceSizes.set(file, displaySize(video));
         if (!cancelled) setProbed((n) => n + 1);
       })
       .catch(() => {});

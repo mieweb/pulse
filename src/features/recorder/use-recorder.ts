@@ -7,7 +7,7 @@ import {
 import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
-import { isValidFile, deleteFile } from 'react-native-video-trim';
+import { probe } from '@mieweb/pulse-editor';
 import {
   type CameraRef,
   CommonResolutions,
@@ -55,6 +55,13 @@ export type CameraFacing = 'front' | 'back';
 /** Stopping the native recorder before it has actually started hangs the capture —
  * earlier stop requests are deferred to this boundary. */
 const MIN_RECORD_MS = 350;
+
+/** Delete a conform output; best-effort (it's in the purgeable cache dir anyway). */
+function discard(uri: string) {
+  try {
+    new File(uri).delete();
+  } catch {}
+}
 
 export function useRecorder(initialDraftId?: string) {
   const cameraRef = useRef<CameraRef>(null);
@@ -369,13 +376,14 @@ export function useRecorder(initialDraftId?: string) {
               // ends the recording with an error — but AVFoundation finalizes the movie on disk
               // first, so the file is usually complete up to the cut. VisionCamera surfaces every
               // such stop as an error; probe the file and treat a playable clip as a successful
-              // stop instead of dropping it. A dead / zero-length file still rejects as before.
+              // stop instead of dropping it. A dead file, or one whose video track is missing or
+              // empty (the container can have a duration from its audio alone), still rejects.
               const recordingUri = recordingPath.startsWith('file://')
                 ? recordingPath
                 : `file://${recordingPath}`;
-              void isValidFile(recordingUri).then(
+              void probe(recordingUri).then(
                 (info) =>
-                  info.isValid && info.duration > 0 ? resolve(recordingPath) : reject(err),
+                  (info.video?.durationMs ?? 0) > 0 ? resolve(recordingPath) : reject(err),
                 () => reject(err),
               );
             },
@@ -417,7 +425,8 @@ export function useRecorder(initialDraftId?: string) {
   // exact format keep their original bytes; everything else is conformed ONCE, here, to the
   // reels contract AND the recorder's own signature (coded orientation, fps, AAC layout), so a
   // draft mixing recordings and imports merges with no re-encode. The policy lives in
-  // decideImport (§ imports), the engines and their verification in conformToContract.
+  // decideImport (§ imports), the conversion (pulse-editor `conform`) and its verification in
+  // conformToContract.
   async function importClip() {
     if (isRecordingRef.current || isImporting) return;
     if (!libraryPermission?.granted) {
@@ -474,14 +483,9 @@ export function useRecorder(initialDraftId?: string) {
         );
       };
 
-      // AVFoundation's view of the clip, reused for the duration of a passthrough. Not a gate:
-      // the FFprobe-based contract probe below decides, so a file only FFmpeg can read still
-      // gets its chance.
-      const info = await isValidFile(picked.uri).catch(() => null);
-
       // Conform before the clip enters the draft — and fail CLOSED: every stored clip must meet
       // the reels contract, so a clip that can't be probed or conformed (or whose output fails
-      // verification on every engine) is rejected rather than persisted off-contract.
+      // verification) is rejected rather than persisted off-contract.
       const target = await getRecorderFormat();
       let conformed: ConformOutcome | null;
       try {
@@ -503,7 +507,7 @@ export function useRecorder(initialDraftId?: string) {
       }
       // Finished just as Pulse left: still cancelled, as promised.
       if (abort.signal.aborted) {
-        if (conformed) void deleteFile(conformed.path).catch(() => {});
+        if (conformed) discard(conformed.path);
         cancelled();
         return;
       }
@@ -520,12 +524,9 @@ export function useRecorder(initialDraftId?: string) {
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;
       const originalFilename = await copyIntoSegments(conformed?.path ?? picked.uri, id, segmentId);
-      // The compress output lives in the OS-purgeable cache dir; drop it once copied.
-      if (conformed) void deleteFile(conformed.path).catch(() => {});
-      const durationMs =
-        conformed === null && info && info.isValid && info.duration > 0
-          ? info.duration
-          : await getDurationMs(absolutize(originalFilename));
+      // The conform output lives in the OS-purgeable cache dir; drop it once copied.
+      if (conformed) discard(conformed.path);
+      const durationMs = await getDurationMs(absolutize(originalFilename));
       await persistSegment(id, segmentId, originalFilename, durationMs);
     } catch (e) {
       importLog.warn(`failed: ${describeError(e)}`);

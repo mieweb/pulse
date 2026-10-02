@@ -20,7 +20,6 @@ import {
   type MergedTranscriptionState,
 } from '@/features/export/use-merged-transcription';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
-import { useSaveToDocuments } from '@/features/export/use-save-to-documents';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { CaptionOverlay } from '@/features/transcription/caption-overlay';
 import { ModelSwitcherModal } from '@/features/transcription/model-switcher-modal';
@@ -70,7 +69,6 @@ export default function ExportScreen() {
   // The On-device AI sheet, opened from the caption CTA when no model is selected yet.
   const [modelSheetVisible, setModelSheetVisible] = useState(false);
   const photos = useSaveToPhotos();
-  const docs = useSaveToDocuments();
   const theme = useTheme();
   // Hairline ring for element-filled surfaces — the fill alone barely separates from the
   // flat background in either mode.
@@ -270,42 +268,6 @@ export default function ExportScreen() {
                 )}
               </Pressable>
 
-              <Pressable
-                onPress={() => void docs.save(toFileUri(state.outputPath))}
-                disabled={docs.status !== 'idle'}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  docs.status === 'saved'
-                    ? 'Saved to Files'
-                    : docs.status === 'saving'
-                      ? 'Saving to Files'
-                      : 'Save to Files'
-                }
-                accessibilityState={{
-                  disabled: docs.status !== 'idle',
-                  busy: docs.status === 'saving',
-                }}
-                // 34pt pill + 5 each side = a 44pt tap target.
-                hitSlop={5}
-                style={({ pressed }) => [
-                  styles.smallButton,
-                  elementSurface,
-                  pressed && styles.pressed,
-                ]}>
-                {docs.status === 'saving' ? (
-                  <ActivityIndicator size="small" color={theme.text} />
-                ) : docs.status === 'saved' ? (
-                  <>
-                    <Icon name="checkmark" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Saved</ThemedText>
-                  </>
-                ) : (
-                  <>
-                    <Icon name="folder" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Files</ThemedText>
-                  </>
-                )}
-              </Pressable>
             </View>
           </>
         )}

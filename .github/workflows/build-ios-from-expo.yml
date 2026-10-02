@@ -47,6 +47,11 @@ jobs:
           package_manager: npm
           node_version: "24"
 
+      # prepare-expo-env checks out without submodules; the native module under modules/ is
+      # autolinked from there, so fetch it before prebuild.
+      - name: Checkout local native modules
+        run: git submodule update --init modules/react-native-video-trim modules/pulse-editor
+
       # ── Give every CI build a unique, increasing build number ─────────────
       - name: Stamp build number
         run: |
