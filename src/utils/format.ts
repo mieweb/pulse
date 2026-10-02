@@ -16,21 +16,6 @@ export function formatDurationPadded(ms: number): string {
   return `${minutes}:${seconds}`;
 }
 
-/** Epoch ms → "Today, 2:30 PM" / "Yesterday" / "Mar 4". */
-export function formatRelativeDate(ms: number): string {
-  const date = new Date(ms);
-  const now = new Date();
-  const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const dayDiff = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
-
-  if (dayDiff === 0) return `Today, ${time}`;
-  if (dayDiff === 1) return 'Yesterday';
-  if (dayDiff < 7) return date.toLocaleDateString([], { weekday: 'long' });
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
-
 /** "N clip" / "N clips". */
 export function formatClipCount(count: number): string {
   return `${count} ${count === 1 ? 'clip' : 'clips'}`;
