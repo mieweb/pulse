@@ -21,6 +21,11 @@ import { useDestinations } from './use-destinations';
 const DISMISS_DISTANCE = 80;
 const DISMISS_VELOCITY = 800;
 
+/** The home screen's + FAB (`styles.fab` in app/index.tsx): 60pt wide, `Spacing.four` from the right. */
+const FAB_CLEARANCE = Spacing.four + 60 + Spacing.three;
+/** Longest the pill gets on wide screens, so it stays a pill rather than a bar. */
+const PILL_MAX_WIDTH = 280;
+
 /**
  * A floating pill on the home screen surfacing the device-wide pool of paired upload destinations
  * (§ destination pool). Tapping it opens a sheet to *view and delete* every non-expired
@@ -77,28 +82,38 @@ export function DestinationsFloat() {
 
   return (
     <>
-      <Pressable
-        onPress={openSheet}
-        accessibilityRole="button"
-        accessibilityLabel={`${destinations.length} upload ${
-          destinations.length === 1 ? 'destination' : 'destinations'
-        }`}
-        style={({ pressed }) => [
-          styles.pill,
-          {
-            backgroundColor: theme.backgroundElement,
-            borderColor: theme.border,
-            bottom: insets.bottom + Spacing.four,
-            opacity: pressed ? 0.85 : 1,
-          },
-        ]}>
-        <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} />
-        <ThemedText type="smallBold">
-          {destinations.length === 1
-            ? hostOf(destinations[0].server)
-            : `${destinations.length} destinations`}
-        </ThemedText>
-      </Pressable>
+      {/* The lane runs from the left margin to just short of the + FAB, so a long host truncates
+          instead of sliding under it; taps outside the pill fall through to the list. */}
+      <View
+        pointerEvents="box-none"
+        style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
+        <Pressable
+          onPress={openSheet}
+          accessibilityRole="button"
+          accessibilityLabel={`${destinations.length} upload ${
+            destinations.length === 1 ? 'destination' : 'destinations'
+          }`}
+          style={({ pressed }) => [
+            styles.pill,
+            {
+              backgroundColor: theme.backgroundElement,
+              borderColor: theme.border,
+              opacity: pressed ? 0.85 : 1,
+            },
+          ]}>
+          <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} />
+          {/* Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
+          <ThemedText
+            type="smallBold"
+            numberOfLines={1}
+            ellipsizeMode="middle"
+            style={styles.pillLabel}>
+            {destinations.length === 1
+              ? hostOf(destinations[0].server)
+              : `${destinations.length} destinations`}
+          </ThemedText>
+        </Pressable>
+      </View>
 
       {/* Deliberately undimmed: the dark scrim slid up with the sheet and greyed out the whole
           home screen. Tapping anywhere outside the sheet still closes it. */}
@@ -154,7 +169,7 @@ export function DestinationsFloat() {
                       { backgroundColor: onSheetSurface, borderColor: theme.border },
                     ]}>
                     <View style={styles.rowText}>
-                      <ThemedText type="smallBold" numberOfLines={1}>
+                      <ThemedText type="smallBold" numberOfLines={1} ellipsizeMode="middle">
                         {host}
                       </ThemedText>
                       <ThemedText type="caption1" themeColor="textSecondary">
@@ -181,9 +196,15 @@ export function DestinationsFloat() {
 }
 
 const styles = StyleSheet.create({
-  pill: {
+  lane: {
     position: 'absolute',
     left: Spacing.four,
+    right: FAB_CLEARANCE,
+    height: 44,
+    alignItems: 'flex-start',
+  },
+  pill: {
+    maxWidth: PILL_MAX_WIDTH,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
@@ -197,6 +218,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
   },
+  // Shrinks below its text width so `numberOfLines` can truncate inside the pill.
+  pillLabel: { flexShrink: 1 },
   backdrop: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
     borderTopLeftRadius: 20,
