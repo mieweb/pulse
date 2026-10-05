@@ -58,6 +58,20 @@ if (
   process.exit(1);
 }
 
+/**
+ * A property schema that constrains nothing (only a description) means "any JSON value" — an
+ * object, an array, a string, `null`. json-schema-to-typescript would type it as an untyped
+ * object; `tsType` makes it `unknown` instead. Walks nested properties too.
+ */
+function markAnyJson(schema) {
+  const CONSTRAINTS = ['type', 'enum', 'const', '$ref', 'properties', 'items', 'anyOf', 'oneOf', 'allOf', 'tsType'];
+  for (const prop of Object.values(schema.properties ?? {})) {
+    if (typeof prop !== 'object' || prop === null) continue;
+    if (!CONSTRAINTS.some((k) => k in prop)) prop.tsType = 'unknown';
+    markAnyJson(prop);
+  }
+}
+
 const blocks = [];
 for (const [file, name] of Object.entries(TYPES)) {
   let schema;
@@ -71,6 +85,7 @@ for (const [file, name] of Object.entries(TYPES)) {
   }
   // The root type is named by `name`; drop `$id`/`title` so nothing else gets named after them.
   const { $id: _id, title: _title, ...rest } = schema;
+  markAnyJson(rest);
   blocks.push(
     await compile(rest, name, {
       bannerComment: '',
