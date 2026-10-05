@@ -178,9 +178,7 @@ export interface CapabilityTokenClaims {
   /**
    * Opaque host data signed into the token (protocol 2.3): who the upload is for, where it goes. The server stores it with the artifact the token creates and hands it back to its own hooks; a client never reads it. Any JSON, at most 1 KiB encoded.
    */
-  ctx?: {
-    [k: string]: unknown | undefined;
-  };
+  ctx?: unknown;
 }
 
 /**
