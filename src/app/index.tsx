@@ -17,6 +17,7 @@ import { DestinationsFloat } from '@/features/upload/destinations-float';
 import { watchUpload } from '@/features/upload/link-actions';
 import { uploads } from '@/features/upload/upload-manager';
 import { useWatchLink } from '@/features/upload/use-uploads';
+import { useNow } from '@/hooks/use-now';
 import { useTheme, useThemeToggle } from '@/hooks/use-theme';
 
 // Dev-only seeding controls, behind a `__DEV__`-guarded require so the component and `@/dev/seed`
@@ -28,6 +29,9 @@ const DevSeedRow = __DEV__
 
 type DraftRef = { id: string; name: string | null; anchor: Anchor };
 
+/** How often the cards' date labels ("Just now", "Today, 2:30 PM", …) re-evaluate. */
+const DATE_LABEL_REFRESH_MS = 60_000;
+
 export default function HomeScreen() {
   // First-run gate: pushes the onboarding tour over home when not yet completed.
   useOnboardingRedirect();
@@ -35,6 +39,9 @@ export default function HomeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { data: drafts } = useLiveQuery(draftListQuery);
+  // One clock for every card's date label, so "Just now" and "Today" move on (and roll over at
+  // midnight) without a DB write.
+  const now = useNow(DATE_LABEL_REFRESH_MS);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   // The draft whose action menu (rename, delete, …) is open; null when closed.
   const [actionsDraft, setActionsDraft] = useState<DraftRef | null>(null);
@@ -348,6 +355,7 @@ export default function HomeScreen() {
               segmentCount={item.segmentCount}
               durationMs={item.durationMs}
               lastModified={item.lastModified}
+              now={now}
               editing={editingDraftId === item.id}
               selectionMode={selectionMode}
               selected={selectedIds.has(item.id)}

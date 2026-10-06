@@ -12,7 +12,8 @@ import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
-import { formatClipCount, formatDuration, formatRelativeDate } from '@/utils/format';
+import { formatClipCount, formatDuration } from '@/utils/format';
+import { formatRelativeDate } from '@/utils/relative-date';
 
 const NAME_MAX_LENGTH = 40;
 
@@ -28,6 +29,8 @@ type Props = {
   segmentCount: number;
   durationMs: number;
   lastModified: number;
+  /** Wall-clock time the date label is relative to (the home screen's `useNow`). */
+  now: number;
   /** Swaps the name for an inline text input; entered via long press or the ⋯ menu. */
   editing?: boolean;
   /** Multi-select mode: the ⋯ menu is replaced by a checkbox and onPress toggles selection. */
@@ -50,6 +53,7 @@ export function DraftCard({
   segmentCount,
   durationMs,
   lastModified,
+  now,
   editing = false,
   selectionMode = false,
   selected = false,
@@ -133,7 +137,7 @@ export function DraftCard({
         )}
         <ThemedText themeColor="textSecondary" type="small" numberOfLines={1}>
           {formatClipCount(segmentCount)} · {formatDuration(durationMs)} ·{' '}
-          {formatRelativeDate(lastModified)}
+          {formatRelativeDate(lastModified, now)}
         </ThemedText>
       </View>
 

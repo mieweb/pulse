@@ -1,7 +1,7 @@
 {
   "name": "pulse",
   "main": "expo-router/entry",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "engines": {
     "node": ">=24.3.0"
   },
@@ -25,6 +25,7 @@
     "expo-image": "~57.0.5",
     "expo-image-picker": "~57.0.17",
     "expo-linking": "~57.0.10",
+    "expo-localization": "~57.0.2",
     "expo-media-library": "~57.0.5",
     "expo-notifications": "~57.0.18",
     "expo-router": "~57.0.21",
