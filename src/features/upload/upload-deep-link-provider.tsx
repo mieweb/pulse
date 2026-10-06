@@ -73,6 +73,9 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (!url || url === handledUrl.current || !url.startsWith('pulsecam://')) return;
     handledUrl.current = url;
+    // Development only: `pulsecam://bench?...` opens the git-excluded bench screen (.devrun/), a
+    // route rather than an upload link, which the parser below would reject and alert on.
+    if (__DEV__ && url.startsWith('pulsecam://bench')) return;
 
     // Expo Router has no route matching this scheme-only URL (no path, just query params), so
     // its own automatic Linking-to-route resolution pushes the root route on top of whatever
