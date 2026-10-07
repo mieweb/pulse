@@ -193,13 +193,33 @@ function audioReasons(audio: ProbeAudio | undefined, target?: RecorderFormat): s
  * clip must also match the recorder's signature to pass through, and every conform writes that
  * signature (rotation tag, AAC rate/channels) so the merge can join it by copy.
  */
-export function decideImport(probe: ProbeResult, target?: RecorderFormat): ImportDecision {
+/** Which phone decides (the module stays free of react-native so it tests as pure code). */
+export type ImportPlatform = 'ios' | 'android';
+
+export function decideImport(
+  probe: ProbeResult,
+  target?: RecorderFormat,
+  platform: ImportPlatform = 'ios',
+): ImportDecision {
   const { video } = probe;
   if (!video) return { action: 'passthrough' };
 
   const videoReasons = contractVideoReasons(video);
-  if (target && videoReasons.length === 0) videoReasons.push(...mergeVideoReasons(video, target));
+  if (target && videoReasons.length === 0) {
+    videoReasons.push(...mergeVideoReasons(video, target));
+    // Android's conform can't write a constant 30 fps (Media3 drops frames but never pads, so a
+    // 24 fps clip stays 24 fps and the frame rate still differs after it): a re-encode for that
+    // reason alone buys nothing there. iOS fills to 30 and keeps the rule.
+    if (platform === 'android' && videoReasons.every((r) => r.includes('fps differs'))) {
+      videoReasons.length = 0;
+    }
+  }
   const audio = audioReasons(probe.audio, target);
+  // Android's merge re-encodes the audio of every join, so a clip whose sound only differs from
+  // the recorder's layout (rate, channels) joins as cheaply without the conform; iOS joins by
+  // copy and needs the layout to match. A sound codec the contract rejects is still conformed.
+  const audioLayoutOnly =
+    platform === 'android' && audio.length > 0 && audio.every((r) => r.includes('differs from the recorder'));
   // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to exactly
   // CANVAS_WxH (display), H.264 8-bit SDR (HDR tone-mapped). With a merge target the pixels are
   // written in the recorder's coded orientation under its rotation tag.
@@ -214,7 +234,7 @@ export function decideImport(probe: ProbeResult, target?: RecorderFormat): Impor
   };
 
   if (videoReasons.length === 0) {
-    if (audio.length === 0) return { action: 'passthrough' };
+    if (audio.length === 0 || audioLayoutOnly) return { action: 'passthrough' };
     // Video is fine — conform only the audio track (e.g. Opus → AAC, 44.1 → 48 kHz) and
     // copy the video samples, so the cost is audio-sized.
     return { action: 'normalize', options: { ...options, copyVideo: true }, reasons: audio };

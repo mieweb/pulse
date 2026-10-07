@@ -44,6 +44,23 @@ import { useCallState } from './use-call-state';
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
 // Android only cycles through the modes it can actually honor. The union type keeps 'cinematic'
 // on both platforms so persisted iOS prefs and shared UI maps still typecheck.
+/**
+ * What the import alert says for a conform rejection. The native reasons are stable wording
+ * (pulse-editor's Conform.swift / Conform.kt): a file with no readable picture, sound this phone
+ * can't decode (rejected rather than imported silent), a damaged file whose frames the decoder
+ * dropped (Android). Anything else is a conversion failure worth retrying.
+ */
+export function importFailureCopy(why: string): string {
+  if (/no video stream|no media tracks|probe/i.test(why)) return 'That file isn’t a video Pulse can read.';
+  if (/sound can.t be read/i.test(why)) {
+    return 'This phone can’t play that video’s sound, so Pulse can’t import it.';
+  }
+  if (/couldn.t decode all of the video/i.test(why)) {
+    return 'That video file is damaged: this phone can’t decode all of it.';
+  }
+  return 'Pulse couldn’t convert it for the timeline. Try again, or pick another video.';
+}
+
 export const STABILIZATION_MODES: readonly StabilizationMode[] =
   Platform.OS === 'ios' ? ['off', 'standard', 'cinematic', 'auto'] : ['off', 'standard', 'auto'];
 export type StabilizationMode = 'off' | 'standard' | 'cinematic' | 'auto';
@@ -497,12 +514,7 @@ export function useRecorder(initialDraftId?: string) {
         }
         const why = describeError(e);
         importLog.warn(`failed after ${formatSeconds(Date.now() - started)}: ${why}`);
-        Alert.alert(
-          'Couldn’t import the video',
-          /no video stream|probe/i.test(why)
-            ? 'That file isn’t a video Pulse can read.'
-            : 'Pulse couldn’t convert it for the timeline.',
-        );
+        Alert.alert('Couldn’t import the video', importFailureCopy(why));
         return;
       }
       // Finished just as Pulse left: still cancelled, as promised.

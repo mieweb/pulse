@@ -211,26 +211,25 @@ export async function setEditState(segmentId: string, editState: string): Promis
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
   await beginClipMutation(seg.draftId);
+  // The edit is written first, so the preview shows it at once; the cover follows (160–600 ms
+  // on a Galaxy S24) and only then replaces the old one.
+  await db
+    .update(segments)
+    .set({ editState, editedDurationMs: durationMs, editedFilename: null })
+    .where(eq(segments.id, segmentId));
+  if (seg.editedFilename) deleteSegmentFile(seg.editedFilename);
   const coverRel = editCoverRelPath(seg.draftId, segmentId, Date.now());
   const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(coverRel), {
     editState,
     startMs: edit.startMs,
   });
-  await db
-    .update(segments)
-    .set({
-      editState,
-      editedDurationMs: durationMs,
-      editedFilename: null,
-      thumbnail: ok ? coverRel : seg.thumbnail,
-    })
-    .where(eq(segments.id, segmentId));
-  // Drop replaced files only now that the row points away from them, so a failure above never
-  // leaves the segment referencing deleted files. The prior cover goes only if the new one took
-  // its place; the pristine thumb stays on disk, ready for a reset.
-  if (seg.editedFilename) deleteSegmentFile(seg.editedFilename);
-  if (ok && seg.thumbnail && seg.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
-    deleteSegmentFile(seg.thumbnail);
+  if (ok) {
+    await db.update(segments).set({ thumbnail: coverRel }).where(eq(segments.id, segmentId));
+    // Drop the replaced cover only now that the row points away from it, so a failure above never
+    // leaves the segment referencing a deleted file; the pristine thumb stays on disk for a reset.
+    if (seg.thumbnail && seg.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
+      deleteSegmentFile(seg.thumbnail);
+    }
   }
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }

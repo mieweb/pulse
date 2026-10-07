@@ -1,6 +1,6 @@
 import type { ProbeResult } from '@mieweb/pulse-editor';
 
-import { decideImport, type RecorderFormat } from './import-normalization';
+import { decideImport, type ImportPlatform, type RecorderFormat } from './import-normalization';
 
 /** Verdict on one conform output (see `checkConform`). */
 export type ConformCheck = {
@@ -28,6 +28,7 @@ export function checkConform(
   source: ProbeResult,
   output: ProbeResult,
   target?: RecorderFormat,
+  platform: ImportPlatform = 'ios',
 ): ConformCheck {
   const fatal: string[] = [];
   if (!output.video) {
@@ -47,7 +48,7 @@ export function checkConform(
 
   let mergeMisses: string[] = [];
   if (target && output.video) {
-    const merge = decideImport(output, target);
+    const merge = decideImport(output, target, platform);
     if (merge.action !== 'passthrough') mergeMisses = merge.reasons;
   }
   return { fatal, short, mergeMatch: mergeMisses.length === 0, mergeMisses };

@@ -24,12 +24,13 @@ import {
 // degrees and are ignored, so the format is re-learned from the next recording.
 const RECORDER_FORMAT_KEY = 'recorder.format.v2';
 
-/** Before this device has recorded anything. iOS portrait recordings are coded 1920×1080 under
- * a 270° clockwise rotation (as on real on-device exports); Android starts upright. */
+/** Before this device has recorded anything: what the test phones record (probed with pulse-editor,
+ * 2026-10-01: an iPhone 17 Pro Max and a Galaxy S24 Ultra both write 1920×1080 tagged 90° clockwise;
+ * the iPhone mono AAC, the S24 stereo). Only the first imports use it; the first recording replaces it. */
 export const DEFAULT_RECORDER_FORMAT: RecorderFormat =
   Platform.OS === 'ios'
-    ? { width: 1920, height: 1080, rotation: 270, audioSampleRate: 48000, audioChannels: 2 }
-    : { width: 1080, height: 1920, rotation: 0, audioSampleRate: 48000, audioChannels: 2 };
+    ? { width: 1920, height: 1080, rotation: 90, audioSampleRate: 48000, audioChannels: 1 }
+    : { width: 1920, height: 1080, rotation: 90, audioSampleRate: 48000, audioChannels: 2 };
 
 const isPositiveInt = (n: unknown): n is number =>
   typeof n === 'number' && Number.isInteger(n) && n > 0;

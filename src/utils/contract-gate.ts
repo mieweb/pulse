@@ -90,7 +90,8 @@ async function run(
   // decideImport passes no-video files through (audio-only is fine for a library), but a
   // SEGMENT without a video stream can never satisfy the portrait contract — fail closed.
   if (!source.video) throw new Error('Clip has no video stream.');
-  const decision = decideImport(source, target);
+  const platform = Platform.OS === 'android' ? 'android' : 'ios';
+  const decision = decideImport(source, target, platform);
   if (decision.action === 'passthrough') return null;
 
   let result;
@@ -107,7 +108,7 @@ async function run(
 
   const output = await probe(result.uri).catch(() => null);
   const check = output
-    ? checkConform(source, output, target)
+    ? checkConform(source, output, target, platform)
     : { fatal: ['output unreadable'], short: null, mergeMatch: false, mergeMisses: [] };
   if (check.fatal.length > 0 || check.short) {
     remove(result.uri);
