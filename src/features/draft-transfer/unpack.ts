@@ -2,6 +2,7 @@ import { File } from 'expo-file-system';
 import { strFromU8, unzipSync } from 'fflate';
 
 import { insertImportedDraft } from '@/db/drafts';
+import { describeError } from '@/features/upload/upload-log';
 import { conformToContract } from '@/utils/contract-gate';
 import {
   absolutize,
@@ -13,11 +14,31 @@ import {
   writeEditedBytes,
   writeOriginalBytes,
 } from '@/utils/file-store';
+import { importFailureNote } from '@/utils/import-copy';
 import { editTimelineMs, parseEdit } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 import { isPulseManifest, MANIFEST_NAME } from './manifest';
 
-export type ImportResult = { draftIds: string[] };
+/** A clip the bundle carried that was left out of its draft. */
+export type SkippedClip = {
+  /** Position of its draft in the bundle, and of the clip in that draft (both 0-based). */
+  draftIndex: number;
+  clipIndex: number;
+  /** Short user-facing reason ("damaged video"), for a summary line. */
+  reason: string;
+  /** The underlying error, for the log. */
+  detail: string;
+};
+
+export type ImportResult = { draftIds: string[]; skipped: SkippedClip[] };
+
+/** "3 clips skipped: damaged video" — the reason only when every skipped clip shares it. */
+export function skippedSummary(skipped: SkippedClip[]): string {
+  const n = skipped.length;
+  const reasons = new Set(skipped.map((s) => s.reason));
+  const head = `${n} clip${n === 1 ? '' : 's'} skipped`;
+  return reasons.size === 1 ? `${head}: ${skipped[0].reason}` : head;
+}
 
 const BAD_FILE = 'This file isn’t a valid .pulse bundle.';
 
@@ -84,6 +105,7 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
   // lastModified in import order.
   const base = Date.now();
   const draftIds: string[] = [];
+  const skipped: SkippedClip[] = [];
 
   for (let draftIndex = 0; draftIndex < manifest.drafts.length; draftIndex++) {
     const draft = manifest.drafts[draftIndex];
@@ -94,7 +116,26 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
       for (let segIndex = 0; segIndex < draft.segments.length; segIndex++) {
         const seg = draft.segments[segIndex];
         const origBytes = archive[seg.original];
-        if (!origBytes) continue; // clip referenced by the manifest is missing from the archive
+        if (!origBytes) {
+          // clip referenced by the manifest is missing from the archive
+          skipped.push({
+            draftIndex,
+            clipIndex: segIndex,
+            reason: 'missing from the file',
+            detail: `${seg.original} is not in the archive`,
+          });
+          continue;
+        }
+        const skip = (e: unknown) => {
+          const detail = describeError(e);
+          skipped.push({
+            draftIndex,
+            clipIndex: segIndex,
+            reason: importFailureNote(detail),
+            detail,
+          });
+          console.warn('[draft-transfer] skipped clip', draftIndex, segIndex, detail);
+        };
 
         const segmentId = `${draftId}-${segIndex}`;
         const originalFilename = writeOriginalBytes(draftId, segmentId, origBytes);
@@ -106,7 +147,8 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         let originalConformed: boolean;
         try {
           originalConformed = await conformInPlace(originalFilename);
-        } catch {
+        } catch (e) {
+          skip(e);
           try {
             new File(absolutize(originalFilename)).delete();
           } catch {}
@@ -141,7 +183,8 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
           editedDurationMs = seg.editedDurationMs ?? null;
           try {
             await conformInPlace(editedFilename);
-          } catch {
+          } catch (e) {
+            skip(e);
             for (const rel of [originalFilename, editedFilename]) {
               try {
                 new File(absolutize(rel)).delete();
@@ -203,6 +246,9 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
     }
   }
 
-  if (draftIds.length === 0) throw new Error('No drafts could be imported from this file.');
-  return { draftIds };
+  if (draftIds.length === 0) {
+    const why = skipped.length > 0 ? ` (${skippedSummary(skipped)})` : '';
+    throw new Error(`No drafts could be imported from this file${why}.`);
+  }
+  return { draftIds, skipped };
 }

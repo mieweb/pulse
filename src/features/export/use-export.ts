@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { Segment } from '@/db/schema';
+import { describeError } from '@/features/upload/upload-log';
 
 import { mergeWithEditor } from './editor-merge';
 import { mergedSignature } from './merge-signature';
@@ -10,6 +11,22 @@ export type ExportState =
   | { status: 'merging'; progress: number }
   | { status: 'done'; outputPath: string; durationMs: number }
   | { status: 'error'; message: string };
+
+/**
+ * What the export screen says when the merge fails. The native text ("Clip 3 (<file>.mp4): …",
+ * sometimes with encoder fallbacks appended) goes to the log, not the screen. A failing clip is
+ * named by its badge (the number on its thumb), not its position in the merge: badges are kept
+ * across deletes and reorders, and zero-length clips are left out of the merge.
+ */
+function exportFailureCopy(why: string, segments: Segment[]): string {
+  const position = Number(/\bClip (\d+) \(/.exec(why)?.[1]);
+  const seg = Number.isInteger(position) ? segments[position - 1] : undefined;
+  if (seg) {
+    const clip = seg.label ? `clip ${seg.label}` : 'one of the clips';
+    return `Pulse couldn’t add ${clip} to the video. Try again; if it fails again, replace or remove that clip.`;
+  }
+  return 'Pulse couldn’t put your clips together. Try again.';
+}
 
 /**
  * Merges a draft's clips into a single mp4 with pulse-editor's `merge()` (see `editor-merge.ts`),
@@ -56,13 +73,9 @@ export function useExport(draftId: string, segments: Segment[]) {
         if (current) setState({ status: 'done', outputPath: path, durationMs });
       } catch (e) {
         if (abort.signal.aborted) return; // cancelled: the screen left or the clips changed
-        console.warn('[export] merge failed', e);
-        if (current) {
-          setState({
-            status: 'error',
-            message: e instanceof Error ? e.message : 'Could not merge the clips.',
-          });
-        }
+        const why = describeError(e);
+        console.warn(`[export] merge failed: ${why}`);
+        if (current) setState({ status: 'error', message: exportFailureCopy(why, segments) });
       }
     })();
 

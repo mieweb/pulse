@@ -2,9 +2,9 @@ import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
 import { useRef } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
-import Svg, { Circle } from 'react-native-svg';
 
 import type { Anchor } from '@/components/action-menu';
+import { ProgressRing } from '@/components/progress-ring';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
@@ -112,7 +112,11 @@ export function DraftCard({
             // The ring alone can't say WHAT is uploading; announce the phase so a
             // backgrounded/resumed run is as legible here as on the export screen.
             accessibilityLabel={live.status === 'uploading' ? uploadPhaseLabel(live) : 'Uploading'}>
-            <UploadRing progress={uploadProgress} />
+            <ProgressRing
+              progress={uploadProgress}
+              color="#fff"
+              trackColor="rgba(255,255,255,0.3)"
+            />
           </View>
         )}
       </View>
@@ -211,40 +215,6 @@ function LinkPill({ draftId, name }: { draftId: string; name: string | null }) {
       />
       <ThemedText type="small">{shareable ? 'Share' : 'Watch'}</ThemedText>
     </Pressable>
-  );
-}
-
-const RING = 28;
-const RING_STROKE = 3;
-const RING_R = (RING - RING_STROKE) / 2;
-const RING_C = 2 * Math.PI * RING_R;
-
-/** A small determinate ring shown over a draft's cover while it uploads (white on a dark scrim). */
-function UploadRing({ progress }: { progress: number }) {
-  const clamped = Math.max(0.03, Math.min(1, progress));
-  return (
-    <Svg width={RING} height={RING}>
-      <Circle
-        cx={RING / 2}
-        cy={RING / 2}
-        r={RING_R}
-        stroke="rgba(255,255,255,0.3)"
-        strokeWidth={RING_STROKE}
-        fill="none"
-      />
-      <Circle
-        cx={RING / 2}
-        cy={RING / 2}
-        r={RING_R}
-        stroke="#fff"
-        strokeWidth={RING_STROKE}
-        strokeLinecap="round"
-        fill="none"
-        strokeDasharray={RING_C}
-        strokeDashoffset={RING_C * (1 - clamped)}
-        transform={`rotate(-90 ${RING / 2} ${RING / 2})`}
-      />
-    </Svg>
   );
 }
 

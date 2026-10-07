@@ -6,7 +6,7 @@ import { Alert } from 'react-native';
 import { useToast } from '@/features/toast/toast-provider';
 
 import { exportDrafts } from './pack';
-import { importPulseFile } from './unpack';
+import { importPulseFile, skippedSummary } from './unpack';
 
 type TransferState = 'idle' | 'exporting' | 'importing';
 
@@ -57,8 +57,11 @@ export function useDraftTransfer() {
 
     setState('importing');
     try {
-      const { draftIds } = await importPulseFile(asset.uri);
-      showToast(`${draftIds.length} draft${draftIds.length === 1 ? '' : 's'} imported`);
+      const { draftIds, skipped } = await importPulseFile(asset.uri);
+      const imported = `${draftIds.length} draft${draftIds.length === 1 ? '' : 's'} imported`;
+      // Clips the phone couldn't take are left out, not fatal: say so, without a dialog.
+      if (skipped.length > 0) showToast(`${imported} · ${skippedSummary(skipped)}`, 'error');
+      else showToast(imported);
       return draftIds;
     } catch (e) {
       Alert.alert('Couldn’t import drafts', message(e));

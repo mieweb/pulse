@@ -43,7 +43,8 @@ function remove(uri: string) {
  * whose sound the phone can't decode is rejected too, never imported silent.
  *
  * `signal` cancels it: the conversion is stopped natively and the call rejects with "Import
- * cancelled" right away.
+ * cancelled" right away. `onProgress` gets the conversion's progress (0–1); it isn't called
+ * for a clip that passes through unchanged.
  *
  * Container layout (faststart) is deliberately NOT part of this gate: raw recorder files are
  * moov-at-end by AVFoundation constraint (see the codec-pin note in use-recorder.ts) and the
@@ -54,9 +55,10 @@ export async function conformToContract(
   uri: string,
   target?: RecorderFormat,
   signal?: AbortSignal,
+  onProgress?: (fraction: number) => void,
 ): Promise<ConformOutcome | null> {
   if (signal?.aborted) throw new Error('Import cancelled');
-  const work = run(uri, target, signal);
+  const work = run(uri, target, signal, onProgress);
   if (!signal) return work;
 
   // Reject the moment the signal aborts — never wait on the native side to confirm: a conversion
@@ -84,6 +86,7 @@ async function run(
   uri: string,
   target: RecorderFormat | undefined,
   signal: AbortSignal | undefined,
+  onProgress: ((fraction: number) => void) | undefined,
 ): Promise<ConformOutcome | null> {
   const source = await probe(uri);
   if (signal?.aborted) throw new Error('Import cancelled');
@@ -96,7 +99,7 @@ async function run(
 
   let result;
   try {
-    result = await conform(uri, decision.options, { signal });
+    result = await conform(uri, decision.options, { signal, onProgress });
   } catch (e) {
     if (signal?.aborted) throw new Error('Import cancelled');
     throw new Error(`Could not convert this video (${describe(e)})`);
@@ -117,7 +120,8 @@ async function run(
   }
 
   const notes = [`conform: ${decision.reasons.join('; ')}`];
-  if (target && !check.mergeMatch) notes.push(`merge signature missed: ${check.mergeMisses.join('; ')}`);
+  if (target && !check.mergeMatch)
+    notes.push(`merge signature missed: ${check.mergeMisses.join('; ')}`);
   return {
     path: result.uri,
     engine: Platform.OS === 'ios' ? 'AVFoundation' : 'Media3',

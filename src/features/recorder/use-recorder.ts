@@ -34,6 +34,7 @@ import {
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
 import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
 import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
+import { importFailureCopy } from '@/utils/import-copy';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
@@ -44,23 +45,6 @@ import { useCallState } from './use-call-state';
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
 // Android only cycles through the modes it can actually honor. The union type keeps 'cinematic'
 // on both platforms so persisted iOS prefs and shared UI maps still typecheck.
-/**
- * What the import alert says for a conform rejection. The native reasons are stable wording
- * (pulse-editor's Conform.swift / Conform.kt): a file with no readable picture, sound this phone
- * can't decode (rejected rather than imported silent), a damaged file whose frames the decoder
- * dropped (Android). Anything else is a conversion failure worth retrying.
- */
-export function importFailureCopy(why: string): string {
-  if (/no video stream|no media tracks|probe/i.test(why)) return 'That file isn’t a video Pulse can read.';
-  if (/sound can.t be read/i.test(why)) {
-    return 'This phone can’t play that video’s sound, so Pulse can’t import it.';
-  }
-  if (/couldn.t decode all of the video/i.test(why)) {
-    return 'That video file is damaged: this phone can’t decode all of it.';
-  }
-  return 'Pulse couldn’t convert it for the timeline. Try again, or pick another video.';
-}
-
 export const STABILIZATION_MODES: readonly StabilizationMode[] =
   Platform.OS === 'ios' ? ['off', 'standard', 'cinematic', 'auto'] : ['off', 'standard', 'auto'];
 export type StabilizationMode = 'off' | 'standard' | 'cinematic' | 'auto';
@@ -89,6 +73,9 @@ export function useRecorder(initialDraftId?: string) {
   const [recordStartedAt, setRecordStartedAt] = useState<number | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  // The import's conversion progress (0–1) for the + ring; null until the conversion reports
+  // (and for a clip kept as is), so the + shows its spinner meanwhile.
+  const [importProgress, setImportProgress] = useState<number | null>(null);
   const [facing, setFacing] = useState<CameraFacing>('back');
   const [torch, setTorch] = useState(false);
   const [stabilization, setStabilization] = useState<StabilizationMode>('off');
@@ -233,6 +220,10 @@ export function useRecorder(initialDraftId?: string) {
   // on a single backgrounding, and the persist tail keeps isRecordingRef true across both — without
   // this we'd finalize and open a background task twice for one clip.
   const backgroundFinalizingRef = useRef(false);
+  // The in-flight import's cancel handle, so leaving the recorder stops its conversion (see the
+  // unmount cleanup), and whether we've left (that cancel is silent: no alert on a closed screen).
+  const importAbortRef = useRef<AbortController | null>(null);
+  const unmountedRef = useRef(false);
 
   // Drop an empty draft on leave so it doesn't litter Home: either one we created this
   // session and never kept a clip in, or a resumed draft whose every clip was deleted.
@@ -249,8 +240,13 @@ export function useRecorder(initialDraftId?: string) {
     segmentCount.current = segments.length;
     if (segments.length > 0) everHadSegments.current = true;
   }, [segments]);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      // An import still converting is cancelled: the clip would otherwise land in a draft the
+      // user has left (or fail against one deleted just below).
+      importAbortRef.current?.abort();
       // Backstop for a recording still live at unmount — the gesture's onFinalize is the
       // primary stop path. Stopping the recorder finalizes the file (the clip is then dropped
       // by startRecording's cleanup since we've unmounted), avoiding a dangling capture.
@@ -261,9 +257,8 @@ export function useRecorder(initialDraftId?: string) {
       if (id && segmentCount.current === 0 && safeToDelete) {
         void deleteDraft(id);
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   // Hydrate persisted camera prefs once on mount, then mark ready so the camera can render.
   useEffect(() => {
@@ -474,6 +469,7 @@ export function useRecorder(initialDraftId?: string) {
       const picked = result.assets?.[0];
       if (result.canceled || !picked) return;
       pickedUri = picked.uri;
+      setImportProgress(null);
       setIsImporting(true);
       const started = Date.now();
       importLog.info(
@@ -487,10 +483,18 @@ export function useRecorder(initialDraftId?: string) {
       // Only a real move to the background counts; Control Center or a Face ID prompt
       // ('inactive') doesn't.
       const abort = new AbortController();
+      importAbortRef.current = abort;
+      if (unmountedRef.current) abort.abort(); // the picker returned to a closed recorder
       appStateSub = AppState.addEventListener('change', (state) => {
         if (state === 'background') abort.abort();
       });
       const cancelled = () => {
+        if (unmountedRef.current) {
+          importLog.warn(
+            `cancelled after ${formatSeconds(Date.now() - started)}: the recorder was closed`,
+          );
+          return;
+        }
         importLog.warn(
           `cancelled after ${formatSeconds(Date.now() - started)}: Pulse left the screen`,
         );
@@ -504,9 +508,17 @@ export function useRecorder(initialDraftId?: string) {
       // the reels contract, so a clip that can't be probed or conformed (or whose output fails
       // verification) is rejected rather than persisted off-contract.
       const target = await getRecorderFormat();
+      // Native reports often (iOS every 0.5 %, Android every 100 ms); whole percents are plenty
+      // for the ring. A report that lands after a cancel is dropped.
+      let shown = -1;
+      const onProgress = (fraction: number) => {
+        if (abort.signal.aborted || (fraction < 1 && fraction - shown < 0.01)) return;
+        shown = fraction;
+        setImportProgress(fraction);
+      };
       let conformed: ConformOutcome | null;
       try {
-        conformed = await conformToContract(picked.uri, target, abort.signal);
+        conformed = await conformToContract(picked.uri, target, abort.signal, onProgress);
       } catch (e) {
         if (abort.signal.aborted) {
           cancelled();
@@ -545,6 +557,7 @@ export function useRecorder(initialDraftId?: string) {
       Alert.alert('Couldn’t import the video', e instanceof Error ? e.message : 'Try again.');
     } finally {
       appStateSub?.remove();
+      importAbortRef.current = null;
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
       // for 4K): the clip now lives in the draft (or was rejected), so drop it.
       if (pickedUri) {
@@ -552,6 +565,7 @@ export function useRecorder(initialDraftId?: string) {
           new File(pickedUri).delete();
         } catch {}
       }
+      setImportProgress(null);
       setIsImporting(false);
     }
   }
@@ -639,6 +653,7 @@ export function useRecorder(initialDraftId?: string) {
     recordStartedAt,
     cameraReady,
     isImporting,
+    importProgress,
     prefsReady,
     facing,
     torch,
