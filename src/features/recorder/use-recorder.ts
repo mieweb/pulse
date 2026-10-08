@@ -183,9 +183,13 @@ export function useRecorder(initialDraftId?: string) {
 
   // Library access for the + import — granular (photo+video) like the camera/mic gate,
   // but requested just-in-time on tap (§2.3). Granting up front also lets the picker's
-  // passthrough fast path stream originals instead of prompting mid-import.
+  // passthrough fast path stream originals instead of prompting mid-import. iOS only: Android
+  // imports through the system photo picker, which needs no permission, and Play's photo/video
+  // policy rejects READ_MEDIA_* for that. With those out of the manifest, even checking the
+  // photo/video permission throws on Android 13+, so the hook doesn't check there.
   const [libraryPermission, requestLibraryPermission] = usePermissions({
     granularPermissions: ['photo', 'video'],
+    get: Platform.OS === 'ios',
   });
 
   // Start/stop decisions run from memoized gesture callbacks where `isRecording` state can
@@ -420,7 +424,7 @@ export function useRecorder(initialDraftId?: string) {
   // decideImport (§ imports), the engines and their verification in conformToContract.
   async function importClip() {
     if (isRecordingRef.current || isImporting) return;
-    if (!libraryPermission?.granted) {
+    if (Platform.OS === 'ios' && !libraryPermission?.granted) {
       if (libraryPermission && !libraryPermission.canAskAgain) {
         Alert.alert(
           'Photos access needed',
