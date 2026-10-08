@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import type { VideoProbeResult } from 'react-native-video-trim';
+import type { ProbeAudio, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
 
 import {
   CANVAS_HEIGHT,
@@ -9,107 +9,101 @@ import {
   NORMALIZE_TARGET_FPS,
 } from './import-normalization';
 
-// Real probeVideo() values from the wild-import corpus in assets/dev/import/
-// (see assets/dev/README.md), captured with ffprobe against the committed
-// fixtures. Names match the fixture files.
-function probe(overrides: Partial<VideoProbeResult>): VideoProbeResult {
+// Real probe() values from the wild-import corpus in assets/dev/import/
+// (see assets/dev/README.md), read with pulse-editor's AVFoundation probe against the committed
+// fixtures. Names match the fixture files. Rotation is clockwise.
+type Fields = Partial<ProbeVideo> & { durationMs?: number; audio?: ProbeAudio | null; noVideo?: true };
+function probe({ durationMs = 8000, audio, noVideo, ...video }: Fields): ProbeResult {
   return {
-    hasVideo: true,
-    videoCodec: 'h264',
-    width: 1920,
-    height: 1080,
-    rotation: 0,
-    mirrored: false,
-    nominalFps: 30,
-    averageFps: 30,
-    bitrate: 3_000_000,
-    pixelFormat: 'yuv420p',
-    colorTransfer: 'bt709',
-    hasAudio: true,
-    audioCodec: 'aac',
-    audioSampleRate: 48000,
-    audioChannels: 2,
-    duration: 8000,
-    videoDuration: 8000,
-    fileSize: 3_000_000,
-    ...overrides,
+    durationMs,
+    video: noVideo
+      ? undefined
+      : {
+          codec: 'h264',
+          width: 1920,
+          height: 1080,
+          rotation: 0,
+          mirrored: false,
+          fps: 30,
+          bitrate: 3_000_000,
+          bitDepth: 8,
+          transfer: 'sdr',
+          durationMs,
+          ...video,
+        },
+    audio: audio === null ? undefined : { codec: 'aac', sampleRate: 48000, channels: 2, ...audio },
   };
 }
+const aac = (sampleRate: number, channels: number): ProbeAudio => ({ codec: 'aac', sampleRate, channels });
+const opus: ProbeAudio = { codec: 'opus', sampleRate: 48000, channels: 2 };
 
-const FIXTURES: Record<string, VideoProbeResult> = {
+const FIXTURES: Record<string, ProbeResult> = {
   'hdr-hlg-portrait-1080p-30-hevc10': probe({
-    videoCodec: 'hevc',
-    rotation: 90,
-    bitrate: 895_086,
-    pixelFormat: 'yuv420p10le',
-    colorTransfer: 'arib-std-b67',
+    codec: 'hevc',
+    rotation: 270,
+    bitrate: 1_002_851,
+    bitDepth: 10,
+    transfer: 'hlg',
   }),
   'hdr-pq-landscape-4k-30-hevc10': probe({
-    videoCodec: 'hevc',
+    codec: 'hevc',
     width: 3840,
     height: 2160,
-    bitrate: 1_701_365,
-    pixelFormat: 'yuv420p10le',
-    colorTransfer: 'smpte2084',
+    bitrate: 2_125_325,
+    bitDepth: 10,
+    transfer: 'pq',
   }),
   'mono44k-portrait-1080p-30-h264': probe({
-    rotation: 90,
-    bitrate: 2_155_971,
-    audioSampleRate: 44100,
-    audioChannels: 1,
+    rotation: 270,
+    bitrate: 2_226_719,
+    audio: aac(44100, 1),
   }),
   'ntsc-landscape-1080p-2997-h264': probe({
-    nominalFps: 29.97,
-    averageFps: 29.97,
-    bitrate: 3_166_876,
+    fps: 29.97,
+    bitrate: 3_436_690,
   }),
   'opus-landscape-1080p-30-h264': probe({
-    bitrate: 4_551_683,
-    audioCodec: 'opus',
+    bitrate: 4_718_881,
+    audio: opus,
   }),
   'rot270-portrait-1080p-30-hevc': probe({
-    videoCodec: 'hevc',
-    rotation: 270,
-    bitrate: 433_528,
+    codec: 'hevc',
+    rotation: 90,
+    fps: 29.87,
+    bitrate: 566_119,
   }),
   'screenrec-portrait-886x1920-60-h264': probe({
     width: 886,
     height: 1920,
-    nominalFps: 60,
-    averageFps: 60,
-    bitrate: 1_218_503,
+    fps: 60,
+    bitrate: 1_372_973,
   }),
   'slomo-portrait-1080p-120-h264': probe({
-    rotation: 90,
-    nominalFps: 120,
-    averageFps: 120,
-    bitrate: 850_255,
+    rotation: 270,
+    fps: 120,
+    bitrate: 911_077,
   }),
   'square-720x720-30-h264': probe({
     width: 720,
     height: 720,
-    bitrate: 890_283,
+    bitrate: 968_701,
   }),
   'timelapse-landscape-1080p-30-hevc-noaudio': probe({
-    videoCodec: 'hevc',
-    bitrate: 3_037_944,
-    hasAudio: false,
-    audioCodec: '',
-    audioSampleRate: -1,
-    audioChannels: -1,
+    codec: 'hevc',
+    bitrate: 3_266_407,
+    audio: null,
   }),
   'vfr-portrait-1080p-h264': probe({
     width: 1080,
     height: 1920,
-    nominalFps: 60,
-    averageFps: 40,
-    bitrate: 2_224_619,
+    fps: 40,
+    bitrate: 2_366_691,
   }),
   'whatsapp-848x464-30-h264-baseline': probe({
     width: 848,
     height: 464,
-    bitrate: 745_736,
-    audioSampleRate: 44100,
+    bitrate: 752_820,
+    audio: aac(44100, 2),
   }),
 };
 
@@ -121,10 +115,18 @@ describe('decideImport against the wild-import fixture corpus', () => {
   });
 
   it('opus audio on an on-canvas video gets an audio-only conform with the video stream-copied', () => {
-    const d = decideImport(probe({ rotation: 90, audioCodec: 'opus' }));
+    const d = decideImport(probe({ rotation: 270, audio: opus }));
     expect(d).toEqual({
       action: 'normalize',
-      options: { engine: 'auto', copyVideo: true },
+      options: {
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+        rotation: 0,
+        fps: NORMALIZE_TARGET_FPS,
+        bitrate: NORMALIZE_TARGET_BITRATE,
+        audio: { sampleRate: 48000, channels: 2 },
+        copyVideo: true,
+      },
       reasons: ['audio codec opus'],
     });
   });
@@ -133,14 +135,14 @@ describe('decideImport against the wild-import fixture corpus', () => {
     const d = decideImport(FIXTURES['opus-landscape-1080p-30-h264']);
     expect(d.action).toBe('normalize');
     if (d.action !== 'normalize') return;
-    expect(d.options.copyVideo).toBeUndefined();
+    expect(d.options.copyVideo).toBe(false);
     expect(d.reasons.join('; ')).toContain('audio codec opus');
     expect(d.reasons.join('; ')).toContain('off the 1080x1920 canvas');
   });
 
   it.each([
-    ['hdr-hlg-portrait-1080p-30-hevc10', ['video codec hevc', '10-bit', 'HDR transfer arib-std-b67']],
-    ['hdr-pq-landscape-4k-30-hevc10', ['video codec hevc', '10-bit', 'HDR transfer smpte2084']],
+    ['hdr-hlg-portrait-1080p-30-hevc10', ['video codec hevc', '10-bit', 'HDR transfer hlg']],
+    ['hdr-pq-landscape-4k-30-hevc10', ['video codec hevc', '10-bit', 'HDR transfer pq']],
     ['rot270-portrait-1080p-30-hevc', ['video codec hevc']],
     ['timelapse-landscape-1080p-30-hevc-noaudio', ['video codec hevc', 'off the 1080x1920 canvas']],
     ['screenrec-portrait-886x1920-60-h264', ['60 fps', 'off the 1080x1920 canvas']],
@@ -153,9 +155,9 @@ describe('decideImport against the wild-import fixture corpus', () => {
     const d = decideImport(FIXTURES[name]);
     expect(d.action).toBe('normalize');
     if (d.action !== 'normalize') return;
-    expect(d.options.copyVideo).toBeUndefined();
+    expect(d.options.copyVideo).toBe(false);
     expect(d.options.bitrate).toBe(NORMALIZE_TARGET_BITRATE);
-    expect(d.options.frameRate).toBe(NORMALIZE_TARGET_FPS);
+    expect(d.options.fps).toBe(NORMALIZE_TARGET_FPS);
     for (const fragment of expectedReasons) {
       expect(d.reasons.join('; ')).toContain(fragment);
     }
@@ -167,24 +169,23 @@ describe('decideImport against the wild-import fixture corpus', () => {
       if (d.action !== 'normalize' || d.options.copyVideo) continue;
       expect(d.options.width).toBe(CANVAS_WIDTH);
       expect(d.options.height).toBe(CANVAS_HEIGHT);
-      expect(d.options.letterbox).toBe(true);
     }
   });
 });
 
 describe('decideImport edge cases beyond the corpus', () => {
   it('audio-less files with fine on-canvas video pass through', () => {
-    expect(decideImport(probe({ rotation: 90, hasAudio: false, audioCodec: '' }))).toEqual({
+    expect(decideImport(probe({ rotation: 270, audio: null }))).toEqual({
       action: 'passthrough',
     });
   });
 
   it('audio-only files (no video stream) pass through', () => {
-    expect(decideImport(probe({ hasVideo: false, videoCodec: '' })).action).toBe('passthrough');
+    expect(decideImport(probe({ noVideo: true })).action).toBe('passthrough');
   });
 
   it('exotic video codecs are re-encoded', () => {
-    const d = decideImport(probe({ videoCodec: 'vp9' }));
+    const d = decideImport(probe({ codec: 'vp9' }));
     expect(d.action).toBe('normalize');
     if (d.action === 'normalize') {
       expect(d.reasons.join('; ')).toContain('vp9');
@@ -200,32 +201,31 @@ describe('decideImport edge cases beyond the corpus', () => {
   });
 
   it('hostile audio on a hostile video is folded into the full re-encode', () => {
-    const d = decideImport(probe({ averageFps: 60, nominalFps: 60, audioCodec: 'opus' }));
+    const d = decideImport(probe({ fps: 60, audio: opus }));
     expect(d.action).toBe('normalize');
     if (d.action === 'normalize') {
-      expect(d.options.copyVideo).toBeUndefined();
+      expect(d.options.copyVideo).toBe(false);
       expect(d.reasons.join('; ')).toContain('audio codec opus');
     }
   });
 
   it('portrait 4K (rotated coded-landscape) is baked onto the canvas', () => {
-    const d = decideImport(probe({ width: 3840, height: 2160, rotation: 90 }));
+    const d = decideImport(probe({ width: 3840, height: 2160, rotation: 270 }));
     expect(d.action).toBe('normalize');
     if (d.action === 'normalize') {
       expect(d.options.width).toBe(CANVAS_WIDTH);
       expect(d.options.height).toBe(CANVAS_HEIGHT);
-      expect(d.options.letterbox).toBe(true);
     }
   });
 
   it('unknown fps (probe -1) does not trigger the fps rule', () => {
-    expect(decideImport(probe({ rotation: 90, nominalFps: -1, averageFps: -1 }))).toEqual({
+    expect(decideImport(probe({ rotation: 270, fps: -1 }))).toEqual({
       action: 'passthrough',
     });
   });
 
   it('on-canvas 31 fps is normalized (would round past the pinned 30 fps)', () => {
-    const d = decideImport(probe({ rotation: 90, nominalFps: 31, averageFps: 31 }));
+    const d = decideImport(probe({ rotation: 270, fps: 31 }));
     expect(d.action).toBe('normalize');
     if (d.action === 'normalize') {
       expect(d.reasons.join('; ')).toContain('31 fps');
@@ -233,35 +233,23 @@ describe('decideImport edge cases beyond the corpus', () => {
   });
 
   it('exactly 30.5 fps rounds to 31 and is normalized (merge-pin rounding boundary)', () => {
-    const d = decideImport(probe({ rotation: 90, nominalFps: 30.5, averageFps: 30.5 }));
+    const d = decideImport(probe({ rotation: 270, fps: 30.5 }));
     expect(d.action).toBe('normalize');
   });
 
   it('on-canvas 29.97 NTSC still passes through', () => {
     expect(
-      decideImport(probe({ rotation: 90, nominalFps: 29.97, averageFps: 29.97 })),
+      decideImport(probe({ rotation: 270, fps: 29.97 })),
     ).toEqual({ action: 'passthrough' });
   });
 
   it('unknown bitrate (probe -1) does not trigger the bitrate rule', () => {
-    expect(decideImport(probe({ rotation: 90, bitrate: -1 }))).toEqual({ action: 'passthrough' });
+    expect(decideImport(probe({ rotation: 270, bitrate: -1 }))).toEqual({ action: 'passthrough' });
   });
 
-  it('8-bit chroma-subsampling formats with "10" in the name are not treated as 10-bit', () => {
-    // yuv410p/yuv411p are 8-bit 4:1:0 / 4:1:1 — only a 10/10le/10be depth suffix means 10-bit.
-    expect(decideImport(probe({ rotation: 90, pixelFormat: 'yuv410p' }))).toEqual({
-      action: 'passthrough',
-    });
-    expect(decideImport(probe({ rotation: 90, pixelFormat: 'yuv411p' }))).toEqual({
-      action: 'passthrough',
-    });
-  });
-
-  it('10-bit depth suffixes are still caught (be as well as le, and biplanar p010)', () => {
-    for (const pixelFormat of ['yuv420p10le', 'yuv420p10be', 'p010le']) {
-      const d = decideImport(probe({ pixelFormat }));
-      expect(d.action).toBe('normalize');
-      if (d.action === 'normalize') expect(d.reasons).toContain(`10-bit pixel format ${pixelFormat}`);
-    }
+  it('10-bit video is re-encoded even when SDR', () => {
+    const d = decideImport(probe({ rotation: 270, bitDepth: 10 }));
+    expect(d.action).toBe('normalize');
+    if (d.action === 'normalize') expect(d.reasons).toContain('10-bit video');
   });
 });

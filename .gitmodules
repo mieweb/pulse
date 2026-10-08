@@ -2,3 +2,9 @@
 	path = pulsevault-mieweb
 	url = https://github.com/mieweb/pulsevault.git
 	branch = main
+[submodule "modules/react-native-video-trim"]
+	path = modules/react-native-video-trim
+	url = https://github.com/morepriyam/react-native-video-trim.git
+[submodule "modules/pulse-editor"]
+	path = modules/pulse-editor
+	url = https://github.com/morepriyam/pulse-editor.git

@@ -1,18 +1,22 @@
 import { Icon } from '@/components/icon';
+import { ProgressRing } from '@/components/progress-ring';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 /** The "+" import control next to the record button — opens the system video picker to add
- *  an existing device clip as a segment. Shows a spinner while a picked clip is being
- *  normalized/copied into the draft. */
+ *  an existing device clip as a segment. While a picked clip is being normalized/copied into
+ *  the draft it shows a spinner, or a ring once the conversion reports progress (0–1). */
 export function ImportButton({
   onPress,
   disabled,
   busy = false,
+  progress = null,
 }: {
   onPress: () => void;
   disabled: boolean;
   busy?: boolean;
+  progress?: number | null;
 }) {
+  const ring = busy ? progress : null;
   return (
     <Pressable
       onPress={onPress}
@@ -21,11 +25,17 @@ export function ImportButton({
       accessibilityRole="button"
       accessibilityLabel="Import video"
       accessibilityState={{ busy }}
+      accessibilityValue={
+        ring != null ? { min: 0, max: 100, now: Math.round(ring * 100) } : undefined
+      }
       style={({ pressed }) => [
         styles.button,
-        { opacity: disabled || busy ? 0.35 : pressed ? 0.7 : 1 },
+        // The ring stays at full strength so its progress reads; the spinner dims as before.
+        { opacity: disabled || (busy && ring == null) ? 0.35 : pressed ? 0.7 : 1 },
       ]}>
-      {busy ? (
+      {ring != null ? (
+        <ProgressRing progress={ring} color="#000" trackColor="rgba(0,0,0,0.15)" />
+      ) : busy ? (
         <ActivityIndicator size="small" color="#000" />
       ) : (
         <Icon name="plus" size={24} weight="medium" tintColor="#000" />

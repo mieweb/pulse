@@ -16,8 +16,8 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
 
 /**
- * Circular progress ring for the merge screen. `progress` is a fraction in [0,1] emitted by the
- * native merge engine (`onMergeProgress`). The arc sweeps from 12 o'clock; the fill is animated
+ * Circular progress ring for the merge screen. `progress` is a fraction in [0,1] reported by
+ * pulse-editor's `merge()` (`onProgress`). The arc sweeps from 12 o'clock; the fill is animated
  * with `withTiming` so even the near-instant passthrough path animates rather than snapping. The
  * centered label shows two decimals (e.g. `50.11%`).
  */

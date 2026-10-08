@@ -7,7 +7,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 //   drafts/{draftId}/segments/{segmentId}.edited.{rev}.mp4  — re-encoded editor output
 
 /**
- * Normalize a bare filesystem path to a `file://` URI. `merge()` / `getFrameAt` / the camera hand
+ * Normalize a bare filesystem path to a `file://` URI. `merge()` / `thumbnail()` / the camera hand
  * back bare paths, but expo's `File`, expo-video, whisper, sharing, etc. all want a URI. A value
  * that already has a scheme is returned unchanged.
  */

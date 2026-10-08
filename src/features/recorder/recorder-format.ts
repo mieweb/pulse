@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { probeVideo, type VideoProbeResult } from 'react-native-video-trim';
+import { probe, type ProbeResult } from '@mieweb/pulse-editor';
 
 import { getSetting, setSetting } from '@/db/settings';
 import { importLog } from './import-log';
@@ -20,14 +20,17 @@ import {
  * re-encode) at merge, never correctness.
  */
 
-const RECORDER_FORMAT_KEY = 'recorder.format';
+// v2: rotation is clockwise (pulse-editor `probe`). v1 rows held FFprobe's counter-clockwise
+// degrees and are ignored, so the format is re-learned from the next recording.
+const RECORDER_FORMAT_KEY = 'recorder.format.v2';
 
-/** Before this device has recorded anything. iOS portrait recordings are coded 1920×1080 under
- * a 90° tag (probeVideo convention, as on real on-device exports); Android starts upright. */
+/** Before this device has recorded anything: what the test phones record (probed with pulse-editor,
+ * 2026-10-01: an iPhone 17 Pro Max and a Galaxy S24 Ultra both write 1920×1080 tagged 90° clockwise;
+ * the iPhone mono AAC, the S24 stereo). Only the first imports use it; the first recording replaces it. */
 export const DEFAULT_RECORDER_FORMAT: RecorderFormat =
   Platform.OS === 'ios'
-    ? { width: 1920, height: 1080, rotation: 90, audioSampleRate: 48000, audioChannels: 2 }
-    : { width: 1080, height: 1920, rotation: 0, audioSampleRate: 48000, audioChannels: 2 };
+    ? { width: 1920, height: 1080, rotation: 90, audioSampleRate: 48000, audioChannels: 1 }
+    : { width: 1920, height: 1080, rotation: 90, audioSampleRate: 48000, audioChannels: 2 };
 
 const isPositiveInt = (n: unknown): n is number =>
   typeof n === 'number' && Number.isInteger(n) && n > 0;
@@ -59,20 +62,16 @@ export function parseRecorderFormat(raw: string | null): RecorderFormat | null {
  * no audio track: the audio half stays whatever was known before.
  */
 export function recorderFormatFromProbe(
-  probe: VideoProbeResult,
+  { video, audio: track }: ProbeResult,
   previous: RecorderFormat,
 ): RecorderFormat | null {
-  if (!probe.hasVideo || probe.videoCodec !== 'h264' || probe.mirrored) return null;
-  const geometry = { width: probe.width, height: probe.height, rotation: probe.rotation };
+  if (!video || video.codec !== 'h264' || video.mirrored) return null;
+  const geometry = { width: video.width, height: video.height, rotation: video.rotation };
   if (!isCanvasFormat(geometry)) return null;
-  const fps = probe.averageFps > 0 ? probe.averageFps : probe.nominalFps;
-  if (Math.round(fps) !== NORMALIZE_TARGET_FPS) return null;
+  if (Math.round(video.fps) !== NORMALIZE_TARGET_FPS) return null;
   const audio =
-    probe.hasAudio &&
-    probe.audioCodec === 'aac' &&
-    probe.audioSampleRate > 0 &&
-    probe.audioChannels > 0
-      ? { audioSampleRate: probe.audioSampleRate, audioChannels: probe.audioChannels }
+    track && track.codec === 'aac' && track.sampleRate > 0 && track.channels > 0
+      ? { audioSampleRate: track.sampleRate, audioChannels: track.channels }
       : { audioSampleRate: previous.audioSampleRate, audioChannels: previous.audioChannels };
   return { ...geometry, ...audio };
 }
@@ -86,7 +85,19 @@ export async function getRecorderFormat(): Promise<RecorderFormat> {
 export async function learnRecorderFormat(uri: string): Promise<void> {
   try {
     const current = await getRecorderFormat();
-    const next = recorderFormatFromProbe(await probeVideo(uri), current);
+    const probed = await probe(uri);
+    // What the recorder actually wrote: its bitrate lands above the 5 Mbps it asks for (#241).
+    const v = probed.video;
+    if (v) {
+      // probe() reports an unknown value as -1.
+      const mbps = v.bitrate > 0 ? `${(v.bitrate / 1e6).toFixed(1)} Mbps` : 'unknown bitrate';
+      const length =
+        probed.durationMs > 0 ? `${(probed.durationMs / 1000).toFixed(1)}s` : 'unknown length';
+      importLog.info(
+        `recorded ${v.codec} ${v.width}x${v.height} ${v.fps > 0 ? Math.round(v.fps) : '?'}fps ${mbps}, ${length}`,
+      );
+    }
+    const next = recorderFormatFromProbe(probed, current);
     if (next && JSON.stringify(next) !== JSON.stringify(current)) {
       await setSetting(RECORDER_FORMAT_KEY, JSON.stringify(next));
       importLog.info(`recorder format learned: ${JSON.stringify(next)}`);

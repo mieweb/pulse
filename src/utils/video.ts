@@ -1,8 +1,9 @@
 import { File } from 'expo-file-system';
 import { createVideoPlayer, VideoThumbnail } from 'expo-video';
-import { getFrameAt, isValidFile } from 'react-native-video-trim';
+import { probe, thumbnail } from '@mieweb/pulse-editor';
 
 import { toFileUri } from './file-store';
+import { parseEdit } from './segment-window';
 
 type Player = ReturnType<typeof createVideoPlayer>;
 
@@ -23,9 +24,9 @@ function whenReady(player: Player): Promise<void> {
 }
 
 /**
- * Extract a clip's cover frame as a jpeg via RNVT's native `getFrameAt` and move it to
+ * Extract a clip's cover frame as a jpeg via pulse-editor's `thumbnail` and move it to
  * `destAbsUri` (its persisted home in the draft dir): the first frame, or — for an edited clip —
- * the frame at the edit's start, rotated / flipped / cropped as the edit renders it. Returns
+ * the frame at the edit's start, rotated / flipped / cropped as the export renders it. Returns
  * false on failure, leaving the caller to store a null thumbnail (the runtime
  * `generateThumbnail` fallback then covers it).
  */
@@ -35,17 +36,20 @@ export async function generateThumbnailFile(
   edit?: { editState: string; startMs: number },
 ): Promise<boolean> {
   try {
-    const { outputPath } = await getFrameAt(videoAbsUri, {
-      time: edit?.startMs ?? 0,
-      format: 'jpeg',
-      quality: 80,
+    const parsed = parseEdit(edit?.editState);
+    const frame = await thumbnail(videoAbsUri, {
+      timeMs: edit?.startMs ?? 0,
+      quality: 0.8,
       maxWidth: 192,
       maxHeight: 256,
-      editState: edit?.editState,
+      // The editor stores counter-clockwise quarter turns; pulse-editor takes clockwise degrees.
+      rotation: parsed ? ((4 - parsed.rotation) % 4) * 90 : 0,
+      flipped: parsed?.flipped ?? false,
+      crop: parsed?.crop ?? undefined,
     });
     const dest = new File(destAbsUri);
     if (dest.exists) dest.delete();
-    await new File(toFileUri(outputPath)).move(dest);
+    await new File(toFileUri(frame.uri)).move(dest);
     return true;
   } catch (e) {
     console.warn('[video] thumbnail file failed for', videoAbsUri, e);
@@ -79,13 +83,13 @@ export async function generateThumbnail(uri: string): Promise<VideoThumbnail | u
 }
 
 /**
- * Native clip duration in ms via RNVT's `isValidFile` probe — no player to spin up. 0 on an
+ * Native clip duration in ms via pulse-editor's `probe` — no player to spin up. 0 on an
  * invalid/unreadable file (the clip is then skipped on playback and merge).
  */
 export async function getDurationMs(uri: string): Promise<number> {
   try {
-    const info = await isValidFile(uri);
-    return info.isValid && info.duration > 0 ? info.duration : 0;
+    const { durationMs } = await probe(uri);
+    return durationMs > 0 ? durationMs : 0;
   } catch (e) {
     console.warn('[video] duration failed for', uri, e);
     return 0;

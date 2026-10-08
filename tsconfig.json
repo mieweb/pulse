@@ -8,7 +8,10 @@
       // whisper.rn's package.json `exports` map omits a "." root entry, so bundler-mode
       // resolution can't find the bare import's types. Metro resolves it at runtime via the
       // `main` fallback; this points TS at the published declarations.
-      "whisper.rn": ["./node_modules/whisper.rn/lib/typescript/index"]
+      "whisper.rn": ["./node_modules/whisper.rn/lib/typescript/index"],
+      // Local native module (git submodule, autolinked from modules/ — see metro.config.js).
+      "react-native-video-trim": ["./modules/react-native-video-trim/src/index.tsx"],
+      "@mieweb/pulse-editor": ["./modules/pulse-editor/src/index.tsx"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],

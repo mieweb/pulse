@@ -27,7 +27,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { CompressOptions, VideoProbeResult } from 'react-native-video-trim';
+import type { ConformOptions, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
 
 import { CANVAS_HEIGHT, CANVAS_WIDTH, decideImport } from './import-normalization';
 
@@ -93,57 +93,66 @@ function num(value: unknown): number {
   return Number.isFinite(n) ? n : -1;
 }
 
-/** Map desktop ffprobe output to the exact `probeVideo()` result shape the app consumes. */
-function probeLikeNative(file: string): VideoProbeResult {
+/** Whether ffprobe's display matrix mirrors the frame: a negative determinant, the test the
+ * native probes use. The matrix prints as rows of 16.16 fixed-point numbers. */
+function isMirrored(displayMatrix: unknown): boolean {
+  if (typeof displayMatrix !== 'string') return false;
+  const rows = displayMatrix
+    .trim()
+    .split('\n')
+    .map((row) => row.split(':')[1]?.trim().split(/\s+/).map(Number) ?? []);
+  const [a, b] = rows[0] ?? [];
+  const [c, d] = rows[1] ?? [];
+  return [a, b, c, d].every(Number.isFinite) && a! * d! - b! * c! < 0;
+}
+
+/** Desktop stand-in for pulse-editor's `probe()`: ffprobe mapped to the exact result shape. */
+function probeLikeNative(file: string): ProbeResult {
   const j = ffprobeJson(file);
   const v = j.streams.find((s: any) => s.codec_type === 'video');
   const a = j.streams.find((s: any) => s.codec_type === 'audio');
-
-  let rotation = 0;
-  if (v) {
-    const dm = (v.side_data_list ?? []).find((s: any) => typeof s.rotation === 'number');
-    // The fork normalizes the raw Display-Matrix value to 0..359 without negating
-    // (ios/VideoTrim.swift probeVideo; Android probeRotation matches).
-    if (dm) rotation = ((dm.rotation % 360) + 360) % 360;
-    else if (v.tags?.rotate) rotation = ((Number(v.tags.rotate) % 360) + 360) % 360;
-  }
-
-  const streamBitrate = num(v?.bit_rate);
   const durationSec = num(j.format?.duration);
-  return {
-    hasVideo: !!v,
-    videoCodec: v?.codec_name ?? '',
-    width: v ? num(v.width) : -1,
-    height: v ? num(v.height) : -1,
-    rotation,
-    mirrored: false,
-    nominalFps: parseFps(v?.r_frame_rate),
-    averageFps: parseFps(v?.avg_frame_rate),
-    bitrate: streamBitrate > 0 ? streamBitrate : num(j.format?.bit_rate),
-    pixelFormat: v?.pix_fmt ?? '',
-    colorTransfer: v?.color_transfer ?? '',
-    hasAudio: !!a,
-    audioCodec: a?.codec_name ?? '',
-    audioSampleRate: num(a?.sample_rate),
-    audioChannels: num(a?.channels),
-    duration: durationSec >= 0 ? Math.round(durationSec * 1000) : -1,
-    videoDuration: -1,
-    fileSize: num(j.format?.size),
-  };
+  const durationMs = durationSec >= 0 ? Math.round(durationSec * 1000) : -1;
+
+  let video: ProbeVideo | undefined;
+  if (v) {
+    // ffprobe's Display-Matrix angle is counter-clockwise; probe() reports clockwise.
+    const dm = (v.side_data_list ?? []).find((s: any) => typeof s.rotation === 'number');
+    const ccw = dm ? dm.rotation : v.tags?.rotate ? -Number(v.tags.rotate) : 0;
+    const avg = parseFps(v.avg_frame_rate);
+    const streamBitrate = num(v.bit_rate);
+    video = {
+      codec: v.codec_name ?? '',
+      width: num(v.width),
+      height: num(v.height),
+      rotation: ((-ccw % 360) + 360) % 360,
+      mirrored: isMirrored(dm?.displaymatrix),
+      fps: avg > 0 ? avg : parseFps(v.r_frame_rate),
+      bitrate: streamBitrate > 0 ? streamBitrate : num(j.format?.bit_rate),
+      bitDepth: /10(le|be)?$/.test(v.pix_fmt ?? '') ? 10 : 8,
+      transfer:
+        v.color_transfer === 'arib-std-b67' ? 'hlg' : v.color_transfer === 'smpte2084' ? 'pq' : 'sdr',
+      durationMs: v.duration ? Math.round(num(v.duration) * 1000) : durationMs,
+    };
+  }
+  const audio = a
+    ? { codec: a.codec_name ?? '', sampleRate: num(a.sample_rate), channels: num(a.channels) }
+    : undefined;
+  return { durationMs, video, audio };
 }
 
 /**
  * The fork's iOS `compress()` argv, verbatim (ios/VideoTrim.swift), so the desktop run
  * exercises the same encoder + filter chain the device does (videotoolbox on both).
  */
-function compressArgs(input: string, options: Partial<CompressOptions>, output: string): string[] {
-  const bitrate = options.bitrate ?? -1;
-  const width = options.width ?? -1;
-  const height = options.height ?? -1;
-  const frameRate = options.frameRate ?? -1;
-  const codec = options.codec ?? 'h264';
-  const copyVideo = options.copyVideo ?? false;
-  const letterbox = options.letterbox ?? false;
+function compressArgs(input: string, options: ConformOptions, output: string): string[] {
+  const bitrate = options.bitrate;
+  const width = options.width;
+  const height = options.height;
+  const frameRate = options.fps;
+  const codec: string = 'h264';
+  const copyVideo = options.copyVideo;
+  const letterbox = true;
 
   const cmds: string[] = ['-i', input];
   if (copyVideo) {
@@ -173,8 +182,8 @@ function compressArgs(input: string, options: Partial<CompressOptions>, output: 
     if (frameRate > 0) cmds.push('-r', String(frameRate));
   }
   cmds.push('-c:a', 'aac');
-  if ((options.audioSampleRate ?? -1) > 0) cmds.push('-ar', String(options.audioSampleRate));
-  if ((options.audioChannels ?? -1) > 0) cmds.push('-ac', String(options.audioChannels));
+  cmds.push('-ar', String(options.audio.sampleRate));
+  cmds.push('-ac', String(options.audio.channels));
   // The fork appends faststart flags on every MP4-family output (copy and re-encode alike).
   cmds.push('-movflags', '+faststart');
   cmds.push(output);
@@ -327,8 +336,10 @@ function findPlayheadFill(frame: Frame, box: Box): number {
 
 function mergeSignature(file: string): string {
   const p = probeLikeNative(file);
-  const a = p.hasAudio ? `${p.audioCodec}:${p.audioSampleRate}:${p.audioChannels}` : 'none';
-  return `${p.videoCodec}:${p.width}x${p.height}r${p.rotation}@${Math.round(p.nominalFps)}|${a}`;
+  const a = p.audio ? `${p.audio.codec}:${p.audio.sampleRate}:${p.audio.channels}` : 'none';
+  const v = p.video;
+  if (!v) throw new Error(`mergeSignature: ${file} has no video stream`);
+  return `${v.codec}:${v.width}x${v.height}r${v.rotation}@${Math.round(v.fps)}|${a}`;
 }
 
 /** A recorder-signature clip (1920x1080 30 fps H.264 5 Mbps, AAC 48 kHz stereo). */
@@ -399,7 +410,7 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
         expect(decision.action).toBe('normalize');
         if (decision.action !== 'normalize') return;
         if (expected === 'audio-only') expect(decision.options.copyVideo).toBe(true);
-        else expect(decision.options.copyVideo).toBeUndefined();
+        else expect(decision.options.copyVideo).toBe(false);
 
         const output = path.join(TMP, `norm-${name}`);
         ff(compressArgs(input, decision.options, output));
@@ -408,30 +419,31 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
         // Output invariants: what the merge/upload pipeline is promised downstream.
         // Audio-less sources stay audio-less — `-c:a aac` is a no-op with no input stream.
         const out = probeLikeNative(output);
-        expect(out.audioCodec).toBe(probe.hasAudio ? 'aac' : '');
+        expect(out.audio?.codec).toBe(probe.audio ? 'aac' : undefined);
         // Every normalized output (copy and re-encode alike) must be faststart.
         expect(isFaststart(output)).toBe(true);
         if (expected === 'audio-only') {
           // Video track stream-copied byte-for-byte: same codec, geometry, timing.
-          expect(out.videoCodec).toBe(probe.videoCodec);
-          expect(out.width).toBe(probe.width);
-          expect(out.height).toBe(probe.height);
+          expect(out.video?.codec).toBe(probe.video?.codec);
+          expect(out.video?.width).toBe(probe.video?.width);
+          expect(out.video?.height).toBe(probe.video?.height);
           return;
         }
-        expect(out.videoCodec).toBe('h264');
+        const ov = out.video!;
+        expect(ov.codec).toBe('h264');
         // The pixel data is cast to 8-bit SDR-safe range (the encoder-compat goal).
         // NOTE: ffmpeg passes the input's color TAGS (transfer/primaries) through the
         // re-encode, so an HDR source stays tagged HLG/PQ on 8-bit output — same
         // behavior as the trim re-encode path. Players tone-map on display; tracked
         // as a fork follow-up (tone-cast to BT.709 on the compress re-encode path).
-        expect(out.pixelFormat).toBe('yuv420p'); // 8-bit
+        expect(ov.bitDepth).toBe(8);
         // Every full re-encode is baked onto the exact portrait canvas, coded upright.
-        expect(out.width).toBe(CANVAS_WIDTH);
-        expect(out.height).toBe(CANVAS_HEIGHT);
-        expect(out.rotation).toBe(0);
-        expect(out.nominalFps).toBeLessThanOrEqual(30.5);
+        expect(ov.width).toBe(CANVAS_WIDTH);
+        expect(ov.height).toBe(CANVAS_HEIGHT);
+        expect(ov.rotation).toBe(0);
+        expect(ov.fps).toBeLessThanOrEqual(30.5);
         // -b:v is a target, not a hard cap; allow encoder overshoot headroom.
-        expect(out.bitrate).toBeLessThanOrEqual(8_000_000);
+        expect(ov.bitrate).toBeLessThanOrEqual(8_000_000);
       },
       TIMEOUT,
     );
@@ -446,7 +458,7 @@ e2e('import pipeline e2e (probe → decide → normalize)', () => {
         // Expected scale-fit rectangle from the SOURCE's display geometry — the detected
         // content box must match it, or a stretched/unfitted output (box = full frame)
         // would silently pass the bar checks below.
-        const src = probeLikeNative(path.join(FIXTURES_DIR, name));
+        const src = probeLikeNative(path.join(FIXTURES_DIR, name)).video!;
         const srcRot = src.rotation % 180 !== 0;
         const dispW = srcRot ? src.height : src.width;
         const dispH = srcRot ? src.width : src.height;

@@ -1,14 +1,11 @@
 import { useEffect, useState } from 'react';
-import VideoTrim, { merge, type Spec } from 'react-native-video-trim';
 
 import type { Segment } from '@/db/schema';
-import { absolutize } from '@/utils/file-store';
-import { canonicalEdit, effFile } from '@/utils/segment-window';
+import { describeError } from '@/features/upload/upload-log';
 
-import { mergedSignature, REELS_TARGET } from './merge-signature';
+import { mergeWithEditor } from './editor-merge';
+import { mergedSignature } from './merge-signature';
 import { resolveMergedExport } from './merged-export';
-
-const Native = VideoTrim as Spec;
 
 export type ExportState =
   | { status: 'merging'; progress: number }
@@ -16,15 +13,29 @@ export type ExportState =
   | { status: 'error'; message: string };
 
 /**
- * Headless concat of a draft's clips into a single mp4 via react-native-video-trim's `merge()`
- * (passthrough join for uniform pin-matching clips, selective outlier-conform for mixed,
- * re-encode fallback), always onto the pinned reels canvas (portrait 1080×1920 h264 — see
- * REELS_TARGET). Joins each clip's file in timeline order, with its edit (trim, rotate / flip /
- * crop, speed, mute) passed as `clipEdits` and rendered by the merge in the same pass — edits are
- * stored as settings, so this is the one place they're encoded.
- * Single-clip drafts go through the engine too: a lone conforming clip is a near-free passthrough
- * remux, a lone landscape import gets conformed to portrait like any outlier. The job re-runs only
- * when the clip set actually changes (keyed on a file signature, not array identity) or on `run`.
+ * What the export screen says when the merge fails. The native text ("Clip 3 (<file>.mp4): …",
+ * sometimes with encoder fallbacks appended) goes to the log, not the screen. A failing clip is
+ * named by its badge (the number on its thumb), not its position in the merge: badges are kept
+ * across deletes and reorders, and zero-length clips are left out of the merge.
+ */
+function exportFailureCopy(why: string, segments: Segment[]): string {
+  const position = Number(/\bClip (\d+) \(/.exec(why)?.[1]);
+  const seg = Number.isInteger(position) ? segments[position - 1] : undefined;
+  if (seg) {
+    const clip = seg.label ? `clip ${seg.label}` : 'one of the clips';
+    return `Pulse couldn’t add ${clip} to the video. Try again; if it fails again, replace or remove that clip.`;
+  }
+  return 'Pulse couldn’t put your clips together. Try again.';
+}
+
+/**
+ * Merges a draft's clips into a single mp4 with pulse-editor's `merge()` (see `editor-merge.ts`),
+ * always onto the pinned reels canvas (portrait 1080×1920 H.264 — see REELS_TARGET). Joins each
+ * clip's file in timeline order, with its edit (trim, rotate / flip / crop, speed, mute) passed as
+ * typed fields and rendered by the merge in the same pass — edits are stored as settings, so this
+ * is the one place they're encoded. Single-clip drafts go through the merge too, so the export is
+ * always faststart. The job re-runs only when the clip set actually changes (keyed on a file
+ * signature, not array identity) or on `run`; leaving the screen or changing the clips cancels it.
  *
  * The merge is persisted per draft (`drafts/{id}/export.mp4`, see `merged-export.ts`): when the
  * stored export still matches the clips, the hook goes straight to `done` with no re-encode, and
@@ -38,12 +49,6 @@ export function useExport(draftId: string, segments: Segment[]) {
 
   // Stable across re-renders that don't change the actual clips, so the live query re-emitting
   // the same data doesn't kick off a second merge.
-  const files = segments.map(effFile);
-  // Each clip's edit, rendered by the merge itself ("" = none; legacy baked clips are already
-  // rendered into their file).
-  const clipEdits = segments.map((s) =>
-    s.editedFilename ? '' : (canonicalEdit(s.editState) ?? ''),
-  );
   const signature = mergedSignature(segments);
 
   useEffect(() => {
@@ -52,47 +57,31 @@ export function useExport(draftId: string, segments: Segment[]) {
     // A late merge resolving after this effect re-ran (or the screen unmounted) must not clobber
     // newer state — only the most recent run is allowed to commit.
     let current = true;
-
-    // Native emits normalized merge progress in [0,1]; reflect it into the loader. Subscribed for
-    // the lifetime of this run and torn down in cleanup.
-    const sub = Native.onMergeProgress(({ progress }) => {
-      if (current) setState({ status: 'merging', progress });
-    });
+    // Leaving the screen or changing the clips cancels the merge in flight.
+    const abort = new AbortController();
 
     void (async () => {
       // Inside the async body (not the effect's synchronous path) so re-running on a clip change
       // flips back to the loader without a cascading-render warning.
       if (current) setState({ status: 'merging', progress: 0 });
       try {
-        const { path, durationMs } = await resolveMergedExport(draftId, segments, async () => {
-          const urls = files.map(absolutize);
-          // Single clips go through the engine too — not just for outlier conforming, but because
-          // exported files must be faststart and the raw sources aren't (recorder files are
-          // moov-at-end by AVFoundation constraint): the uniform fast path remuxes them
-          // near-free on iOS with the moov relocated.
-          const result = await merge(urls, { outputExt: 'mp4', ...REELS_TARGET, clipEdits });
-          // Emergency encoder fallback missed the pin (Android broken-encoder devices) — the
-          // export is playable but off-contract; the vault's web-ready backstop owns the re-encode.
-          if (result.degraded) {
-            console.warn('[export] merged output is degraded (missed the reels pin)');
-          }
-          return { path: result.outputPath, durationMs: result.duration };
-        });
+        const { path, durationMs } = await resolveMergedExport(draftId, segments, () =>
+          mergeWithEditor(segments, abort.signal, (progress) => {
+            if (current) setState({ status: 'merging', progress });
+          }),
+        );
         if (current) setState({ status: 'done', outputPath: path, durationMs });
       } catch (e) {
-        console.warn('[export] merge failed', e);
-        if (current) {
-          setState({
-            status: 'error',
-            message: e instanceof Error ? e.message : 'Could not merge the clips.',
-          });
-        }
+        if (abort.signal.aborted) return; // cancelled: the screen left or the clips changed
+        const why = describeError(e);
+        console.warn(`[export] merge failed: ${why}`);
+        if (current) setState({ status: 'error', message: exportFailureCopy(why, segments) });
       }
     })();
 
     return () => {
       current = false;
-      sub.remove();
+      abort.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftId, signature, attempt]);

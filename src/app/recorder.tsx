@@ -82,6 +82,7 @@ export default function RecorderScreen() {
     finalizeRecording,
     importClip,
     isImporting,
+    importProgress,
     startHoldRecording,
     endHoldRecording,
     flipCamera,
@@ -583,6 +584,7 @@ export default function RecorderScreen() {
                   onPress={importClip}
                   disabled={isRecording || dragging}
                   busy={isImporting}
+                  progress={importProgress}
                 />
               </View>
             </View>

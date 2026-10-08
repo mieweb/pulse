@@ -52,12 +52,11 @@
     "react-native-screens": "~4.26.0",
     "react-native-sortables": "^1.10.0",
     "react-native-svg": "15.15.4",
-    "react-native-video-trim": "git+https://github.com/morepriyam/react-native-video-trim.git#6162a2ac575279c2ec5f86c0b96e72625d8699eb",
     "react-native-vision-camera": "^5.2.2",
     "react-native-vision-camera-worklets": "^5.2.2",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.10.1",
-    "whisper.rn": "0.6.0"
+    "whisper.rn": "0.7.4"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",
