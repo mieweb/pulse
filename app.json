@@ -3,7 +3,7 @@
     "name": "Pulse",
     "slug": "pulse-camera",
     "owner": "mieweb",
-    "version": "2.2.1",
+    "version": "2.2.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pulsecam",
@@ -36,7 +36,7 @@
         "android.permission.SYSTEM_ALERT_WINDOW"
       ],
       "package": "com.mieweb.pulse",
-      "versionCode": 20210
+      "versionCode": 20220
     },
     "web": {
       "output": "static",
