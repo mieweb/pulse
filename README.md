@@ -152,15 +152,22 @@ The server side lives in [`pulsevault-mieweb/`](pulsevault-mieweb/): a Fastify p
 >
 > The ~400 MB fixture-regen master (`fixtures/bbb_master.mov`) is intentionally excluded from normal clones (see `.lfsconfig`); fetch it only when regenerating fixtures: `git lfs pull --include "fixtures/*.mov"`.
 
+Requires **Node.js ≥ 24.3.0** (the `engines` field in `package.json`; CI uses Node 24).
+
 ```bash
-# 1. Install dependencies
+# 1. Clone with the PulseVault submodule (or, in an existing clone: git submodule update --init)
+git clone --recurse-submodules https://github.com/mieweb/pulse.git && cd pulse
+
+# 2. Install dependencies
 npm install
 
-# 2. Run a development build (native modules — Expo Go won't work)
+# 3. Run a development build (native modules — Expo Go won't work)
 npm run ios       # or: npm run android
 ```
 
 Pulse uses native modules (VisionCamera, Whisper, FFmpeg), so it needs a **dev build**, not Expo Go.
+
+The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this app is built against. It holds the protocol JSON Schemas that `src/features/upload/protocol.gen.ts` is generated from, and it is the server used by the integration suite (see [Testing](#testing)).
 
 **No camera? No problem.** In a dev build, the Home screen has `+ seed` / `clear` buttons that create a "Dev sample" draft from the bundled `assets/dev/` clips — including deliberately mismatched resolution/fps/codec/orientation clips that exercise the export-normalization path — so the full editor is drivable on a simulator. See [assets/dev/README.md](assets/dev/README.md).
 
@@ -174,7 +181,11 @@ Pulse uses native modules (VisionCamera, Whisper, FFmpeg), so it needs a **dev b
 | `npm run ios` / `npm run android` | Build & run the dev client |
 | `npm test` | Run the Jest unit-test suite |
 | `npm run lint` | ESLint via `expo lint` |
-| `npm run format` | Prettier |
+| `npx tsc --noEmit` | Typecheck |
+| `npm run format` / `npm run format:check` | Prettier (write / check only) |
+| `node scripts/gen-protocol-types.mjs` | Regenerate `src/features/upload/protocol.gen.ts` from the submodule's schemas and `package.json` `pulseProtocol` (`--check` fails if it's stale) |
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, lint, `gen-protocol-types.mjs --check`, and unit tests on every PR, plus the integration suite against both the pinned PulseVault and the latest npm release.
 
 ### Project structure
 
@@ -197,6 +208,19 @@ Unit tests are co-located with the code and scoped to pure logic — cue reflow,
 
 ```bash
 npm test
+```
+
+Two heavier suites are opt-in and skip themselves in a plain `npm test`:
+
+```bash
+# Cross-repo integration: the app's real pairing + upload code against a real PulseVault
+# server built from the submodule (set PV_CORE=<path to core.js> to test another build)
+(cd pulsevault-mieweb && npm ci && npm run build)
+PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
+
+# Import → normalize → merge pipeline on the assets/dev/import corpus
+# (needs ffmpeg + ffprobe on PATH and the LFS fixtures pulled)
+PULSE_E2E=1 npx jest import-pipeline
 ```
 
 ## License
