@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { type ReactNode, useEffect, useMemo, useRef } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,6 +10,7 @@ import { ThemedText } from '@/components/themed-text';
 import { CardShadow, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { hostOf, shortHost } from '@/utils/format';
+import { tallSheetFits } from '@/utils/sheet-fit';
 
 import { DestinationLabel } from './destination-label';
 import { type DestinationOption, useDestinations } from './use-destinations';
@@ -22,9 +23,17 @@ import { type DestinationOption, useDestinations } from './use-destinations';
  */
 const MAX_FITTED = 5;
 
-/** The route's presentation for a pool of `count` destinations (see `MAX_FITTED`). */
+/**
+ * Whether the sheet opens in its scrolling 60% → full-height mode: past `MAX_FITTED` rows, or at
+ * any count when large text or a short screen would clip a fitted sheet (`tallSheetFits`).
+ */
+function scrollsFor(count: number): boolean {
+  return count > MAX_FITTED || !tallSheetFits();
+}
+
+/** The route's presentation for a pool of `count` destinations (see `scrollsFor`). */
 export function destinationsSheetOptions(count: number) {
-  return count > MAX_FITTED
+  return scrollsFor(count)
     ? {
         sheetAllowedDetents: [0.6, 1],
         sheetInitialDetentIndex: 0,
@@ -52,7 +61,7 @@ export function DestinationsSheet() {
   const destinations = useMemo(() => [...pool].sort(byExpiry), [pool]);
   // Same decision as the route's options (`destinationsSheetOptions`), from the same count.
   const { count } = useLocalSearchParams<{ count?: string }>();
-  const scrolls = Number(count) > MAX_FITTED;
+  const [scrolls] = useState(() => scrollsFor(Number(count)));
   // Each server's compatibility with this app, checked live when the sheet opens.
   const compat = useServerCompatibility();
   const compatOf = (server: string) => compat.find((c) => c.server === server);

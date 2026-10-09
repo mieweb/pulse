@@ -58,7 +58,8 @@ export function OnDeviceAiSheet() {
   const close = () => router.back();
   // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
   const [scrolls] = useState(() => !tallSheetFits());
-  // A large model not on disk yet: the sheet asks before the download, in place of the list.
+  // A large model not on disk yet: the sheet asks first, in place of the list. Choosing it doesn't
+  // download it here; captions download it when they next run (`useMergedTranscription`).
   const [confirming, setConfirming] = useState<WhisperModel | null>(null);
 
   const select = (id: string) => {
@@ -89,9 +90,10 @@ export function OnDeviceAiSheet() {
     return (
       <View collapsable={false} style={containerStyle}>
         <View style={styles.headerText}>
-          <ThemedText type="title2">Download {confirming.label}?</ThemedText>
+          <ThemedText type="title2">Use {confirming.label}?</ThemedText>
           <ThemedText type="body" themeColor="textSecondary">
-            About {sizeMb(confirming.approxBytes)}. Use Wi-Fi to avoid cellular data charges.
+            It’s about {sizeMb(confirming.approxBytes)}, downloaded when Pulse next makes captions.
+            Use Wi-Fi to avoid cellular data charges.
           </ThemedText>
         </View>
         <View style={styles.actions}>
@@ -103,7 +105,7 @@ export function OnDeviceAiSheet() {
               { backgroundColor: theme.accent, opacity: pressed ? 0.85 : 1 },
             ]}>
             <ThemedText type="headline" style={styles.buttonLabel}>
-              Download
+              Use {confirming.label}
             </ThemedText>
           </Pressable>
           <Pressable

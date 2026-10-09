@@ -169,6 +169,9 @@ export function Toast({
             onDismiss(id);
             action.onPress();
           }}
+          // The button owns this touch, so it holds the toast itself while pressed.
+          onPressIn={() => onHold(id)}
+          onPressOut={() => onRelease(id)}
           hitSlop={Spacing.two}
           accessibilityRole="button"
           style={({ pressed }) => [
@@ -211,6 +214,10 @@ export function Toast({
         onPress={() => onDismiss(id)}
         onPressIn={() => onHold(id)}
         onPressOut={() => onRelease(id)}
+        // With an action, not one element: VoiceOver would read it as a whole and never reach the
+        // button. The text and the button are then separate elements (the toast is announced as
+        // it appears either way).
+        accessible={!action}
         accessibilityRole="alert"
         accessibilityHint="Dismisses this message. You can also swipe it up."
         accessibilityLiveRegion="polite"

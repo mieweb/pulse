@@ -5,7 +5,7 @@ import { Alert, AppState } from 'react-native';
 
 import { addDestination } from '@/db/destinations';
 import { useToast } from '@/features/toast/toast-provider';
-import { hostOf } from '@/utils/format';
+import { hostOf, shortHost } from '@/utils/format';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
@@ -27,7 +27,7 @@ function confirmPairing(host: string): Promise<boolean> {
   return new Promise((resolve) => {
     Alert.alert(
       'Connect to this server?',
-      `Pulse will pair with “${host}” and upload to it. Only continue if you recognize this server and opened or scanned this link yourself.`,
+      `Pulse will pair with “${shortHost(host)}” and upload to it. Only continue if you recognize this server and opened or scanned this link yourself.`,
       [
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
         { text: 'Connect', onPress: () => resolve(true) },
@@ -115,7 +115,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             token: link.token,
             artifactId: link.artifactId,
           }).then(() => {
-            showToast(`Connected to ${host} — pick it when you upload`);
+            showToast(`Connected to ${shortHost(host)} — pick it when you upload`);
           });
         })
         .catch(() => {
