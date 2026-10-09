@@ -28,10 +28,30 @@ function durationFor({ kind, title, message, action }: ToastContent): number {
 /** The exit animation's length; the toast unmounts after it. */
 const EXIT_MS = 220;
 
+/**
+ * Why a toast went away: its `action` was tapped, it timed out, the person dismissed it (tap,
+ * swipe, VoiceOver escape), or another toast replaced it.
+ */
+export type ToastCloseReason = 'action' | 'timeout' | 'dismissed' | 'replaced';
+
 export type ToastOptions = Omit<ToastContent, 'kind'> & {
   kind?: ToastKind;
   /** Overrides the reading-time default (`durationFor`). */
   duration?: number;
+  /** Called exactly once when this toast goes away, with why. */
+  onClose?: (reason: ToastCloseReason) => void;
+};
+
+/**
+ * An optimistic action with an Undo: the caller has already applied it on screen. `onUndo` puts
+ * it back if Undo is tapped; `onCommit` makes it permanent once the toast goes any other way
+ * (times out, is dismissed, or is replaced by another toast).
+ */
+export type UndoToastOptions = {
+  title: string;
+  message?: string;
+  onUndo: () => void;
+  onCommit: () => void;
 };
 
 /**
@@ -44,7 +64,10 @@ type ShowToast = {
   (text: string, kind?: ToastKind): void;
 };
 
-type ToastContextValue = { showToast: ShowToast };
+type ToastContextValue = {
+  showToast: ShowToast;
+  showUndoToast: (options: UndoToastOptions) => void;
+};
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
@@ -84,6 +107,13 @@ function ToastSurface(props: React.ComponentProps<typeof Toast>) {
  */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<{ id: number; content: ToastContent } | null>(null);
+  // The up toast's `onClose`, called once (then cleared) whichever way it goes.
+  const onCloseRef = useRef<ToastOptions['onClose']>(undefined);
+  const close = useCallback((reason: ToastCloseReason) => {
+    const onClose = onCloseRef.current;
+    onCloseRef.current = undefined;
+    onClose?.(reason);
+  }, []);
   const [leaving, setLeaving] = useState(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const nextId = useRef(0);
@@ -97,13 +127,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const dismiss = useCallback(
-    (id: number) => {
+    (id: number, reason: ToastCloseReason = 'dismissed') => {
       if (id !== currentId.current) return;
+      close(reason);
       clearTimers();
       setLeaving(true);
       timers.current.push(setTimeout(() => setToast(null), EXIT_MS));
     },
-    [clearTimers],
+    [clearTimers, close],
   );
 
   // A finger on the toast holds it; letting go (not swiping it away) gives a little more.
@@ -123,22 +154,47 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const showToast = useCallback<ShowToast>(
     (input: ToastOptions | string, kind?: ToastKind) => {
-      const { kind: k = 'success', duration, ...rest } = toOptions(input, kind);
+      const { kind: k = 'success', duration, onClose, ...rest } = toOptions(input, kind);
       const content = { ...rest, kind: k };
+      close('replaced');
+      onCloseRef.current = onClose;
       const id = ++nextId.current;
       currentId.current = id;
       clearTimers();
       setLeaving(false);
       setToast({ id, content });
-      timers.current.push(setTimeout(() => dismiss(id), duration ?? durationFor(content)));
+      timers.current.push(
+        setTimeout(() => dismiss(id, 'timeout'), duration ?? durationFor(content)),
+      );
     },
-    [clearTimers, dismiss],
+    [clearTimers, close, dismiss],
   );
 
-  useEffect(() => clearTimers, [clearTimers]);
+  const showUndoToast = useCallback(
+    ({ title, message, onUndo, onCommit }: UndoToastOptions) =>
+      showToast({
+        kind: 'info',
+        title,
+        message,
+        action: { label: 'Undo', onPress: onUndo },
+        onClose: (reason) => {
+          if (reason !== 'action') onCommit();
+        },
+      }),
+    [showToast],
+  );
+
+  // Leaving the app's root (a reload) commits whatever is pending rather than dropping it.
+  useEffect(
+    () => () => {
+      clearTimers();
+      close('replaced');
+    },
+    [clearTimers, close],
+  );
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={{ showToast, showUndoToast }}>
       {children}
       {toast && (
         // Keyed by id: a replacing toast animates in fresh instead of reusing the old one.

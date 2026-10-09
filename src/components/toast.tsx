@@ -38,7 +38,7 @@ export type ToastContent = {
 
 const ICONS: Record<ToastKind, IconName> = {
   success: 'checkmark.circle.fill',
-  info: 'info.circle',
+  info: 'info.circle.fill',
   warning: 'exclamationmark.triangle.fill',
   error: 'xmark.circle.fill',
 };
@@ -92,7 +92,8 @@ export function Toast({
   id: number;
   content: ToastContent;
   leaving: boolean;
-  onDismiss: (id: number) => void;
+  /** `reason` is 'action' when the action button closed it, else 'dismissed'. */
+  onDismiss: (id: number, reason?: 'action' | 'dismissed') => void;
   /** A finger is on the toast: hold it up. */
   onHold: (id: number) => void;
   /** The finger let go without dismissing it. */
@@ -166,7 +167,7 @@ export function Toast({
           // Dismiss first: an action that shows a toast of its own ("Retrying…") must not have
           // that new toast dismissed right after.
           onPress={() => {
-            onDismiss(id);
+            onDismiss(id, 'action');
             action.onPress();
           }}
           // The button owns this touch, so it holds the toast itself while pressed.

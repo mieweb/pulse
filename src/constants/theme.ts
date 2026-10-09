@@ -56,6 +56,7 @@ export const Colors = {
     card: '#ffffff',
     // A control sitting on a card (a card's link pill): white with its own shadow in light.
     cardRaised: '#ffffff',
+    cardRaisedPressed: '#E5E5EA', // System Gray 5
   },
   dark: {
     text: '#ffffff', // Label / Primary
@@ -75,6 +76,7 @@ export const Colors = {
     groupedBackground: '#000000',
     card: '#2C2C2E',
     cardRaised: '#3A3A3C',
+    cardRaisedPressed: '#48484A', // System Gray 3
   },
 } as const;
 
@@ -123,6 +125,29 @@ export const CardShadow = {
   shadowOffset: { width: 0, height: 2 },
   elevation: 2,
 } as const;
+
+/**
+ * The lift for things that float above the screen's content (the home + button, the destinations
+ * pill, the toast, the Android ⋯ menu): one step above `CardShadow`. In dark mode, where a shadow
+ * doesn't show on black, a floating surface also uses `cardRaised` so it separates from the cards.
+ */
+export const FloatShadow = {
+  shadowColor: '#000',
+  shadowOpacity: 0.18,
+  shadowRadius: 12,
+  shadowOffset: { width: 0, height: 4 },
+  elevation: 6,
+} as const;
+
+/** Corner radii: rows and small chips, buttons, cards and sheets' rows. */
+export const Radius = {
+  row: 12,
+  button: 14,
+  card: 18,
+} as const;
+
+/** The height of a primary or paired button row. */
+export const ButtonHeight = 52;
 
 export const Spacing = {
   half: 2,

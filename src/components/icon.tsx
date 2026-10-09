@@ -84,6 +84,7 @@ const ANDROID_GLYPHS: Partial<Record<string, LucideIcon>> = {
   folder: Folder,
   gyroscope: Orbit,
   'info.circle': Info,
+  'info.circle.fill': Info,
   'line.3.horizontal': GripHorizontal,
   link: Link,
   'mic.fill': Mic,
