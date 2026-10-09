@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { CloseButton } from '@/features/recorder/close-button';
-import { ControlScrim, Spacing } from '@/constants/theme';
+import { CardShadow, ControlScrim, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { segmentsForDraft } from '@/db/drafts';
 import { useExport } from '@/features/export/use-export';
@@ -23,7 +23,6 @@ import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToDocuments } from '@/features/export/use-save-to-documents';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { CaptionOverlay } from '@/features/transcription/caption-overlay';
-import { ModelSwitcherModal } from '@/features/transcription/model-switcher-modal';
 import type { TranscriptLine } from '@/features/transcription/whisper';
 import { DestinationSelector } from '@/features/upload/destination-selector';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
@@ -67,18 +66,13 @@ export default function ExportScreen() {
 
   // Whether the share sheet is being presented, so we can disable the button and show a spinner.
   const [busy, setBusy] = useState(false);
-  // The On-device AI sheet, opened from the caption CTA when no model is selected yet.
-  const [modelSheetVisible, setModelSheetVisible] = useState(false);
+
   const photos = useSaveToPhotos();
   const docs = useSaveToDocuments();
   const theme = useTheme();
-  // Hairline ring for element-filled surfaces — the fill alone barely separates from the
-  // flat background in either mode.
-  const elementSurface = {
-    backgroundColor: theme.backgroundElement,
-    borderColor: theme.border,
-    borderWidth: StyleSheet.hairlineWidth,
-  } as const;
+  // Secondary buttons and the uploading bar: cards on the grouped background, lifted by a
+  // shadow (no outline), like the app's other cards.
+  const elementSurface = { backgroundColor: theme.card, ...CardShadow } as const;
 
   // Open the merged-video caption editor (only meaningful once the merge is done).
   const openCaptionEditor = () => {
@@ -162,7 +156,14 @@ export default function ExportScreen() {
         ) : (
           <>
             <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.onAccent} />
-            <ThemedText style={{ color: theme.onAccent }}>Upload to {selectedHost}</ThemedText>
+            {/* The section is already titled Upload: the icon and the destination say the rest.
+                Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
+            <ThemedText
+              numberOfLines={1}
+              ellipsizeMode="middle"
+              style={[styles.buttonLabel, { color: theme.onAccent }]}>
+              {selectedHost || 'Upload'}
+            </ThemedText>
           </>
         )}
       </Pressable>
@@ -170,7 +171,7 @@ export default function ExportScreen() {
   );
 
   return (
-    <ThemedView style={styles.fill}>
+    <ThemedView type="groupedBackground" style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
         <CloseButton onPress={close} />
         {state.status === 'done' && !uploading && (
@@ -178,7 +179,7 @@ export default function ExportScreen() {
             status={transcription.state.status}
             hasCaptions={captionLines.length > 0}
             onEditCaptions={openCaptionEditor}
-            onAddCaptions={() => setModelSheetVisible(true)}
+            onAddCaptions={() => router.push('/on-device-ai')}
           />
         )}
       </View>
@@ -410,8 +411,6 @@ export default function ExportScreen() {
           </View>
         )}
       </View>
-
-      <ModelSwitcherModal visible={modelSheetVisible} onClose={() => setModelSheetVisible(false)} />
     </ThemedView>
   );
 }
@@ -619,8 +618,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.two,
     height: 52,
+    paddingHorizontal: Spacing.three,
     borderRadius: 14,
   },
+  buttonLabel: { flexShrink: 1 },
   pressed: { opacity: 0.85 },
   pressedIcon: { opacity: 0.6 },
   disabled: { opacity: 0.35 },

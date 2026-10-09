@@ -10,6 +10,7 @@ import { type BuildConfig, readBuildInfo } from '@/features/about/build-info';
 import { installLogCapture } from '@/features/logs/logger';
 import { ToastProvider } from '@/features/toast/toast-provider';
 import { setClientIdentity } from '@/features/upload/client-identity';
+import { destinationsSheetOptions } from '@/features/upload/destinations-sheet';
 import { UploadDeepLinkProvider } from '@/features/upload/upload-deep-link-provider';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/hooks/use-theme';
 
@@ -54,7 +55,32 @@ function ThemedNavigation() {
                 sheet), which left a dead band above the captions header and put its ✕ on a
                 different side than the other sheet. Full-screen matches export beneath it. */}
             <Stack.Screen name="subtitles" options={{ presentation: 'fullScreenModal' }} />
-            <Stack.Screen name="about" options={{ presentation: 'modal' }} />
+            <Stack.Screen
+              name="about"
+              options={{
+                presentation: 'formSheet',
+                sheetAllowedDetents: 'fitToContents',
+                sheetGrabberVisible: true,
+              }}
+            />
+            <Stack.Screen
+              name="on-device-ai"
+              options={{
+                presentation: 'formSheet',
+                sheetAllowedDetents: 'fitToContents',
+                sheetGrabberVisible: true,
+              }}
+            />
+            <Stack.Screen
+              name="destinations"
+              options={({ route }) => ({
+                presentation: 'formSheet',
+                sheetGrabberVisible: true,
+                ...destinationsSheetOptions(
+                  Number((route.params as { count?: string } | undefined)?.count),
+                ),
+              })}
+            />
             <Stack.Screen
               name="onboarding"
               options={{ presentation: 'fullScreenModal', gestureEnabled: false }}

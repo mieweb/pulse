@@ -29,7 +29,6 @@ import { CloseButton } from '@/features/recorder/close-button';
 import { CaptionOverlay } from '@/features/transcription/caption-overlay';
 import { CueRow } from '@/features/transcription/cue-row';
 import { CueToolbar } from '@/features/transcription/cue-toolbar';
-import { ModelSwitcherModal } from '@/features/transcription/model-switcher-modal';
 import { resolveSelectedModel } from '@/features/transcription/models';
 import { useAutosaveTranscript } from '@/features/transcription/use-autosave-transcript';
 import { useSubtitleEditor, type Cue } from '@/features/transcription/use-subtitle-editor';
@@ -140,7 +139,6 @@ function Editor({
   // so the user can switch models without leaving the caption editor.
   const { data: modelRow } = useLiveQuery(selectedModelQuery, []);
   const selectedModel = resolveSelectedModel(modelRow[0]?.value);
-  const [modelSheetVisible, setModelSheetVisible] = useState(false);
 
   const player = useVideoPlayer(toFileUri(videoUri), (p) => {
     p.timeUpdateEventInterval = 0.1;
@@ -283,7 +281,7 @@ function Editor({
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
 
   return (
-    <ThemedView style={styles.fill}>
+    <ThemedView type="groupedBackground" style={styles.fill}>
       <KeyboardAvoidingView
         style={styles.fill}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -302,7 +300,7 @@ function Editor({
               selected={!!selectedModel}
               valueText={selectedModel ? selectedModel.label : 'Off'}
               disabled={false}
-              onPress={() => setModelSheetVisible(true)}
+              onPress={() => router.push('/on-device-ai')}
               tintColor={selectedModel ? theme.accent : undefined}
             />
             <HeaderBtn
@@ -424,8 +422,6 @@ function Editor({
           </View>
         )}
       </KeyboardAvoidingView>
-
-      <ModelSwitcherModal visible={modelSheetVisible} onClose={() => setModelSheetVisible(false)} />
     </ThemedView>
   );
 }

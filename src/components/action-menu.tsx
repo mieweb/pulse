@@ -65,7 +65,6 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
               styles.card,
               {
                 backgroundColor: mode === 'dark' ? theme.backgroundElement : theme.background,
-                borderColor: theme.border,
               },
             ]}>
             {actions.map((action, i) => {
@@ -104,7 +103,6 @@ const styles = StyleSheet.create({
   },
   card: {
     borderRadius: Spacing.three,
-    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOpacity: 0.18,

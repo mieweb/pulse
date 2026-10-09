@@ -22,7 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { CardShadow, Spacing } from '@/constants/theme';
 import { markOnboardingComplete } from '@/db/settings';
 import { ONBOARDING_STEPS } from '@/features/onboarding/steps';
 import { useTheme } from '@/hooks/use-theme';
@@ -114,11 +114,7 @@ export function OnboardingScreen() {
             {item.image ? (
               <Image source={item.image} style={styles.logo} contentFit="contain" />
             ) : (
-              <View
-                style={[
-                  styles.iconCard,
-                  { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                ]}>
+              <View style={[styles.iconCard, { backgroundColor: theme.card }]}>
                 <Icon name={item.symbol ?? 'sparkles'} size={56} tintColor={theme.accent} />
               </View>
             )}
@@ -194,7 +190,7 @@ const styles = StyleSheet.create({
     width: 116,
     height: 116,
     borderRadius: 28,
-    borderWidth: StyleSheet.hairlineWidth,
+    ...CardShadow,
     alignItems: 'center',
     justifyContent: 'center',
   },

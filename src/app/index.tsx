@@ -5,18 +5,15 @@ import { useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ActionMenu, type Anchor, type MenuAction } from '@/components/action-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { deleteDraft, draftListQuery, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
+import { DraftMenu } from '@/features/home/draft-menu';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
-import { watchUpload } from '@/features/upload/link-actions';
-import { uploads } from '@/features/upload/upload-manager';
-import { useWatchLink } from '@/features/upload/use-uploads';
 import { useNow } from '@/hooks/use-now';
 import { useTheme, useThemeToggle } from '@/hooks/use-theme';
 
@@ -27,7 +24,7 @@ const DevSeedRow = __DEV__
     (require('@/dev/dev-seed-row') as typeof import('@/dev/dev-seed-row')).DevSeedRow
   : null;
 
-type DraftRef = { id: string; name: string | null; anchor: Anchor };
+type DraftRef = { id: string; name: string | null };
 
 /** How often the cards' date labels ("Just now", "Today, 2:30 PM", …) re-evaluate. */
 const DATE_LABEL_REFRESH_MS = 60_000;
@@ -44,7 +41,6 @@ export default function HomeScreen() {
   const now = useNow(DATE_LABEL_REFRESH_MS);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   // The draft whose action menu (rename, delete, …) is open; null when closed.
-  const [actionsDraft, setActionsDraft] = useState<DraftRef | null>(null);
   // Name shown ahead of the DB write; dropped once the live query reflects it.
   const [pendingRename, setPendingRename] = useState<{ id: string; name: string | null } | null>(
     null,
@@ -119,7 +115,7 @@ export default function HomeScreen() {
           style: 'destructive',
           onPress: () => {
             setDeletingIds((prev) => new Set(prev).add(draft.id));
-            // Delete isn't offered while uploading (see `menuActions`) and `deleteDraft` refuses
+            // Delete isn't offered while uploading (see `useDraftMenuActions`) and `deleteDraft` refuses
             // an uploading draft, so there's no live run to stop first.
             deleteDraft(draft.id).catch(() => {
               setDeletingIds((prev) => {
@@ -136,67 +132,8 @@ export default function HomeScreen() {
   };
 
   // Built per-render from the open draft; new actions are added here.
-  const actionsDraftStatus = actionsDraft
-    ? drafts.find((d) => d.id === actionsDraft.id)?.uploadStatus
-    : null;
-  // An uploaded draft whose card offers Share (a link safe to share) also gets Watch here; one
-  // carrying the upload token is Watch on the card already. Only while the link still opens.
-  const watchLink = useWatchLink(actionsDraft?.id ?? null);
-  const watchAction: MenuAction[] = watchLink?.shareable
-    ? [
-        {
-          key: 'watch',
-          label: 'Watch',
-          icon: 'play.fill',
-          onPress: () => {
-            setActionsDraft(null);
-            void watchUpload(watchLink.url);
-          },
-        },
-      ]
-    : [];
-  // An uploading draft is LOCKED (see `assertNotUploading`): Cancel is its only action.
-  const menuActions: MenuAction[] = !actionsDraft
-    ? []
-    : actionsDraftStatus === 'uploading'
-      ? [
-          {
-            key: 'cancel-upload',
-            label: 'Cancel upload',
-            icon: 'xmark',
-            onPress: () => {
-              const draftId = actionsDraft.id;
-              setActionsDraft(null);
-              void uploads.cancel(draftId);
-            },
-          },
-        ]
-      : [
-          ...watchAction,
-          {
-            key: 'rename',
-            label: 'Rename',
-            icon: 'pencil',
-            onPress: () => {
-              setEditingDraftId(actionsDraft.id);
-              setActionsDraft(null);
-            },
-          },
-          {
-            key: 'delete',
-            label: 'Delete',
-            icon: 'trash',
-            destructive: true,
-            onPress: () => {
-              const draft = actionsDraft;
-              setActionsDraft(null);
-              confirmDelete(draft);
-            },
-          },
-        ];
-
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView type="groupedBackground" style={styles.container}>
       {selectionMode ? (
         <View style={[styles.header, { paddingTop: insets.top + Spacing.three }]}>
           <Pressable
@@ -368,19 +305,20 @@ export default function HomeScreen() {
               onLongPress={
                 item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
               }
-              onMore={(anchor) => setActionsDraft({ id: item.id, name: item.name, anchor })}
+              menu={
+                <DraftMenu
+                  draftId={item.id}
+                  uploading={item.uploadStatus === 'uploading'}
+                  besidePill={item.uploadStatus === 'uploaded'}
+                  onRename={() => setEditingDraftId(item.id)}
+                  onDelete={() => confirmDelete({ id: item.id, name: item.name })}
+                />
+              }
               onSubmitName={(input) => submitRename(item.id, item.name, input)}
             />
           )}
         />
       )}
-
-      <ActionMenu
-        visible={actionsDraft !== null}
-        anchor={actionsDraft?.anchor ?? null}
-        actions={menuActions}
-        onClose={() => setActionsDraft(null)}
-      />
 
       {selectionMode ? (
         <Pressable

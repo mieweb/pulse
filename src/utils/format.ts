@@ -29,3 +29,14 @@ export function hostOf(url: string): string {
     return url;
   }
 }
+
+/**
+ * A host shortened in the middle for a sentence (toast, alert), where layout can't truncate it:
+ * keeps both ends, so the domain ("…mieweb.org") stays readable. Labels use
+ * `numberOfLines={1} ellipsizeMode="middle"` instead.
+ */
+export function shortHost(host: string, max = 32): string {
+  if (host.length <= max) return host;
+  const tail = Math.ceil((max - 1) / 2);
+  return `${host.slice(0, max - 1 - tail)}…${host.slice(-tail)}`;
+}

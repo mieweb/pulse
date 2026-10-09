@@ -49,6 +49,13 @@ export const Colors = {
     accent: SystemColors.red.light, // #FF383C
     warning: SystemColors.orange.light, // #FF8D28 — soft/at-risk states
     onAccent: '#ffffff',
+    // Grouped screens (home, export, captions) and their cards, iOS's grouped style: white cards
+    // with CardShadow on a light grey, the same as on the sheets (where white reads as a raised
+    // card both on the grey glass and on the solid white it turns into at full height).
+    groupedBackground: '#F2F2F7', // systemGroupedBackground
+    card: '#ffffff',
+    // A control sitting on a card (a card's link pill): white with its own shadow in light.
+    cardRaised: '#ffffff',
   },
   dark: {
     text: '#ffffff', // Label / Primary
@@ -63,6 +70,11 @@ export const Colors = {
     accent: SystemColors.red.dark, // #FF4245
     warning: SystemColors.orange.dark, // #FF9230 — soft/at-risk states
     onAccent: '#ffffff',
+    // Dark has no shadows to lean on: the cards are the elevated fill on black, and a control on
+    // a card steps up one more gray.
+    groupedBackground: '#000000',
+    card: '#2C2C2E',
+    cardRaised: '#3A3A3C',
   },
 } as const;
 
@@ -99,6 +111,18 @@ export const Fonts = Platform.select({
     mono: 'var(--font-mono)',
   },
 });
+
+/**
+ * The lift for cards, rows on sheets, and controls that sit on them: a soft shadow, not a border
+ * (borders stay for selection rings, and for chrome over video, where a shadow vanishes).
+ */
+export const CardShadow = {
+  shadowColor: '#000',
+  shadowOpacity: 0.08,
+  shadowRadius: 8,
+  shadowOffset: { width: 0, height: 2 },
+  elevation: 2,
+} as const;
 
 export const Spacing = {
   half: 2,

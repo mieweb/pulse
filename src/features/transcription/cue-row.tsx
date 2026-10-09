@@ -76,8 +76,10 @@ export function CueRow({
       style={({ pressed }) => [
         styles.row,
         {
-          backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
-          borderColor: theme.border,
+          // Fill only at rest (no outline, no shadow: a long list of lifted rows reads busy); the
+          // playing and selected rings below still use the border.
+          backgroundColor: pressed ? theme.backgroundSelected : theme.card,
+          borderColor: 'transparent',
         },
         playing && { borderColor: theme.accent },
         active && {

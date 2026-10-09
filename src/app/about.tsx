@@ -11,7 +11,6 @@ import {
   Linking,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
@@ -19,24 +18,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { CardShadow, Spacing } from '@/constants/theme';
 import {
   commitLabel,
   readBuildInfo,
   versionLabel,
   type BuildConfig,
 } from '@/features/about/build-info';
-import {
-  compatLabel,
-  formatDetails,
-  type DeviceInfo,
-  type ServerCompat,
-} from '@/features/about/details';
+import { formatDetails, type DeviceInfo } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
-import { logEntries, writeLogExport } from '@/features/logs/logger';
+import { logEntries, logExportText, writeLogExport } from '@/features/logs/logger';
 import { useToast } from '@/features/toast/toast-provider';
 import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/client-identity';
-import { useTheme, useThemeMode } from '@/hooks/use-theme';
+import { useTheme } from '@/hooks/use-theme';
 
 const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
 const device: DeviceInfo = {
@@ -45,16 +39,10 @@ const device: DeviceInfo = {
   model: Device.modelName,
 };
 
-/** The generated compatibility table (GitHub Pages), with this app's row highlighted. */
-/**
- * iOS page-sheet top corner radius (~36pt, measured on iOS 26) and the close icon's size. The ⓧ
- * is centered on the corner's arc center — as far in from the right edge as down from the top —
- * so it sits concentric with the rounded corner instead of crammed into it.
- */
-const SHEET_CORNER_RADIUS = 36;
+/** The app's sheet close control size (pairing, destinations, On-device AI). */
 const CLOSE_ICON_SIZE = 28;
-const CLOSE_INSET = SHEET_CORNER_RADIUS - CLOSE_ICON_SIZE / 2;
 
+/** The generated compatibility table (GitHub Pages), with this app's row highlighted. */
 const COMPATIBILITY_URL = `https://mieweb.github.io/pulse/compatibility.html?app=${encodeURIComponent(
   build.version,
 )}&protocol=${APP_PROTOCOL.min}-${APP_PROTOCOL.max}`;
@@ -67,20 +55,26 @@ const COMPATIBILITY_URL = `https://mieweb.github.io/pulse/compatibility.html?app
 export default function AboutScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
-  const mode = useThemeMode();
   const { showToast } = useToast();
+  // Still checked here: Copy details and the log export carry each server's result.
   const servers = useServerCompatibility();
   const [sharing, setSharing] = useState(false);
-  // Content has scrolled under the header — show its hairline edge (iOS scroll-edge style).
-  const [scrolled, setScrolled] = useState(false);
   const logCount = useMemo(() => logEntries().length, []);
 
-  const details = () => formatDetails({ build, device, protocol: APP_PROTOCOL, servers });
+  const details = () =>
+    formatDetails({
+      build,
+      device,
+      protocol: APP_PROTOCOL,
+      servers,
+    });
 
   const copyDetails = () => {
-    void Clipboard.setStringAsync(details()).then(
-      (ok) => ok && showToast('Details copied'),
-      () => showToast('Couldn’t copy the details', 'error'),
+    // The whole bug report: the details, then the debug log (what Share logs sends as a file).
+    void Clipboard.setStringAsync(logExportText(details())).then(
+      (ok) =>
+        ok && showToast({ title: 'Details copied', message: 'Paste them into your bug report.' }),
+      () => showToast({ kind: 'error', title: 'Couldn’t copy the details', message: 'Try again.' }),
     );
   };
 
@@ -98,47 +92,16 @@ export default function AboutScreen() {
     }
   };
 
-  // Same elevation as the other sheets: in dark mode the sheet sits on the elevated surface and
-  // its cards step up one more level (a black sheet would merge into the screen behind it).
-  const sheetSurface = mode === 'dark' ? theme.backgroundElement : theme.background;
-  const surface = {
-    backgroundColor: mode === 'dark' ? theme.backgroundSelected : theme.backgroundElement,
-    borderColor: theme.border,
-  };
+  // The sheet's own glass is the background, as on the app's other sheets; the cards use their
+  // row fill.
+  const surface = { backgroundColor: theme.card };
 
   return (
-    <View style={[styles.fill, { backgroundColor: sheetSurface }]}>
-      {/* iOS presents `modal` as a page sheet that already starts below the status bar, but the
-          root provider's insets are the window's — adding insets.top there left a ~60pt dead band
-          above the content. Android presents it full-screen, so it still needs the inset. */}
-      <View
-        style={[
-          styles.header,
-          {
-            ...(Platform.OS === 'ios'
-              ? { paddingTop: CLOSE_INSET, paddingRight: CLOSE_INSET }
-              : { paddingTop: insets.top + Spacing.two }),
-            borderBottomColor: scrolled ? theme.border : 'transparent',
-          },
-        ]}>
-        {/* The same close control as the app's other sheets (destinations, On-device AI). */}
-        <Pressable
-          onPress={() => router.back()}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          style={({ pressed }) => pressed && styles.pressedIcon}>
-          <Icon name="xmark.circle.fill" size={CLOSE_ICON_SIZE} tintColor={theme.textSecondary} />
-        </Pressable>
-      </View>
-
-      {/* No rubber-band when everything fits; when it doesn't (small phones, several paired
-          servers), content passes under the header's hairline instead of being sliced off. */}
-      <ScrollView
-        alwaysBounceVertical={false}
-        scrollEventThrottle={16}
-        onScroll={(e) => setScrolled(e.nativeEvent.contentOffset.y > 0)}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}>
+    <View collapsable={false} style={styles.fill}>
+      {/* No title bar: the app icon, name and version open the sheet, and the content flows on
+          from there. The sheet sizes to it; the page doesn't scroll (a scroll view here breaks a
+          `fitToContents` sheet's layout), only a long paired-server list does. */}
+      <View style={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}>
         <View style={styles.hero}>
           {/* expo-image, not RN's Image: RN re-fetched and re-decoded the 1024px icon on every
               open (in dev, over Wi-Fi from Metro), so it popped in late or never showed. The
@@ -150,11 +113,29 @@ export default function AboutScreen() {
             style={[styles.appIcon, { borderColor: theme.border }]}
             cachePolicy="memory-disk"
           />
-          <ThemedText type="title3">Pulse</ThemedText>
-          <ThemedText themeColor="textSecondary">Version {versionLabel(build)}</ThemedText>
+          <View style={styles.heroText}>
+            <ThemedText type="title2">Pulse</ThemedText>
+            <ThemedText themeColor="textSecondary">Version {versionLabel(build)}</ThemedText>
+          </View>
         </View>
 
-        <Section title="This build" surface={surface}>
+        <Section
+          title="This build"
+          surface={surface}
+          action={
+            <Pressable
+              onPress={copyDetails}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Copy details"
+              accessibilityHint="Copies the build and server details and the debug log for a bug report"
+              style={({ pressed }) => [styles.copy, pressed && styles.pressedIcon]}>
+              <Icon name="doc.on.doc" size={14} weight="semibold" tintColor={theme.accent} />
+              <ThemedText type="caption1" themeColor="accent" style={styles.copyLabel}>
+                Copy details
+              </ThemedText>
+            </Pressable>
+          }>
           <Row label="Commit" value={commitLabel(build)} />
           <Row
             label="Built"
@@ -178,14 +159,8 @@ export default function AboutScreen() {
         </Section>
 
         <Section title="Compatibility" surface={surface}>
+          {/* Each paired server's own result is on its row in the destinations sheet (home). */}
           <Row label="Upload protocol" value={`v${protocolRangeLabel(APP_PROTOCOL)}`} />
-          {servers.length === 0 ? (
-            <ThemedText type="caption1" themeColor="textSecondary" style={styles.note}>
-              No servers paired yet.
-            </ThemedText>
-          ) : (
-            servers.map((s) => <ServerRow key={s.server} compat={s} />)
-          )}
           <Pressable
             onPress={() => void Linking.openURL(COMPATIBILITY_URL)}
             accessibilityRole="link"
@@ -217,21 +192,17 @@ export default function AboutScreen() {
             <ThemedText themeColor="accent">Share logs</ThemedText>
           </Pressable>
         </Section>
+      </View>
 
-        <Pressable
-          onPress={copyDetails}
-          accessibilityRole="button"
-          accessibilityLabel="Copy details"
-          accessibilityHint="Copies the version, build and compatibility details for a bug report"
-          style={({ pressed }) => [
-            styles.button,
-            { backgroundColor: theme.accent },
-            pressed && styles.pressed,
-          ]}>
-          <Icon name="doc.on.doc" size={18} tintColor={theme.onAccent} />
-          <ThemedText style={{ color: theme.onAccent }}>Copy details</ThemedText>
-        </Pressable>
-      </ScrollView>
+      {/* The app's sheet close control, top right, level with the app icon. */}
+      <Pressable
+        onPress={() => router.back()}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Close"
+        style={({ pressed }) => [styles.close, pressed && styles.pressedIcon]}>
+        <Icon name="xmark.circle.fill" size={CLOSE_ICON_SIZE} tintColor={theme.textSecondary} />
+      </Pressable>
     </View>
   );
 }
@@ -239,18 +210,28 @@ export default function AboutScreen() {
 function Section({
   title,
   surface,
+  action,
   children,
 }: {
   title: string;
-  surface: { backgroundColor: string; borderColor: string };
+  surface: { backgroundColor: string };
+  /** A small control at the right end of the section title (e.g. Copy). */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <View style={styles.section}>
-      <ThemedText type="caption1" themeColor="textSecondary" style={styles.sectionTitle}>
-        {title.toUpperCase()}
-      </ThemedText>
-      <View style={[styles.card, surface]}>{children}</View>
+      <View style={styles.sectionHeader}>
+        <ThemedText type="caption1" themeColor="textSecondary" style={styles.sectionTitle}>
+          {title.toUpperCase()}
+        </ThemedText>
+        {action}
+      </View>
+      {/* The shadow sits on a wrapper: the card clips its rows to its corners, which would clip a
+          shadow on the card itself. */}
+      <View style={[styles.cardShadow, surface]}>
+        <View style={styles.card}>{children}</View>
+      </View>
     </View>
   );
 }
@@ -273,61 +254,37 @@ function Row({ label, value, last = false }: { label: string; value: string; las
   );
 }
 
-/** A paired server and its compatibility. Always followed by the docs link, so it keeps its divider. */
-function ServerRow({ compat }: { compat: ServerCompat }) {
-  const theme = useTheme();
-  const ok = compat.status === 'compatible';
-  const checking = compat.status === 'checking';
-  return (
-    <View
-      style={[
-        styles.row,
-        { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth },
-      ]}
-      accessible
-      accessibilityLabel={`${compat.host}: ${compatLabel(compat)}`}>
-      <ThemedText style={styles.rowLabel} numberOfLines={1}>
-        {compat.host}
-      </ThemedText>
-      <View style={styles.status}>
-        {checking ? (
-          <ActivityIndicator size="small" color={theme.textSecondary} />
-        ) : (
-          <Icon
-            name={ok ? 'checkmark.circle.fill' : 'exclamationmark.triangle.fill'}
-            size={16}
-            tintColor={ok ? theme.text : theme.accent}
-          />
-        )}
-        <ThemedText type="caption1" themeColor="textSecondary">
-          {compatLabel(compat)}
-        </ThemedText>
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  header: {
-    paddingHorizontal: Spacing.three,
-    paddingBottom: Spacing.two,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+  close: { position: 'absolute', top: Spacing.five, right: Spacing.four },
+  content: { paddingTop: Spacing.five, paddingHorizontal: Spacing.four, gap: Spacing.four },
+  // Leading-aligned like the app's other sheets: the icon, then the name and version beside it.
+  // Right padding keeps the text clear of the close button floating at the top right.
+  hero: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: Spacing.three,
+    paddingRight: Spacing.five,
   },
-  content: { paddingHorizontal: Spacing.three, gap: Spacing.four },
-  hero: { alignItems: 'center', gap: Spacing.one, marginTop: Spacing.two },
+  heroText: { flex: 1, gap: Spacing.half },
   appIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 16,
+    width: 64,
+    height: 64,
+    borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: Spacing.two,
   },
   section: { gap: Spacing.two },
-  sectionTitle: { marginLeft: Spacing.three, letterSpacing: 0.5 },
-  card: { borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.three,
+  },
+  sectionTitle: { letterSpacing: 0.5 },
+  copy: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  copyLabel: { fontWeight: '600' },
+  cardShadow: { borderRadius: 18, ...CardShadow },
+  card: { borderRadius: 18, overflow: 'hidden' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -346,14 +303,6 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingHorizontal: Spacing.three,
     paddingVertical: 12,
-  },
-  button: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    height: 52,
-    borderRadius: 14,
   },
   pressed: { opacity: 0.85 },
   pressedIcon: { opacity: 0.6 },

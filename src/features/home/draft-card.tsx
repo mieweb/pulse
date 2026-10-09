@@ -1,12 +1,11 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { useRef } from 'react';
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
-import type { Anchor } from '@/components/action-menu';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { CardShadow, Spacing } from '@/constants/theme';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
@@ -38,8 +37,8 @@ type Props = {
   selected?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
-  /** Opens the draft's action menu, anchored to the ⋯ button's on-screen rect. */
-  onMore?: (anchor: Anchor) => void;
+  /** The ⋯ menu (draft-menu.tsx), shown after the link pill. */
+  menu?: ReactNode;
   /** Fires once when editing ends (keyboard done or blur) with the trimmed name. */
   onSubmitName?: (name: string) => void;
 };
@@ -59,7 +58,7 @@ export function DraftCard({
   selected = false,
   onPress,
   onLongPress,
-  onMore,
+  menu,
   onSubmitName,
 }: Props) {
   const theme = useTheme();
@@ -67,7 +66,6 @@ export function DraftCard({
   // gave a light card a white shadow when Light was pinned on a dark-mode phone.
   const isDark = useThemeMode() === 'dark';
   const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
-  const moreRef = useRef<View>(null);
 
   // An upload in progress is a ring on the cover — from the live state, or the persisted status
   // until the launch check settles a draft a killed app left `uploading`. A finished one gets a
@@ -85,8 +83,7 @@ export function DraftCard({
         styles.card,
         {
           // Rows highlight by fill swap (action-menu rows, home header buttons), not by dimming.
-          backgroundColor: pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
-          borderColor: theme.border,
+          backgroundColor: pressed && !editing ? theme.backgroundSelected : theme.card,
         },
       ]}>
       <View
@@ -156,21 +153,7 @@ export function DraftCard({
         !editing && (
           <View style={styles.trailing}>
             {uploaded && <LinkPill draftId={id} name={name} />}
-            {onMore && (
-              <Pressable
-                ref={moreRef}
-                onPress={() =>
-                  moreRef.current?.measureInWindow((x, y, width, height) =>
-                    onMore({ x, y, width, height }),
-                  )
-                }
-                hitSlop={{ top: 10, bottom: 10, left: uploaded ? 2 : 10, right: 10 }}
-                accessibilityRole="button"
-                accessibilityLabel="Draft options"
-                style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]}>
-                <Icon name="ellipsis" size={18} tintColor={theme.textSecondary} />
-              </Pressable>
-            )}
+            {menu}
           </View>
         )
       )}
@@ -202,7 +185,7 @@ function LinkPill({ draftId, name }: { draftId: string; name: string | null }) {
       accessibilityLabel={shareable ? 'Share link' : 'Watch'}
       style={({ pressed }) => [
         styles.share,
-        { backgroundColor: pressed ? theme.border : theme.backgroundSelected },
+        { backgroundColor: pressed ? theme.backgroundSelected : theme.cardRaised },
       ]}>
       <Icon
         name={shareable ? 'square.and.arrow.up' : 'play.fill'}
@@ -266,7 +249,7 @@ const styles = StyleSheet.create({
     padding: Spacing.two,
     paddingRight: Spacing.three,
     borderRadius: Spacing.three,
-    borderWidth: StyleSheet.hairlineWidth,
+    ...CardShadow,
   },
   thumb: {
     width: 44,
@@ -312,7 +295,9 @@ const styles = StyleSheet.create({
     height: 28,
     paddingHorizontal: Spacing.two + Spacing.half,
     borderRadius: 14,
+    ...CardShadow,
   },
+  // The trailing slot's size: the selection checkbox, and the ⋯ menu beside it (draft-menu.tsx).
   more: {
     width: 28,
     height: 28,
