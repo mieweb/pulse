@@ -10,6 +10,7 @@ import {
   Linking,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   useWindowDimensions,
   View,
@@ -31,9 +32,14 @@ import { formatDetails, type DeviceInfo } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
 import { logEntries, logExportText, writeLogExport } from '@/features/logs/logger';
 import { useToast } from '@/features/toast/toast-provider';
+import {
+  clearTrustedServers,
+  untrustServer,
+  useTrustedServers,
+} from '@/features/upload/trusted-servers';
 import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/client-identity';
 import { useTheme } from '@/hooks/use-theme';
-import { formatCount } from '@/utils/format';
+import { formatCount, hostOf } from '@/utils/format';
 import { formatDateTime } from '@/utils/relative-date';
 import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
@@ -69,6 +75,18 @@ export default function AboutScreen() {
   const { showToast } = useToast();
   // Still checked here: Copy details and the log export carry each server's result.
   const servers = useServerCompatibility();
+  const trusted = useTrustedServers();
+  // No confirm, like the app's other removals: cleared at once. Forgetting a server only means its
+  // next link asks first.
+  const removeAllTrusted = () => {
+    clearTrustedServers().catch((e: unknown) =>
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t clear the trusted servers',
+        message: userMessage(e, 'Try again.', 'trusted servers'),
+      }),
+    );
+  };
   const [sharing, setSharing] = useState(false);
   const logCount = useMemo(() => logEntries().length, []);
 
@@ -78,6 +96,7 @@ export default function AboutScreen() {
       device,
       protocol: APP_PROTOCOL,
       servers,
+      trusted: trusted.map((server) => hostOf(server)),
     });
 
   const copyDetails = () => {
@@ -147,7 +166,7 @@ export default function AboutScreen() {
               hitSlop={COPY_SLOP}
               accessibilityRole="button"
               accessibilityLabel="Copy details"
-              accessibilityHint="Copies the build and server details and the debug log for a bug report"
+              accessibilityHint="Copies the build, server and trusted-server details and the debug log for a bug report"
               style={({ pressed }) => [styles.copy, pressed && styles.pressedIcon]}>
               <Icon
                 name="doc.on.doc"
@@ -193,6 +212,32 @@ export default function AboutScreen() {
             <Icon name="link" size={18} tintColor={theme.accent} scalesWithText />
             <ThemedText themeColor="accent">Compatibility & docs</ThemedText>
           </Pressable>
+        </Section>
+
+        <Section
+          title="Trusted servers"
+          surface={surface}
+          action={
+            trusted.length > 0 && (
+              <Pressable
+                onPress={removeAllTrusted}
+                hitSlop={COPY_SLOP}
+                accessibilityRole="button"
+                accessibilityLabel="Remove all trusted servers"
+                style={({ pressed }) => pressed && styles.pressedIcon}>
+                <ThemedText type="subheadlineEmphasized" themeColor="accent">
+                  Remove all
+                </ThemedText>
+              </Pressable>
+            )
+          }>
+          {trusted.length === 0 ? (
+            <ThemedText type="footnote" themeColor="textSecondary" style={styles.note}>
+              None yet. Servers you tick “Don’t ask again” for when pairing show up here.
+            </ThemedText>
+          ) : (
+            <TrustedServers servers={trusted} />
+          )}
         </Section>
 
         <Section title="Debug logs" surface={surface}>
@@ -285,6 +330,83 @@ function Row({ label, value, last = false }: { label: string; value: string; las
   );
 }
 
+/**
+ * Most servers listed without scrolling; more scroll inside a list of fixed height. A fixed
+ * height, not a max: a scroll view that sized itself broke the `fitToContents` sheet's layout.
+ */
+const MAX_UNSCROLLED_SERVERS = 4;
+const SERVER_LIST_HEIGHT = 200;
+
+/**
+ * The servers that pair without asking ("Don't ask again" on the pairing sheet), as a dropdown:
+ * one row with the count, expanding into the list (which scrolls inside itself when long).
+ */
+function TrustedServers({ servers }: { servers: string[] }) {
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  const count = formatCount(servers.length, 'server', 'servers');
+  const rows = servers.map((server) => <TrustedServerRow key={server} server={server} />);
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen((v) => !v)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`Trusted servers, ${count}`}
+        // An in-card row: it swaps its fill on press, like About's other rows.
+        style={({ pressed }) => [
+          styles.row,
+          pressed && { backgroundColor: theme.backgroundSelected },
+        ]}>
+        <ThemedText style={styles.rowLabel}>Don’t ask again for</ThemedText>
+        <View style={styles.status}>
+          <ThemedText themeColor="textSecondary">{count}</ThemedText>
+          <Icon
+            name="chevron.up"
+            size={14}
+            weight="semibold"
+            tintColor={theme.textSecondary}
+            style={!open && styles.chevronClosed}
+          />
+        </View>
+      </Pressable>
+      {open &&
+        (servers.length > MAX_UNSCROLLED_SERVERS ? (
+          <ScrollView style={styles.serverList}>{rows}</ScrollView>
+        ) : (
+          rows
+        ))}
+    </>
+  );
+}
+
+function TrustedServerRow({ server }: { server: string }) {
+  const theme = useTheme();
+  return (
+    <View
+      style={[
+        styles.row,
+        styles.serverRow,
+        { borderTopColor: theme.border, borderTopWidth: StyleSheet.hairlineWidth },
+      ]}>
+      <Icon name="checkmark.circle.fill" size={15} tintColor={theme.textSecondary} />
+      {/* Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
+      <ThemedText style={styles.serverHost} numberOfLines={1} ellipsizeMode="middle">
+        {hostOf(server)}
+      </ThemedText>
+      {/* No confirm: forgetting one only means its next link asks again. */}
+      <Pressable
+        onPress={() => void untrustServer(server)}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`Stop trusting ${hostOf(server)}`}
+        style={({ pressed }) => pressed && styles.pressedIcon}>
+        <Icon name="trash" size={18} tintColor={theme.accent} />
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   close: { position: 'absolute', top: Spacing.five, right: Spacing.four },
@@ -323,6 +445,11 @@ const styles = StyleSheet.create({
   rowValue: { flexShrink: 1, textAlign: 'right' },
   rowValueStacked: { textAlign: 'left' },
   status: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, flexShrink: 1 },
+  serverList: { height: SERVER_LIST_HEIGHT },
+  serverHost: { flex: 1 },
+  // List rows sit under the dropdown row, inset like iOS's own expanded lists.
+  serverRow: { justifyContent: 'flex-start', gap: Spacing.two, paddingLeft: Spacing.four },
+  chevronClosed: { transform: [{ rotate: '180deg' }] },
   note: { paddingHorizontal: Spacing.three, paddingTop: 12 },
   // A full-width row inside a card: it swaps its fill on press, as in-card rows do (the card's
   // overflow clipping rounds the fill at the card's corners), rather than dimming.
