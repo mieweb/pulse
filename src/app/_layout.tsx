@@ -13,6 +13,7 @@ import { setClientIdentity } from '@/features/upload/client-identity';
 import { destinationsSheetOptions } from '@/features/upload/destinations-sheet';
 import { UploadDeepLinkProvider } from '@/features/upload/upload-deep-link-provider';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/hooks/use-theme';
+import { tallSheetOptions } from '@/utils/sheet-fit';
 
 // Before anything renders, so the debug log (About → Share logs) sees the whole session.
 installLogCapture();
@@ -57,19 +58,21 @@ function ThemedNavigation() {
             <Stack.Screen name="subtitles" options={{ presentation: 'fullScreenModal' }} />
             <Stack.Screen
               name="about"
-              options={{
+              options={() => ({
                 presentation: 'formSheet',
-                sheetAllowedDetents: 'fitToContents',
                 sheetGrabberVisible: true,
-              }}
+                // Sized to its content, or full height and scrolling at large text sizes.
+                ...tallSheetOptions(),
+              })}
             />
             <Stack.Screen
               name="on-device-ai"
-              options={{
+              options={() => ({
                 presentation: 'formSheet',
-                sheetAllowedDetents: 'fitToContents',
                 sheetGrabberVisible: true,
-              }}
+                // Sized to its content, or full height and scrolling at large text sizes.
+                ...tallSheetOptions(),
+              })}
             />
             <Stack.Screen
               name="destinations"

@@ -14,10 +14,10 @@ import type { ServerCompat } from './details';
  */
 export function useServerCompatibility(): ServerCompat[] {
   const { destinations } = useDestinations();
-  const servers = useMemo(
-    () => [...new Set(destinations.map((d) => d.server))].sort(),
-    [destinations],
-  );
+  // Keyed by the set of servers, not the list: `useDestinations` rebuilds its array on every
+  // expiry tick, and depending on that would re-fetch every server's capabilities each tick.
+  const serverKey = [...new Set(destinations.map((d) => d.server))].sort().join('\n');
+  const servers = useMemo(() => (serverKey ? serverKey.split('\n') : []), [serverKey]);
   const [results, setResults] = useState<Record<string, ServerCompat>>({});
 
   useEffect(() => {

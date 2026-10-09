@@ -1,12 +1,13 @@
 import type { MenuAction } from '@/components/action-menu';
 import { watchUpload } from '@/features/upload/link-actions';
-import { uploads } from '@/features/upload/upload-manager';
-import { useWatchLink } from '@/features/upload/use-uploads';
+import { uploads, type WatchLink } from '@/features/upload/upload-manager';
 
 export type DraftMenuProps = {
   draftId: string;
   /** An uploading draft is LOCKED (see `assertNotUploading`): Cancel is its only action. */
   uploading: boolean;
+  /** The draft's live watch link, from the card (`null` if it has none). */
+  watchLink: WatchLink | null;
   onRename: () => void;
   onDelete: () => void;
   /** Sits right after the card's link pill: a narrower left hit area keeps taps off the pill. */
@@ -14,15 +15,15 @@ export type DraftMenuProps = {
 };
 
 /** The draft card's ⋯ actions, shared by the iOS system menu and the Android popover. */
-export function useDraftMenuActions({
+export function draftMenuActions({
   draftId,
   uploading,
+  watchLink,
   onRename,
   onDelete,
 }: DraftMenuProps): MenuAction[] {
   // An uploaded draft whose card offers Share (a link safe to share) also gets Watch here; one
   // carrying the upload token is Watch on the card already. Only while the link still opens.
-  const watchLink = useWatchLink(draftId);
   if (uploading) {
     return [
       {

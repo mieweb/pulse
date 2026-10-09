@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
+import { SheetBody } from '@/components/sheet-body';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, Spacing } from '@/constants/theme';
 import {
@@ -31,6 +32,7 @@ import { logEntries, logExportText, writeLogExport } from '@/features/logs/logge
 import { useToast } from '@/features/toast/toast-provider';
 import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/client-identity';
 import { useTheme } from '@/hooks/use-theme';
+import { tallSheetFits } from '@/utils/sheet-fit';
 
 const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
 const device: DeviceInfo = {
@@ -54,6 +56,8 @@ const COMPATIBILITY_URL = `https://mieweb.github.io/pulse/compatibility.html?app
  */
 export default function AboutScreen() {
   const insets = useSafeAreaInsets();
+  // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
+  const [scrolls] = useState(() => !tallSheetFits());
   const theme = useTheme();
   const { showToast } = useToast();
   // Still checked here: Copy details and the log export carry each server's result.
@@ -99,9 +103,12 @@ export default function AboutScreen() {
   return (
     <View collapsable={false} style={styles.fill}>
       {/* No title bar: the app icon, name and version open the sheet, and the content flows on
-          from there. The sheet sizes to it; the page doesn't scroll (a scroll view here breaks a
-          `fitToContents` sheet's layout), only a long paired-server list does. */}
-      <View style={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}>
+          from there. The sheet sizes to it and doesn't scroll (a scroll view breaks a
+          `fitToContents` sheet's layout); at large text sizes or on a short screen, where it would
+          be clipped, it opens full height and scrolls instead (`tallSheetFits`). */}
+      <SheetBody
+        scrolls={scrolls}
+        style={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}>
         <View style={styles.hero}>
           {/* expo-image, not RN's Image: RN re-fetched and re-decoded the 1024px icon on every
               open (in dev, over Wi-Fi from Metro), so it popped in late or never showed. The
@@ -192,7 +199,7 @@ export default function AboutScreen() {
             <ThemedText themeColor="accent">Share logs</ThemedText>
           </Pressable>
         </Section>
-      </View>
+      </SheetBody>
 
       {/* The app's sheet close control, top right, level with the app icon. */}
       <Pressable

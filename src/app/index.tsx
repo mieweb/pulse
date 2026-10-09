@@ -115,8 +115,8 @@ export default function HomeScreen() {
           style: 'destructive',
           onPress: () => {
             setDeletingIds((prev) => new Set(prev).add(draft.id));
-            // Delete isn't offered while uploading (see `useDraftMenuActions`) and `deleteDraft` refuses
-            // an uploading draft, so there's no live run to stop first.
+            // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft`
+            // refuses an uploading draft, so there's no live run to stop first.
             deleteDraft(draft.id).catch(() => {
               setDeletingIds((prev) => {
                 const next = new Set(prev);
@@ -305,15 +305,16 @@ export default function HomeScreen() {
               onLongPress={
                 item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
               }
-              menu={
+              menu={(watchLink) => (
                 <DraftMenu
                   draftId={item.id}
+                  watchLink={watchLink}
                   uploading={item.uploadStatus === 'uploading'}
                   besidePill={item.uploadStatus === 'uploaded'}
                   onRename={() => setEditingDraftId(item.id)}
                   onDelete={() => confirmDelete({ id: item.id, name: item.name })}
                 />
-              }
+              )}
               onSubmitName={(input) => submitRename(item.id, item.name, input)}
             />
           )}

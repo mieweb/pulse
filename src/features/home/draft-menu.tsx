@@ -5,7 +5,7 @@ import { ActionMenu, type Anchor } from '@/components/action-menu';
 import { Icon } from '@/components/icon';
 import { useTheme } from '@/hooks/use-theme';
 
-import { type DraftMenuProps, useDraftMenuActions } from './draft-menu-actions';
+import { type DraftMenuProps, draftMenuActions } from './draft-menu-actions';
 
 /**
  * The draft card's ⋯ button and its popover menu, anchored to the button (Android; iOS uses the
@@ -13,7 +13,7 @@ import { type DraftMenuProps, useDraftMenuActions } from './draft-menu-actions';
  */
 export function DraftMenu(props: DraftMenuProps) {
   const theme = useTheme();
-  const actions = useDraftMenuActions(props);
+  const actions = draftMenuActions(props);
   const ref = useRef<View>(null);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const close = () => setAnchor(null);

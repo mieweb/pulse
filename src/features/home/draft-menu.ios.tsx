@@ -2,7 +2,7 @@ import { Button, type ButtonProps, Host, Image, Menu } from '@expo/ui/swift-ui';
 
 import { useTheme } from '@/hooks/use-theme';
 
-import { type DraftMenuProps, useDraftMenuActions } from './draft-menu-actions';
+import { type DraftMenuProps, draftMenuActions } from './draft-menu-actions';
 
 /**
  * The draft card's ⋯ button, as the iOS system menu: it opens from the button with the system's
@@ -10,7 +10,7 @@ import { type DraftMenuProps, useDraftMenuActions } from './draft-menu-actions';
  */
 export function DraftMenu(props: DraftMenuProps) {
   const theme = useTheme();
-  const actions = useDraftMenuActions(props);
+  const actions = draftMenuActions(props);
   return (
     <Host matchContents>
       <Menu label={<Image systemName="ellipsis" size={18} color={theme.textSecondary} />}>

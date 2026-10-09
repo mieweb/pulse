@@ -7,6 +7,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, Spacing } from '@/constants/theme';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
+import type { WatchLink } from '@/features/upload/upload-manager';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
@@ -37,8 +38,11 @@ type Props = {
   selected?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
-  /** The ⋯ menu (draft-menu.tsx), shown after the link pill. */
-  menu?: ReactNode;
+  /**
+   * The ⋯ menu (draft-menu.tsx), shown after the link pill, given the draft's watch link: the card
+   * looks it up once (uploaded drafts only) for both the pill and the menu.
+   */
+  menu?: (watchLink: WatchLink | null) => ReactNode;
   /** Fires once when editing ends (keyboard done or blur) with the trimmed name. */
   onSubmitName?: (name: string) => void;
 };
@@ -152,8 +156,7 @@ export function DraftCard({
       ) : (
         !editing && (
           <View style={styles.trailing}>
-            {uploaded && <LinkPill draftId={id} name={name} />}
-            {menu}
+            {uploaded ? <UploadedTrailing draftId={id} name={name} menu={menu} /> : menu?.(null)}
           </View>
         )
       )}
@@ -167,10 +170,30 @@ export function DraftCard({
  * otherwise — not a button that could only say it can't. Its own component so only uploaded
  * drafts run the link's expiry check.
  */
-function LinkPill({ draftId, name }: { draftId: string; name: string | null }) {
-  const theme = useTheme();
+/**
+ * An uploaded draft's trailing controls: the one subscription to its watch link (it carries a
+ * clock for the link's expiry), shared by the link pill and the ⋯ menu.
+ */
+function UploadedTrailing({
+  draftId,
+  name,
+  menu,
+}: {
+  draftId: string;
+  name: string | null;
+  menu: Props['menu'];
+}) {
   const link = useWatchLink(draftId);
-  if (!link) return null;
+  return (
+    <>
+      {link && <LinkPill link={link} name={name} />}
+      {menu?.(link)}
+    </>
+  );
+}
+
+function LinkPill({ link, name }: { link: WatchLink; name: string | null }) {
+  const theme = useTheme();
   const { url, shareable } = link;
   return (
     <Pressable

@@ -81,19 +81,22 @@ const FROST = { light: 'rgba(255,255,255,0.78)', dark: 'rgba(28,28,30,0.78)' } a
  * `leaving` plays the exit before it unmounts.
  */
 export function Toast({
+  id,
   content,
   leaving,
   onDismiss,
   onHold,
   onRelease,
 }: {
+  /** Passed back with every callback, so the provider can ignore a toast that's been replaced. */
+  id: number;
   content: ToastContent;
   leaving: boolean;
-  onDismiss: () => void;
+  onDismiss: (id: number) => void;
   /** A finger is on the toast: hold it up. */
-  onHold: () => void;
+  onHold: (id: number) => void;
   /** The finger let go without dismissing it. */
-  onRelease: () => void;
+  onRelease: (id: number) => void;
 }) {
   const theme = useTheme();
   const mode = useThemeMode();
@@ -114,22 +117,22 @@ export function Toast({
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, g) =>
           Math.abs(g.dy) > 4 && Math.abs(g.dy) > Math.abs(g.dx),
-        onPanResponderGrant: () => onHold(),
+        onPanResponderGrant: () => onHold(id),
         onPanResponderMove: (_, g) => drag.setValue(g.dy < 0 ? g.dy : g.dy * PULL_DOWN_RESISTANCE),
         onPanResponderRelease: (_, g) => {
           if (g.dy < -SWIPE_DISTANCE || g.vy < -SWIPE_VELOCITY) {
-            onDismiss();
+            onDismiss(id);
           } else {
             Animated.spring(drag, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
-            onRelease();
+            onRelease(id);
           }
         },
         onPanResponderTerminate: () => {
           Animated.spring(drag, { toValue: 0, useNativeDriver: true }).start();
-          onRelease();
+          onRelease(id);
         },
       }),
-    [drag, onDismiss, onHold, onRelease],
+    [drag, id, onDismiss, onHold, onRelease],
   );
 
   useEffect(() => {
@@ -160,9 +163,11 @@ export function Toast({
       </View>
       {action && (
         <Pressable
+          // Dismiss first: an action that shows a toast of its own ("Retrying…") must not have
+          // that new toast dismissed right after.
           onPress={() => {
+            onDismiss(id);
             action.onPress();
-            onDismiss();
           }}
           hitSlop={Spacing.two}
           accessibilityRole="button"
@@ -203,9 +208,9 @@ export function Toast({
         },
       ]}>
       <Pressable
-        onPress={onDismiss}
-        onPressIn={onHold}
-        onPressOut={onRelease}
+        onPress={() => onDismiss(id)}
+        onPressIn={() => onHold(id)}
+        onPressOut={() => onRelease(id)}
         accessibilityRole="alert"
         accessibilityHint="Dismisses this message. You can also swipe it up."
         accessibilityLiveRegion="polite"

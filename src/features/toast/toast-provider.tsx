@@ -87,31 +87,50 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [leaving, setLeaving] = useState(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const nextId = useRef(0);
+  // The toast that's up. A toast's own callbacks (tap, swipe, hold, action) name it, so one that
+  // has just been replaced can't dismiss or shorten its replacement.
+  const currentId = useRef(0);
 
   const clearTimers = useCallback(() => {
     for (const t of timers.current) clearTimeout(t);
     timers.current = [];
   }, []);
 
-  const dismiss = useCallback(() => {
-    clearTimers();
-    setLeaving(true);
-    timers.current.push(setTimeout(() => setToast(null), EXIT_MS));
-  }, [clearTimers]);
+  const dismiss = useCallback(
+    (id: number) => {
+      if (id !== currentId.current) return;
+      clearTimers();
+      setLeaving(true);
+      timers.current.push(setTimeout(() => setToast(null), EXIT_MS));
+    },
+    [clearTimers],
+  );
 
   // A finger on the toast holds it; letting go (not swiping it away) gives a little more.
-  const release = useCallback(() => {
-    timers.current.push(setTimeout(dismiss, AFTER_HOLD_MS));
-  }, [dismiss]);
+  const hold = useCallback(
+    (id: number) => {
+      if (id === currentId.current) clearTimers();
+    },
+    [clearTimers],
+  );
+  const release = useCallback(
+    (id: number) => {
+      if (id === currentId.current)
+        timers.current.push(setTimeout(() => dismiss(id), AFTER_HOLD_MS));
+    },
+    [dismiss],
+  );
 
   const showToast = useCallback<ShowToast>(
     (input: ToastOptions | string, kind?: ToastKind) => {
       const { kind: k = 'success', duration, ...rest } = toOptions(input, kind);
       const content = { ...rest, kind: k };
+      const id = ++nextId.current;
+      currentId.current = id;
       clearTimers();
       setLeaving(false);
-      setToast({ id: ++nextId.current, content });
-      timers.current.push(setTimeout(dismiss, duration ?? durationFor(content)));
+      setToast({ id, content });
+      timers.current.push(setTimeout(() => dismiss(id), duration ?? durationFor(content)));
     },
     [clearTimers, dismiss],
   );
@@ -125,10 +144,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         // Keyed by id: a replacing toast animates in fresh instead of reusing the old one.
         <ToastSurface
           key={toast.id}
+          id={toast.id}
           content={toast.content}
           leaving={leaving}
           onDismiss={dismiss}
-          onHold={clearTimers}
+          onHold={hold}
           onRelease={release}
         />
       )}
