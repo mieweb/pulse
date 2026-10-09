@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Spacing } from '@/constants/theme';
+import { CardShadow, Radius, Spacing } from '@/constants/theme';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
 import type { WatchLink } from '@/features/upload/upload-manager';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
@@ -16,6 +16,15 @@ import { formatClipCount, formatDuration } from '@/utils/format';
 import { formatRelativeDate } from '@/utils/relative-date';
 
 const NAME_MAX_LENGTH = 40;
+
+/**
+ * `maxLength` counts UTF-16 units, so a name typed or pasted up to the limit can end on the first
+ * half of an emoji's surrogate pair. That lone half isn't valid text (it shows as "�"), so it's
+ * dropped rather than saved.
+ */
+function dropSplitSurrogate(text: string): string {
+  return text.replace(/[\uD800-\uDBFF]$/, '');
+}
 
 type Props = {
   id: string;
@@ -39,8 +48,8 @@ type Props = {
   onPress?: () => void;
   onLongPress?: () => void;
   /**
-   * The ⋯ menu (draft-menu.tsx), shown after the link pill, given the draft's watch link: the card
-   * looks it up once (uploaded drafts only) for both the pill and the menu.
+   * The ⋯ menu (draft-menu.tsx), shown after the link button, given the draft's watch link: the
+   * card looks it up once (uploaded drafts only) for both the button and the menu.
    */
   menu?: (watchLink: WatchLink | null) => ReactNode;
   /** Fires once when editing ends (keyboard done or blur) with the trimmed name. */
@@ -73,7 +82,7 @@ export function DraftCard({
 
   // An upload in progress is a ring on the cover — from the live state, or the persisted status
   // until the launch check settles a draft a killed app left `uploading`. A finished one gets a
-  // one-tap link button beside ⋯ (see `LinkPill`). A failure is a toast, not a badge.
+  // one-tap link button beside ⋯ (see `LinkButton`). A failure is a toast, not a badge.
   const live = useDraftUploadState(id);
   const uploading = live.status === 'uploading' || uploadStatus === 'uploading';
   const uploadProgress = live.status === 'uploading' ? live.progress : 0;
@@ -128,7 +137,7 @@ export function DraftCard({
             selectTextOnFocus
             maxLength={NAME_MAX_LENGTH}
             returnKeyType="done"
-            onEndEditing={(e) => onSubmitName?.(e.nativeEvent.text.trim())}
+            onEndEditing={(e) => onSubmitName?.(dropSplitSurrogate(e.nativeEvent.text).trim())}
             style={[styles.name, styles.nameInput, { color: theme.text }]}
           />
         ) : (
@@ -136,7 +145,9 @@ export function DraftCard({
             {name || 'Untitled'}
           </ThemedText>
         )}
-        <ThemedText themeColor="textSecondary" type="small" numberOfLines={1}>
+        {/* Two lines, so a narrow card (an uploaded draft's link button beside ⋯, larger text)
+            wraps the date onto a second line instead of cutting it off. */}
+        <ThemedText themeColor="textSecondary" type="small" numberOfLines={2}>
           {formatClipCount(segmentCount)} · {formatDuration(durationMs)} ·{' '}
           {formatRelativeDate(lastModified, now)}
         </ThemedText>
@@ -165,14 +176,9 @@ export function DraftCard({
 }
 
 /**
- * An uploaded draft's one-tap link button beside ⋯, while its link still opens: Share (the share
- * sheet) for a link that's safe to share, or Watch for one carrying the upload token. Nothing
- * otherwise — not a button that could only say it can't. Its own component so only uploaded
- * drafts run the link's expiry check.
- */
-/**
  * An uploaded draft's trailing controls: the one subscription to its watch link (it carries a
- * clock for the link's expiry), shared by the link pill and the ⋯ menu.
+ * clock for the link's expiry), shared by the link button and the ⋯ menu. Its own component so
+ * only uploaded drafts run the link's expiry check.
  */
 function UploadedTrailing({
   draftId,
@@ -186,13 +192,19 @@ function UploadedTrailing({
   const link = useWatchLink(draftId);
   return (
     <>
-      {link && <LinkPill link={link} name={name} />}
+      {link && <LinkButton link={link} name={name} />}
       {menu?.(link)}
     </>
   );
 }
 
-function LinkPill({ link, name }: { link: WatchLink; name: string | null }) {
+/**
+ * An uploaded draft's one-tap link button beside ⋯, while its link still opens: Share (the share
+ * sheet) for a link that's safe to share, or Watch for one carrying the upload token. Nothing
+ * otherwise — not a button that could only say it can't. Icon-only, the ⋯'s size: a labelled
+ * pill left a 375 pt phone's card body too narrow for the name and date.
+ */
+function LinkButton({ link, name }: { link: WatchLink; name: string | null }) {
   const theme = useTheme();
   const { url, shareable } = link;
   return (
@@ -207,15 +219,15 @@ function LinkPill({ link, name }: { link: WatchLink; name: string | null }) {
       accessibilityRole="button"
       accessibilityLabel={shareable ? 'Share link' : 'Watch'}
       style={({ pressed }) => [
-        styles.share,
-        { backgroundColor: pressed ? theme.backgroundSelected : theme.cardRaised },
+        styles.linkButton,
+        // Its own pressed step: dark's `backgroundSelected` is the same gray as `cardRaised`.
+        { backgroundColor: pressed ? theme.cardRaisedPressed : theme.cardRaised },
       ]}>
       <Icon
         name={shareable ? 'square.and.arrow.up' : 'play.fill'}
         size={14}
         tintColor={theme.text}
       />
-      <ThemedText type="small">{shareable ? 'Share' : 'Watch'}</ThemedText>
     </Pressable>
   );
 }
@@ -254,6 +266,9 @@ function UploadRing({ progress }: { progress: number }) {
   );
 }
 
+/** Concentric with the card: its radius less the padding between them. */
+const THUMB_RADIUS = Radius.card - Spacing.two;
+
 const styles = StyleSheet.create({
   uploadScrim: {
     position: 'absolute',
@@ -264,6 +279,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: THUMB_RADIUS,
+    borderCurve: 'continuous',
   },
   card: {
     flexDirection: 'row',
@@ -271,7 +288,8 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     padding: Spacing.two,
     paddingRight: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
+    borderCurve: 'continuous',
     ...CardShadow,
   },
   thumb: {
@@ -279,6 +297,10 @@ const styles = StyleSheet.create({
     height: 60,
     alignItems: 'center',
     justifyContent: 'center',
+    // Rounded without `overflow: 'hidden'` (which would clip its shadow): the image and the
+    // upload scrim round their own corners to match.
+    borderRadius: THUMB_RADIUS,
+    borderCurve: 'continuous',
     // Lift the cover off the card so it pops a little. A hairline ring carries the separation
     // in dark mode (where a black shadow is invisible against the dark card); the shadow does
     // the lifting in light mode.
@@ -291,6 +313,8 @@ const styles = StyleSheet.create({
   thumbImage: {
     width: '100%',
     height: '100%',
+    borderRadius: THUMB_RADIUS,
+    borderCurve: 'continuous',
   },
   body: {
     flex: 1,
@@ -301,9 +325,10 @@ const styles = StyleSheet.create({
   },
   nameInput: {
     // Match the name Text (body: 17/22) exactly so swapping in the input never changes the
-    // text size or the body height (which would nudge the subtitle).
+    // text size or the body height (which would nudge the subtitle). A floor, not a fixed height:
+    // at a larger text size the input grows with its text instead of clipping it.
     fontSize: 17,
-    height: 22,
+    minHeight: 22,
     padding: 0,
   },
   trailing: {
@@ -311,13 +336,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.one,
   },
-  share: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
+  linkButton: {
+    width: 28,
     height: 28,
-    paddingHorizontal: Spacing.two + Spacing.half,
     borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
     ...CardShadow,
   },
   // The trailing slot's size: the selection checkbox, and the ⋯ menu beside it (draft-menu.tsx).

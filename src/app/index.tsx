@@ -2,20 +2,25 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import Animated, { FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { EaseOut, ListReflowMs } from '@/constants/motion';
+import { FloatShadow, Radius, Spacing } from '@/constants/theme';
 import { deleteDraft, draftListQuery, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
 import { DraftMenu } from '@/features/home/draft-menu';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
+import { useToast } from '@/features/toast/toast-provider';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
 import { useNow } from '@/hooks/use-now';
 import { useTheme, useThemeToggle } from '@/hooks/use-theme';
+import { formatCount } from '@/utils/format';
+import { userMessage } from '@/utils/user-message';
 
 // Dev-only seeding controls, behind a `__DEV__`-guarded require so the component and `@/dev/seed`
 // (with its perf fixtures) are dead-code-eliminated from the production bundle, not just hidden.
@@ -24,10 +29,15 @@ const DevSeedRow = __DEV__
     (require('@/dev/dev-seed-row') as typeof import('@/dev/dev-seed-row')).DevSeedRow
   : null;
 
-type DraftRef = { id: string; name: string | null };
-
 /** How often the cards' date labels ("Just now", "Today, 2:30 PM", …) re-evaluate. */
 const DATE_LABEL_REFRESH_MS = 60_000;
+
+// A deleted (or undone) card closes (or opens) its gap with the cards below gliding, instead of
+// every one of them jumping a row.
+const LIST_REFLOW = LinearTransition.duration(ListReflowMs).easing(EaseOut);
+// Only an exit, no `entering`: the list mounts cells as they scroll into view, and those would
+// fade in while scrolling.
+const CARD_EXIT = FadeOut.duration(150);
 
 export default function HomeScreen() {
   // First-run gate: pushes the onboarding tour over home when not yet completed.
@@ -45,7 +55,7 @@ export default function HomeScreen() {
   const [pendingRename, setPendingRename] = useState<{ id: string; name: string | null } | null>(
     null,
   );
-  // Rows hidden optimistically while their delete is in flight.
+  // Rows hidden optimistically while their delete waits out its Undo toast, then while in flight.
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set());
 
   // Multi-select for `.pulse` export. `selectionMode` swaps the header for a selection toolbar
@@ -53,6 +63,7 @@ export default function HomeScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const { busy, state: transferState, shareDrafts, importDrafts } = useDraftTransfer();
+  const { showToast, showUndoToast } = useToast();
 
   // Appearance preference (system-follow / pinned light / pinned dark), persisted so it
   // survives restarts (see `useTheme`).
@@ -98,37 +109,44 @@ export default function HomeScreen() {
     const name = input || null;
     if (name === currentName) return;
     setPendingRename({ id: draftId, name });
-    renameDraft(draftId, name).catch(() => {
+    renameDraft(draftId, name).catch((e) => {
       setPendingRename(null);
-      Alert.alert('Couldn’t rename the draft', 'Try again.');
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t rename the draft',
+        message: userMessage(e, 'Try again.', 'rename'),
+      });
     });
   };
 
-  const confirmDelete = (draft: DraftRef) => {
-    Alert.alert(
-      'Delete draft?',
-      `“${draft.name || 'Untitled'}” and its clips will be permanently deleted.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            setDeletingIds((prev) => new Set(prev).add(draft.id));
-            // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft`
-            // refuses an uploading draft, so there's no live run to stop first.
-            deleteDraft(draft.id).catch(() => {
-              setDeletingIds((prev) => {
-                const next = new Set(prev);
-                next.delete(draft.id);
-                return next;
-              });
-              Alert.alert('Couldn’t delete the draft', 'Try again.');
-            });
-          },
-        },
-      ],
-    );
+  const unhide = (draftId: string) =>
+    setDeletingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(draftId);
+      return next;
+    });
+
+  // No confirm dialog: the card goes at once and the toast offers Undo. Nothing touches the DB or
+  // the clips on disk until the toast goes away without Undo, so Undo is a plain unhide.
+  const deleteWithUndo = (draftId: string) => {
+    setDeletingIds((prev) => new Set(prev).add(draftId));
+    showUndoToast({
+      title: 'Draft deleted',
+      onUndo: () => unhide(draftId),
+      onCommit: () => {
+        // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft`
+        // refuses an uploading draft, so there's no live run to stop first.
+        deleteDraft(draftId).catch((e) => {
+          // The card comes back, so it never vanishes without its delete having happened.
+          unhide(draftId);
+          showToast({
+            kind: 'error',
+            title: 'Couldn’t delete the draft',
+            message: userMessage(e, 'Try again.', 'delete'),
+          });
+        });
+      },
+    });
   };
 
   // Built per-render from the open draft; new actions are added here.
@@ -144,7 +162,9 @@ export default function HomeScreen() {
             <ThemedText themeColor="accent">Cancel</ThemedText>
           </Pressable>
           <ThemedText type="smallBold">
-            {selectedIds.size === 0 ? 'Select drafts' : `${selectedIds.size} selected`}
+            {selectedIds.size === 0
+              ? 'Select drafts'
+              : formatCount(selectedIds.size, 'selected', 'selected')}
           </ThemedText>
           <Pressable
             onPress={toggleSelectAll}
@@ -172,7 +192,7 @@ export default function HomeScreen() {
               accessibilityState={{ disabled: busy, busy: transferState === 'importing' }}
               style={({ pressed }) => [
                 styles.headerButton,
-                pressed && { backgroundColor: theme.backgroundElement },
+                pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
               {transferState === 'importing' ? (
                 <ActivityIndicator size="small" color={theme.textSecondary} />
@@ -184,7 +204,7 @@ export default function HomeScreen() {
                 />
               )}
               <ThemedText
-                type="smallBold"
+                type="caption2"
                 themeColor={busy ? 'textSecondary' : 'text'}
                 style={styles.headerButtonLabel}>
                 Import
@@ -203,10 +223,10 @@ export default function HomeScreen() {
               style={({ pressed }) => [
                 styles.headerButton,
                 visibleDrafts.length === 0 && styles.disabled,
-                pressed && { backgroundColor: theme.backgroundElement },
+                pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
               <Icon name="square.and.arrow.up" size={20} tintColor={theme.text} />
-              <ThemedText type="smallBold" style={styles.headerButtonLabel}>
+              <ThemedText type="caption2" style={styles.headerButtonLabel}>
                 Export
               </ThemedText>
             </Pressable>
@@ -221,7 +241,7 @@ export default function HomeScreen() {
               }}
               style={({ pressed }) => [
                 styles.headerButton,
-                pressed && { backgroundColor: theme.backgroundElement },
+                pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
               <Icon
                 name={
@@ -234,7 +254,7 @@ export default function HomeScreen() {
                 size={20}
                 tintColor={theme.text}
               />
-              <ThemedText type="smallBold" style={styles.headerButtonLabel}>
+              <ThemedText type="caption2" style={styles.headerButtonLabel}>
                 {themePref === 'system' ? 'Auto' : themeMode === 'dark' ? 'Dark' : 'Light'}
               </ThemedText>
             </Pressable>
@@ -246,10 +266,10 @@ export default function HomeScreen() {
               accessibilityHint="Shows the version, build details and debug logs"
               style={({ pressed }) => [
                 styles.headerButton,
-                pressed && { backgroundColor: theme.backgroundElement },
+                pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
               <Icon name="info.circle" size={20} tintColor={theme.text} />
-              <ThemedText type="smallBold" style={styles.headerButtonLabel}>
+              <ThemedText type="caption2" style={styles.headerButtonLabel}>
                 About
               </ThemedText>
             </Pressable>
@@ -275,48 +295,51 @@ export default function HomeScreen() {
           </ThemedText>
         </View>
       ) : (
-        <FlatList
+        <Animated.FlatList
           data={visibleDrafts}
           keyExtractor={(item) => item.id}
+          itemLayoutAnimation={LIST_REFLOW}
           contentContainerStyle={[
             styles.list,
             { paddingBottom: insets.bottom + Spacing.six + Spacing.four },
           ]}
           renderItem={({ item }) => (
-            <DraftCard
-              id={item.id}
-              uploadStatus={item.uploadStatus}
-              name={pendingRename?.id === item.id ? pendingRename.name : item.name}
-              firstSegmentFilename={item.firstSegmentFilename}
-              firstSegmentThumbnail={item.firstSegmentThumbnail}
-              segmentCount={item.segmentCount}
-              durationMs={item.durationMs}
-              lastModified={item.lastModified}
-              now={now}
-              editing={editingDraftId === item.id}
-              selectionMode={selectionMode}
-              selected={selectedIds.has(item.id)}
-              onPress={() => {
-                if (selectionMode) toggleSelected(item.id);
-                // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
-                else if (item.uploadStatus !== 'uploading')
-                  router.push({ pathname: '/recorder', params: { draftId: item.id } });
-              }}
-              onLongPress={
-                item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
-              }
-              menu={(watchLink) => (
-                <DraftMenu
-                  draftId={item.id}
-                  watchLink={watchLink}
-                  uploading={item.uploadStatus === 'uploading'}
-                  besidePill={item.uploadStatus === 'uploaded'}
-                  onRename={() => setEditingDraftId(item.id)}
-                  onDelete={() => confirmDelete({ id: item.id, name: item.name })}
-                />
-              )}
-              onSubmitName={(input) => submitRename(item.id, item.name, input)}
-            />
+            <Animated.View exiting={CARD_EXIT}>
+              <DraftCard
+                id={item.id}
+                uploadStatus={item.uploadStatus}
+                name={pendingRename?.id === item.id ? pendingRename.name : item.name}
+                firstSegmentFilename={item.firstSegmentFilename}
+                firstSegmentThumbnail={item.firstSegmentThumbnail}
+                segmentCount={item.segmentCount}
+                durationMs={item.durationMs}
+                lastModified={item.lastModified}
+                now={now}
+                editing={editingDraftId === item.id}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(item.id)}
+                onPress={() => {
+                  if (selectionMode) toggleSelected(item.id);
+                  // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
+                  else if (item.uploadStatus !== 'uploading')
+                    router.push({ pathname: '/recorder', params: { draftId: item.id } });
+                }}
+                onLongPress={
+                  item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
+                }
+                menu={(watchLink) => (
+                  <DraftMenu
+                    draftId={item.id}
+                    watchLink={watchLink}
+                    uploading={item.uploadStatus === 'uploading'}
+                    besidePill={item.uploadStatus === 'uploaded'}
+                    onRename={() => setEditingDraftId(item.id)}
+                    onDelete={() => deleteWithUndo(item.id)}
+                  />
+                )}
+                onSubmitName={(input) => submitRename(item.id, item.name, input)}
+              />
+            </Animated.View>
           )}
         />
       )}
@@ -397,10 +420,12 @@ const styles = StyleSheet.create({
     gap: Spacing.half,
     minHeight: 44,
     minWidth: 44,
-    borderRadius: 12,
+    borderRadius: Radius.row,
+    borderCurve: 'continuous',
     paddingHorizontal: Spacing.two,
   },
-  headerButtonLabel: { fontSize: 11, lineHeight: 13 },
+  // Size/leading come from the `caption2` type; semibold, as the labels under the header icons.
+  headerButtonLabel: { fontWeight: '600' },
   devRowWrap: {
     alignItems: 'flex-end',
     paddingHorizontal: Spacing.four,
@@ -432,10 +457,6 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
+    ...FloatShadow,
   },
 });

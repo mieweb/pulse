@@ -1,11 +1,13 @@
 import type { SymbolViewProps } from 'expo-symbols';
 import { Icon } from '@/components/icon';
-import { Modal, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import Animated, { Keyframe } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
-import { useTheme, useThemeMode } from '@/hooks/use-theme';
+import { EaseOut } from '@/constants/motion';
+import { FloatShadow, Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 /** On-screen rect of the control the menu points at (from `measureInWindow`). */
 export type Anchor = { x: number; y: number; width: number; height: number };
@@ -32,6 +34,13 @@ const GAP = Spacing.one;
 /** Approximate row height — used only to decide whether the menu opens up or down. */
 const EST_ROW_HEIGHT = 48;
 
+// The menu grows out of its trigger (with `transformOrigin` at the trigger's corner), as the
+// system menus do. No exit animation: a picked or dismissed menu is gone at once, also as theirs.
+const MENU_ENTERING = new Keyframe({
+  0: { opacity: 0, transform: [{ scale: 0.95 }] },
+  100: { opacity: 1, transform: [{ scale: 1 }], easing: EaseOut },
+}).duration(150);
+
 /**
  * A popover menu anchored to a control (e.g. a ⋯ button) rather than a bottom sheet. Pops
  * below the anchor, or above it when there isn't room. Generic by design: callers pass a
@@ -39,7 +48,6 @@ const EST_ROW_HEIGHT = 48;
  */
 export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProps) {
   const theme = useTheme();
-  const mode = useThemeMode();
   const insets = useSafeAreaInsets();
   const { width: screenW, height: screenH } = useWindowDimensions();
 
@@ -54,17 +62,20 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
   const right = Math.max(insets.right + Spacing.two, screenW - (anchor.x + anchor.width));
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    // The card animates itself (`MENU_ENTERING`); a Modal fade would only fade it in place.
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Dismiss">
         {/* Swallow taps on the menu itself so they don't reach the backdrop. */}
         <Pressable onPress={() => {}} style={[styles.menu, { top, right, width: MENU_WIDTH }]}>
-          {/* Dark mode: the elevated surface, like the sheets and toast — a pure-black menu
-              floating over the black screen with no dim only had its hairline to show it. */}
-          <View
+          {/* `cardRaised`: white in light, and in dark one gray above the cards it floats over —
+              the card fill itself left the menu indistinguishable from the card under it. */}
+          <Animated.View
+            entering={MENU_ENTERING}
             style={[
               styles.card,
               {
-                backgroundColor: mode === 'dark' ? theme.backgroundElement : theme.background,
+                backgroundColor: theme.cardRaised,
+                transformOrigin: openUp ? 'bottom right' : 'top right',
               },
             ]}>
             {actions.map((action, i) => {
@@ -81,7 +92,7 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
                       borderTopWidth: StyleSheet.hairlineWidth,
                       borderTopColor: theme.border,
                     },
-                    pressed && { backgroundColor: theme.backgroundSelected },
+                    pressed && { backgroundColor: theme.cardRaisedPressed },
                   ]}>
                   <ThemedText type="body" style={{ color: tint }}>
                     {action.label}
@@ -90,7 +101,7 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
                 </Pressable>
               );
             })}
-          </View>
+          </Animated.View>
         </Pressable>
       </Pressable>
     </Modal>
@@ -103,12 +114,9 @@ const styles = StyleSheet.create({
   },
   card: {
     borderRadius: Spacing.three,
+    borderCurve: 'continuous',
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
+    ...FloatShadow,
   },
   row: {
     flexDirection: 'row',

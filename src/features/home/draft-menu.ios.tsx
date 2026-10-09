@@ -47,7 +47,7 @@ const TRIGGER_SIZE = 44;
 
 const styles = StyleSheet.create({
   // Takes the 28 pt slot the card lays out (as Android's trigger), reaching past it to 44 pt: the
-  // extra overhangs the card's padding, and only 4 pt toward the link pill beside it.
+  // extra overhangs the card's padding, and only 4 pt toward the link button beside it.
   trigger: {
     width: TRIGGER_SIZE,
     height: TRIGGER_SIZE,

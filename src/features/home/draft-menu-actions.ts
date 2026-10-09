@@ -10,7 +10,7 @@ export type DraftMenuProps = {
   watchLink: WatchLink | null;
   onRename: () => void;
   onDelete: () => void;
-  /** Sits right after the card's link pill: a narrower left hit area keeps taps off the pill. */
+  /** Sits right after the card's link button: a narrower left hit area keeps taps off it. */
   besidePill?: boolean;
 };
 

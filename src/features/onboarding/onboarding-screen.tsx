@@ -20,6 +20,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PrimaryButton } from '@/components/primary-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { CardShadow, Spacing } from '@/constants/theme';
@@ -42,8 +43,8 @@ function Dot({
   const style = useAnimatedStyle(() => {
     const input = [(index - 1) * width, index * width, (index + 1) * width];
     return {
-      width: interpolate(scrollX.value, input, [8, 22, 8], Extrapolation.CLAMP),
-      opacity: interpolate(scrollX.value, input, [0.35, 1, 0.35], Extrapolation.CLAMP),
+      width: interpolate(scrollX.get(), input, [8, 22, 8], Extrapolation.CLAMP),
+      opacity: interpolate(scrollX.get(), input, [0.35, 1, 0.35], Extrapolation.CLAMP),
     };
   });
   return <Animated.View style={[styles.dot, { backgroundColor: color }, style]} />;
@@ -58,7 +59,7 @@ export function OnboardingScreen() {
   const [index, setIndex] = useState(0);
 
   const onScroll = useAnimatedScrollHandler((e) => {
-    scrollX.value = e.contentOffset.x;
+    scrollX.set(e.contentOffset.x);
   });
 
   const isLast = index === ONBOARDING_STEPS.length - 1;
@@ -151,17 +152,7 @@ export function OnboardingScreen() {
             <Dot key={step.key} index={i} scrollX={scrollX} width={width} color={theme.accent} />
           ))}
         </View>
-        <Pressable
-          onPress={next}
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.cta,
-            { backgroundColor: theme.accent, opacity: pressed ? 0.85 : 1 },
-          ]}>
-          <ThemedText style={{ color: theme.onAccent }}>
-            {isLast ? 'Start recording' : 'Next'}
-          </ThemedText>
-        </Pressable>
+        <PrimaryButton label={isLast ? 'Start recording' : 'Next'} onPress={next} />
       </View>
     </ThemedView>
   );
@@ -190,6 +181,7 @@ const styles = StyleSheet.create({
     width: 116,
     height: 116,
     borderRadius: 28,
+    borderCurve: 'continuous',
     ...CardShadow,
     alignItems: 'center',
     justifyContent: 'center',
@@ -208,11 +200,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: Spacing.three,
   },
-  // Fixed lead column, sized to the first text line (lineHeight 24) and centering whatever
-  // glyph it holds — so icon, dot, and record bullets all align to the first line of text.
+  // Fixed lead column, sized to the first text line (body's lineHeight 22) and centering
+  // whatever glyph it holds — so icon, dot, and record bullets all align to the first line.
   bulletLead: {
-    width: 24,
-    height: 24,
+    width: 22,
+    height: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -251,11 +243,4 @@ const styles = StyleSheet.create({
   },
   dot: { height: 8, borderRadius: 4 },
   pressedText: { opacity: 0.6 },
-  // The app's standard primary button (export, captions, About, permission gate).
-  cta: {
-    height: 52,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 });
