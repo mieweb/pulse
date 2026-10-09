@@ -86,38 +86,53 @@ export function OnDeviceAiSheet() {
 
   const containerStyle = [styles.container, { paddingBottom: insets.bottom + Spacing.four }];
 
+  // The sheet's close control, floating at the top right in both states (list and confirmation).
+  const closeButton = (
+    <Pressable
+      onPress={close}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel="Close"
+      style={({ pressed }) => [styles.close, pressed && styles.pressed]}>
+      <Icon name="xmark.circle.fill" size={28} tintColor={theme.textSecondary} />
+    </Pressable>
+  );
+
   if (confirming) {
     return (
-      <View collapsable={false} style={containerStyle}>
-        <View style={styles.headerText}>
-          <ThemedText type="title2">Use {confirming.label}?</ThemedText>
-          <ThemedText type="body" themeColor="textSecondary">
-            It’s about {sizeMb(confirming.approxBytes)}, downloaded when Pulse next makes captions.
-            Use Wi-Fi to avoid cellular data charges.
-          </ThemedText>
-        </View>
-        <View style={styles.actions}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => select(confirming.id)}
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: theme.accent, opacity: pressed ? 0.85 : 1 },
-            ]}>
-            <ThemedText type="headline" style={styles.buttonLabel}>
-              Use {confirming.label}
-            </ThemedText>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            hitSlop={Spacing.two}
-            onPress={() => setConfirming(null)}
-            style={styles.cancel}>
+      <View collapsable={false} style={scrolls ? styles.fill : undefined}>
+        <View style={containerStyle}>
+          <View style={styles.headerText}>
+            <ThemedText type="title2">Use {confirming.label}?</ThemedText>
             <ThemedText type="body" themeColor="textSecondary">
-              Cancel
+              It’s about {sizeMb(confirming.approxBytes)}, downloaded when Pulse next makes
+              captions. Use Wi-Fi to avoid cellular data charges.
             </ThemedText>
-          </Pressable>
+          </View>
+          <View style={styles.actions}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => select(confirming.id)}
+              style={({ pressed }) => [
+                styles.button,
+                { backgroundColor: theme.accent, opacity: pressed ? 0.85 : 1 },
+              ]}>
+              <ThemedText type="headline" style={styles.buttonLabel}>
+                Use {confirming.label}
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={Spacing.two}
+              onPress={() => setConfirming(null)}
+              style={styles.cancel}>
+              <ThemedText type="body" themeColor="textSecondary">
+                Cancel
+              </ThemedText>
+            </Pressable>
+          </View>
         </View>
+        {closeButton}
       </View>
     );
   }
@@ -214,14 +229,7 @@ export function OnDeviceAiSheet() {
           </Pressable>
         )}
       </SheetBody>
-      <Pressable
-        onPress={close}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel="Close"
-        style={({ pressed }) => [styles.close, pressed && styles.pressed]}>
-        <Icon name="xmark.circle.fill" size={28} tintColor={theme.textSecondary} />
-      </Pressable>
+      {closeButton}
     </View>
   );
 }
