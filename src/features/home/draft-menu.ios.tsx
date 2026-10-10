@@ -1,6 +1,6 @@
 import { Button, type ButtonProps, Host, Image, Menu } from '@expo/ui/swift-ui';
 import { contentShape, frame, shapes } from '@expo/ui/swift-ui/modifiers';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { useTheme } from '@/hooks/use-theme';
 
@@ -14,31 +14,38 @@ export function DraftMenu(props: DraftMenuProps) {
   const theme = useTheme();
   const actions = draftMenuActions(props);
   return (
-    <Host style={styles.trigger}>
-      <Menu
-        label={
-          // An 18 pt glyph in a 44 pt tappable frame (the HIG minimum); the whole frame hit-tests.
-          <Image
-            systemName="ellipsis"
-            size={18}
-            color={theme.textSecondary}
-            modifiers={[
-              frame({ width: TRIGGER_SIZE, height: TRIGGER_SIZE }),
-              contentShape(shapes.rectangle()),
-            ]}
-          />
-        }>
-        {actions.map((action) => (
-          <Button
-            key={action.key}
-            label={action.label}
-            systemImage={action.icon as ButtonProps['systemImage']}
-            role={action.destructive ? 'destructive' : 'default'}
-            onPress={action.onPress}
-          />
-        ))}
-      </Menu>
-    </Host>
+    // The card around it is a Pressable, and React Native hands a touch to the deepest view that
+    // asks for it, else up to the card. The native menu isn't part of that system, so without
+    // this a tap opened the draft (the card's press) along with the menu, and a hold reached the
+    // card's long press too. Claiming the touch keeps the card out of it; the SwiftUI menu still
+    // gets the native touch and opens on a tap.
+    <View style={styles.trigger} onStartShouldSetResponder={() => true}>
+      <Host style={styles.fill}>
+        <Menu
+          label={
+            // An 18 pt glyph in a 44 pt tappable frame (the HIG minimum); the whole frame hit-tests.
+            <Image
+              systemName="ellipsis"
+              size={18}
+              color={theme.textSecondary}
+              modifiers={[
+                frame({ width: TRIGGER_SIZE, height: TRIGGER_SIZE }),
+                contentShape(shapes.rectangle()),
+              ]}
+            />
+          }>
+          {actions.map((action) => (
+            <Button
+              key={action.key}
+              label={action.label}
+              systemImage={action.icon as ButtonProps['systemImage']}
+              role={action.destructive ? 'destructive' : 'default'}
+              onPress={action.onPress}
+            />
+          ))}
+        </Menu>
+      </Host>
+    </View>
   );
 }
 
@@ -55,4 +62,5 @@ const styles = StyleSheet.create({
     marginLeft: -4,
     marginRight: -(TRIGGER_SIZE - 28 - 4),
   },
+  fill: { flex: 1 },
 });
