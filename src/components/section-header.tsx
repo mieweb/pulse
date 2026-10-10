@@ -26,10 +26,15 @@ export function SectionHeader({ title, action }: { title: string; action?: React
 }
 
 const styles = StyleSheet.create({
+  // Wraps when the title and action don't fit side by side (large text, a narrow sheet): the
+  // action moves under the title instead of running into it.
   header: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
+    columnGap: Spacing.three,
+    rowGap: Spacing.half,
     paddingHorizontal: Spacing.three,
   },
   title: { letterSpacing: 0.5 },

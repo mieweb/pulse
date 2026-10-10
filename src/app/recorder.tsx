@@ -527,7 +527,11 @@ export default function RecorderScreen() {
                 {/* Both floor: a playhead shouldn't read a second ahead, and with the total
                     rounding up the end read "00:07 / 00:08" on a 7.6 s draft. */}
                 {formatDuration(preview.globalMs, { pad: true, floor: true })} /{' '}
-                {formatDuration(preview.totalMs, { pad: true, floor: true })}
+                {/* A draft under a second still reads 00:01, as on Home and the clip strip. */}
+                {formatDuration(preview.totalMs > 0 ? Math.max(1000, preview.totalMs) : 0, {
+                  pad: true,
+                  floor: true,
+                })}
               </Text>
             </View>
           ) : (
@@ -608,7 +612,7 @@ export default function RecorderScreen() {
               steps out and back rather than fading with the others: it's glass, and a partly
               transparent ancestor makes iOS draw glass flat, sometimes for good. */}
           {!previewing && (
-            <View style={{ opacity: dragging ? 0 : 1 }}>
+            <View style={{ transform: [{ scale: dragging ? 0 : 1 }] }}>
               <LensSelector
                 presets={lensPresets}
                 selected={activeLens}
