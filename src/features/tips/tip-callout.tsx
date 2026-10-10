@@ -206,7 +206,7 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
       />
       <View style={[styles.bubble, { backgroundColor: fill }]} pointerEvents="box-none">
         <View pointerEvents="none" style={styles.symbol}>
-          <Icon name={tip.symbol} size={24} tintColor={theme.accent} />
+          <Icon name={tip.symbol} size={24} tintColor={theme.accent} scalesWithText />
         </View>
         <View pointerEvents="none" style={styles.text}>
           <ThemedText type="headline">{tip.title}</ThemedText>

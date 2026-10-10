@@ -13,6 +13,7 @@ import { EaseOut } from '@/constants/motion';
 import { Spacing } from '@/constants/theme';
 import { markOnboardingComplete } from '@/db/settings';
 import { WELCOME_FEATURES } from '@/features/onboarding/steps';
+import { useTextScale } from '@/hooks/use-text-scale';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -27,6 +28,9 @@ const rowEnter = (i: number) =>
     .easing(EaseOut)
     .delay(200 + i * ROW_STAGGER_MS);
 
+/** Width of the column the feature glyphs centre in, at the default text size. */
+const FEATURE_ICON_COLUMN = 40;
+
 /**
  * First launch: one welcome screen, like Apple's own apps open with — what Pulse is for, a word on
  * privacy and Continue, which goes straight to the recorder. Nothing to swipe through or skip;
@@ -35,6 +39,8 @@ const rowEnter = (i: number) =>
 export function OnboardingScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  // The feature glyphs grow with their text; so does the column they're centred in.
+  const iconColumn = { width: Math.round(FEATURE_ICON_COLUMN * useTextScale()) };
 
   // Continue goes on to the recorder; Android's Back goes back to Home. Either way the welcome is
   // done: Back is the way past it without recording, as Skip was on the old tour.
@@ -77,8 +83,8 @@ export function OnboardingScreen() {
         <View style={styles.features}>
           {WELCOME_FEATURES.map((feature, i) => (
             <Animated.View key={feature.title} entering={rowEnter(i)} style={styles.feature}>
-              <View style={styles.featureIcon}>
-                <Icon name={feature.icon} size={30} tintColor={theme.accent} />
+              <View style={[styles.featureIcon, iconColumn]}>
+                <Icon name={feature.icon} size={30} tintColor={theme.accent} scalesWithText />
               </View>
               <View style={styles.featureText}>
                 <ThemedText type="headline">{feature.title}</ThemedText>
@@ -95,7 +101,7 @@ export function OnboardingScreen() {
         entering={FadeIn.duration(ENTER_MS / 2).easing(EaseOut)}
         style={[styles.footer, { paddingBottom: insets.bottom + Spacing.four }]}>
         <View style={styles.privacy}>
-          <Icon name="lock.fill" size={14} tintColor={theme.textSecondary} />
+          <Icon name="lock.fill" size={14} tintColor={theme.textSecondary} scalesWithText />
           <ThemedText type="footnote" themeColor="textSecondary" style={styles.privacyText}>
             No account needed. Your recordings stay on this device unless you share or upload them.
           </ThemedText>
@@ -122,7 +128,7 @@ const styles = StyleSheet.create({
   features: { gap: Spacing.four },
   feature: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
   // A fixed column so the three glyphs line up whatever their shape, centred on the title line.
-  featureIcon: { width: 40, alignItems: 'center', paddingTop: Spacing.half },
+  featureIcon: { alignItems: 'center', paddingTop: Spacing.half },
   featureText: { flex: 1, gap: Spacing.half },
   footer: { paddingHorizontal: Spacing.three, paddingTop: Spacing.three, gap: Spacing.three },
   privacy: {
