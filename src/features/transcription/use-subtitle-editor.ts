@@ -8,7 +8,6 @@ import {
   undo as undoHistory,
   type History,
 } from './edit-history';
-import { joinWords } from './group-lines';
 import type { TranscriptLine, TranscriptWord } from './whisper';
 
 /** One editable caption cue. Times are centiseconds; `words` drives word-level highlighting. */
@@ -250,7 +249,10 @@ export function useSubtitleEditor(initial: TranscriptLine[]) {
       const rightWords = target.words.filter((w) => w.t0 >= atCs);
       const makeHalf = (id: string, words: TranscriptWord[], t0: number, t1: number): Cue => ({
         id,
-        text: joinWords(words.map((w) => w.text)).trim(),
+        text: words
+          .map((w) => w.text)
+          .join(' ')
+          .trim(),
         t0,
         t1,
         words,
@@ -282,7 +284,7 @@ export function useSubtitleEditor(initial: TranscriptLine[]) {
         const second = sorted[index + 1];
         const merged: Cue = {
           id: first.id,
-          text: joinWords([first.text, second.text]).trim(),
+          text: `${first.text} ${second.text}`.trim(),
           t0: first.t0,
           t1: second.t1,
           words: [...first.words, ...second.words],

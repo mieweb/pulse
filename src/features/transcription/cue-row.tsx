@@ -5,7 +5,6 @@ import { ThemedText } from '@/components/themed-text';
 import { MaxTextScale, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
-import { spaceBefore } from './group-lines';
 import type { Cue } from './use-subtitle-editor';
 
 const CPS_WARN = 17;
@@ -162,7 +161,7 @@ function KaraokeText({
             color: i === active ? theme.accent : i < active ? theme.text : theme.textSecondary,
             fontWeight: i === active ? '600' : '400',
           }}>
-          {(i > 0 && spaceBefore(words[i - 1].text, w.text) ? ' ' : '') + w.text}
+          {(i > 0 ? ' ' : '') + w.text}
         </Text>
       ))}
     </ThemedText>

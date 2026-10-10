@@ -2,7 +2,6 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Accent } from '@/constants/theme';
-import { spaceBefore } from './group-lines';
 import type { TranscriptLine, TranscriptWord } from './whisper';
 
 const COLOR_SPOKEN = 'rgba(255,255,255,1)';
@@ -84,7 +83,7 @@ export function CaptionOverlay({ lines, positionMs, fontSize = 17 }: Props) {
               style={{
                 color: i === active ? Accent : i < active ? COLOR_SPOKEN : COLOR_FUTURE,
               }}>
-              {(i > 0 && spaceBefore(words[i - 1].text, w.text) ? ' ' : '') + w.text}
+              {(i > 0 ? ' ' : '') + w.text}
             </Text>
           ))}
         </Text>
