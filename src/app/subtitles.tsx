@@ -16,6 +16,8 @@ import {
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import Animated, {
   FadeIn,
@@ -48,6 +50,9 @@ import { resolveSelectedModel } from '@/features/transcription/models';
 import { useAutosaveTranscript } from '@/features/transcription/use-autosave-transcript';
 import { useSubtitleEditor, type Cue } from '@/features/transcription/use-subtitle-editor';
 import { parseTranscriptLines, type TranscriptLine } from '@/features/transcription/whisper';
+import { TipAnchor } from '@/features/tips/tip-anchor';
+import { TipLayer } from '@/features/tips/tip-callout';
+import { useTip } from '@/features/tips/use-tip';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { toFileUri } from '@/utils/file-store';
@@ -266,11 +271,21 @@ function Editor({
     const y = offsets.current.get(playingId);
     if (y != null) scrollRef.current?.scrollTo({ y: Math.max(0, y - 96), animated: true });
   }, [playingId, selectedId, editingId]);
+  // For the editor's tip, which points at the first caption: whether that caption is in view (the
+  // list rests at the top) and the list isn't being dragged.
+  const [listDragging, setListDragging] = useState(false);
+  const [listAtTop, setListAtTop] = useState(true);
+  const onListScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const atTop = e.nativeEvent.contentOffset.y <= LIST_TOP_SLOP;
+    if (atTop !== listAtTop) setListAtTop(atTop);
+  };
   const onUserScrollStart = () => {
+    setListDragging(true);
     followSuspendedRef.current = true;
     if (suspendTimerRef.current) clearTimeout(suspendTimerRef.current);
   };
   const onUserScrollSettle = () => {
+    setListDragging(false);
     if (suspendTimerRef.current) clearTimeout(suspendTimerRef.current);
     suspendTimerRef.current = setTimeout(() => {
       followSuspendedRef.current = false;
@@ -358,6 +373,19 @@ function Editor({
   };
 
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
+
+  // Once, while browsing a list with captions: how to select a caption and edit its words. Only
+  // while the first caption, which it points at, is in view and still: paused (playback scrolls the
+  // list to the playing caption), the list at the top and not being dragged. Playing or scrolling
+  // once it's up ends it; before it shows, they only put it off.
+  const editTip = useTip(
+    'captionEdit',
+    mode === 'browse' && !isPlaying && listAtTop && !listDragging && editor.cues.length > 0,
+    {
+      delayMs: 800,
+      learned: mode !== 'browse',
+    },
+  );
 
   return (
     <ThemedView type="groupedBackground" style={styles.fill}>
@@ -477,15 +505,20 @@ function Editor({
             contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 96 }]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            onScroll={onListScroll}
+            scrollEventThrottle={64}
             onScrollBeginDrag={onUserScrollStart}
             onScrollEndDrag={onUserScrollSettle}
+            // A fling keeps moving after the finger lifts: still the person's scroll, so playback
+            // doesn't follow yet and the editor's tip doesn't arm mid-fling.
+            onMomentumScrollBegin={onUserScrollStart}
             onMomentumScrollEnd={onUserScrollSettle}>
             {editor.cues.length === 0 && (
               <ThemedText themeColor="textSecondary" style={styles.empty}>
                 No captions yet. Add one at the playhead to start.
               </ThemedText>
             )}
-            {editor.cues.map((cue) => (
+            {editor.cues.map((cue, i) => (
               <Animated.View
                 key={cue.id}
                 layout={rowsReflow ? LIST_REFLOW : undefined}
@@ -511,6 +544,9 @@ function Editor({
                   onChangeText={setText}
                   onEndTextEdit={endTextEdit}
                 />
+                {i === 0 && editTip.mounted && (
+                  <TipAnchor id="captionEdit" shown={editTip.shown} onDismiss={editTip.dismiss} />
+                )}
               </Animated.View>
             ))}
             {showReset && (
@@ -541,9 +577,14 @@ function Editor({
           </Animated.View>
         )}
       </KeyboardAvoidingView>
+      {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
+      <TipLayer />
     </ThemedView>
   );
 }
+
+/** How far the caption list can scroll and still count as at the top (first caption in view). */
+const LIST_TOP_SLOP = 24;
 
 /** The preview's width, in % of the screen: browsing, and text mode (keyboard up). */
 const PREVIEW_FULL = 56;

@@ -1,107 +1,52 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { Icon } from '@/components/icon';
-import { useCallback, useRef, useState } from 'react';
-import {
-  type FlatList,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  useWindowDimensions,
-  View,
-} from 'react-native';
-import Animated, {
-  Extrapolation,
-  interpolate,
-  type SharedValue,
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useSharedValue,
-} from 'react-native-reanimated';
+import { useCallback, useEffect } from 'react';
+import { BackHandler, ScrollView, StyleSheet, View } from 'react-native';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Icon } from '@/components/icon';
 import { PrimaryButton } from '@/components/primary-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { CardShadow, Opacity, Spacing } from '@/constants/theme';
+import { EaseOut } from '@/constants/motion';
+import { Spacing } from '@/constants/theme';
 import { markOnboardingComplete } from '@/db/settings';
-import { ONBOARDING_STEPS } from '@/features/onboarding/steps';
+import { WELCOME_FEATURES } from '@/features/onboarding/steps';
+import { useTextScale } from '@/hooks/use-text-scale';
 import { useTheme } from '@/hooks/use-theme';
 
-const DOT = 8;
-const DOT_ACTIVE = 22;
-const DOT_GAP = Spacing.two;
 /**
- * The dot row's width, the same at every scroll position: the page arriving widens its dot by as
- * much as the page leaving narrows its own, so one active dot's width is always shared out.
+ * The rows arrive one after another, after the title: quick enough not to keep anyone waiting.
+ * Continue doesn't wait for them, or move: it fades in at once, so it's never a moving or invisible
+ * target.
  */
-const DOTS_WIDTH = DOT_ACTIVE + (ONBOARDING_STEPS.length - 1) * (DOT + DOT_GAP);
+const ENTER_MS = 400;
+const ROW_STAGGER_MS = 80;
+const rowEnter = (i: number) =>
+  FadeInDown.duration(ENTER_MS)
+    .easing(EaseOut)
+    .delay(200 + i * ROW_STAGGER_MS);
 
-/** How wide dot `i` is with the pages scrolled to `x` (pages `width` wide). */
-function dotWidth(i: number, x: number, width: number): number {
-  'worklet';
-  return interpolate(
-    x,
-    [(i - 1) * width, i * width, (i + 1) * width],
-    [DOT, DOT_ACTIVE, DOT],
-    Extrapolation.CLAMP,
-  );
-}
+/** Width of the column the feature glyphs centre in, at the default text size. */
+const FEATURE_ICON_COLUMN = 40;
 
 /**
- * A single page indicator that grows/brightens as its page scrolls into view. Absolutely placed
- * in a fixed track and childless, so its width and position change every scroll frame without
- * laying out anything else: in a flowing row, each frame's width change re-laid the whole row.
- * Its offset is the dots before it at their resting width, plus however much they've grown.
+ * First launch: one welcome screen, like Apple's own apps open with — what Pulse is for, a word on
+ * privacy and Continue, which goes straight to the recorder. Nothing to swipe through or skip;
+ * the controls are taught by one-time tips beside them as they're first used (features/tips).
  */
-function Dot({
-  index,
-  scrollX,
-  width,
-  color,
-}: {
-  index: number;
-  scrollX: SharedValue<number>;
-  width: number;
-  color: string;
-}) {
-  const style = useAnimatedStyle(() => {
-    const x = scrollX.get();
-    let offset = index * (DOT + DOT_GAP);
-    for (let i = 0; i < index; i++) offset += dotWidth(i, x, width) - DOT;
-    return {
-      width: dotWidth(index, x, width),
-      transform: [{ translateX: offset }],
-      opacity: interpolate(
-        x,
-        [(index - 1) * width, index * width, (index + 1) * width],
-        [0.35, 1, 0.35],
-        Extrapolation.CLAMP,
-      ),
-    };
-  });
-  return <Animated.View style={[styles.dot, { backgroundColor: color }, style]} />;
-}
-
 export function OnboardingScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const scrollX = useSharedValue(0);
-  const listRef = useRef<FlatList<(typeof ONBOARDING_STEPS)[number]>>(null);
-  const [index, setIndex] = useState(0);
+  // The feature glyphs grow with their text; so does the column they're centred in.
+  const iconColumn = { width: Math.round(FEATURE_ICON_COLUMN * useTextScale()) };
 
-  const onScroll = useAnimatedScrollHandler((e) => {
-    scrollX.set(e.contentOffset.x);
-  });
-
-  const isLast = index === ONBOARDING_STEPS.length - 1;
-
-  // Both "Skip" and the final CTA mark onboarding done so it never reappears.
-  // Skipping returns to home; finishing drops the user straight into the recorder.
+  // Continue goes on to the recorder; Android's Back goes back to Home. Either way the welcome is
+  // done: Back is the way past it without recording, as Skip was on the old tour.
   const finish = useCallback((toRecorder: boolean) => {
     // Don't block navigation on the write, but don't swallow a failure either —
-    // if this never persists, onboarding re-shows on every launch.
+    // if this never persists, the welcome re-shows on every launch.
     markOnboardingComplete().catch((e) => {
       console.warn('[onboarding] failed to persist completion; onboarding will re-show', e);
     });
@@ -109,179 +54,89 @@ export function OnboardingScreen() {
     else router.back();
   }, []);
 
-  const next = () => {
-    if (isLast) finish(true);
-    else listRef.current?.scrollToIndex({ index: index + 1, animated: true });
-  };
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      finish(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [finish]);
 
   return (
-    // Grouped, like the other full-screen screens: the white icon tile reads as a card on it.
+    // Grouped, like the other full-screen screens.
     <ThemedView type="groupedBackground" style={styles.container}>
-      <View style={[styles.topBar, { paddingTop: insets.top + Spacing.two }]}>
-        <Pressable
-          onPress={() => finish(false)}
-          hitSlop={12}
-          accessibilityRole="button"
-          style={({ pressed }) => pressed && styles.pressedText}>
-          <ThemedText type="subheadlineEmphasized" themeColor="textSecondary">
-            Skip
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.six }]}
+        showsVerticalScrollIndicator={false}>
+        <Animated.View entering={FadeIn.duration(ENTER_MS).easing(EaseOut)} style={styles.hero}>
+          <Image
+            source={require('../../../assets/images/pulse-logo-master-2048.png')}
+            style={styles.logo}
+            contentFit="contain"
+            accessibilityIgnoresInvertColors
+          />
+          <ThemedText type="largeTitle" style={styles.title} accessibilityRole="header">
+            Welcome to Pulse
           </ThemedText>
-        </Pressable>
-      </View>
+        </Animated.View>
 
-      <Animated.FlatList
-        ref={listRef}
-        data={ONBOARDING_STEPS}
-        keyExtractor={(item) => item.key}
-        horizontal
-        pagingEnabled
-        bounces={false}
-        showsHorizontalScrollIndicator={false}
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
-        onMomentumScrollEnd={(e) => setIndex(Math.round(e.nativeEvent.contentOffset.x / width))}
-        renderItem={({ item }) => (
-          <ScrollView
-            style={{ width }}
-            contentContainerStyle={styles.page}
-            showsVerticalScrollIndicator={false}>
-            {item.image ? (
-              <Image source={item.image} style={styles.logo} contentFit="contain" />
-            ) : (
-              <View style={[styles.iconCard, { backgroundColor: theme.card }]}>
-                <Icon name={item.symbol ?? 'sparkles'} size={56} tintColor={theme.accent} />
+        <View style={styles.features}>
+          {WELCOME_FEATURES.map((feature, i) => (
+            <Animated.View key={feature.title} entering={rowEnter(i)} style={styles.feature}>
+              <View style={[styles.featureIcon, iconColumn]}>
+                <Icon name={feature.icon} size={30} tintColor={theme.accent} scalesWithText />
               </View>
-            )}
-            <ThemedText type="title1" style={styles.title}>
-              {item.title}
-            </ThemedText>
-            <View style={styles.bullets}>
-              {item.bullets.map((bullet, i) => (
-                <View key={i} style={styles.bulletRow}>
-                  <View style={styles.bulletLead}>
-                    {bullet.record ? (
-                      <View style={[styles.recordRing, { borderColor: theme.accent }]}>
-                        <View style={[styles.recordDot, { backgroundColor: theme.accent }]} />
-                      </View>
-                    ) : bullet.icon ? (
-                      <Icon name={bullet.icon} size={19} tintColor={theme.accent} scalesWithText />
-                    ) : (
-                      <View style={[styles.bulletDot, { backgroundColor: theme.accent }]} />
-                    )}
-                  </View>
-                  <ThemedText type="body" style={styles.bulletText}>
-                    {bullet.text}
-                  </ThemedText>
-                </View>
-              ))}
-            </View>
-          </ScrollView>
-        )}
-      />
-
-      <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.four }]}>
-        <View style={styles.dots}>
-          {ONBOARDING_STEPS.map((step, i) => (
-            <Dot key={step.key} index={i} scrollX={scrollX} width={width} color={theme.accent} />
+              <View style={styles.featureText}>
+                <ThemedText type="headline">{feature.title}</ThemedText>
+                <ThemedText type="subheadline" themeColor="textSecondary">
+                  {feature.text}
+                </ThemedText>
+              </View>
+            </Animated.View>
           ))}
         </View>
-        <PrimaryButton label={isLast ? 'Start recording' : 'Next'} onPress={next} />
-      </View>
+      </ScrollView>
+
+      <Animated.View
+        entering={FadeIn.duration(ENTER_MS / 2).easing(EaseOut)}
+        style={[styles.footer, { paddingBottom: insets.bottom + Spacing.four }]}>
+        <View style={styles.privacy}>
+          <Icon name="lock.fill" size={14} tintColor={theme.textSecondary} scalesWithText />
+          <ThemedText type="footnote" themeColor="textSecondary" style={styles.privacyText}>
+            No account needed. Your recordings stay on this device unless you share or upload them.
+          </ThemedText>
+        </View>
+        <PrimaryButton label="Continue" onPress={() => finish(true)} />
+      </Animated.View>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  // The app's 16 pt full-screen gutter for the bar and the footer; the pages' text keeps a
-  // narrower column (32 pt each side), easier to read at a glance.
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingHorizontal: Spacing.three,
-  },
-  page: {
+  // Text keeps a narrower column (32 pt each side) than the footer's 16 pt gutter, as Apple's
+  // welcome screens do.
+  content: {
     flexGrow: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
     paddingHorizontal: Spacing.five,
-    paddingVertical: Spacing.four,
-    gap: Spacing.four,
+    paddingBottom: Spacing.four,
+    gap: Spacing.five,
   },
-  logo: {
-    width: 132,
-    height: 132,
-  },
-  iconCard: {
-    width: 116,
-    height: 116,
-    borderRadius: 28,
-    borderCurve: 'continuous',
-    ...CardShadow,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Size/leading come from the `title1` type; keep it centered and bold for the onboarding hero.
-  title: {
-    textAlign: 'center',
-    fontWeight: '700',
-  },
-  bullets: {
-    width: '100%',
-    gap: Spacing.three,
-  },
-  bulletRow: {
+  hero: { alignItems: 'center', gap: Spacing.three },
+  logo: { width: 96, height: 96 },
+  title: { textAlign: 'center' },
+  features: { gap: Spacing.four },
+  feature: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
+  // A fixed column so the three glyphs line up whatever their shape, centred on the title line.
+  featureIcon: { alignItems: 'center', paddingTop: Spacing.half },
+  featureText: { flex: 1, gap: Spacing.half },
+  footer: { paddingHorizontal: Spacing.three, paddingTop: Spacing.three, gap: Spacing.three },
+  privacy: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: Spacing.three,
-  },
-  // Fixed lead column, sized to the first text line (body's lineHeight 22) and centering
-  // whatever glyph it holds — so icon, dot, and record bullets all align to the first line.
-  bulletLead: {
-    width: 22,
-    height: 22,
-    alignItems: 'center',
     justifyContent: 'center',
-  },
-  bulletDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  // Mini record button: a red disc inside a red ring, matching the recorder's shutter.
-  recordRing: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recordDot: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-  },
-  bulletText: {
-    flex: 1,
-  },
-  footer: {
+    gap: Spacing.one + Spacing.half,
     paddingHorizontal: Spacing.three,
-    gap: Spacing.four,
   },
-  // A fixed track the dots are placed in (see `Dot`), centred in the footer.
-  dots: {
-    alignSelf: 'center',
-    width: DOTS_WIDTH,
-    height: 10,
-  },
-  dot: {
-    position: 'absolute',
-    top: (10 - DOT) / 2,
-    left: 0,
-    height: DOT,
-    borderRadius: DOT / 2,
-  },
-  pressedText: { opacity: Opacity.pressedGlyph },
+  privacyText: { flexShrink: 1, textAlign: 'center' },
 });

@@ -38,6 +38,9 @@ import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
+import { TipAnchor } from '@/features/tips/tip-anchor';
+import { TipLayer } from '@/features/tips/tip-callout';
+import { useTip } from '@/features/tips/use-tip';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
 import { haptics, muteHaptics } from '@/utils/haptics';
@@ -403,6 +406,34 @@ export default function RecorderScreen() {
     [lensPresets],
   );
 
+  // First-run tips, one at a time: the shutter before the first clip, then the clips once one
+  // has landed. They never get in the way of recording: one only appears once the shutter has
+  // been left alone for a moment (not touched, held or recording; 2 s after a take, so it can't pop
+  // up between takes), and the first touch anywhere on the recorder closes it — that touch carries
+  // on as usual, so a tap still records and a hold still records and zooms. Each tip is then done
+  // for good (see `useTip`).
+  const [shutterTouched, setShutterTouched] = useState(false);
+  useAnimatedReaction(
+    () => pressed.get() || holdActive.get(),
+    (touched, prev) => {
+      if (touched !== prev) scheduleOnRN(setShutterTouched, touched);
+    },
+  );
+  const shutterIdle = focused && cameraReady && !previewing && !isRecording && !shutterTouched;
+  const recordTip = useTip('record', shutterIdle && segments.length === 0, {
+    delayMs: 1000,
+    learned: isRecording,
+  });
+  const clipsTip = useTip('clips', shutterIdle && !dragging && segments.length > 0, {
+    delayMs: 2000,
+    learned: previewing || dragging,
+  });
+  const closeTips = () => {
+    recordTip.dismiss();
+    clipsTip.dismiss();
+    return false; // never takes the touch: it goes on to the shutter, the camera or the control
+  };
+
   if (!permissions.ready) return <ThemedView style={styles.fill} />;
   if (!permissions.granted) {
     return <PermissionGate blocked={permissions.blocked} onRequest={permissions.request} />;
@@ -427,7 +458,7 @@ export default function RecorderScreen() {
   const handleClose = () => void finalizeRecording().then(closeToHome);
 
   return (
-    <View style={styles.fill}>
+    <View style={styles.fill} onStartShouldSetResponderCapture={closeTips}>
       {/* Light over the live camera whatever the theme; the preview's backdrop follows the theme,
           so the bar does too. Only while this screen is focused: the last StatusBar mounted wins,
           and the recorder stays mounted under Export, which should get the root's again. */}
@@ -632,6 +663,11 @@ export default function RecorderScreen() {
                 cameraReady={cameraReady}
                 dragging={dragging}
               />
+              {recordTip.mounted && (
+                <View style={styles.recordTip} pointerEvents="none">
+                  <TipAnchor id="record" shown={recordTip.shown} onDismiss={recordTip.dismiss} />
+                </View>
+              )}
               {/* Faded out with the record button during a drag so the trash has clear space. */}
               <Animated.View
                 style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
@@ -646,6 +682,11 @@ export default function RecorderScreen() {
 
           <SegmentBar
             segments={segments}
+            firstClipOverlay={
+              clipsTip.mounted && (
+                <TipAnchor id="clips" shown={clipsTip.shown} onDismiss={clipsTip.dismiss} />
+              )
+            }
             onReorder={reorderSegments}
             // Drag-to-trash deletes at once, same as the preview's 🗑.
             onDelete={deleteSegment}
@@ -670,6 +711,9 @@ export default function RecorderScreen() {
           />
         </View>
       </View>
+
+      {/* Over everything: the recorder's tips are callouts, which leave the shutter tappable. */}
+      <TipLayer />
     </View>
   );
 }
@@ -720,6 +764,15 @@ const styles = StyleSheet.create({
   // The + sits at the midpoint of the gap between the record button's right edge and the
   // screen edge: 75% marks the center of the right half, +19 shifts past the button's
   // half-width (38/2), -22 centers the 44pt circle on that point.
+  // Over the record button (centred in the row), for the record tip's arrow.
+  recordTip: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: '50%',
+    width: RECORD_BUTTON_SIZE,
+    marginLeft: -RECORD_BUTTON_SIZE / 2,
+  },
   importWrap: {
     position: 'absolute',
     left: '75%',

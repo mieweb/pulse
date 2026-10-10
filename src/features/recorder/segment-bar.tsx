@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   interpolateColor,
@@ -76,6 +76,8 @@ type Props = {
   onDragActiveChange?: (active: boolean) => void;
   onNext?: () => void;
   cursor?: Cursor;
+  /** Laid over the first clip (it scrolls with it), taking no touches: the clips tip's anchor. */
+  firstClipOverlay?: ReactNode;
 };
 
 export function SegmentBar(props: Props) {
@@ -93,6 +95,7 @@ function Bar({
   onDragActiveChange,
   onNext,
   cursor,
+  firstClipOverlay,
 }: Props) {
   const mode = useThemeMode();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
@@ -324,6 +327,7 @@ function Bar({
                   segment={item}
                   active={cursor?.activeId === item.id}
                   onSelect={() => onSelect(item.id)}
+                  overlay={item.id === segments[0]?.id ? firstClipOverlay : undefined}
                 />
               )}
             />
@@ -362,10 +366,12 @@ function SegmentThumb({
   segment,
   active,
   onSelect,
+  overlay,
 }: {
   segment: Segment;
   active: boolean;
   onSelect: () => void;
+  overlay?: ReactNode;
 }) {
   // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original) for legacy rows.
   const thumbnail = useThumbnail(
@@ -429,6 +435,8 @@ function SegmentThumb({
           </Text>
         </View>
       </View>
+
+      {overlay}
     </View>
   );
 }
