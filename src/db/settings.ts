@@ -67,10 +67,13 @@ export async function resetOnboarding(): Promise<void> {
   await db.delete(settings).where(eq(settings.key, ONBOARDING_COMPLETE_KEY));
 }
 
-/** A tip's row: present once the tip has been shown and closed, so it never shows again. */
+/**
+ * A tip's row: present once the tip is retired, so it never shows again: shown and then closed (or
+ * its moment passed while it was up), or its action done before it showed (`useTip`).
+ */
 const TIP_KEY_PREFIX = 'tip.';
 
-/** The ids of every tip already shown. */
+/** The ids of every retired tip. */
 export async function seenTips(): Promise<Set<string>> {
   const rows = await db
     .select({ key: settings.key })
@@ -79,7 +82,7 @@ export async function seenTips(): Promise<Set<string>> {
   return new Set(rows.map((r) => r.key.slice(TIP_KEY_PREFIX.length)));
 }
 
-/** Record that a tip has been shown, so it doesn't show again. */
+/** Record that a tip is retired (shown and closed, or its action done), so it doesn't show again. */
 export async function markTipSeen(id: string): Promise<void> {
   await setSetting(TIP_KEY_PREFIX + id, 'seen');
 }

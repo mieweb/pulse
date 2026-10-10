@@ -7,13 +7,13 @@ import type { TipId } from './tips';
 /** Stands for every tip when the shown ones can't be read. */
 const ALL = '*';
 
-/** The tips already shown, read once per launch. */
+/** The tips already retired, read once per launch. */
 let seen: Promise<Set<string>> | null = null;
 function loadSeen(): Promise<Set<string>> {
   seen ??= seenTips().catch((e: unknown) => {
-    // Unreadable: show no tips this launch rather than repeat ones already seen.
-    console.warn('[tips] failed to read shown tips', e);
-    seen = null;
+    // Unreadable: no tips for the rest of this launch (kept, not retried, so a screen opened later
+    // can't show one that was already retired).
+    console.warn('[tips] failed to read retired tips', e);
     return new Set([ALL]);
   });
   return seen;
