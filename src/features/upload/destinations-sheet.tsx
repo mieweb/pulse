@@ -1,7 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -70,8 +69,8 @@ function byExpiry(a: DestinationOption, b: DestinationOption): number {
 
 /**
  * The device-wide pool of paired upload destinations (§ destination pool), opened from the home
- * screen's destinations pill: each destination's name (`DestinationLabel`), expiry and its server's
- * compatibility with this app, soonest-expiring first, to *view and delete*. Picking which one to upload to happens on the export screen. Same sheet style as
+ * screen's destinations pill: each destination's name (`DestinationLabel`), expiry and any problem with its
+ * server, soonest-expiring first, to *view and delete*. Picking which one to upload to happens on the export screen. Same sheet style as
  * the pairing sheet.
  */
 export function DestinationsSheet() {
@@ -220,8 +219,8 @@ function DestinationRow({
       <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} />
       <View style={styles.rowText}>
         <DestinationLabel server={server} />
-        {compat ? (
-          <RowStatus compat={compat} expiryLabel={expiryLabel} />
+        {compat && compat.status !== 'compatible' && compat.status !== 'checking' ? (
+          <RowProblem compat={compat} expiryLabel={expiryLabel} />
         ) : (
           <ThemedText type="footnote" themeColor="textSecondary">
             {expiryLabel}
@@ -240,54 +239,40 @@ function DestinationRow({
   );
 }
 
-/** Size of the status glyph, and of the box the checking spinner shrinks into. */
+/** Size of the warning glyph. */
 const STATUS_ICON = 13;
-/** `ActivityIndicator size="small"`'s own box: it lays out at this size whatever its scale. */
-const SPINNER_SIZE = 20;
-/** The footnote line the status icon centers on (ThemedText's `footnote`). */
+/** The footnote line the warning icon centers on (ThemedText's `footnote`). */
 const FOOTNOTE_LINE = 18;
 
 /**
- * The server's compatibility with this app, then the destination's expiry: "✓ protocol 2.3 · No
- * expiry". A check and its protocol when it works, else the problem in words — orange when the
- * server can't be reached (it may be back later), red when this app and it can't work together.
+ * A server problem, then the destination's expiry: "⚠ Can’t reach the server · No expiry". Orange
+ * when the server can't be reached (it may be back later), red when this app and it can't work
+ * together. A server that works shows only its expiry, as it does while it's being checked.
  *
  * One text, so it wraps rather than truncates and never runs into the trash button. The "·" is
- * glued to the status (no-break space) and the expiry to itself, so a wrap breaks after the "·",
+ * glued to the problem (no-break space) and the expiry to itself, so a wrap breaks after the "·",
  * never leaving it to start a line or splitting "Expires in 7d".
  */
-function RowStatus({ compat, expiryLabel }: { compat: ServerCompat; expiryLabel: string }) {
+function RowProblem({ compat, expiryLabel }: { compat: ServerCompat; expiryLabel: string }) {
   const theme = useTheme();
   // The icon stays on the first line's center when the text wraps; that line grows with text size.
   const { fontScale } = useWindowDimensions();
-  const ok = compat.status === 'compatible';
-  const checking = compat.status === 'checking';
-  const color: ThemeColor =
-    ok || checking ? 'textSecondary' : compat.status === 'unreachable' ? 'warning' : 'accent';
+  const color: ThemeColor = compat.status === 'unreachable' ? 'warning' : 'accent';
   return (
     <View
       style={styles.meta}
       accessible
       accessibilityLabel={`${compatLabel(compat)}, ${expiryLabel}`}>
-      {/* One fixed box for the spinner and the icon that replaces it, so the text doesn't move. */}
       <View
         style={[
           styles.statusIcon,
           { marginTop: Math.max(0, (FOOTNOTE_LINE * fontScale - STATUS_ICON) / 2) },
         ]}>
-        {checking ? (
-          <ActivityIndicator size="small" color={theme.textSecondary} style={styles.spinner} />
-        ) : (
-          <Icon
-            name={ok ? 'checkmark.circle.fill' : 'exclamationmark.triangle.fill'}
-            size={STATUS_ICON}
-            tintColor={theme[color]}
-          />
-        )}
+        <Icon name="exclamationmark.triangle.fill" size={STATUS_ICON} tintColor={theme[color]} />
       </View>
       <ThemedText type="footnote" themeColor="textSecondary" style={styles.metaText}>
         <ThemedText type="footnote" themeColor={color}>
-          {ok ? `protocol ${compat.revision ?? compat.protocol}` : compatLabel(compat)}
+          {compatLabel(compat)}
         </ThemedText>
         {`\u00A0· ${expiryLabel.replace(/ /g, '\u00A0')}`}
       </ThemedText>
@@ -327,7 +312,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  spinner: { transform: [{ scale: STATUS_ICON / SPINNER_SIZE }] },
   metaText: { flexShrink: 1 },
   delete: { padding: Spacing.two },
   // The close, trash and Remove all buttons are bare glyphs and text.

@@ -7,43 +7,15 @@ const MAX_LINE_CHARS = 42;
 // Hard ceiling on a single cue's on-screen duration (centiseconds). 7s is the standard cap.
 const MAX_DUR_CS = 700;
 
-// Western and CJK (。！？) sentence ends, optionally followed by a closing quote or bracket.
-const SENTENCE_END = /[.!?…。！？]["')\]」』]?$/;
+const SENTENCE_END = /[.!?…]["')\]]?$/;
 
-// Punctuation that hugs the word before it (whisper emits it as its own token: "Hello", ","),
-// including Arabic and Urdu marks (، ؛ ؟ ۔), Devanagari dandas (। ॥) and closing quotes.
-const CLOSING = /^[,.!?;:…%)\]」』。、！？，：；）】》〉،؛؟۔।॥”’]/;
-// Punctuation that hugs the word after it: opening brackets and quotes, and Spanish ¿ ¡.
-const OPENING = /[(\[“‘¿¡「『（]$/;
-// Scripts written without spaces between words: Thai, Lao, Myanmar, Khmer, and hiragana,
-// katakana, CJK ideographs, CJK punctuation (、。「」) and full-width forms (，：！). Whisper still
-// emits their words as separate tokens, so a space would split every word. Hangul isn't here:
-// Korean puts spaces between words.
-const NO_SPACE_SCRIPT =
-  /[\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
-
-/**
- * Whether a space goes between two caption words when they're joined for display: none before
- * closing punctuation ("Hello," not "Hello ,"), none after opening punctuation ("(yes" not
- * "( yes") and none between two characters of a script written without spaces ("我们", not
- * "我 们"). Every place that renders words in sequence (the caption text, the karaoke row, the
- * on-video overlay, the WebVTT export) uses this, so they all read the same.
- */
-export function spaceBefore(prev: string, word: string): boolean {
-  if (!prev || !word) return false;
-  if (CLOSING.test(word) || OPENING.test(prev)) return false;
-  return !(NO_SPACE_SCRIPT.test(prev[prev.length - 1]) && NO_SPACE_SCRIPT.test(word[0]));
-}
-
-/** Join caption words into display text with `spaceBefore`'s spacing. */
-export function joinWords(words: string[]): string {
-  let text = '';
-  for (const word of words) text += (spaceBefore(text, word) ? ' ' : '') + word;
-  return text;
-}
-
+/** Collapse the stray space whisper leaves before punctuation when words are joined (" ," → ","). */
 function cueText(words: TranscriptWord[]): string {
-  return joinWords(words.map((w) => w.text)).trim();
+  return words
+    .map((w) => w.text)
+    .join(' ')
+    .replace(/\s+([,.!?;:…])/g, '$1')
+    .trim();
 }
 
 function flush(words: TranscriptWord[]): TranscriptLine {
@@ -67,9 +39,7 @@ export function groupWordsIntoLines(segments: TranscriptWord[]): TranscriptLine[
     if (!text) continue;
     const word: TranscriptWord = { text, t0: seg.t0, t1: seg.t1 };
 
-    const prev = current.length ? current[current.length - 1].text : '';
-    const gap = spaceBefore(prev, text) ? 1 : 0;
-    const wouldChars = chars + gap + text.length;
+    const wouldChars = chars + (current.length ? 1 : 0) + text.length;
     const wouldDur = current.length ? seg.t1 - current[0].t0 : 0;
     if (current.length && (wouldChars > MAX_LINE_CHARS || wouldDur > MAX_DUR_CS)) {
       lines.push(flush(current));
@@ -77,9 +47,8 @@ export function groupWordsIntoLines(segments: TranscriptWord[]): TranscriptLine[
       chars = 0;
     }
 
-    // A flush above starts a fresh line, so the gap only counts when the word joins `prev`.
-    chars += (current.length ? gap : 0) + text.length;
     current.push(word);
+    chars += (current.length > 1 ? 1 : 0) + text.length;
 
     if (SENTENCE_END.test(text)) {
       lines.push(flush(current));
