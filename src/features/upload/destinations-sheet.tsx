@@ -11,6 +11,7 @@ import {
 import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DestructiveAction } from '@/components/destructive-action';
 import { Icon } from '@/components/icon';
 import { compatLabel, type ServerCompat } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
@@ -175,17 +176,11 @@ export function DestinationsSheet() {
           row already has its own trash. It moves with the rows as they reflow. */}
       {destinations.length > 1 && (
         <Animated.View layout={layout} exiting={exiting}>
-          <Pressable
-            onPress={() => remove(destinations)}
-            hitSlop={Spacing.two}
-            accessibilityRole="button"
+          <DestructiveAction
+            label="Remove all"
             accessibilityLabel="Remove all destinations"
-            style={({ pressed }) => [styles.removeAll, pressed && styles.pressed]}>
-            <Icon name="trash" size={16} tintColor={theme.accent} />
-            <ThemedText type="subheadlineEmphasized" themeColor="accent">
-              Remove all
-            </ThemedText>
-          </Pressable>
+            onPress={() => remove(destinations)}
+          />
         </Animated.View>
       )}
     </>
@@ -327,14 +322,6 @@ const styles = StyleSheet.create({
   list: { gap: Spacing.two },
   // A 20 pt line padded to 36 pt; with the hit slop, a 52 pt target. Only as wide as its label,
   // so a tap beside it doesn't remove everything.
-  removeAll: {
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    paddingVertical: Spacing.two,
-  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

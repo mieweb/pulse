@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DestructiveAction } from '@/components/destructive-action';
 import { Icon } from '@/components/icon';
 import { PrimaryButton } from '@/components/primary-button';
 import { SectionHeader } from '@/components/section-header';
@@ -242,16 +243,10 @@ export function OnDeviceAiSheet() {
 
         {/* The app's destructive text action, centred below the list. */}
         {selectedId && (
-          <Pressable
+          <DestructiveAction
+            label="Remove model & free up space"
             onPress={() => removeModel(selectedId)}
-            hitSlop={8}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.remove, pressed && styles.pressed]}>
-            <Icon name="trash" size={16} tintColor={theme.accent} />
-            <ThemedText type="subheadlineEmphasized" themeColor="accent">
-              Remove model & free up space
-            </ThemedText>
-          </Pressable>
+          />
         )}
       </SheetBody>
       {closeButton}
@@ -296,14 +291,6 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: Spacing.half },
   rowTitle: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.two, flexWrap: 'wrap' },
   // A 20 pt line padded to 36 pt; with the hit slop, a 52 pt target. Only as wide as its label.
-  remove: {
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    paddingVertical: Spacing.two,
-  },
   actions: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.two },
   action: { flex: 1 },
   // The close and remove buttons are bare glyphs and text.
