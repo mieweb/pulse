@@ -79,6 +79,8 @@ function ThemedNavigation() {
               options={({ route }) => ({
                 presentation: 'formSheet',
                 sheetGrabberVisible: true,
+                // The home pill passes `?count`; a link without it gives NaN, which sizes the
+                // sheet for a long list (`destinationsSheetOptions`).
                 ...destinationsSheetOptions(
                   Number((route.params as { count?: string } | undefined)?.count),
                 ),

@@ -1,12 +1,14 @@
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
-import { hostOf } from '@/utils/format';
+import { EaseOut } from '@/constants/motion';
+import { FloatShadow, Spacing } from '@/constants/theme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
+import { formatCount, hostOf } from '@/utils/format';
 
 import { useDestinations } from './use-destinations';
 
@@ -15,6 +17,10 @@ const FAB_SIZE = 60;
 const FAB_CLEARANCE = Spacing.four + FAB_SIZE + Spacing.three;
 /** Longest the pill gets on wide screens, so it stays a pill rather than a bar. */
 const PILL_MAX_WIDTH = 280;
+
+/** The pill fades in when the first server is paired and out when the last one goes. */
+const ENTERING = FadeIn.duration(200).easing(EaseOut);
+const EXITING = FadeOut.duration(150).easing(EaseOut);
 
 /**
  * A floating pill on the home screen surfacing the device-wide pool of paired upload destinations
@@ -27,14 +33,21 @@ const PILL_MAX_WIDTH = 280;
 export function DestinationsFloat() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const dark = useThemeMode() === 'dark';
+  // Less any the destinations sheet just removed, while their Undo is up.
   const { destinations } = useDestinations();
 
   if (destinations.length === 0) return null;
 
   return (
     // The lane runs from the left margin to just short of the + FAB, so a long host truncates
-    // instead of sliding under it; taps outside the pill fall through to the list.
-    <View pointerEvents="box-none" style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
+    // instead of sliding under it; taps outside the pill fall through to the list. The lane is
+    // what mounts and unmounts, so it carries the fade.
+    <Animated.View
+      entering={ENTERING}
+      exiting={EXITING}
+      pointerEvents="box-none"
+      style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
       <Pressable
         // The count picks the sheet's size up front (`destinationsSheetOptions`).
         onPress={() =>
@@ -44,13 +57,17 @@ export function DestinationsFloat() {
           })
         }
         accessibilityRole="button"
-        accessibilityLabel={`${destinations.length} upload ${
-          destinations.length === 1 ? 'destination' : 'destinations'
-        }`}
+        accessibilityLabel={formatCount(
+          destinations.length,
+          'upload destination',
+          'upload destinations',
+        )}
         style={({ pressed }) => [
           styles.pill,
           {
-            backgroundColor: theme.card,
+            // Floating, so one step up in dark mode, where the shadow doesn't show: on `card` it
+            // blended into the draft cards it floats over.
+            backgroundColor: dark ? theme.cardRaised : theme.card,
             opacity: pressed ? 0.85 : 1,
           },
         ]}>
@@ -63,10 +80,10 @@ export function DestinationsFloat() {
           style={styles.pillLabel}>
           {destinations.length === 1
             ? hostOf(destinations[0].server)
-            : `${destinations.length} destinations`}
+            : formatCount(destinations.length, 'destination', 'destinations')}
         </ThemedText>
       </Pressable>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -88,11 +105,7 @@ const styles = StyleSheet.create({
     height: 44,
     paddingHorizontal: Spacing.three,
     borderRadius: 22,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
+    ...FloatShadow,
   },
   // Shrinks below its text width so `numberOfLines` can truncate inside the pill.
   pillLabel: { flexShrink: 1 },

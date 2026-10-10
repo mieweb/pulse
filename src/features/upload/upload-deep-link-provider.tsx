@@ -5,7 +5,7 @@ import { Alert, AppState } from 'react-native';
 
 import { addDestination } from '@/db/destinations';
 import { useToast } from '@/features/toast/toast-provider';
-import { hostOf, shortHost } from '@/utils/format';
+import { hasNonAsciiHost, hostOf, shortHost } from '@/utils/format';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
@@ -24,10 +24,17 @@ const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> 
  * button), never defaulting to "proceed".
  */
 function confirmPairing(host: string): Promise<boolean> {
+  // The whole host, never shortened: its end is exactly what a look-alike changes
+  // ("pulsevault.os.mieweb.org.evil-site.example"), and an alert wraps a long one anyway. A host
+  // with non-ASCII letters, or their punycode ("xn--"), can pass for another name: say so.
+  const lookalike =
+    hasNonAsciiHost(host) || /(^|\.)xn--/i.test(host)
+      ? '\n\nThis address contains unusual characters. It may imitate another server’s name.'
+      : '';
   return new Promise((resolve) => {
     Alert.alert(
       'Connect to this server?',
-      `Pulse will pair with “${shortHost(host)}” and upload to it. Only continue if you recognize this server and opened or scanned this link yourself.`,
+      `Pulse will pair with “${host}” and upload to it. Only continue if you recognize this server and opened or scanned this link yourself.${lookalike}`,
       [
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
         { text: 'Connect', onPress: () => resolve(true) },
@@ -87,8 +94,13 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
     if (router.canDismiss()) router.dismissAll();
 
     const result = parseUploadDeepLink(url);
+    // Failures that leave nothing to decide are toasts; only the pairing itself asks (above).
     if (!result.ok) {
-      Alert.alert('Can’t open this link', REJECTION_MESSAGE[result.reason]);
+      showToast({
+        kind: 'error',
+        title: 'Can’t open this link',
+        message: REJECTION_MESSAGE[result.reason],
+      });
       return;
     }
 
@@ -105,7 +117,11 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
       return checkCapabilities(link.server)
         .then((capResult) => {
           if (!capResult.ok) {
-            Alert.alert('Can’t connect', CAPABILITIES_REJECTION_MESSAGE[capResult.reason]);
+            showToast({
+              kind: 'error',
+              title: 'Can’t connect',
+              message: CAPABILITIES_REJECTION_MESSAGE[capResult.reason],
+            });
             return;
           }
           // Added to the device-wide pool (not a single slot) — any draft can pick it at
@@ -122,7 +138,11 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
           // Let the same link be retried — nothing was persisted, so silently swallowing this
           // would leave the user stuck with no path forward but to restart the app.
           handledUrl.current = null;
-          Alert.alert('Can’t connect', CAPABILITIES_REJECTION_MESSAGE.unreachable);
+          showToast({
+            kind: 'error',
+            title: 'Can’t connect',
+            message: CAPABILITIES_REJECTION_MESSAGE.unreachable,
+          });
         });
     });
   }, [url, showToast]);

@@ -5,21 +5,13 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
 import { type ReactNode, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Platform,
-  Pressable,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { SheetBody } from '@/components/sheet-body';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Spacing } from '@/constants/theme';
+import { CardShadow, Radius, Spacing } from '@/constants/theme';
 import {
   commitLabel,
   readBuildInfo,
@@ -32,7 +24,10 @@ import { logEntries, logExportText, writeLogExport } from '@/features/logs/logge
 import { useToast } from '@/features/toast/toast-provider';
 import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/client-identity';
 import { useTheme } from '@/hooks/use-theme';
+import { formatCount } from '@/utils/format';
+import { formatDateTime } from '@/utils/relative-date';
 import { tallSheetFits } from '@/utils/sheet-fit';
+import { userMessage } from '@/utils/user-message';
 
 const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
 const device: DeviceInfo = {
@@ -43,6 +38,9 @@ const device: DeviceInfo = {
 
 /** The app's sheet close control size (pairing, destinations, On-device AI). */
 const CLOSE_ICON_SIZE = 28;
+
+/** Copy details is a 20 pt line of text: the slop makes it a 44 pt target. */
+const COPY_SLOP = { top: 12, bottom: 12, left: 8, right: 8 };
 
 /** The generated compatibility table (GitHub Pages), with this app's row highlighted. */
 const COMPATIBILITY_URL = `https://mieweb.github.io/pulse/compatibility.html?app=${encodeURIComponent(
@@ -90,7 +88,12 @@ export default function AboutScreen() {
       const file = writeLogExport(details());
       await shareAsync(file.uri, { mimeType: 'text/plain', dialogTitle: 'Pulse logs' });
     } catch (e) {
-      Alert.alert('Couldn’t share logs', e instanceof Error ? e.message : 'Try again.');
+      // As a failed copy: nothing to decide, so a toast rather than an alert.
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t share logs',
+        message: userMessage(e, 'Try again.', 'share logs'),
+      });
     } finally {
       setSharing(false);
     }
@@ -132,13 +135,13 @@ export default function AboutScreen() {
           action={
             <Pressable
               onPress={copyDetails}
-              hitSlop={8}
+              hitSlop={COPY_SLOP}
               accessibilityRole="button"
               accessibilityLabel="Copy details"
               accessibilityHint="Copies the build and server details and the debug log for a bug report"
               style={({ pressed }) => [styles.copy, pressed && styles.pressedIcon]}>
               <Icon name="doc.on.doc" size={14} weight="semibold" tintColor={theme.accent} />
-              <ThemedText type="caption1" themeColor="accent" style={styles.copyLabel}>
+              <ThemedText type="subheadline" themeColor="accent" style={styles.copyLabel}>
                 Copy details
               </ThemedText>
             </Pressable>
@@ -146,14 +149,9 @@ export default function AboutScreen() {
           <Row label="Commit" value={commitLabel(build)} />
           <Row
             label="Built"
-            value={
-              build.builtAt
-                ? build.builtAt.toLocaleString(undefined, {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  })
-                : 'Unknown'
-            }
+            // In the device's time zone: Hermes' own `toLocaleString` reads UTC and labels it
+            // local.
+            value={build.builtAt ? formatDateTime(build.builtAt.getTime()) : 'Unknown'}
           />
           <Row label="Built against PulseVault" value={build.pulsevault ?? 'Unknown'} />
           <Row
@@ -180,9 +178,9 @@ export default function AboutScreen() {
         </Section>
 
         <Section title="Debug logs" surface={surface}>
-          <ThemedText type="caption1" themeColor="textSecondary" style={styles.note}>
-            Recent app activity, kept on this device ({logCount} entries). Upload tokens are removed
-            before anything is saved.
+          <ThemedText type="footnote" themeColor="textSecondary" style={styles.note}>
+            Recent app activity, kept on this device ({formatCount(logCount, 'entry', 'entries')}).
+            Upload tokens are removed before anything is saved.
           </ThemedText>
           <Pressable
             onPress={() => void shareLogs()}
@@ -278,6 +276,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 14,
+    borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
   },
   section: { gap: Spacing.two },
@@ -290,8 +289,8 @@ const styles = StyleSheet.create({
   sectionTitle: { letterSpacing: 0.5 },
   copy: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
   copyLabel: { fontWeight: '600' },
-  cardShadow: { borderRadius: 18, ...CardShadow },
-  card: { borderRadius: 18, overflow: 'hidden' },
+  cardShadow: { borderRadius: Radius.card, borderCurve: 'continuous', ...CardShadow },
+  card: { borderRadius: Radius.card, borderCurve: 'continuous', overflow: 'hidden' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

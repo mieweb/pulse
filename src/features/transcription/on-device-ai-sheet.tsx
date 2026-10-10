@@ -5,10 +5,12 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
+import { PrimaryButton } from '@/components/primary-button';
 import { SheetBody } from '@/components/sheet-body';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Spacing } from '@/constants/theme';
+import { CardShadow, Radius, Spacing } from '@/constants/theme';
 import { selectedModelQuery, setSelectedModel } from '@/db/settings';
+import { useToast } from '@/features/toast/toast-provider';
 import { useTheme } from '@/hooks/use-theme';
 import { tallSheetFits } from '@/utils/sheet-fit';
 
@@ -21,7 +23,24 @@ const sizeMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 
 /** Matches the active ring, so selecting a row doesn't shift the list. */
 const RING_WIDTH = 1.5;
-const BUTTON_HEIGHT = 50;
+
+/** The selected model id as stored now (the sheet, and its live query, may be gone by then). */
+async function storedModelId(): Promise<string | null> {
+  return (await selectedModelQuery)[0]?.value ?? null;
+}
+
+/**
+ * Removing the model is undoable: the selection clears at once (captions stop using it), and the
+ * weights are deleted only when the Undo toast goes. Both steps act only if nothing was picked in
+ * between, so they never undo or delete a model chosen while the toast was up.
+ */
+async function restoreModel(id: string) {
+  if ((await storedModelId()) === null) await setSelectedModel(id);
+}
+
+async function freeRemovedModel() {
+  if ((await storedModelId()) === null) await applyModelSelection(null);
+}
 
 function statusLine(status: ReturnType<typeof useTranscriptionStatus>): string | null {
   switch (status.kind) {
@@ -46,7 +65,7 @@ function statusLine(status: ReturnType<typeof useTranscriptionStatus>): string |
  * previous model's weights/contexts (`applyModelSelection`); the new model is downloaded lazily the
  * next time a draft is exported, not here — so selecting records intent without blocking on a
  * download. A large model not on disk yet asks first, in the sheet itself. The active model can be
- * removed here to free disk. Same sheet style as the pairing and destinations sheets.
+ * removed here to free disk, with an Undo. Same sheet style as the pairing and destinations sheets.
  */
 export function OnDeviceAiSheet() {
   const theme = useTheme();
@@ -55,6 +74,7 @@ export function OnDeviceAiSheet() {
   const selectedId = data[0]?.value ?? null;
   const status = useTranscriptionStatus();
   const busy = statusLine(status);
+  const { showUndoToast } = useToast();
   const close = () => router.back();
   // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
   const [scrolls] = useState(() => !tallSheetFits());
@@ -98,10 +118,22 @@ export function OnDeviceAiSheet() {
     </Pressable>
   );
 
+  const removeModel = (id: string) => {
+    void setSelectedModel(null);
+    close();
+    showUndoToast({
+      title: 'Model removed',
+      message: getModel(id)?.label,
+      onUndo: () => void restoreModel(id),
+      onCommit: () => void freeRemovedModel(),
+    });
+  };
+
   if (confirming) {
     return (
+      // Scrolls like the list when it wouldn't fit (large text), so the buttons stay reachable.
       <View collapsable={false} style={scrolls ? styles.fill : undefined}>
-        <View style={containerStyle}>
+        <SheetBody scrolls={scrolls} style={containerStyle}>
           <View style={styles.headerText}>
             <ThemedText type="title2">Use {confirming.label}?</ThemedText>
             <ThemedText type="body" themeColor="textSecondary">
@@ -109,29 +141,21 @@ export function OnDeviceAiSheet() {
               captions. Use Wi-Fi to avoid cellular data charges.
             </ThemedText>
           </View>
+          {/* The app's paired actions: side by side in one row, the choice on the right. */}
           <View style={styles.actions}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => select(confirming.id)}
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: theme.accent, opacity: pressed ? 0.85 : 1 },
-              ]}>
-              <ThemedText type="headline" style={styles.buttonLabel}>
-                Use {confirming.label}
-              </ThemedText>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              hitSlop={Spacing.two}
+            <PrimaryButton
+              variant="card"
+              label="Cancel"
               onPress={() => setConfirming(null)}
-              style={styles.cancel}>
-              <ThemedText type="body" themeColor="textSecondary">
-                Cancel
-              </ThemedText>
-            </Pressable>
+              style={styles.action}
+            />
+            <PrimaryButton
+              label={`Use ${confirming.label}`}
+              onPress={() => select(confirming.id)}
+              style={styles.action}
+            />
           </View>
-        </View>
+        </SheetBody>
         {closeButton}
       </View>
     );
@@ -214,11 +238,7 @@ export function OnDeviceAiSheet() {
 
         {selectedId && (
           <Pressable
-            onPress={() => {
-              void setSelectedModel(null);
-              void applyModelSelection(null);
-              close();
-            }}
+            onPress={() => removeModel(selectedId)}
             hitSlop={8}
             accessibilityRole="button"
             style={({ pressed }) => [styles.remove, pressed && styles.pressed]}>
@@ -249,7 +269,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
     padding: Spacing.three,
-    borderRadius: 18,
+    borderRadius: Radius.card,
+    borderCurve: 'continuous',
   },
   section: { gap: Spacing.half },
   sectionTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
@@ -259,7 +280,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
     padding: Spacing.three - RING_WIDTH,
-    borderRadius: 18,
+    borderRadius: Radius.card,
+    borderCurve: 'continuous',
     borderWidth: RING_WIDTH,
     ...CardShadow,
   },
@@ -273,16 +295,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
   },
   removeText: { fontWeight: '600' },
-  // The pairing sheet's centered button pair.
-  actions: { alignItems: 'center', gap: Spacing.two, marginTop: Spacing.two },
-  button: {
-    alignSelf: 'stretch',
-    height: BUTTON_HEIGHT,
-    borderRadius: BUTTON_HEIGHT / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonLabel: { color: '#ffffff' },
-  cancel: { paddingVertical: Spacing.two, paddingHorizontal: Spacing.four },
+  actions: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.two },
+  action: { flex: 1 },
   pressed: { opacity: 0.6 },
 });

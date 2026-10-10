@@ -2,9 +2,9 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Spacing } from '@/constants/theme';
+import { CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { hostOf } from '@/utils/format';
+import { displayServer } from '@/utils/format';
 
 import { DestinationLabel } from './destination-label';
 import type { DestinationOption } from './use-destinations';
@@ -42,7 +42,7 @@ export function DestinationSelector({
             onPress={() => onSelect(d.id)}
             accessibilityRole="radio"
             accessibilityState={{ selected }}
-            accessibilityLabel={`Upload to ${hostOf(d.server)}, ${d.expiryLabel}`}
+            accessibilityLabel={`Upload to ${displayServer(d.server)}, ${d.expiryLabel}`}
             style={({ pressed }) => [
               styles.chip,
               {
@@ -54,7 +54,14 @@ export function DestinationSelector({
               pressed && styles.pressed,
             ]}>
             <View style={styles.chipHeader}>
-              {selected && <Icon name="checkmark.circle.fill" size={14} tintColor={theme.accent} />}
+              {/* Always laid out, clear when not selected: a check that only rendered on
+                  selection widened the chip and shifted the rail. The chip's own label speaks
+                  for it (VoiceOver reads the chip as one element, with its selected state). */}
+              <Icon
+                name="checkmark.circle.fill"
+                size={14}
+                tintColor={selected ? theme.accent : 'transparent'}
+              />
               <DestinationLabel server={d.server} size="chip" />
             </View>
             <ThemedText type="caption2" themeColor="textSecondary">
@@ -67,6 +74,9 @@ export function DestinationSelector({
   );
 }
 
+/** The selection ring, as on the captions cue rows and On-device AI's model rows. */
+const RING_WIDTH = 1.5;
+
 const styles = StyleSheet.create({
   // Room for the chips' shadows: a horizontal scroll view clips at its edges.
   row: { gap: Spacing.two, paddingVertical: Spacing.two, paddingHorizontal: Spacing.half },
@@ -76,17 +86,18 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
     paddingVertical: Spacing.two,
     paddingHorizontal: Spacing.three,
-    borderRadius: 14,
-    // A clear hairline at rest keeps the ring math below; selection upgrades it to 2pt accent.
+    borderRadius: Radius.button,
+    borderCurve: 'continuous',
+    // A clear hairline at rest keeps the ring math below; selection upgrades it to the accent ring.
     borderWidth: StyleSheet.hairlineWidth,
     ...CardShadow,
   },
-  // 2pt accent ring; padding gives back the extra border so the chip's outer size doesn't
+  // The accent ring; padding gives back the extra border so the chip's outer size doesn't
   // jitter the rail on selection.
   chipSelected: {
-    borderWidth: 2,
-    paddingVertical: Spacing.two - (2 - StyleSheet.hairlineWidth),
-    paddingHorizontal: Spacing.three - (2 - StyleSheet.hairlineWidth),
+    borderWidth: RING_WIDTH,
+    paddingVertical: Spacing.two - (RING_WIDTH - StyleSheet.hairlineWidth),
+    paddingHorizontal: Spacing.three - (RING_WIDTH - StyleSheet.hairlineWidth),
   },
   chipHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
   pressed: { opacity: 0.85 },

@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { deleteDestination, destinationsQuery } from '@/db/destinations';
 import { getDestinationToken } from '@/db/secure-token';
@@ -25,6 +25,29 @@ export type DestinationOption = {
 };
 
 /**
+ * Destinations removed in the sheet whose Undo toast is still up: left out of the pool everywhere
+ * (the sheet, the home pill, export's chips) but not deleted until the toast goes, so Undo only
+ * shows them again and an upload can't pick one that's about to go. Module-level, not sheet
+ * state: the toast outlives the sheet, which closes when its last row goes.
+ */
+let pendingRemoval: ReadonlySet<string> = new Set();
+const pendingListeners = new Set<() => void>();
+
+export function setPendingRemoval(update: (ids: Set<string>) => void) {
+  const next = new Set(pendingRemoval);
+  update(next);
+  pendingRemoval = next;
+  for (const listener of pendingListeners) listener();
+}
+
+function subscribePendingRemoval(listener: () => void) {
+  pendingListeners.add(listener);
+  return () => {
+    pendingListeners.delete(listener);
+  };
+}
+
+/**
  * Shared read model over the device-wide destination pool (`upload_destinations`). Live-queries
  * the rows, loads each row's bearer token from expo-secure-store (which has no live-query
  * equivalent), filters out expired ones, and re-evaluates on a timer so expiry countdowns tick
@@ -38,6 +61,7 @@ export function useDestinations() {
   // Reactive wall-clock so expiry filtering/labels re-evaluate as time passes, even without a DB
   // write — a token can lapse while the user just sits on the screen.
   const now = useNow(EXPIRY_CHECK_INTERVAL_MS);
+  const pending = useSyncExternalStore(subscribePendingRemoval, () => pendingRemoval);
 
   // Tokens live in secure-store keyed by row id; load them into a map keyed on id. Re-fires only
   // when the set of ids changes, not on every render.
@@ -67,7 +91,7 @@ export function useDestinations() {
       rows
         // Only once its token has loaded: before that it would read as a tokenless link, and
         // uploading with it would spend the link on a certain 401.
-        .filter((r) => r.id in tokens)
+        .filter((r) => r.id in tokens && !pending.has(r.id))
         .map((r) => ({ ...r, token: tokens[r.id] ?? null }))
         .filter((r) => !isTokenExpired(r.token, now))
         .map((r) => ({
@@ -79,7 +103,7 @@ export function useDestinations() {
           expiryLabel: formatExpiry(r.token, now),
         })),
     // `now` intentionally in deps so an expiry that passes between ticks re-filters the list.
-    [rows, tokens, now],
+    [rows, tokens, now, pending],
   );
 
   // Garbage-collect rows whose token has actually lapsed so they don't linger as dead state.

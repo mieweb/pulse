@@ -1,19 +1,28 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { compatLabel, type ServerCompat } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Spacing } from '@/constants/theme';
+import { CardShadow, Radius, Spacing, type ThemeColor } from '@/constants/theme';
+import { useToast } from '@/features/toast/toast-provider';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { hostOf, shortHost } from '@/utils/format';
+import { displayServer, formatCount } from '@/utils/format';
 import { tallSheetFits } from '@/utils/sheet-fit';
+import { userMessage } from '@/utils/user-message';
 
 import { DestinationLabel } from './destination-label';
-import { type DestinationOption, useDestinations } from './use-destinations';
+import { type DestinationOption, setPendingRemoval, useDestinations } from './use-destinations';
 
 /**
  * Up to this many, the sheet sizes to its rows. Beyond, it opens at about 60% height and
@@ -23,12 +32,17 @@ import { type DestinationOption, useDestinations } from './use-destinations';
  */
 const MAX_FITTED = 5;
 
+/** Remove all is a 20 pt line of text: the slop makes it a 44 pt target. */
+const REMOVE_ALL_SLOP = { top: 12, bottom: 12, left: 8, right: 8 };
+
 /**
  * Whether the sheet opens in its scrolling 60% → full-height mode: past `MAX_FITTED` rows, or at
- * any count when large text or a short screen would clip a fitted sheet (`tallSheetFits`).
+ * any count when large text or a short screen would clip a fitted sheet (`tallSheetFits`). An
+ * unknown count (`/destinations` opened by a link, without `?count`, reads as NaN) counts as many:
+ * a sheet that scrolls fits a short list too, while a fitted one clips a long list.
  */
 function scrollsFor(count: number): boolean {
-  return count > MAX_FITTED || !tallSheetFits();
+  return !Number.isFinite(count) || count > MAX_FITTED || !tallSheetFits();
 }
 
 /** The route's presentation for a pool of `count` destinations (see `scrollsFor`). */
@@ -57,6 +71,7 @@ export function DestinationsSheet() {
   const theme = useTheme();
   const mode = useThemeMode();
   const insets = useSafeAreaInsets();
+  const { showToast, showUndoToast } = useToast();
   const { destinations: pool, deleteDestination } = useDestinations();
   const destinations = useMemo(() => [...pool].sort(byExpiry), [pool]);
   // Same decision as the route's options (`destinationsSheetOptions`), from the same count.
@@ -75,28 +90,34 @@ export function DestinationsSheet() {
     else if (hadDestinations.current && router.canGoBack()) router.back();
   }, [empty]);
 
-  const confirmDelete = (id: string, host: string) => {
-    Alert.alert('Remove destination?', `Stop uploading to “${shortHost(host)}” from this device.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => void deleteDestination(id) },
-    ]);
-  };
-
-  const confirmClearAll = () => {
-    const count = destinations.length;
-    Alert.alert(
-      'Remove all destinations?',
-      `Stop uploading to ${count === 1 ? 'this server' : `these ${count} servers`} from this device.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove all',
-          style: 'destructive',
-          // The sheet closes itself once the pool is empty.
-          onPress: () => void Promise.all(destinations.map((d) => deleteDestination(d.id))),
-        },
-      ],
-    );
+  // Removed at once, with an Undo instead of a confirmation: the rows hide now and are deleted
+  // when the toast goes (times out, is dismissed, or another toast replaces it). Removing the last
+  // one closes the sheet (above); the toast stays up over home, and Undo brings the pill back.
+  const remove = (ids: string[]) => {
+    setPendingRemoval((pending) => ids.forEach((id) => pending.add(id)));
+    const show = () => setPendingRemoval((pending) => ids.forEach((id) => pending.delete(id)));
+    showUndoToast({
+      title:
+        ids.length === 1
+          ? 'Destination removed'
+          : `${formatCount(ids.length, 'destination', 'destinations')} removed`,
+      onUndo: show,
+      onCommit: () =>
+        void Promise.all(ids.map((id) => deleteDestination(id)))
+          .catch((e: unknown) =>
+            showToast({
+              kind: 'error',
+              title:
+                ids.length === 1
+                  ? 'Couldn’t remove the destination'
+                  : 'Couldn’t remove the destinations',
+              message: userMessage(e, 'Try again.', 'destinations'),
+            }),
+          )
+          // Shown again only once the rows are gone (or the delete failed and they're still there),
+          // so a removed row doesn't flash back in between.
+          .finally(show),
+    });
   };
 
   const rows = destinations.map((d) => (
@@ -105,7 +126,7 @@ export function DestinationsSheet() {
       server={d.server}
       expiryLabel={d.expiryLabel}
       compat={compatOf(d.server)}
-      onRemove={(host) => confirmDelete(d.id, host)}
+      onRemove={() => remove([d.id])}
     />
   ));
 
@@ -122,16 +143,16 @@ export function DestinationsSheet() {
         </ThemedText>
       </View>
 
-      {/* Clear all, at the right above the list; the rows speak for themselves. */}
+      {/* Remove all, at the right above the list; the rows speak for themselves. */}
       <View style={styles.listHeader}>
         <Pressable
-          onPress={confirmClearAll}
-          hitSlop={8}
+          onPress={() => remove(destinations.map((d) => d.id))}
+          hitSlop={REMOVE_ALL_SLOP}
           accessibilityRole="button"
           accessibilityLabel="Remove all destinations"
           style={({ pressed }) => pressed && styles.pressed}>
-          <ThemedText type="caption1" themeColor="accent" style={styles.clearLabel}>
-            Clear all
+          <ThemedText type="subheadline" themeColor="accent" style={styles.removeAllLabel}>
+            Remove all
           </ThemedText>
         </Pressable>
       </View>
@@ -179,29 +200,28 @@ function DestinationRow({
   server: string;
   expiryLabel: string;
   compat: ServerCompat | undefined;
-  onRemove: (host: string) => void;
+  onRemove: () => void;
 }) {
   const theme = useTheme();
-  const host = hostOf(server);
   return (
     <View style={[styles.row, { backgroundColor: theme.card }]}>
-      <Icon name="icloud.and.arrow.up" size={17} weight="semibold" tintColor={theme.accent} />
+      {/* The home pill's glyph and color: the row is a server, not an alert. */}
+      <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} />
       <View style={styles.rowText}>
         <DestinationLabel server={server} />
-        {/* Compatibility first, then the expiry: "✓ protocol 2.3 · No expiry". Wraps rather than
-            truncates, so a longer status is never cut off. */}
-        <View style={styles.meta}>
-          {compat && <CompatStatus compat={compat} />}
+        {compat ? (
+          <RowStatus compat={compat} expiryLabel={expiryLabel} />
+        ) : (
           <ThemedText type="footnote" themeColor="textSecondary">
-            {compat ? `· ${expiryLabel}` : expiryLabel}
+            {expiryLabel}
           </ThemedText>
-        </View>
+        )}
       </View>
       <Pressable
-        onPress={() => onRemove(host)}
+        onPress={onRemove}
         hitSlop={8}
         accessibilityRole="button"
-        accessibilityLabel={`Remove ${host}`}
+        accessibilityLabel={`Remove ${displayServer(server)}`}
         style={({ pressed }) => [styles.delete, pressed && styles.pressed]}>
         <Icon name="trash" size={20} tintColor={theme.accent} />
       </Pressable>
@@ -209,26 +229,56 @@ function DestinationRow({
   );
 }
 
+/** Size of the status glyph, and of the box the checking spinner shrinks into. */
+const STATUS_ICON = 13;
+/** `ActivityIndicator size="small"`'s own box: it lays out at this size whatever its scale. */
+const SPINNER_SIZE = 20;
+/** The footnote line the status icon centers on (ThemedText's `footnote`). */
+const FOOTNOTE_LINE = 18;
+
 /**
- * The server's compatibility with this app: a check and its protocol when it works (the check says
- * "compatible"), else the problem in words.
+ * The server's compatibility with this app, then the destination's expiry: "✓ protocol 2.3 · No
+ * expiry". A check and its protocol when it works, else the problem in words — orange when the
+ * server can't be reached (it may be back later), red when this app and it can't work together.
+ *
+ * One text, so it wraps rather than truncates and never runs into the trash button. The "·" is
+ * glued to the status (no-break space) and the expiry to itself, so a wrap breaks after the "·",
+ * never leaving it to start a line or splitting "Expires in 7d".
  */
-function CompatStatus({ compat }: { compat: ServerCompat }) {
+function RowStatus({ compat, expiryLabel }: { compat: ServerCompat; expiryLabel: string }) {
   const theme = useTheme();
+  // The icon stays on the first line's center when the text wraps; that line grows with text size.
+  const { fontScale } = useWindowDimensions();
   const ok = compat.status === 'compatible';
+  const checking = compat.status === 'checking';
+  const color: ThemeColor =
+    ok || checking ? 'textSecondary' : compat.status === 'unreachable' ? 'warning' : 'accent';
   return (
-    <View style={styles.compat} accessible accessibilityLabel={compatLabel(compat)}>
-      {compat.status === 'checking' ? (
-        <ActivityIndicator size="small" color={theme.textSecondary} style={styles.compatIcon} />
-      ) : (
-        <Icon
-          name={ok ? 'checkmark.circle.fill' : 'exclamationmark.triangle.fill'}
-          size={13}
-          tintColor={ok ? theme.textSecondary : theme.accent}
-        />
-      )}
-      <ThemedText type="footnote" themeColor={ok ? 'textSecondary' : 'accent'}>
-        {ok ? `protocol ${compat.revision ?? compat.protocol}` : compatLabel(compat)}
+    <View
+      style={styles.meta}
+      accessible
+      accessibilityLabel={`${compatLabel(compat)}, ${expiryLabel}`}>
+      {/* One fixed box for the spinner and the icon that replaces it, so the text doesn't move. */}
+      <View
+        style={[
+          styles.statusIcon,
+          { marginTop: Math.max(0, (FOOTNOTE_LINE * fontScale - STATUS_ICON) / 2) },
+        ]}>
+        {checking ? (
+          <ActivityIndicator size="small" color={theme.textSecondary} style={styles.spinner} />
+        ) : (
+          <Icon
+            name={ok ? 'checkmark.circle.fill' : 'exclamationmark.triangle.fill'}
+            size={STATUS_ICON}
+            tintColor={theme[color]}
+          />
+        )}
+      </View>
+      <ThemedText type="footnote" themeColor="textSecondary" style={styles.metaText}>
+        <ThemedText type="footnote" themeColor={color}>
+          {ok ? `protocol ${compat.revision ?? compat.protocol}` : compatLabel(compat)}
+        </ThemedText>
+        {`\u00A0· ${expiryLabel.replace(/ /g, '\u00A0')}`}
       </ThemedText>
     </View>
   );
@@ -251,7 +301,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     marginBottom: -Spacing.one,
   },
-  clearLabel: { fontWeight: '600' },
+  removeAllLabel: { fontWeight: '600' },
   list: { gap: Spacing.two },
   row: {
     flexDirection: 'row',
@@ -260,13 +310,20 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.three,
     paddingLeft: Spacing.three,
     paddingRight: Spacing.two,
-    borderRadius: 18,
+    borderRadius: Radius.card,
+    borderCurve: 'continuous',
     ...CardShadow,
   },
   rowText: { flex: 1, gap: Spacing.half },
-  meta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: Spacing.one },
-  compat: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
-  compatIcon: { transform: [{ scale: 0.7 }] },
+  meta: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.one },
+  statusIcon: {
+    width: STATUS_ICON,
+    height: STATUS_ICON,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spinner: { transform: [{ scale: STATUS_ICON / SPINNER_SIZE }] },
+  metaText: { flexShrink: 1 },
   delete: { padding: Spacing.two },
   pressed: { opacity: 0.6 },
 });
