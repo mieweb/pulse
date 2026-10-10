@@ -38,6 +38,8 @@ import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
+import { TipAnchor } from '@/features/tips/tip-anchor';
+import { useTip } from '@/features/tips/use-tip';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
 import { haptics, muteHaptics } from '@/utils/haptics';
@@ -141,6 +143,12 @@ export default function RecorderScreen() {
       return () => setFocused(false);
     }, []),
   );
+
+  // First-run tips, one at a time: the shutter before the first clip, then the clips once one
+  // has landed. Each goes for good when its moment passes (recording, opening a clip, leaving).
+  const liveCamera = focused && cameraReady && !previewing && !isRecording;
+  const recordTip = useTip('record', liveCamera && segments.length === 0);
+  const clipsTip = useTip('clips', liveCamera && !dragging && segments.length > 0, 800);
 
   // Audio focus: while the recorder is on screen capturing with a live mic, pause other apps'
   // audio (Spotify / podcasts) rather than mixing it in; restore on leave or mute. Gated on the
@@ -632,6 +640,11 @@ export default function RecorderScreen() {
                 cameraReady={cameraReady}
                 dragging={dragging}
               />
+              {recordTip.mounted && (
+                <View style={styles.recordTip} pointerEvents="none">
+                  <TipAnchor id="record" shown={recordTip.shown} onDismiss={recordTip.dismiss} />
+                </View>
+              )}
               {/* Faded out with the record button during a drag so the trash has clear space. */}
               <Animated.View
                 style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
@@ -646,6 +659,11 @@ export default function RecorderScreen() {
 
           <SegmentBar
             segments={segments}
+            firstClipOverlay={
+              clipsTip.mounted && (
+                <TipAnchor id="clips" shown={clipsTip.shown} onDismiss={clipsTip.dismiss} />
+              )
+            }
             onReorder={reorderSegments}
             // Drag-to-trash deletes at once, same as the preview's 🗑.
             onDelete={deleteSegment}
@@ -720,6 +738,15 @@ const styles = StyleSheet.create({
   // The + sits at the midpoint of the gap between the record button's right edge and the
   // screen edge: 75% marks the center of the right half, +19 shifts past the button's
   // half-width (38/2), -22 centers the 44pt circle on that point.
+  // Over the record button (centred in the row), for the record tip's arrow.
+  recordTip: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: '50%',
+    width: RECORD_BUTTON_SIZE,
+    marginLeft: -RECORD_BUTTON_SIZE / 2,
+  },
   importWrap: {
     position: 'absolute',
     left: '75%',

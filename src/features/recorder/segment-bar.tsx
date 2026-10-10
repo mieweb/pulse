@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   interpolateColor,
@@ -76,6 +76,8 @@ type Props = {
   onDragActiveChange?: (active: boolean) => void;
   onNext?: () => void;
   cursor?: Cursor;
+  /** Laid over the first clip, where nothing reads its touches: the clips tip's anchor. */
+  firstClipOverlay?: ReactNode;
 };
 
 export function SegmentBar(props: Props) {
@@ -93,6 +95,7 @@ function Bar({
   onDragActiveChange,
   onNext,
   cursor,
+  firstClipOverlay,
 }: Props) {
   const mode = useThemeMode();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
@@ -329,6 +332,12 @@ function Bar({
             />
           </Animated.ScrollView>
 
+          {firstClipOverlay && (
+            <View style={styles.firstClip} pointerEvents="none">
+              {firstClipOverlay}
+            </View>
+          )}
+
           {cursor && (
             <PlayheadCursor
               cursor={cursor}
@@ -489,6 +498,14 @@ const styles = StyleSheet.create({
   // clipped by its overflow — can span them: top tag above the number pills, bottom tag
   // below the thumbs, symmetric in the bar.
   viewport: { flex: 1, overflow: 'hidden', paddingTop: SCRUB_LANE, paddingBottom: SCRUB_LANE },
+  // The first thumb at rest: the scroll content's leading inset, below its pop lane.
+  firstClip: {
+    position: 'absolute',
+    left: SCRUB_INSET,
+    top: SCRUB_LANE + POP_LANE,
+    width: THUMB_WIDTH,
+    height: THUMB_HEIGHT,
+  },
   content: {
     alignItems: 'center',
     paddingLeft: SCRUB_INSET,

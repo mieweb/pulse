@@ -48,6 +48,8 @@ import { resolveSelectedModel } from '@/features/transcription/models';
 import { useAutosaveTranscript } from '@/features/transcription/use-autosave-transcript';
 import { useSubtitleEditor, type Cue } from '@/features/transcription/use-subtitle-editor';
 import { parseTranscriptLines, type TranscriptLine } from '@/features/transcription/whisper';
+import { TipAnchor } from '@/features/tips/tip-anchor';
+import { useTip } from '@/features/tips/use-tip';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { toFileUri } from '@/utils/file-store';
@@ -359,6 +361,9 @@ function Editor({
 
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
 
+  // Once, while browsing a list with captions: how to select a caption and edit its words.
+  const editTip = useTip('captionEdit', mode === 'browse' && editor.cues.length > 0, 800);
+
   return (
     <ThemedView type="groupedBackground" style={styles.fill}>
       <KeyboardAvoidingView
@@ -485,7 +490,7 @@ function Editor({
                 No captions yet. Add one at the playhead to start.
               </ThemedText>
             )}
-            {editor.cues.map((cue) => (
+            {editor.cues.map((cue, i) => (
               <Animated.View
                 key={cue.id}
                 layout={rowsReflow ? LIST_REFLOW : undefined}
@@ -511,6 +516,9 @@ function Editor({
                   onChangeText={setText}
                   onEndTextEdit={endTextEdit}
                 />
+                {i === 0 && editTip.mounted && (
+                  <TipAnchor id="captionEdit" shown={editTip.shown} onDismiss={editTip.dismiss} />
+                )}
               </Animated.View>
             ))}
             {showReset && (
