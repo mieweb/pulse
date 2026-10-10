@@ -367,6 +367,7 @@ function TrustedServers({ servers }: { servers: string[] }) {
             weight="semibold"
             tintColor={theme.textSecondary}
             style={!open && styles.chevronClosed}
+            scalesWithText
           />
         </View>
       </Pressable>
@@ -389,7 +390,7 @@ function TrustedServerRow({ server }: { server: string }) {
         styles.serverRow,
         { borderTopColor: theme.border, borderTopWidth: StyleSheet.hairlineWidth },
       ]}>
-      <Icon name="checkmark.circle.fill" size={15} tintColor={theme.textSecondary} />
+      <Icon name="checkmark.circle.fill" size={15} tintColor={theme.textSecondary} scalesWithText />
       {/* Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
       <ThemedText style={styles.serverHost} numberOfLines={1} ellipsizeMode="middle">
         {hostOf(server)}

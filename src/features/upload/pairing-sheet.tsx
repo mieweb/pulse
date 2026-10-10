@@ -69,6 +69,7 @@ export function PairingSheet() {
           size={17}
           weight="semibold"
           tintColor={theme.accent}
+          scalesWithText
         />
         {/* The whole host, never shortened: its end is exactly what a look-alike changes
             ("pulsevault.os.mieweb.org.evil-site.example"), so it wraps instead. */}
@@ -102,6 +103,7 @@ export function PairingSheet() {
             name={dontAsk ? 'checkmark.circle.fill' : 'circle'}
             size={22}
             tintColor={dontAsk ? theme.accent : theme.textSecondary}
+            scalesWithText
           />
           <ThemedText type="body">Don’t ask again for this server</ThemedText>
         </Pressable>
