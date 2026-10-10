@@ -59,20 +59,19 @@ export function DestinationSelector({
               selected && styles.chipSelected,
               pressed && styles.pressed,
             ]}>
-            <View style={styles.chipHeader}>
-              {/* Always laid out, clear when not selected: a check that only rendered on
-                  selection widened the chip and shifted the rail. The chip's own label speaks
-                  for it (VoiceOver reads the chip as one element, with its selected state). */}
-              <Icon
-                name="checkmark.circle.fill"
-                size={14}
-                tintColor={selected ? theme.accent : 'transparent'}
-              />
-              <DestinationLabel server={d.server} size="chip" />
-            </View>
+            <DestinationLabel server={d.server} size="chip" />
             <ThemedText type="caption2" themeColor="textSecondary">
               {d.expiryLabel}
             </ThemedText>
+            {/* The check sits on the ring's top-right corner, off the content, so every chip lays
+                out its text the same whether selected or not (inline, it pushed the host in, or
+                left a blank gap on the others). The chip's own label speaks for it: VoiceOver
+                reads the chip as one element, with its selected state. */}
+            {selected && (
+              <View style={[styles.check, { backgroundColor: theme.card }]} pointerEvents="none">
+                <Icon name="checkmark.circle.fill" size={CHECK_SIZE} tintColor={theme.accent} />
+              </View>
+            )}
           </Pressable>
         );
       })}
@@ -82,10 +81,22 @@ export function DestinationSelector({
 
 /** The selection ring, as on the captions cue rows and On-device AI's model rows. */
 const RING_WIDTH = 1.5;
+/** The check on the selected chip's corner, and the card-coloured disc it sits on. */
+const CHECK_SIZE = 18;
+const CHECK_DISC = CHECK_SIZE + 2;
+// The rounded corner's curve passes this far in from the box's corner (r · (1 − 1/√2)): the check
+// is centred there, on the ring itself rather than off it in the empty corner.
+const CORNER_INSET = Radius.button * (1 - Math.SQRT1_2);
 
 const styles = StyleSheet.create({
-  // Room for the chips' shadows: a horizontal scroll view clips at its edges.
-  row: { gap: Spacing.two, paddingVertical: Spacing.two, paddingHorizontal: Spacing.half },
+  // Room for the chips' shadows, and for the check that overhangs a selected chip's top-right
+  // corner: a horizontal scroll view clips at its edges.
+  row: {
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingLeft: Spacing.half,
+    paddingRight: Spacing.two,
+  },
   chip: {
     minWidth: 132,
     maxWidth: 200,
@@ -105,7 +116,17 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two - (RING_WIDTH - StyleSheet.hairlineWidth),
     paddingHorizontal: Spacing.three - (RING_WIDTH - StyleSheet.hairlineWidth),
   },
-  chipHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  // Centred on the corner of the ring; the disc cuts the ring under it so the check reads cleanly.
+  check: {
+    position: 'absolute',
+    top: CORNER_INSET - CHECK_DISC / 2,
+    right: CORNER_INSET - CHECK_DISC / 2,
+    width: CHECK_DISC,
+    height: CHECK_DISC,
+    borderRadius: CHECK_DISC / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   // A card-surface control: dims while pressed rather than swapping its fill.
   pressed: { opacity: Opacity.pressed },
 });
