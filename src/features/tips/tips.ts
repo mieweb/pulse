@@ -7,9 +7,9 @@ export type Tip = {
   symbol: IconName;
   /**
    * `callout`: drawn by Pulse and not modal, so a tap on the control it's about still works (the
-   * recorder's tips, where the first tap records). `popover`: the system popover on iOS, which takes
-   * a tap outside just to close itself; fine where nothing is in a hurry. Android draws every tip as
-   * a callout.
+   * recorder's tips, where the first tap records). `popover`: the system popover on iOS, which
+   * takes a tap outside just to close itself; fine where nothing is in a hurry. Android draws every
+   * tip as a callout.
    */
   kind: 'callout' | 'popover';
 };

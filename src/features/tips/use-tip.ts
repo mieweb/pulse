@@ -22,7 +22,7 @@ function loadSeen(): Promise<Set<string>> {
 /** The tip on screen now: one at a time, so two never stack up or race for the same moment. */
 let active: TipId | null = null;
 
-/** How long a closed tip's anchor stays mounted, so the popover can animate back into its control. */
+/** How long a closed tip's anchor stays mounted, so its popover can animate back into place. */
 const EXIT_MS = 400;
 
 /**

@@ -82,7 +82,7 @@ export async function seenTips(): Promise<Set<string>> {
   return new Set(rows.map((r) => r.key.slice(TIP_KEY_PREFIX.length)));
 }
 
-/** Record that a tip is retired (shown and closed, or its action done), so it doesn't show again. */
+/** Record that a tip is retired (shown and closed, or its action done): it won't show again. */
 export async function markTipSeen(id: string): Promise<void> {
   await setSetting(TIP_KEY_PREFIX + id, 'seen');
 }

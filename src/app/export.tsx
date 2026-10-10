@@ -427,7 +427,7 @@ export default function ExportScreen() {
           </View>
         )}
       </View>
-      {/* Android draws its tips as callouts, over everything (iOS uses the system popover here). */}
+      {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
       <TipLayer />
     </ThemedView>
   );

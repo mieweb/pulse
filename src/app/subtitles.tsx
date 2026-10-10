@@ -577,13 +577,13 @@ function Editor({
           </Animated.View>
         )}
       </KeyboardAvoidingView>
-      {/* Android draws its tips as callouts, over everything (iOS uses the system popover here). */}
+      {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
       <TipLayer />
     </ThemedView>
   );
 }
 
-/** How far the caption list can scroll and still count as at the top (its first caption in view). */
+/** How far the caption list can scroll and still count as at the top (first caption in view). */
 const LIST_TOP_SLOP = 24;
 
 /** The preview's width, in % of the screen: browsing, and text mode (keyboard up). */
