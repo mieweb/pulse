@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { AccessibilityInfo, Platform } from 'react-native';
 import { FullWindowOverlay } from 'react-native-screens';
 
 import { Toast, type ToastContent, type ToastKind } from '@/components/toast';
+import { haptics } from '@/utils/haptics';
 
 /**
  * How long a toast stays up, from how much there is to read: a base plus reading time per
@@ -25,8 +26,14 @@ function durationFor({ kind, title, message, action }: ToastContent): number {
   if (action) ms = Math.max(ms, ACTION_MIN_MS);
   return ms;
 }
-/** The exit animation's length; the toast unmounts after it. */
-const EXIT_MS = 220;
+
+/** The outcome kinds have a notification haptic; `info` is quiet. */
+const HAPTICS: Record<ToastKind, (() => void) | undefined> = {
+  success: haptics.success,
+  info: undefined,
+  warning: haptics.warning,
+  error: haptics.error,
+};
 
 /**
  * Why a toast went away: its `action` was tapped, it timed out, the person dismissed it (tap,
@@ -102,8 +109,14 @@ function ToastSurface(props: React.ComponentProps<typeof Toast>) {
  * Mounts the single global toast surface, matching `UploadDeepLinkProvider`'s pattern — a
  * provider near the root so any screen (or a provider above all screens, like the deep-link
  * handler) can fire a transient banner without needing its own mount point. Only one toast is
- * shown at a time; a new call replaces whatever's currently up rather than queuing. Tapping a
- * toast or swiping it up dismisses it early; holding it keeps it up.
+ * shown at a time; a new call replaces whatever's currently up rather than queuing (the banner
+ * stays and its content changes). Tapping a toast or swiping it up dismisses it early; holding it
+ * keeps it up. A toast unmounts once `Toast` reports its exit finished.
+ *
+ * With a screen reader on, a toast with an action (Undo) stays until it's used, dismissed or
+ * replaced: a few seconds isn't long enough to find and reach the button by swiping through the
+ * screen. That's what Android's own Snackbar does with TalkBack on. Without an action there's
+ * nothing to reach, and the announcement has already read it out.
  */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<{ id: number; content: ToastContent } | null>(null);
@@ -115,6 +128,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     onClose?.(reason);
   }, []);
   const [leaving, setLeaving] = useState(false);
+  // The same, for callbacks: a toast on its way out can't be held, released or dismissed again.
+  const leavingRef = useRef(false);
+  // The up toast waits for the person rather than a timer (see above).
+  const persistent = useRef(false);
+  // How many touches are holding the up toast (see `hold`).
+  const holds = useRef(0);
+  const screenReader = useRef(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const nextId = useRef(0);
   // The toast that's up. A toast's own callbacks (tap, swipe, hold, action) name it, so one that
@@ -128,26 +148,39 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const dismiss = useCallback(
     (id: number, reason: ToastCloseReason = 'dismissed') => {
-      if (id !== currentId.current) return;
+      if (id !== currentId.current || leavingRef.current) return;
       close(reason);
       clearTimers();
+      leavingRef.current = true;
       setLeaving(true);
-      timers.current.push(setTimeout(() => setToast(null), EXIT_MS));
     },
     [clearTimers, close],
   );
 
-  // A finger on the toast holds it; letting go (not swiping it away) gives a little more.
+  // The exit has played (or the swipe threw it off screen): unmount, unless a newer toast has
+  // taken the surface over in the meantime.
+  const exited = useCallback((id: number) => {
+    if (id === currentId.current) setToast(null);
+  }, []);
+
+  // A finger on the toast holds it; letting go (not swiping it away) gives a little more. The
+  // press and the swipe can both be holding it (a drag cancels the press it began as, in either
+  // order), so it's released when the last one lets go. Not once it's leaving: holding an exit
+  // would only cancel its unmount, not bring it back.
   const hold = useCallback(
     (id: number) => {
-      if (id === currentId.current) clearTimers();
+      if (id !== currentId.current || leavingRef.current) return;
+      holds.current += 1;
+      clearTimers();
     },
     [clearTimers],
   );
   const release = useCallback(
     (id: number) => {
-      if (id === currentId.current)
-        timers.current.push(setTimeout(() => dismiss(id), AFTER_HOLD_MS));
+      if (id !== currentId.current || leavingRef.current || holds.current === 0) return;
+      holds.current -= 1;
+      if (holds.current > 0 || persistent.current) return;
+      timers.current.push(setTimeout(() => dismiss(id), AFTER_HOLD_MS));
     },
     [dismiss],
   );
@@ -161,11 +194,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       const id = ++nextId.current;
       currentId.current = id;
       clearTimers();
+      leavingRef.current = false;
+      // A replacement starts unheld: a finger still on the banner was holding the old toast.
+      holds.current = 0;
       setLeaving(false);
       setToast({ id, content });
-      timers.current.push(
-        setTimeout(() => dismiss(id, 'timeout'), duration ?? durationFor(content)),
-      );
+      HAPTICS[content.kind]?.();
+      persistent.current = !!content.action && screenReader.current;
+      if (!persistent.current) {
+        timers.current.push(
+          setTimeout(() => dismiss(id, 'timeout'), duration ?? durationFor(content)),
+        );
+      }
     },
     [clearTimers, close, dismiss],
   );
@@ -184,6 +224,21 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     [showToast],
   );
 
+  // Cached so `showToast` can decide synchronously; kept current as it's switched on and off.
+  useEffect(() => {
+    let live = true;
+    void AccessibilityInfo.isScreenReaderEnabled().then((on) => {
+      if (live) screenReader.current = on;
+    });
+    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', (on) => {
+      screenReader.current = on;
+    });
+    return () => {
+      live = false;
+      sub.remove();
+    };
+  }, []);
+
   // Leaving the app's root (a reload) commits whatever is pending rather than dropping it.
   useEffect(
     () => () => {
@@ -197,15 +252,16 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={{ showToast, showUndoToast }}>
       {children}
       {toast && (
-        // Keyed by id: a replacing toast animates in fresh instead of reusing the old one.
+        // Not keyed by id: a replacement reuses the banner that's up (or on its way out), so
+        // "Retry" → "Retrying…" changes in place instead of blanking and dropping in again.
         <ToastSurface
-          key={toast.id}
           id={toast.id}
           content={toast.content}
           leaving={leaving}
           onDismiss={dismiss}
           onHold={hold}
           onRelease={release}
+          onExited={exited}
         />
       )}
     </ToastContext.Provider>

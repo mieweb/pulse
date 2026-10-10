@@ -1,16 +1,22 @@
 import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  AccessibilityInfo,
-  Animated,
-  PanResponder,
-  Pressable,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { AccessibilityInfo, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  cancelAnimation,
+  FadeIn,
+  ReduceMotion,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { scheduleOnRN } from 'react-native-worklets';
 
-import { Spacing, SystemColors } from '@/constants/theme';
+import { EaseOut } from '@/constants/motion';
+import { FloatShadow, Spacing, SystemColors } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 
 import { Icon, type IconName } from './icon';
@@ -64,21 +70,57 @@ const LIQUID_GLASS = isLiquidGlassAvailable();
  * (thumbnails, the camera) through the text; this frosts it so the toast reads on anything,
  * while keeping the glass edge and light.
  */
+const FROST = { light: 'rgba(255,255,255,0.78)', dark: 'rgba(28,28,30,0.78)' } as const;
+
 /** Far enough above the safe area to start (and leave) fully off screen. */
 const OFFSCREEN = 160;
-/** An upward drag past this (pt), or a flick faster than this (pt/ms), swipes the toast away. */
+/**
+ * A release whose projected end (pt above where the finger started) passes this, or an upward
+ * flick faster than this (pt/s), swipes the toast away.
+ */
 const SWIPE_DISTANCE = 24;
-const SWIPE_VELOCITY = 0.4;
-/** Pulling it down moves it this fraction of the drag: it gives, but doesn't follow. */
-const PULL_DOWN_RESISTANCE = 0.2;
+const SWIPE_VELOCITY = 400;
+/**
+ * UIScrollView's normal deceleration rate: where the toast would coast to after the release, so
+ * a short fast flick counts as much as a long slow drag.
+ */
+const DECELERATION = 0.998;
+/** How far a downward pull can stretch: it gives, more and more stiffly, but doesn't follow. */
+const PULL_DOWN_LIMIT = 80;
 
-const FROST = { light: 'rgba(255,255,255,0.78)', dark: 'rgba(28,28,30,0.78)' } as const;
+/** Something the person didn't cause arrives and leaves without a bounce. */
+const ENTER = { duration: 300, easing: EaseOut };
+const EXIT = { duration: 240, easing: EaseOut };
+/**
+ * The Reduce Motion stand-in for the slide on the raised card. `Never`, because Reanimated's
+ * default (follow the system) would make this fade instant too.
+ */
+const FADE = { duration: 200, easing: EaseOut, reduceMotion: ReduceMotion.Never };
+/** A replacing toast's content fading in over the surface that stays put. */
+const SWAP_MS = 150;
+
+/** Rubber-banding for a pull past the resting point: 1:1 at first, never past the limit. */
+function rubberBand(offset: number): number {
+  'worklet';
+  return (offset * PULL_DOWN_LIMIT * 0.55) / (PULL_DOWN_LIMIT + 0.55 * Math.abs(offset));
+}
+
+/**
+ * On iOS the toast lives in `FullWindowOverlay`, a UIWindow of its own above every modal, so it
+ * gets its own gesture-handler root rather than relying on the app's. That root is sized to the
+ * toast (the positioned container below), never the full window: the overlay passes a touch
+ * through only when nothing inside it claims it, so a full-window root would swallow every touch
+ * on the screen beneath. On Android the toast is a plain sibling inside the app's root.
+ */
+const Root = Platform.OS === 'ios' ? GestureHandlerRootView : View;
 
 /**
  * A single transient banner below the top safe area: a colored icon for the kind, a bold title,
  * an optional detail line and action. Liquid Glass on iOS 26, a raised card elsewhere. Tap to
- * dismiss, or swipe it up; a finger on it holds it. Purely presentational — `ToastProvider` owns the timing and which toast is up;
- * `leaving` plays the exit before it unmounts.
+ * dismiss, or swipe it up; a finger on it holds it. `ToastProvider` owns the timing and which
+ * toast is up; this owns the motion. `leaving` plays the exit, and `onExited` says when the toast
+ * is off screen and can be unmounted. A new `id` while mounted is a replacement: the surface stays
+ * where it is (or comes back, if it was leaving) and only the content changes.
  */
 export function Toast({
   id,
@@ -87,6 +129,7 @@ export function Toast({
   onDismiss,
   onHold,
   onRelease,
+  onExited,
 }: {
   /** Passed back with every callback, so the provider can ignore a toast that's been replaced. */
   id: number;
@@ -94,70 +137,135 @@ export function Toast({
   leaving: boolean;
   /** `reason` is 'action' when the action button closed it, else 'dismissed'. */
   onDismiss: (id: number, reason?: 'action' | 'dismissed') => void;
-  /** A finger is on the toast: hold it up. */
+  /**
+   * A finger is on the toast: hold it up. The tap target, the action button and the swipe each
+   * call this and `onRelease` in pairs, and can overlap (a drag cancels the press it began as).
+   */
   onHold: (id: number) => void;
-  /** The finger let go without dismissing it. */
+  /** That finger let go without dismissing it. */
   onRelease: (id: number) => void;
+  /** The exit (slide, fade or swipe) has finished: the toast is off screen. */
+  onExited: (id: number) => void;
 }) {
   const theme = useTheme();
   const mode = useThemeMode();
   const insets = useSafeAreaInsets();
   const { kind, title, message, action } = content;
-  // `Animated.Value` is mutable and meant to be read during render (its whole purpose is to
-  // drive a style prop) — a lazy `useState` initializer holds it without re-creating it on every
-  // render, whereas `useRef` is reserved for values that should never be read during render.
-  const [progress] = useState(() => new Animated.Value(0));
-  // The swipe's offset, on top of the slide in and out.
-  const [drag] = useState(() => new Animated.Value(0));
+  const hidden = -(insets.top + OFFSCREEN);
 
-  // Swipe up to dismiss. Only a vertical drag claims the touch, so a tap still reaches the
-  // toast (dismiss) and its action button. The provider's callbacks are stable, so this is made
-  // once per toast.
-  const swipe = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) =>
-          Math.abs(g.dy) > 4 && Math.abs(g.dy) > Math.abs(g.dx),
-        onPanResponderGrant: () => onHold(id),
-        onPanResponderMove: (_, g) => drag.setValue(g.dy < 0 ? g.dy : g.dy * PULL_DOWN_RESISTANCE),
-        onPanResponderRelease: (_, g) => {
-          if (g.dy < -SWIPE_DISTANCE || g.vy < -SWIPE_VELOCITY) {
-            onDismiss(id);
-          } else {
-            Animated.spring(drag, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
-            onRelease(id);
-          }
-        },
-        onPanResponderTerminate: () => {
-          Animated.spring(drag, { toValue: 0, useNativeDriver: true }).start();
-          onRelease(id);
-        },
-      }),
-    [drag, id, onDismiss, onHold, onRelease],
-  );
+  // Reduce Motion, read once at launch. Reanimated already makes the slide instant then, which
+  // is all the glass can do: iOS stops drawing it under a partly transparent parent, so it can't
+  // fade. The raised card can, so it fades in place instead of snapping in and out.
+  const reduceMotion = useReducedMotion();
+  const fade = !LIQUID_GLASS && reduceMotion;
+
+  // 0 is resting below the safe area; `hidden` is above the screen. The swipe moves the same
+  // value, so grabbing the toast mid-slide picks it up where it is.
+  const y = useSharedValue(fade ? 0 : hidden);
+  const opacity = useSharedValue(fade ? 0 : 1);
+  // Where `y` was when the finger took it.
+  const dragStart = useSharedValue(0);
+  // A swipe that throws the toast away runs its own spring; the exit mustn't start a second one.
+  const swiped = useSharedValue(false);
+  const isLeaving = useSharedValue(leaving);
+
+  // The first toast slides in whole; a replacement's content fades in over the surface.
+  const [firstId] = useState(id);
 
   useEffect(() => {
-    Animated.spring(progress, {
-      toValue: leaving ? 0 : 1,
-      useNativeDriver: true,
-      ...(leaving ? { speed: 40, bounciness: 0 } : { speed: 18, bounciness: 6 }),
-    }).start();
-  }, [progress, leaving]);
+    isLeaving.set(leaving);
+    if (leaving) {
+      if (swiped.get()) return;
+      const done = (finished?: boolean) => {
+        'worklet';
+        if (finished) scheduleOnRN(onExited, id);
+      };
+      if (fade) opacity.set(withTiming(0, FADE, done));
+      else y.set(withTiming(hidden, EXIT, done));
+    } else {
+      // Arriving, or replaced while leaving (from wherever it got to), or replaced while up
+      // (already at rest, so nothing moves).
+      swiped.set(false);
+      y.set(withTiming(0, ENTER));
+      if (fade) opacity.set(withTiming(1, FADE));
+    }
+  }, [leaving, id, fade, hidden, onExited, y, opacity, swiped, isLeaving]);
 
-  // Screen readers hear it once, as it appears.
+  // Screen readers hear each toast once, as it appears (or replaces the one that was up). The
+  // announcement on both platforms rather than an Android live region, which reads a change to
+  // a view already on screen but not reliably one that has just been added.
   useEffect(() => {
     AccessibilityInfo.announceForAccessibility(message ? `${title}. ${message}` : title);
-  }, [title, message]);
+  }, [id, title, message]);
+
+  // Swipe up to dismiss. Only a vertical drag claims the touch, so a tap still reaches the
+  // toast (dismiss) and its action button.
+  const swipe = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(!leaving)
+        .activeOffsetY([-6, 6])
+        .failOffsetX([-12, 12])
+        .onStart(() => {
+          cancelAnimation(y);
+          dragStart.set(y.get());
+          scheduleOnRN(onHold, id);
+        })
+        .onUpdate((e) => {
+          const offset = dragStart.get() + e.translationY;
+          y.set(offset <= 0 ? offset : rubberBand(offset));
+        })
+        .onEnd((e) => {
+          const projected =
+            e.translationY + ((e.velocityY / 1000) * DECELERATION) / (1 - DECELERATION);
+          // Also when the toast started leaving mid-drag (it timed out under the finger): let
+          // go, it carries on out rather than settling back as a toast nobody will unmount.
+          if (isLeaving.get() || projected < -SWIPE_DISTANCE || e.velocityY < -SWIPE_VELOCITY) {
+            swiped.set(true);
+            y.set(
+              withSpring(
+                hidden,
+                { velocity: e.velocityY, dampingRatio: 1, duration: 300, overshootClamping: true },
+                (finished) => {
+                  if (finished) scheduleOnRN(onExited, id);
+                },
+              ),
+            );
+            scheduleOnRN(onDismiss, id, 'dismissed');
+          } else {
+            y.set(withSpring(0, { velocity: e.velocityY, dampingRatio: 0.8, duration: 350 }));
+          }
+          scheduleOnRN(onRelease, id);
+        }),
+    [leaving, hidden, id, y, dragStart, swiped, isLeaving, onHold, onRelease, onDismiss, onExited],
+  );
+
+  const slide = useAnimatedStyle(() =>
+    // Translate only on the glass: iOS stops drawing it when a parent view is partly
+    // transparent, so a fade left the text with no background. Opacity only on the card.
+    fade
+      ? { opacity: opacity.get(), transform: [{ translateY: y.get() }] }
+      : { transform: [{ translateY: y.get() }] },
+  );
 
   const body = (
-    <>
+    // Keyed by id so a replacement swaps in whole (and any press on the old action button ends
+    // with it). Opacity on this child of the glass is fine; it's an ancestor's that blanks it.
+    <Animated.View
+      key={id}
+      entering={id === firstId ? undefined : FadeIn.duration(SWAP_MS).easing(EaseOut)}
+      style={styles.row}>
       <Icon name={ICONS[kind]} size={22} tintColor={iconColor(kind, mode)} />
       <View style={styles.text}>
-        <ThemedText type="headline" numberOfLines={2}>
+        <ThemedText type="headline" numberOfLines={3} maxFontSizeMultiplier={1.6}>
           {title}
         </ThemedText>
         {message && (
-          <ThemedText type="subheadline" themeColor="textSecondary" numberOfLines={2}>
+          <ThemedText
+            type="subheadline"
+            themeColor="textSecondary"
+            numberOfLines={2}
+            maxFontSizeMultiplier={1.6}>
             {message}
           </ThemedText>
         )}
@@ -180,62 +288,55 @@ export function Toast({
             { backgroundColor: theme.backgroundSelected },
             pressed && styles.pressed,
           ]}>
-          <ThemedText type="subheadline" themeColor="accent" style={styles.actionLabel}>
+          <ThemedText
+            type="subheadline"
+            themeColor="accent"
+            numberOfLines={1}
+            maxFontSizeMultiplier={1.6}
+            style={styles.actionLabel}>
             {action.label}
           </ThemedText>
         </Pressable>
       )}
-    </>
+    </Animated.View>
   );
 
   return (
-    <Animated.View
-      pointerEvents="box-none"
-      {...swipe.panHandlers}
-      style={[
-        styles.container,
-        {
-          top: insets.top + Spacing.two,
-          // Slides in from above the screen, no fade: iOS stops drawing the glass when a parent
-          // view is partly transparent, so animating opacity left the text with no background.
-          transform: [
-            {
-              translateY: Animated.add(
-                progress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [-(insets.top + OFFSCREEN), 0],
-                }),
-                drag,
-              ),
-            },
-          ],
-        },
-      ]}>
-      <Pressable
-        onPress={() => onDismiss(id)}
-        onPressIn={() => onHold(id)}
-        onPressOut={() => onRelease(id)}
-        // With an action, not one element: VoiceOver would read it as a whole and never reach the
-        // button. The text and the button are then separate elements (the toast is announced as
-        // it appears either way).
-        accessible={!action}
-        accessibilityRole="alert"
-        accessibilityHint="Dismisses this message. You can also swipe it up."
-        accessibilityLiveRegion="polite"
-        style={styles.press}>
-        {LIQUID_GLASS ? (
-          <GlassView
-            glassEffectStyle="regular"
-            colorScheme={mode}
-            tintColor={FROST[mode]}
-            style={styles.banner}>
-            {body}
-          </GlassView>
-        ) : (
-          <View style={[styles.banner, styles.card, { backgroundColor: theme.card }]}>{body}</View>
-        )}
-      </Pressable>
-    </Animated.View>
+    <Root pointerEvents="box-none" style={[styles.container, { top: insets.top + Spacing.two }]}>
+      <GestureDetector gesture={swipe}>
+        <Animated.View style={[styles.slide, slide]}>
+          <Pressable
+            onPress={() => onDismiss(id)}
+            onPressIn={() => onHold(id)}
+            onPressOut={() => onRelease(id)}
+            // VoiceOver's escape (two-finger scrub) closes it like a tap does.
+            onAccessibilityEscape={() => onDismiss(id)}
+            // With an action, not one element: VoiceOver would read it as a whole and never
+            // reach the button. The text and the button are then separate elements (the toast
+            // is announced as it appears either way).
+            accessible={!action}
+            accessibilityRole="alert"
+            accessibilityHint="Dismisses this message. You can also swipe it up."
+            style={styles.press}>
+            {LIQUID_GLASS ? (
+              <GlassView
+                glassEffectStyle="regular"
+                colorScheme={mode}
+                tintColor={FROST[mode]}
+                style={styles.banner}>
+                {body}
+              </GlassView>
+            ) : (
+              // `cardRaised`, not `card`: white in light, and in dark a step lighter than the
+              // cards beneath, where the shadow doesn't show.
+              <View style={[styles.banner, FloatShadow, { backgroundColor: theme.cardRaised }]}>
+                {body}
+              </View>
+            )}
+          </Pressable>
+        </Animated.View>
+      </GestureDetector>
+    </Root>
   );
 }
 
@@ -247,32 +348,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1000,
   },
+  slide: { alignSelf: 'stretch' },
   press: { alignSelf: 'stretch', alignItems: 'center' },
   banner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.three,
     paddingVertical: Spacing.three,
-    paddingLeft: Spacing.three,
-    paddingRight: Spacing.three,
+    paddingHorizontal: Spacing.three,
     borderRadius: 22,
+    borderCurve: 'continuous',
     minWidth: 240,
     maxWidth: 480,
   },
-  // The non-glass surface: a raised card with a soft shadow.
-  card: {
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
+  row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   text: { flexShrink: 1, gap: Spacing.half },
   action: {
+    flexShrink: 0,
+    maxWidth: '40%',
     paddingVertical: Spacing.two - Spacing.half,
     paddingHorizontal: Spacing.three,
     borderRadius: 999,
   },
   actionLabel: { fontWeight: '600' },
-  pressed: { opacity: 0.7 },
+  // Matches the app's other filled controls.
+  pressed: { opacity: 0.85 },
 });
