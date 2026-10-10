@@ -15,7 +15,11 @@ import { markOnboardingComplete } from '@/db/settings';
 import { WELCOME_FEATURES } from '@/features/onboarding/steps';
 import { useTheme } from '@/hooks/use-theme';
 
-/** The rows arrive one after another, after the title: quick enough not to keep anyone waiting. */
+/**
+ * The rows arrive one after another, after the title: quick enough not to keep anyone waiting.
+ * Continue doesn't wait for them, or move: it fades in at once, so it's never a moving or invisible
+ * target.
+ */
 const ENTER_MS = 400;
 const ROW_STAGGER_MS = 80;
 const rowEnter = (i: number) =>
@@ -77,7 +81,7 @@ export function OnboardingScreen() {
       </ScrollView>
 
       <Animated.View
-        entering={rowEnter(WELCOME_FEATURES.length)}
+        entering={FadeIn.duration(ENTER_MS / 2).easing(EaseOut)}
         style={[styles.footer, { paddingBottom: insets.bottom + Spacing.four }]}>
         <View style={styles.privacy}>
           <Icon name="lock.fill" size={14} tintColor={theme.textSecondary} />

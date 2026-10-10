@@ -76,7 +76,7 @@ type Props = {
   onDragActiveChange?: (active: boolean) => void;
   onNext?: () => void;
   cursor?: Cursor;
-  /** Laid over the first clip, where nothing reads its touches: the clips tip's anchor. */
+  /** Laid over the first clip (it scrolls with it), taking no touches: the clips tip's anchor. */
   firstClipOverlay?: ReactNode;
 };
 
@@ -327,16 +327,11 @@ function Bar({
                   segment={item}
                   active={cursor?.activeId === item.id}
                   onSelect={() => onSelect(item.id)}
+                  overlay={item.id === segments[0]?.id ? firstClipOverlay : undefined}
                 />
               )}
             />
           </Animated.ScrollView>
-
-          {firstClipOverlay && (
-            <View style={styles.firstClip} pointerEvents="none">
-              {firstClipOverlay}
-            </View>
-          )}
 
           {cursor && (
             <PlayheadCursor
@@ -371,10 +366,12 @@ function SegmentThumb({
   segment,
   active,
   onSelect,
+  overlay,
 }: {
   segment: Segment;
   active: boolean;
   onSelect: () => void;
+  overlay?: ReactNode;
 }) {
   // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original) for legacy rows.
   const thumbnail = useThumbnail(
@@ -438,6 +435,8 @@ function SegmentThumb({
           </Text>
         </View>
       </View>
+
+      {overlay}
     </View>
   );
 }
@@ -498,14 +497,6 @@ const styles = StyleSheet.create({
   // clipped by its overflow — can span them: top tag above the number pills, bottom tag
   // below the thumbs, symmetric in the bar.
   viewport: { flex: 1, overflow: 'hidden', paddingTop: SCRUB_LANE, paddingBottom: SCRUB_LANE },
-  // The first thumb at rest: the scroll content's leading inset, below its pop lane.
-  firstClip: {
-    position: 'absolute',
-    left: SCRUB_INSET,
-    top: SCRUB_LANE + POP_LANE,
-    width: THUMB_WIDTH,
-    height: THUMB_HEIGHT,
-  },
   content: {
     alignItems: 'center',
     paddingLeft: SCRUB_INSET,

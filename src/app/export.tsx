@@ -30,6 +30,7 @@ import {
   Spacing,
 } from '@/constants/theme';
 import { TipAnchor } from '@/features/tips/tip-anchor';
+import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { segmentsForDraft } from '@/db/drafts';
@@ -419,6 +420,8 @@ export default function ExportScreen() {
           </View>
         )}
       </View>
+      {/* Android draws its tips as callouts, over everything (iOS uses the system popover here). */}
+      <TipLayer />
     </ThemedView>
   );
 }

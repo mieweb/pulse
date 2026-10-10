@@ -39,6 +39,7 @@ import { useRecorderPermissions } from '@/features/recorder/use-recorder-permiss
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { TipAnchor } from '@/features/tips/tip-anchor';
+import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
@@ -688,6 +689,9 @@ export default function RecorderScreen() {
           />
         </View>
       </View>
+
+      {/* Over everything: the recorder's tips are callouts, which leave the shutter tappable. */}
+      <TipLayer />
     </View>
   );
 }

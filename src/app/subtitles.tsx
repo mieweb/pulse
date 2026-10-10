@@ -49,6 +49,7 @@ import { useAutosaveTranscript } from '@/features/transcription/use-autosave-tra
 import { useSubtitleEditor, type Cue } from '@/features/transcription/use-subtitle-editor';
 import { parseTranscriptLines, type TranscriptLine } from '@/features/transcription/whisper';
 import { TipAnchor } from '@/features/tips/tip-anchor';
+import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
@@ -549,6 +550,8 @@ function Editor({
           </Animated.View>
         )}
       </KeyboardAvoidingView>
+      {/* Android draws its tips as callouts, over everything (iOS uses the system popover here). */}
+      <TipLayer />
     </ThemedView>
   );
 }

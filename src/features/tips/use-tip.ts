@@ -22,6 +22,9 @@ function loadSeen(): Promise<Set<string>> {
 /** The tip on screen now: one at a time, so two never stack up or race for the same moment. */
 let active: TipId | null = null;
 
+/** How long a closed tip's anchor stays mounted, so the popover can animate back into its control. */
+const EXIT_MS = 400;
+
 /**
  * One tip's state. `eligible` is whether now is its moment (e.g. the camera is ready and there are
  * no clips yet); the tip shows `delayMs` after that turns true, if it hasn't been shown before and
@@ -36,6 +39,9 @@ export function useTip(id: TipId, eligible: boolean, delayMs = 500) {
   const [unseen, setUnseen] = useState<boolean | undefined>(undefined);
   const [shown, setShown] = useState(false);
   const shownRef = useRef(false);
+  // Set on close: the anchor outlives it for the exit animation, but the tip mustn't show again.
+  const doneRef = useRef(false);
+  const unmountTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,16 +56,18 @@ export function useTip(id: TipId, eligible: boolean, delayMs = 500) {
   const dismiss = useCallback(() => {
     if (!shownRef.current) return;
     shownRef.current = false;
+    doneRef.current = true;
     if (active === id) active = null;
     setShown(false);
-    setUnseen(false);
+    // Unmounting the anchor with the popover still up would cut its exit short.
+    unmountTimer.current = setTimeout(() => setUnseen(false), EXIT_MS);
     void loadSeen().then((ids) => ids.add(id));
     markTipSeen(id).catch((e: unknown) => console.warn('[tips] failed to save a shown tip', e));
   }, [id]);
 
   // Show after the delay once it's the tip's moment; done for good if the moment passes.
   useEffect(() => {
-    if (!unseen) return;
+    if (!unseen || doneRef.current) return;
     if (!eligible) {
       dismiss();
       return;
@@ -75,7 +83,13 @@ export function useTip(id: TipId, eligible: boolean, delayMs = 500) {
   }, [unseen, eligible, delayMs, id, dismiss]);
 
   // Its screen closing counts as seen too.
-  useEffect(() => dismiss, [dismiss]);
+  useEffect(
+    () => () => {
+      dismiss();
+      clearTimeout(unmountTimer.current);
+    },
+    [dismiss],
+  );
 
   return { mounted: unseen === true, shown, dismiss };
 }
