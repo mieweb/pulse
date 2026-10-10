@@ -1,11 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import {
-  cancelTusUpload,
-  TusUploadError,
-  type UploadChunk,
-  uploadViaTus,
-} from './tus-client';
+import { cancelTusUpload, TusUploadError, type UploadChunk, uploadViaTus } from './tus-client';
 import { setClientIdentity } from './client-identity';
 
 const SERVER = 'https://vault.example.test/pulsevault';
@@ -107,7 +102,10 @@ function createRedirectFollowingFetchStub(
     // Simulate the runtime transparently following the redirect: the target
     // receives the original request (with its Authorization header) before
     // tus-client ever gets a response back.
-    leaked.push({ url: next.to, headers: { ...((init?.headers ?? {}) as Record<string, string>) } });
+    leaked.push({
+      url: next.to,
+      headers: { ...((init?.headers ?? {}) as Record<string, string>) },
+    });
     return finalResponse();
   });
   return { fetchImpl: fetchImpl as unknown as typeof fetch, calls, leaked };
@@ -609,7 +607,9 @@ describe('uploadViaTus', () => {
   it('includes an ASCII name in Upload-Metadata, and omits it when unset', async () => {
     const run = async (name?: string) => {
       const { fetchImpl, calls } = createFetchStub({
-        POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
+        POST: [
+          new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } }),
+        ],
         HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '1' } })],
       });
       const { uploadChunk } = createChunkStub([]);
@@ -696,7 +696,9 @@ describe('uploadViaTus', () => {
     // Location on a different origin.
     const file = fakeFile(5);
     const { fetchImpl } = createFetchStub({
-      POST: [new Response(null, { status: 201, headers: { location: 'https://evil.example/collect' } })],
+      POST: [
+        new Response(null, { status: 201, headers: { location: 'https://evil.example/collect' } }),
+      ],
     });
     const { uploadChunk } = createChunkStub([]);
 
@@ -717,7 +719,9 @@ describe('uploadViaTus', () => {
   it('accepts a Location header that is same-origin but on a different path prefix', async () => {
     const file = fakeFile(5);
     const { fetchImpl } = createFetchStub({
-      POST: [new Response(null, { status: 201, headers: { location: '/other-prefix/upload/abc' } })],
+      POST: [
+        new Response(null, { status: 201, headers: { location: '/other-prefix/upload/abc' } }),
+      ],
       HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '5' } })],
     });
     const { uploadChunk } = createChunkStub([]);
@@ -748,7 +752,9 @@ describe('uploadViaTus', () => {
       const file = fakeFile(20);
       const { fetchImpl, leaked } = createRedirectFollowingFetchStub(
         {
-          POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } })],
+          POST: [
+            new Response(null, { status: 201, headers: { location: '/pulsevault/upload/abc' } }),
+          ],
           HEAD: [{ to: 'https://evil.example/collect' }],
         },
         () => new Response(null, { status: 200, headers: { 'upload-offset': '20' } }),
@@ -777,9 +783,9 @@ describe('uploadViaTus', () => {
         () => new Response(null, { status: 204 }),
       );
 
-      await expect(cancelTusUpload(`${SERVER}/upload/abc`, 'tok', fetchImpl)).rejects.toBeInstanceOf(
-        TusUploadError,
-      );
+      await expect(
+        cancelTusUpload(`${SERVER}/upload/abc`, 'tok', fetchImpl),
+      ).rejects.toBeInstanceOf(TusUploadError);
 
       expect(leaked).toHaveLength(0);
     });
@@ -798,7 +804,9 @@ describe('cancelTusUpload', () => {
   it('treats an already-gone resource (404/410) as a successful cancel', async () => {
     for (const status of [404, 410]) {
       const { fetchImpl } = createFetchStub({ DELETE: [new Response(null, { status })] });
-      await expect(cancelTusUpload(`${SERVER}/upload/abc`, 'tok', fetchImpl)).resolves.toBeUndefined();
+      await expect(
+        cancelTusUpload(`${SERVER}/upload/abc`, 'tok', fetchImpl),
+      ).resolves.toBeUndefined();
     }
   });
 

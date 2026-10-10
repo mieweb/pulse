@@ -172,6 +172,23 @@ export async function setMergedExport(
     .where(eq(drafts.id, draftId));
 }
 
+/**
+ * Work that follows a change already committed: its files and the draft's `lastModified`. It
+ * can't undo the change, so a failure here is logged rather than thrown; a caller that rejected
+ * would report the clip as not deleted (or not reverted) when it already was.
+ */
+async function afterCommit(what: string, run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch (e) {
+    console.warn(`[drafts] ${what}: cleanup after the change failed`, e);
+  }
+}
+
+async function touchDraft(draftId: string): Promise<void> {
+  await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId));
+}
+
 /** Delete a segment and its clip file, unless a sibling segment still references the file. */
 export async function deleteSegment(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
@@ -180,22 +197,24 @@ export async function deleteSegment(segmentId: string): Promise<void> {
   await beginClipMutation(seg.draftId);
   await db.delete(segments).where(eq(segments.id, segmentId));
 
-  const [{ value: stillReferenced }] = await db
-    .select({ value: count() })
-    .from(segments)
-    .where(eq(segments.originalFilename, seg.originalFilename));
-  if (stillReferenced === 0) deleteSegmentFile(seg.originalFilename);
-  // The edited file and both thumbnails are per-segment (never shared) — delete with the row.
-  if (seg.editedFilename) {
-    deleteSegmentFile(seg.editedFilename);
-    deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
-  }
-  deleteSegmentFile(thumbRelPath(seg.draftId, segmentId));
-  // The row's cover may not match either derived path (e.g. a prior revision's thumb kept as a
-  // fallback after a failed regeneration) — delete whatever the row actually references too.
-  if (seg.thumbnail) deleteSegmentFile(seg.thumbnail);
-
-  await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
+  // The draft's timestamp on its own, so a file that won't delete can't leave Home's order stale.
+  await afterCommit('delete clip', () => touchDraft(seg.draftId));
+  await afterCommit('delete clip', async () => {
+    const [{ value: stillReferenced }] = await db
+      .select({ value: count() })
+      .from(segments)
+      .where(eq(segments.originalFilename, seg.originalFilename));
+    if (stillReferenced === 0) deleteSegmentFile(seg.originalFilename);
+    // The edited file and both thumbnails are per-segment (never shared) — delete with the row.
+    if (seg.editedFilename) {
+      deleteSegmentFile(seg.editedFilename);
+      deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
+    }
+    deleteSegmentFile(thumbRelPath(seg.draftId, segmentId));
+    // The row's cover may not match either derived path (e.g. a prior revision's thumb kept as a
+    // fallback after a failed regeneration) — delete whatever the row actually references too.
+    if (seg.thumbnail) deleteSegmentFile(seg.thumbnail);
+  });
 }
 
 /**
@@ -255,15 +274,17 @@ export async function resetEdit(segmentId: string): Promise<void> {
       thumbnail: ok ? thumbRel : null,
     })
     .where(eq(segments.id, segmentId));
-  // Drop the now-orphaned edited file and thumb only after the row no longer references them.
-  if (seg.editedFilename) {
-    deleteSegmentFile(seg.editedFilename);
-    deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
-  }
-  // The prior cover may be from an older revision than `editedFilename` (kept as a fallback
-  // after a failed re-edit thumb generation) — drop it too, but never the fresh `thumbRel`.
-  if (seg.thumbnail && seg.thumbnail !== thumbRel) deleteSegmentFile(seg.thumbnail);
-  await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
+  await afterCommit('revert edits', () => touchDraft(seg.draftId));
+  await afterCommit('revert edits', async () => {
+    // Drop the now-orphaned edited file and thumb only after the row no longer references them.
+    if (seg.editedFilename) {
+      deleteSegmentFile(seg.editedFilename);
+      deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
+    }
+    // The prior cover may be from an older revision than `editedFilename` (kept as a fallback
+    // after a failed re-edit thumb generation) — drop it too, but never the fresh `thumbRel`.
+    if (seg.thumbnail && seg.thumbnail !== thumbRel) deleteSegmentFile(seg.thumbnail);
+  });
 }
 
 /** Persist a new clip ordering (ids in target order) for a single draft. */

@@ -1,21 +1,37 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { useRef } from 'react';
+import { type ReactNode, useEffect } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import Animated, {
+  Easing,
+  ReduceMotion,
+  useAnimatedProps,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
 
-import type { Anchor } from '@/components/action-menu';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { CardShadow, MaxTextScale, Radius, Spacing } from '@/constants/theme';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
+import type { WatchLink } from '@/features/upload/upload-manager';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
-import { useTheme, useThemeMode } from '@/hooks/use-theme';
+import { useTheme } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatClipCount, formatDuration } from '@/utils/format';
 import { formatRelativeDate } from '@/utils/relative-date';
 
 const NAME_MAX_LENGTH = 40;
+
+/**
+ * `maxLength` counts UTF-16 units, so a name typed or pasted up to the limit can end on the first
+ * half of an emoji's surrogate pair. That lone half isn't valid text (it shows as "�"), so it's
+ * dropped rather than saved.
+ */
+function dropSplitSurrogate(text: string): string {
+  return text.replace(/[\uD800-\uDBFF]$/, '');
+}
 
 type Props = {
   id: string;
@@ -38,8 +54,11 @@ type Props = {
   selected?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
-  /** Opens the draft's action menu, anchored to the ⋯ button's on-screen rect. */
-  onMore?: (anchor: Anchor) => void;
+  /**
+   * The ⋯ menu (draft-menu.tsx), shown after the link button, given the draft's watch link: the
+   * card looks it up once (uploaded drafts only) for both the button and the menu.
+   */
+  menu?: (watchLink: WatchLink | null) => ReactNode;
   /** Fires once when editing ends (keyboard done or blur) with the trimmed name. */
   onSubmitName?: (name: string) => void;
 };
@@ -59,19 +78,15 @@ export function DraftCard({
   selected = false,
   onPress,
   onLongPress,
-  onMore,
+  menu,
   onSubmitName,
 }: Props) {
   const theme = useTheme();
-  // The app's resolved mode (manual Light/Dark override, else OS) — not the OS scheme, which
-  // gave a light card a white shadow when Light was pinned on a dark-mode phone.
-  const isDark = useThemeMode() === 'dark';
   const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
-  const moreRef = useRef<View>(null);
 
   // An upload in progress is a ring on the cover — from the live state, or the persisted status
   // until the launch check settles a draft a killed app left `uploading`. A finished one gets a
-  // one-tap link button beside ⋯ (see `LinkPill`). A failure is a toast, not a badge.
+  // one-tap link button beside ⋯ (see `LinkButton`). A failure is a toast, not a badge.
   const live = useDraftUploadState(id);
   const uploading = live.status === 'uploading' || uploadStatus === 'uploading';
   const uploadProgress = live.status === 'uploading' ? live.progress : 0;
@@ -85,8 +100,7 @@ export function DraftCard({
         styles.card,
         {
           // Rows highlight by fill swap (action-menu rows, home header buttons), not by dimming.
-          backgroundColor: pressed && !editing ? theme.backgroundSelected : theme.backgroundElement,
-          borderColor: theme.border,
+          backgroundColor: pressed && !editing ? theme.backgroundSelected : theme.card,
         },
       ]}>
       <View
@@ -95,8 +109,6 @@ export function DraftCard({
           {
             backgroundColor: theme.backgroundSelected,
             borderColor: theme.border,
-            // Opposite-tone shadow so it reads in both modes: black in light, white in dark.
-            shadowColor: isDark ? '#fff' : '#000',
           },
         ]}>
         {thumbnail ? (
@@ -126,17 +138,21 @@ export function DraftCard({
             autoFocus
             selectTextOnFocus
             maxLength={NAME_MAX_LENGTH}
+            // The name it replaces stops at the app's text ceiling; so does the field.
+            maxFontSizeMultiplier={MaxTextScale}
             returnKeyType="done"
-            onEndEditing={(e) => onSubmitName?.(e.nativeEvent.text.trim())}
-            style={[styles.name, styles.nameInput, { color: theme.text }]}
+            onEndEditing={(e) => onSubmitName?.(dropSplitSurrogate(e.nativeEvent.text).trim())}
+            style={[styles.nameInput, { color: theme.text }]}
           />
         ) : (
-          <ThemedText style={styles.name} numberOfLines={1}>
+          <ThemedText type="headline" numberOfLines={1}>
             {name || 'Untitled'}
           </ThemedText>
         )}
-        <ThemedText themeColor="textSecondary" type="small" numberOfLines={1}>
-          {formatClipCount(segmentCount)} · {formatDuration(durationMs)} ·{' '}
+        {/* Two lines, so a narrow card (an uploaded draft's link button beside ⋯, larger text)
+            wraps the date onto a second line instead of cutting it off. */}
+        <ThemedText themeColor="textSecondary" type="subheadline" numberOfLines={2}>
+          {formatClipCount(segmentCount)} · {formatDuration(cardDuration(durationMs))} ·{' '}
           {formatRelativeDate(lastModified, now)}
         </ThemedText>
       </View>
@@ -155,22 +171,7 @@ export function DraftCard({
       ) : (
         !editing && (
           <View style={styles.trailing}>
-            {uploaded && <LinkPill draftId={id} name={name} />}
-            {onMore && (
-              <Pressable
-                ref={moreRef}
-                onPress={() =>
-                  moreRef.current?.measureInWindow((x, y, width, height) =>
-                    onMore({ x, y, width, height }),
-                  )
-                }
-                hitSlop={{ top: 10, bottom: 10, left: uploaded ? 2 : 10, right: 10 }}
-                accessibilityRole="button"
-                accessibilityLabel="Draft options"
-                style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]}>
-                <Icon name="ellipsis" size={18} tintColor={theme.textSecondary} />
-              </Pressable>
-            )}
+            {uploaded ? <UploadedTrailing draftId={id} name={name} menu={menu} /> : menu?.(null)}
           </View>
         )
       )}
@@ -179,15 +180,36 @@ export function DraftCard({
 }
 
 /**
+ * An uploaded draft's trailing controls: the one subscription to its watch link (it carries a
+ * clock for the link's expiry), shared by the link button and the ⋯ menu. Its own component so
+ * only uploaded drafts run the link's expiry check.
+ */
+function UploadedTrailing({
+  draftId,
+  name,
+  menu,
+}: {
+  draftId: string;
+  name: string | null;
+  menu: Props['menu'];
+}) {
+  const link = useWatchLink(draftId);
+  return (
+    <>
+      {link && <LinkButton link={link} name={name} />}
+      {menu?.(link)}
+    </>
+  );
+}
+
+/**
  * An uploaded draft's one-tap link button beside ⋯, while its link still opens: Share (the share
  * sheet) for a link that's safe to share, or Watch for one carrying the upload token. Nothing
- * otherwise — not a button that could only say it can't. Its own component so only uploaded
- * drafts run the link's expiry check.
+ * otherwise — not a button that could only say it can't. Icon-only, the ⋯'s size: a labelled
+ * pill left a 375 pt phone's card body too narrow for the name and date.
  */
-function LinkPill({ draftId, name }: { draftId: string; name: string | null }) {
+function LinkButton({ link, name }: { link: WatchLink; name: string | null }) {
   const theme = useTheme();
-  const link = useWatchLink(draftId);
-  if (!link) return null;
   const { url, shareable } = link;
   return (
     <Pressable
@@ -201,27 +223,58 @@ function LinkPill({ draftId, name }: { draftId: string; name: string | null }) {
       accessibilityRole="button"
       accessibilityLabel={shareable ? 'Share link' : 'Watch'}
       style={({ pressed }) => [
-        styles.share,
-        { backgroundColor: pressed ? theme.border : theme.backgroundSelected },
+        styles.linkButton,
+        // Its own pressed step: dark's `backgroundSelected` is the same gray as `cardRaised`.
+        { backgroundColor: pressed ? theme.cardRaisedPressed : theme.cardRaised },
       ]}>
       <Icon
         name={shareable ? 'square.and.arrow.up' : 'play.fill'}
         size={14}
         tintColor={theme.text}
       />
-      <ThemedText type="small">{shareable ? 'Share' : 'Watch'}</ThemedText>
     </Pressable>
   );
 }
+
+/**
+ * The total as the card shows it. `formatDuration` rounds to whole seconds, so a draft of one
+ * very short clip (a tap of the shutter) read "0:00", as if it held nothing. Anything recorded
+ * reads at least one second; only an empty draft reads 0:00.
+ */
+function cardDuration(ms: number): number {
+  return ms > 0 ? Math.max(ms, 1000) : 0;
+}
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const RING = 28;
 const RING_STROKE = 3;
 const RING_R = (RING - RING_STROKE) / 2;
 const RING_C = 2 * Math.PI * RING_R;
 
-/** A small determinate ring shown over a draft's cover while it uploads (white on a dark scrim). */
+/**
+ * A small determinate ring shown over a draft's cover while it uploads (white on a dark scrim).
+ * Each progress update glides over 250 ms, linear, as the merge ring does: a stream of updates
+ * reads as one steady sweep instead of a jump per update. `Never`, because Reanimated's default
+ * would make Reduce Motion snap it, and the sweep is the progress itself, not decoration.
+ */
 function UploadRing({ progress }: { progress: number }) {
   const clamped = Math.max(0.03, Math.min(1, progress));
+  // Starts where the upload is, so a card that mounts mid-upload (scrolled in, relaunched) doesn't
+  // sweep up from empty.
+  const value = useSharedValue(clamped);
+  useEffect(() => {
+    value.set(
+      withTiming(clamped, {
+        duration: 250,
+        easing: Easing.linear,
+        reduceMotion: ReduceMotion.Never,
+      }),
+    );
+  }, [clamped, value]);
+  const animatedProps = useAnimatedProps(() => ({
+    strokeDashoffset: RING_C * (1 - value.get()),
+  }));
   return (
     <Svg width={RING} height={RING}>
       <Circle
@@ -232,7 +285,7 @@ function UploadRing({ progress }: { progress: number }) {
         strokeWidth={RING_STROKE}
         fill="none"
       />
-      <Circle
+      <AnimatedCircle
         cx={RING / 2}
         cy={RING / 2}
         r={RING_R}
@@ -241,12 +294,15 @@ function UploadRing({ progress }: { progress: number }) {
         strokeLinecap="round"
         fill="none"
         strokeDasharray={RING_C}
-        strokeDashoffset={RING_C * (1 - clamped)}
+        animatedProps={animatedProps}
         transform={`rotate(-90 ${RING / 2} ${RING / 2})`}
       />
     </Svg>
   );
 }
+
+/** Concentric with the card: its radius less the padding between them. */
+const THUMB_RADIUS = Radius.card - Spacing.two;
 
 const styles = StyleSheet.create({
   uploadScrim: {
@@ -258,6 +314,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: THUMB_RADIUS,
+    borderCurve: 'continuous',
   },
   card: {
     flexDirection: 'row',
@@ -265,18 +323,24 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     padding: Spacing.two,
     paddingRight: Spacing.three,
-    borderRadius: Spacing.three,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: Radius.card,
+    borderCurve: 'continuous',
+    ...CardShadow,
   },
   thumb: {
     width: 44,
     height: 60,
     alignItems: 'center',
     justifyContent: 'center',
+    // Rounded without `overflow: 'hidden'` (which would clip its shadow): the image and the
+    // upload scrim round their own corners to match.
+    borderRadius: THUMB_RADIUS,
+    borderCurve: 'continuous',
     // Lift the cover off the card so it pops a little. A hairline ring carries the separation
     // in dark mode (where a black shadow is invisible against the dark card); the shadow does
-    // the lifting in light mode.
+    // the lifting in light mode. Black in both: a white shadow glowed around the cover in dark.
     borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.15,
     shadowRadius: 3,
@@ -285,19 +349,20 @@ const styles = StyleSheet.create({
   thumbImage: {
     width: '100%',
     height: '100%',
+    borderRadius: THUMB_RADIUS,
+    borderCurve: 'continuous',
   },
   body: {
     flex: 1,
     gap: 2,
   },
-  name: {
-    fontWeight: '600',
-  },
   nameInput: {
-    // Match the name Text (body: 17/22) exactly so swapping in the input never changes the
-    // text size or the body height (which would nudge the subtitle).
+    // Match the name Text (headline: 17/22, semibold) exactly so swapping in the input never changes the
+    // text size or the body height (which would nudge the subtitle). A floor, not a fixed height:
+    // at a larger text size the input grows with its text instead of clipping it.
     fontSize: 17,
-    height: 22,
+    fontWeight: '600',
+    minHeight: 22,
     padding: 0,
   },
   trailing: {
@@ -305,14 +370,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.one,
   },
-  share: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
+  linkButton: {
+    width: 28,
     height: 28,
-    paddingHorizontal: Spacing.two + Spacing.half,
     borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...CardShadow,
   },
+  // The trailing slot's size: the selection checkbox, and the ⋯ menu beside it (draft-menu.tsx).
   more: {
     width: 28,
     height: 28,

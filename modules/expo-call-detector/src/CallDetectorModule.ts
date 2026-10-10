@@ -10,6 +10,9 @@ declare class CallDetectorModule extends NativeModule<CallDetectorModuleEvents> 
   beginBackgroundTask(): number;
   /** Ends a background task started with beginBackgroundTask. */
   endBackgroundTask(taskId: number): void;
+  /** iOS: let haptics play while the audio session can record. Call BEFORE activating the
+   * session; no-op on Android/web. */
+  allowHapticsWhileRecording(allow: boolean): void;
 }
 
 export default requireNativeModule<CallDetectorModule>('CallDetector');

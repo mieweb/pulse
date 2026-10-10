@@ -3,6 +3,7 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useReducedMotion } from 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { MigrationGate } from '@/db/migrate';
@@ -10,8 +11,10 @@ import { type BuildConfig, readBuildInfo } from '@/features/about/build-info';
 import { installLogCapture } from '@/features/logs/logger';
 import { ToastProvider } from '@/features/toast/toast-provider';
 import { setClientIdentity } from '@/features/upload/client-identity';
+import { destinationsSheetOptions } from '@/features/upload/destinations-sheet';
 import { UploadDeepLinkProvider } from '@/features/upload/upload-deep-link-provider';
 import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/hooks/use-theme';
+import { tallSheetOptions } from '@/utils/sheet-fit';
 
 // Before anything renders, so the debug log (About → Share logs) sees the whole session.
 installLogCapture();
@@ -42,23 +45,56 @@ export default function RootLayout() {
  * theme and status bar can't drift from the app's own colors when the user flips the switch. */
 function ThemedNavigation() {
   const isDark = useThemeMode() === 'dark';
+  // The full-screen modals slide up from the bottom; under Reduce Motion they fade in place
+  // instead (`fullScreenModal` + `fade` is iOS's cross-dissolve), so nothing travels the screen.
+  const reduceMotion = useReducedMotion();
+  const fullScreen = {
+    presentation: 'fullScreenModal',
+    animation: reduceMotion ? 'fade' : 'default',
+  } as const;
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
       <ToastProvider>
         <UploadDeepLinkProvider>
           <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="recorder" options={{ presentation: 'fullScreenModal' }} />
-            <Stack.Screen name="export" options={{ presentation: 'fullScreenModal' }} />
+            <Stack.Screen name="recorder" options={fullScreen} />
+            <Stack.Screen name="export" options={fullScreen} />
             {/* Explicit: a route pushed above a modal otherwise inherits `modal` (an iOS page
                 sheet), which left a dead band above the captions header and put its ✕ on a
                 different side than the other sheet. Full-screen matches export beneath it. */}
-            <Stack.Screen name="subtitles" options={{ presentation: 'fullScreenModal' }} />
-            <Stack.Screen name="about" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="subtitles" options={fullScreen} />
             <Stack.Screen
-              name="onboarding"
-              options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+              name="about"
+              options={() => ({
+                presentation: 'formSheet',
+                sheetGrabberVisible: true,
+                // Sized to its content, or full height and scrolling at large text sizes.
+                ...tallSheetOptions(),
+              })}
             />
+            <Stack.Screen
+              name="on-device-ai"
+              options={() => ({
+                presentation: 'formSheet',
+                sheetGrabberVisible: true,
+                // Sized to its content, or full height and scrolling at large text sizes.
+                ...tallSheetOptions(),
+              })}
+            />
+            <Stack.Screen
+              name="destinations"
+              options={({ route }) => ({
+                presentation: 'formSheet',
+                sheetGrabberVisible: true,
+                // The home pill passes `?count`; a link without it gives NaN, which sizes the
+                // sheet for a long list (`destinationsSheetOptions`).
+                ...destinationsSheetOptions(
+                  Number((route.params as { count?: string } | undefined)?.count),
+                ),
+              })}
+            />
+            <Stack.Screen name="onboarding" options={{ ...fullScreen, gestureEnabled: false }} />
           </Stack>
         </UploadDeepLinkProvider>
       </ToastProvider>

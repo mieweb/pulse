@@ -2,12 +2,13 @@ import { Icon } from '@/components/icon';
 import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
 import { probeVideo } from 'react-native-video-trim';
 
 import { GlassPill } from '@/components/glass-pill';
-import { ControlScrim, Spacing } from '@/constants/theme';
+import { ThemedText } from '@/components/themed-text';
+import { ControlScrim, Radius, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { absolutize } from '@/utils/file-store';
 import { displaySize } from '@/utils/import-normalization';
@@ -30,6 +31,11 @@ const RESET_HIT_SLOP = 8;
 const PARK_BADGE_DELAY_MS = 150;
 // How long the transient ⏸ flash holds after playback starts before its fade-out begins.
 const PAUSE_FLASH_HOLD_MS = 600;
+// The ▶/⏸ badge's enter and exits, built once rather than on every render. The ⏸ exit is slower
+// — it's the tail of the flash's ~1s arc.
+const BADGE_ENTER = ZoomIn.duration(150);
+const BADGE_EXIT = ZoomOut.duration(150);
+const PAUSE_FLASH_EXIT = ZoomOut.duration(350);
 
 // Display size of each source file, probed once. Originals are pinned to the portrait
 // 1080×1920 contract (recorder pin, import/.pulse conform), the default until a probe lands.
@@ -100,6 +106,10 @@ export function PreviewModal({
   const geometric = edit && hasGeometry(edit) ? edit : null;
   const source = useSourceSize(geometric?.file ?? null);
   const geometry = geometric ? previewGeometry(stage, source, geometric) : null;
+  // An unedited clip is 9:16 (recordings are portrait, and imports are conformed to the
+  // recorder's format), so its picture is the largest 9:16 box in the stage, as on export.
+  // Boxing it lets the corners round the picture itself rather than the space around it.
+  const plain = !geometric ? fitPortrait(stage) : null;
   // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
   // not playing). Gating on !isPlaying alone flashed the badge through every clip switch:
   // selectSegment pauses for the swap, so the badge blinked for the load's duration.
@@ -159,9 +169,17 @@ export function PreviewModal({
             const { width, height } = e.nativeEvent.layout;
             setStage({ width, height });
           }}>
-          {/* One stable wrapper, so toggling an edit never remounts the video view: the whole
-              stage when unedited, else the cropped box (clips the transformed picture). */}
-          <View style={geometry ? [styles.cropBox, geometry.box] : StyleSheet.absoluteFill}>
+          {/* One stable wrapper, so toggling an edit never remounts the video view: the 9:16
+              box when unedited, else the cropped box (clips the transformed picture). Both
+              round the picture's corners, like export's and the captions editor's previews. */}
+          <View
+            style={
+              geometry
+                ? [styles.cropBox, geometry.box]
+                : plain
+                  ? [styles.cropBox, plain]
+                  : StyleSheet.absoluteFill
+            }>
             <VideoView
               style={
                 geometry
@@ -191,8 +209,8 @@ export function PreviewModal({
             <Animated.View
               style={styles.playOverlay}
               pointerEvents="none"
-              entering={ZoomIn.duration(150)}
-              exiting={ZoomOut.duration(pauseFlash ? 350 : 150)}>
+              entering={BADGE_ENTER}
+              exiting={pauseFlash ? PAUSE_FLASH_EXIT : BADGE_EXIT}>
               <GlassPill style={[styles.playBadge, pauseFlash && styles.pauseBadge]}>
                 <Icon name={pauseFlash ? 'pause.fill' : 'play.fill'} size={28} tintColor="#fff" />
               </GlassPill>
@@ -214,7 +232,9 @@ export function PreviewModal({
               accessibilityLabel="Revert edits"
               style={({ pressed }) => pressed && styles.pressed}>
               <View style={[styles.resetPill, ControlScrim[mode]]}>
-                <Text style={styles.resetText}>Revert edits</Text>
+                <ThemedText type="footnote" style={styles.resetText} maxFontSizeMultiplier={1.3}>
+                  Revert edits
+                </ThemedText>
               </View>
             </Pressable>
           </View>
@@ -246,6 +266,14 @@ export function PreviewModal({
   );
 }
 
+/** The largest 9:16 box centred in `stage`; null until the stage has a size. */
+function fitPortrait(stage: Size) {
+  if (stage.width <= 0 || stage.height <= 0) return null;
+  const width = Math.min(stage.width, (stage.height * 9) / 16);
+  const height = (width * 16) / 9;
+  return { left: (stage.width - width) / 2, top: (stage.height - height) / 2, width, height };
+}
+
 const styles = StyleSheet.create({
   pressed: { opacity: 0.85 },
   stage: {
@@ -260,7 +288,12 @@ const styles = StyleSheet.create({
     marginVertical: Spacing.two,
   },
   fill: { flex: 1 },
-  cropBox: { position: 'absolute', overflow: 'hidden' },
+  cropBox: {
+    position: 'absolute',
+    overflow: 'hidden',
+    borderRadius: Radius.row,
+    borderCurve: 'continuous',
+  },
   playOverlay: {
     position: 'absolute',
     top: 0,
@@ -313,5 +346,7 @@ const styles = StyleSheet.create({
     borderRadius: RESET_PILL_HEIGHT / 2,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  resetText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  // Footnote, kept semibold and white on the scrim; the pill is a fixed 28 pt, so the text
+  // grows with Dynamic Type only so far.
+  resetText: { color: '#fff', fontWeight: '600' },
 });

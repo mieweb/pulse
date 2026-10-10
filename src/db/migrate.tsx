@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator } from 'react-native';
 import { cleanFiles } from 'react-native-video-trim';
 
-import { ThemedText } from '@/components/themed-text';
+import { StateMessage } from '@/components/state-message';
 import { ThemedView } from '@/components/themed-view';
 import migrations from '../../drizzle/migrations';
 import { db } from './client';
@@ -50,11 +50,21 @@ export function MigrationGate({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, [success]);
 
+  // The raw error goes to the log, not the screen: a SQLite message means nothing to the person,
+  // and what they can do about it is the same whatever it says.
+  useEffect(() => {
+    if (error) console.error('[db] migrations failed', error);
+  }, [error]);
+
   if (error) {
     return (
       <ThemedView style={centered}>
-        <ThemedText>Could not open database</ThemedText>
-        <ThemedText themeColor="textSecondary">{error.message}</ThemedText>
+        <StateMessage
+          icon="exclamationmark.triangle.fill"
+          tone="accent"
+          title="Couldn’t open your drafts"
+          message="Close Pulse and open it again. Your drafts are still on this phone."
+        />
       </ThemedView>
     );
   }

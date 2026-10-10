@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
+import { Appearance } from 'react-native';
 
 import { Colors } from '@/constants/theme';
 import { setThemePreference, themePreferenceQuery, type ThemePreference } from '@/db/settings';
@@ -39,6 +40,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // are hot leaf components — a fresh object per render (e.g. a live-query re-emit of the
   // same value) would re-render them all for nothing.
   const value = useMemo(() => ({ resolved, preference }), [resolved, preference]);
+
+  // Hand a pinned mode to the OS too, so what it draws for the app follows it: the glass behind
+  // a form sheet, alerts, menus, the system paste button. Without this they kept the phone's own
+  // mode under a pinned one (light glass under dark text). 'unspecified' goes back to the OS.
+  useEffect(() => {
+    Appearance.setColorScheme(preference === 'system' ? 'unspecified' : preference);
+  }, [preference]);
 
   return <ThemeStateContext.Provider value={value}>{children}</ThemeStateContext.Provider>;
 }

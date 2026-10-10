@@ -51,6 +51,15 @@ public class CallDetectorModule: Module {
   private var activeTasks = Set<Int>()
   private let tasksLock = NSLock()
 
+  // One beginBackgroundTask call: its id once begin has it, and whether iOS already expired it.
+  // iOS can run the expiration handler (on main) before beginBackgroundTask returns its id, when
+  // no background time is left; the handler then can't know the id, so it marks this instead and
+  // begin ends the task itself. Both fields are read and written under `tasksLock`.
+  private final class PendingTask {
+    var id: UIBackgroundTaskIdentifier = .invalid
+    var expired = false
+  }
+
   private func endTask(_ rawId: Int) {
     tasksLock.lock()
     let wasActive = activeTasks.remove(rawId) != nil
@@ -157,29 +166,68 @@ public class CallDetectorModule: Module {
     // file copy. JS holds a task across the finalize+persist and ends it when done. Both are safe
     // to call from any thread; the expiration handler ends the task if iOS runs out of patience.
     Function("beginBackgroundTask") { () -> Int in
-      var taskId: UIBackgroundTaskIdentifier = .invalid
-      taskId = UIApplication.shared.beginBackgroundTask(withName: "PulseFinalizeRecording") {
-        self.endTask(taskId.rawValue)
+      let pending = PendingTask()
+      let taskId = UIApplication.shared.beginBackgroundTask(withName: "PulseFinalizeRecording") {
+        self.tasksLock.lock()
+        pending.expired = true
+        let known = pending.id
+        self.tasksLock.unlock()
+        // Before begin published the id, `known` is .invalid and begin ends it (below); after,
+        // this ends it, unless JS already did.
+        if known != .invalid { self.endTask(known.rawValue) }
       }
-      let rawId = taskId.rawValue
       self.tasksLock.lock()
-      self.activeTasks.insert(rawId)
+      pending.id = taskId
+      let expiredAlready = pending.expired
+      if !expiredAlready { self.activeTasks.insert(taskId.rawValue) }
       self.tasksLock.unlock()
-      return rawId
+      // Expired before its id was known: end it here. JS still gets the id; its own end is then a
+      // no-op, as the task is no longer active.
+      if expiredAlready && taskId != .invalid {
+        UIApplication.shared.endBackgroundTask(taskId)
+      }
+      return taskId.rawValue
     }
 
     Function("endBackgroundTask") { (rawId: Int) in
       self.endTask(rawId)
     }
 
+    // iOS mutes every haptic while the audio session can record (the recorder holds it in
+    // playAndRecord with the camera's mic attached) unless this is on, and it only takes effect
+    // when set BEFORE the session is activated — so JS calls it right before activating
+    // (useAudioFocus), rather than relying on VisionCamera's own setting, which lands whenever the
+    // camera configures. A failure leaves haptics muted, nothing worse, so it isn't thrown to JS;
+    // it's logged, so a silent recorder can be traced to it from the device console.
+    Function("allowHapticsWhileRecording") { (allow: Bool) in
+      do {
+        try AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(allow)
+      } catch {
+        NSLog("[CallDetector] setAllowHapticsAndSystemSoundsDuringRecording(%@) failed: %@",
+              allow ? "true" : "false", String(describing: error))
+      }
+    }
+
     OnStartObserving {
       self.stateLock.lock()
       self.observing = true
-      let active = self.interruptionActive
       self.stateLock.unlock()
-      // Emit the current state immediately — interruptions only push future *changes*, so a latch
-      // set before the listener attached would otherwise be missed.
-      self.emitCallState(active)
+      // Emit the current state right away — interruptions only push future *changes*, so a latch
+      // set before the listener attached would otherwise be missed. Read and sent on main, where
+      // the interruption handlers send theirs: snapshotting here (the module thread) and queueing
+      // the send let a newer `.began`/`.ended` sent directly on main be overtaken by the stale
+      // snapshot, leaving JS on the wrong state. On main every send is in order, and this one
+      // carries the latch as it is when it runs, so the last event JS sees always matches it.
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self else { return }
+        self.stateLock.lock()
+        let active = self.interruptionActive
+        let observing = self.observing
+        self.stateLock.unlock()
+        if observing {
+          self.sendEvent("onCallStateChange", ["isActive": active])
+        }
+      }
     }
 
     OnStopObserving {

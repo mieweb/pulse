@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { Alert, Linking } from 'react-native';
 
 import { useToast } from '@/features/toast/toast-provider';
+import { userMessage } from '@/utils/user-message';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved';
 
@@ -50,7 +51,13 @@ export function useSaveToPhotos() {
       showToast('Saved to Photos');
     } catch (e) {
       setStatus('idle');
-      Alert.alert('Couldn’t save the video', e instanceof Error ? e.message : 'Try again.');
+      // Nothing to decide, so a toast; the permission prompt above stays an Alert because it
+      // offers Settings.
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t save the video',
+        message: userMessage(e, 'Try again.', 'photos'),
+      });
     }
   }
 

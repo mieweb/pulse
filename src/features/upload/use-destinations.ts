@@ -1,7 +1,11 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
-import { deleteDestination, destinationsQuery } from '@/db/destinations';
+import {
+  deleteDestination,
+  deleteDestinationIfExpired,
+  destinationsQuery,
+} from '@/db/destinations';
 import { getDestinationToken } from '@/db/secure-token';
 import { useNow } from '@/hooks/use-now';
 
@@ -25,6 +29,27 @@ export type DestinationOption = {
 };
 
 /**
+ * Bumped when a pairing rewrites the token of a row that already existed (the same link again
+ * keeps its row id). Each `useDestinations` loads tokens only when its set of row ids changes, so
+ * without this a screen already open would keep the row's old token; a bump makes every one
+ * reload them from secure-store.
+ */
+let tokensVersion = 0;
+const tokensListeners = new Set<() => void>();
+
+export function reloadDestinationTokens() {
+  tokensVersion += 1;
+  for (const listener of tokensListeners) listener();
+}
+
+function subscribeTokens(listener: () => void) {
+  tokensListeners.add(listener);
+  return () => {
+    tokensListeners.delete(listener);
+  };
+}
+
+/**
  * Shared read model over the device-wide destination pool (`upload_destinations`). Live-queries
  * the rows, loads each row's bearer token from expo-secure-store (which has no live-query
  * equivalent), filters out expired ones, and re-evaluates on a timer so expiry countdowns tick
@@ -38,9 +63,10 @@ export function useDestinations() {
   // Reactive wall-clock so expiry filtering/labels re-evaluate as time passes, even without a DB
   // write — a token can lapse while the user just sits on the screen.
   const now = useNow(EXPIRY_CHECK_INTERVAL_MS);
+  const version = useSyncExternalStore(subscribeTokens, () => tokensVersion);
 
   // Tokens live in secure-store keyed by row id; load them into a map keyed on id. Re-fires only
-  // when the set of ids changes, not on every render.
+  // when the set of ids changes or a pairing rewrote a token (`version`), not on every render.
   const idsKey = useMemo(() => rows.map((r) => r.id).join(','), [rows]);
   const [tokens, setTokens] = useState<Record<string, string | null>>({});
   useEffect(() => {
@@ -60,7 +86,7 @@ export function useDestinations() {
     return () => {
       cancelled = true;
     };
-  }, [idsKey]);
+  }, [idsKey, version]);
 
   const destinations: DestinationOption[] = useMemo(
     () =>
@@ -88,7 +114,10 @@ export function useDestinations() {
     for (const r of rows) {
       const token = tokens[r.id];
       if (token !== undefined && isTokenExpired(token, now)) {
-        void deleteDestination(r.id);
+        // Decided again from the stored token when it runs: a re-pair may have refreshed it.
+        void deleteDestinationIfExpired(r.id, (stored) => isTokenExpired(stored, Date.now())).catch(
+          () => {},
+        );
       }
     }
   }, [rows, tokens, now]);

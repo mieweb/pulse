@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
+import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Accent } from '@/constants/theme';
 import type { TranscriptLine, TranscriptWord } from './whisper';
 
@@ -39,6 +40,7 @@ function findActiveLine(lines: TranscriptLine[], posCs: number): number {
  * Time sync is the caller's job: feed `positionMs` from expo-video's `timeUpdate` event.
  */
 export function CaptionOverlay({ lines, positionMs, fontSize = 17 }: Props) {
+  const textSizeKey = useTextSizeKey();
   const posCs = positionMs / 10;
   const lineIdx = findActiveLine(lines, posCs);
   const line = lineIdx >= 0 ? lines[lineIdx] : undefined;
@@ -69,7 +71,12 @@ export function CaptionOverlay({ lines, positionMs, fontSize = 17 }: Props) {
           paddingHorizontal: pad,
           paddingVertical: pad / 2,
         }}>
-        <Text style={[styles.text, { fontSize, lineHeight: fontSize * 1.3 }]}>
+        {/* Capped like the app's other text over video: the caption grows with the text size,
+            but past 1.3× it would cover the frame it describes. */}
+        <Text
+          key={textSizeKey}
+          maxFontSizeMultiplier={1.3}
+          style={[styles.text, { fontSize, lineHeight: fontSize * 1.3 }]}>
           {words.map((w, i) => (
             <Text
               key={`${lineIdx}:${i}`}

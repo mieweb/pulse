@@ -105,15 +105,23 @@ export function expiresAtMs(token: string | null): number | null {
   return claims ? claims.exp * 1000 : null;
 }
 
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+
 /**
- * Human label for a token's remaining validity, for the destination UI:
- * `"No expiry"` (tokenless / opaque), `"Expired"`, or `"Expires in Nm"` / `"Expires in Ns"`.
+ * Human label for a token's remaining validity, for the destination UI: `"No expiry"` (tokenless /
+ * opaque), `"Expired"`, or `"Expires in"` the largest unit that reads naturally — seconds, then
+ * minutes under an hour, hours under two days, else days (a 7-day link reads "7d", not "10079m").
+ * Minutes and hours round down, so the label never promises time that isn't there; days round to
+ * nearest, or a link minted seconds ago would read a day short ("6d") for most of its first day.
  */
 export function formatExpiry(token: string | null, nowMs: number): string {
   const exp = expiresAtMs(token);
   if (exp === null) return 'No expiry';
   const remainingMs = exp - EXPIRY_BUFFER_MS - nowMs;
   if (remainingMs <= 0) return 'Expired';
+  if (remainingMs >= 2 * DAY_MS) return `Expires in ${Math.round(remainingMs / DAY_MS)}d`;
+  if (remainingMs >= HOUR_MS) return `Expires in ${Math.floor(remainingMs / HOUR_MS)}h`;
   const minutes = Math.floor(remainingMs / 60_000);
   if (minutes >= 1) return `Expires in ${minutes}m`;
   return `Expires in ${Math.max(1, Math.ceil(remainingMs / 1000))}s`;

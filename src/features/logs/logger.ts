@@ -108,11 +108,14 @@ export function installLogCapture(): void {
 
 /** A text file with `header` (the About details) followed by the log, ready to share. */
 export function writeLogExport(header: string): File {
-  flushLogs();
   const file = new File(Paths.cache, 'pulse-logs.txt');
   if (file.exists) file.delete();
-  file.write(
-    `${header}\n\n--- Log (${buffer.size} entries, oldest first) ---\n${buffer.all().join('\n')}\n`,
-  );
+  file.write(logExportText(header));
   return file;
+}
+
+/** The log export as text: `header`, then every buffered entry, oldest first. */
+export function logExportText(header: string): string {
+  flushLogs();
+  return `${header}\n\n--- Log (${buffer.size} entries, oldest first) ---\n${buffer.all().join('\n')}\n`;
 }

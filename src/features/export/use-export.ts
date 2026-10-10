@@ -3,6 +3,7 @@ import VideoTrim, { merge, type Spec } from 'react-native-video-trim';
 
 import type { Segment } from '@/db/schema';
 import { absolutize } from '@/utils/file-store';
+import { userMessage } from '@/utils/user-message';
 import { canonicalEdit, effFile } from '@/utils/segment-window';
 
 import { mergedSignature, REELS_TARGET } from './merge-signature';
@@ -80,13 +81,10 @@ export function useExport(draftId: string, segments: Segment[]) {
         });
         if (current) setState({ status: 'done', outputPath: path, durationMs });
       } catch (e) {
-        console.warn('[export] merge failed', e);
-        if (current) {
-          setState({
-            status: 'error',
-            message: e instanceof Error ? e.message : 'Could not merge the clips.',
-          });
-        }
+        // Shown on the export screen: a native merge error (an OSStatus, a MediaCodec stack) is
+        // logged in full and replaced with a plain line (see userMessage).
+        const message = userMessage(e, 'Couldn’t prepare the video.', 'export');
+        if (current) setState({ status: 'error', message });
       }
     })();
 

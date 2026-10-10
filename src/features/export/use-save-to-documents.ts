@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Alert } from 'react-native';
 import { saveToDocuments } from 'react-native-video-trim';
 
 import { useToast } from '@/features/toast/toast-provider';
+import { userMessage } from '@/utils/user-message';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved';
 
@@ -29,7 +29,11 @@ export function useSaveToDocuments() {
       }
     } catch (e) {
       setStatus('idle');
-      Alert.alert('Couldn’t save the video', e instanceof Error ? e.message : 'Try again.');
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t save the video',
+        message: userMessage(e, 'Try again.', 'files'),
+      });
     }
   }
 

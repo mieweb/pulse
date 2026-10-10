@@ -4,24 +4,39 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { Icon, type IconName } from '@/components/icon';
 import { GlassPill } from '@/components/glass-pill';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from 'react-native';
+import Animated, {
+  FadeIn,
+  FadeOut,
+  interpolate,
+  LinearTransition,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  ZoomIn,
+  ZoomOut,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PrimaryButton } from '@/components/primary-button';
+import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { ControlScrim, Spacing } from '@/constants/theme';
+import { EaseOut, ListReflowMs } from '@/constants/motion';
+import { ControlScrim, Opacity, Radius, Spacing } from '@/constants/theme';
 import { segmentsForDraft } from '@/db/drafts';
 import { clearEditedTranscript, getDraftTranscriptRow } from '@/db/transcripts';
 import { selectedModelQuery } from '@/db/settings';
@@ -29,7 +44,6 @@ import { CloseButton } from '@/features/recorder/close-button';
 import { CaptionOverlay } from '@/features/transcription/caption-overlay';
 import { CueRow } from '@/features/transcription/cue-row';
 import { CueToolbar } from '@/features/transcription/cue-toolbar';
-import { ModelSwitcherModal } from '@/features/transcription/model-switcher-modal';
 import { resolveSelectedModel } from '@/features/transcription/models';
 import { useAutosaveTranscript } from '@/features/transcription/use-autosave-transcript';
 import { useSubtitleEditor, type Cue } from '@/features/transcription/use-subtitle-editor';
@@ -73,21 +87,24 @@ export default function SubtitlesScreen() {
 
   if (missing) {
     return (
-      <ThemedView style={[styles.fill, styles.centerAll]}>
-        <ThemedText>Captions unavailable — export the video first.</ThemedText>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.linkBtn, pressed && styles.pressedLink]}>
-          <ThemedText themeColor="accent">Go back</ThemedText>
-        </Pressable>
+      <ThemedView type="groupedBackground" style={[styles.fill, styles.centerAll]}>
+        {/* A full-width wrap so the Go back button spans the column like the app's other
+            state actions, rather than hugging its label. */}
+        <View style={styles.stateWrap}>
+          <StateMessage
+            icon="captions.bubble"
+            title="Captions unavailable"
+            message="Export the video first.">
+            <PrimaryButton variant="card" label="Go back" onPress={() => router.back()} />
+          </StateMessage>
+        </View>
       </ThemedView>
     );
   }
 
   if (!data) {
     return (
-      <ThemedView style={[styles.fill, styles.centerAll]}>
+      <ThemedView type="groupedBackground" style={[styles.fill, styles.centerAll]}>
         <ActivityIndicator />
       </ThemedView>
     );
@@ -140,7 +157,6 @@ function Editor({
   // so the user can switch models without leaving the caption editor.
   const { data: modelRow } = useLiveQuery(selectedModelQuery, []);
   const selectedModel = resolveSelectedModel(modelRow[0]?.value);
-  const [modelSheetVisible, setModelSheetVisible] = useState(false);
 
   const player = useVideoPlayer(toFileUri(videoUri), (p) => {
     p.timeUpdateEventInterval = 0.1;
@@ -149,8 +165,13 @@ function Editor({
   const timeUpdate = useEvent(player, 'timeUpdate');
   const { isPlaying, seekTo } = useParkedPlayback(player);
   const posCs = (timeUpdate?.currentTime ?? player.currentTime) * 100;
+  // Latest `seekTo` for the row callbacks below, which must keep one identity across renders.
+  const seekToRef = useRef(seekTo);
+  useEffect(() => {
+    seekToRef.current = seekTo;
+  });
 
-  const { toLines } = editor;
+  const { toLines, setText, endCoalescing } = editor;
   const lines = useMemo(() => toLines(), [toLines]);
   const { markCleared } = useAutosaveTranscript({
     draftId,
@@ -160,6 +181,19 @@ function Editor({
     savedJson,
   });
 
+  // Reset to automatic captions is one undoable edit (the header Undo brings the edits back).
+  // The row follows the cues: whenever they ARE the reset list — the reset itself, or an
+  // undo/redo back to it — the row is unlocked again (`clearEditedTranscript`, re-armed gate),
+  // and undoing away from it makes the editor dirty so the autosave locks it with the edits.
+  // Declared after useAutosaveTranscript so this runs after its effect and cancels the save it
+  // would otherwise queue for the reset list.
+  const resetCuesRef = useRef<Cue[] | null>(null);
+  useEffect(() => {
+    if (editor.cues !== resetCuesRef.current) return;
+    markCleared();
+    void clearEditedTranscript(draftId);
+  }, [editor.cues, markCleared, draftId]);
+
   // Selection drives the mode; both ids are cleared/derived defensively — a stale id (cue removed
   // by undo/delete/split) simply resolves to no cue and the screen falls back to browse mode.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -167,6 +201,53 @@ function Editor({
   const selCue = editor.cues.find((c) => c.id === selectedId) ?? null;
   const mode: 'browse' | 'timing' | 'text' =
     selCue && editingId === selCue.id ? 'text' : selCue ? 'timing' : 'browse';
+
+  // Text mode shrinks the preview so the edited row stays above the keyboard; it eases between
+  // the two widths instead of snapping (0 = full, 1 = compact).
+  const compact = useSharedValue(mode === 'text' ? 1 : 0);
+  useEffect(() => {
+    compact.set(withTiming(mode === 'text' ? 1 : 0, { duration: 250, easing: EaseOut }));
+  }, [mode, compact]);
+  const previewWidth = useAnimatedStyle(() => ({
+    width: `${interpolate(compact.get(), [0, 1], [PREVIEW_FULL, PREVIEW_COMPACT])}%` as const,
+  }));
+  // The caption and ▶ layer is laid out once, at the full preview's size, and scaled with the
+  // card off the same `compact` value — so the caption text and the badge shrink in step with
+  // the width instead of switching size on the first frame of a 250ms ease. Scaling (rather
+  // than swapping font sizes when the ease ends) keeps the layout fixed: the caption never
+  // rewraps mid-animation, and browsing — where captions are actually read — is at 1×, drawn
+  // natively. Text mode shows them at 0.64× on a thumbnail-sized preview, where a slightly
+  // softer bitmap scale doesn't matter. Scale only: the ▶ is glass, which must never sit under
+  // an opacity.
+  const { width: windowWidth } = useWindowDimensions();
+  const layerWidth = (windowWidth * PREVIEW_FULL) / 100;
+  const layerScale = useAnimatedStyle(() => ({
+    transform: [{ scale: interpolate(compact.get(), [0, 1], [1, PREVIEW_COMPACT / PREVIEW_FULL]) }],
+  }));
+
+  // The list glides when the toolbar docks or the footer leaves (browse ↔ timing), but not into
+  // or out of text mode: there the preview's width animation and the KeyboardAvoidingView's
+  // padding already move it, and a layout transition on top would chase them frame by frame.
+  const [modeChange, setModeChange] = useState({ from: mode, to: mode });
+  if (modeChange.to !== mode) setModeChange({ from: modeChange.to, to: mode });
+  const reflowList = mode !== 'text' && modeChange.from !== 'text';
+
+  // Rows glide (and a removed one fades) only in the render that shows a structural edit —
+  // delete, split, merge. Typing changes the list too, and must never animate the row being
+  // typed in. The handler arms it with the list it edits; the next list is the edited one, and
+  // anything after that (typing, undo) is no longer it. The timer disarms it once the glide is
+  // over (or after a no-op edit, which never produces a next list).
+  const [rowsEdit, setRowsEdit] = useState<{ from: Cue[]; to: Cue[] | null } | null>(null);
+  if (rowsEdit && !rowsEdit.to && editor.cues !== rowsEdit.from) {
+    setRowsEdit({ from: rowsEdit.from, to: editor.cues });
+  }
+  const rowsReflow = rowsEdit != null && rowsEdit.to === editor.cues;
+  useEffect(() => {
+    if (!rowsEdit) return;
+    const timer = setTimeout(() => setRowsEdit(null), ListReflowMs);
+    return () => clearTimeout(timer);
+  }, [rowsEdit]);
+  const armRowsReflow = () => setRowsEdit({ from: editor.cues, to: null });
 
   const playingId = useMemo(() => {
     const c = editor.cues.find((x) => posCs >= x.t0 && posCs <= x.t1);
@@ -204,28 +285,36 @@ function Editor({
     return () => hide.remove();
   }, [editingId]);
 
-  const scrollToCue = (id: string, margin: number) => {
+  const scrollToCue = useCallback((id: string, margin: number) => {
     const y = offsets.current.get(id);
     if (y != null) scrollRef.current?.scrollTo({ y: Math.max(0, y - margin), animated: true });
-  };
+  }, []);
 
-  const selectCue = (cue: Cue) => {
+  // The row callbacks keep one identity across renders, so the memoized rows that aren't
+  // playing skip the 10×/s playback re-renders.
+  const selectCue = useCallback(
+    (cue: Cue) => {
+      setEditingId(null);
+      setSelectedId(cue.id);
+      player.pause();
+      seekToRef.current(cue.t0 / 100);
+      scrollToCue(cue.id, 96);
+    },
+    [player, scrollToCue],
+  );
+
+  const beginTextEdit = useCallback(
+    (id: string) => {
+      setEditingId(id);
+      scrollToCue(id, Spacing.two);
+    },
+    [scrollToCue],
+  );
+
+  const endTextEdit = useCallback(() => {
     setEditingId(null);
-    setSelectedId(cue.id);
-    player.pause();
-    seekTo(cue.t0 / 100);
-    scrollToCue(cue.id, 96);
-  };
-
-  const beginTextEdit = (id: string) => {
-    setEditingId(id);
-    scrollToCue(id, Spacing.two);
-  };
-
-  const endTextEdit = () => {
-    setEditingId(null);
-    editor.endCoalescing();
-  };
+    endCoalescing();
+  }, [endCoalescing]);
 
   const clearSelection = () => {
     setSelectedId(null);
@@ -253,37 +342,25 @@ function Editor({
 
   const onSplit = () => {
     if (!selCue) return;
+    armRowsReflow();
     const id = editor.splitAt(selCue.id, posCs);
     if (id) setSelectedId(id); // keep selection on the playhead's half
   };
 
   const [rowEdited, setRowEdited] = useState(savedJson != null);
   const showReset = (rowEdited || editor.dirty) && editor.cues.length > 0;
+  // No confirm: the reset is a step in the editor's history (see resetCuesRef), so the header
+  // Undo brings the edits back.
   const onResetToAuto = () => {
-    Alert.alert(
-      'Reset captions?',
-      'This discards your edits and restores the automatic captions.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            clearSelection();
-            await clearEditedTranscript(draftId);
-            markCleared();
-            editor.reset(autoLines);
-            setRowEdited(false);
-          },
-        },
-      ],
-    );
+    clearSelection();
+    resetCuesRef.current = editor.resetTo(autoLines);
+    setRowEdited(false);
   };
 
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
 
   return (
-    <ThemedView style={styles.fill}>
+    <ThemedView type="groupedBackground" style={styles.fill}>
       <KeyboardAvoidingView
         style={styles.fill}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -291,7 +368,14 @@ function Editor({
           <View
             style={[styles.headerTitleWrap, { top: insets.top + Spacing.two }]}
             pointerEvents="none">
-            <ThemedText type="headline">Captions</ThemedText>
+            <ThemedText
+              type="headline"
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+              maxFontSizeMultiplier={1.3}>
+              Captions
+            </ThemedText>
           </View>
           <CloseButton onPress={() => router.back()} />
           <View style={styles.headerActions}>
@@ -302,8 +386,7 @@ function Editor({
               selected={!!selectedModel}
               valueText={selectedModel ? selectedModel.label : 'Off'}
               disabled={false}
-              onPress={() => setModelSheetVisible(true)}
-              tintColor={selectedModel ? theme.accent : undefined}
+              onPress={() => router.push('/on-device-ai')}
             />
             <HeaderBtn
               name="arrow.uturn.backward"
@@ -320,115 +403,167 @@ function Editor({
           </View>
         </View>
 
-        <Pressable
-          style={[styles.previewCard, mode === 'text' ? styles.previewCompact : styles.previewFull]}
-          onPress={togglePlay}
-          accessibilityLabel="Toggle playback">
-          <VideoView
+        {/* The 4pt vertical margin snaps with the mode; only the width eases (`previewWidth`). */}
+        <Animated.View
+          style={[
+            styles.previewCard,
+            mode === 'text' ? styles.previewCardCompact : styles.previewCardFull,
+            previewWidth,
+          ]}>
+          <Pressable
             style={StyleSheet.absoluteFill}
-            player={player}
-            contentFit="contain"
-            nativeControls={false}
-          />
-          <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            <CaptionOverlay
-              lines={lines}
-              positionMs={posCs * 10}
-              fontSize={mode === 'text' ? 12 : 17}
+            onPress={togglePlay}
+            accessibilityRole="button"
+            accessibilityLabel="Toggle playback">
+            <VideoView
+              style={StyleSheet.absoluteFill}
+              player={player}
+              contentFit="contain"
+              nativeControls={false}
+              // Android: the default SurfaceView ignores the card's rounded clipping (and this
+              // card is resized every frame of the text-mode ease). A TextureView clips and
+              // resizes like any view — the same as the recorder's preview.
+              surfaceType="textureView"
             />
-          </View>
-          {!isPlaying && (
-            <View style={styles.playOverlay} pointerEvents="none">
-              <GlassPill style={[styles.playBadge, mode === 'text' && styles.playBadgeCompact]}>
-                <Icon name="play.fill" size={mode === 'text' ? 15 : 22} tintColor="#fff" />
-              </GlassPill>
-            </View>
-          )}
-        </Pressable>
+            <Animated.View
+              style={[
+                styles.previewLayer,
+                { width: layerWidth, height: (layerWidth * 16) / 9 },
+                layerScale,
+              ]}
+              pointerEvents="none">
+              <CaptionOverlay lines={lines} positionMs={posCs * 10} />
+              {!isPlaying && (
+                <Animated.View
+                  style={styles.playOverlay}
+                  entering={BADGE_ENTER}
+                  exiting={BADGE_EXIT}>
+                  <GlassPill style={styles.playBadge}>
+                    <Icon name="play.fill" size={22} tintColor="#fff" />
+                  </GlassPill>
+                </Animated.View>
+              )}
+            </Animated.View>
+          </Pressable>
+        </Animated.View>
 
+        {/* Fades in only. No exit fade: on timing → text the toolbar would linger over the list
+            as it moves up into its place, a ghost strip over the rows. */}
         {mode === 'timing' && selCue && (
-          <CueToolbar
-            cue={selCue}
-            posCs={posCs}
-            theme={theme}
-            canMerge={selIndex >= 0 && selIndex < editor.cues.length - 1}
-            onSplit={onSplit}
-            onMerge={() => editor.mergeNext(selCue.id)}
-            onDelete={() => {
-              editor.remove(selCue.id);
-              clearSelection();
-            }}
-          />
+          <Animated.View entering={TOOLBAR_ENTER}>
+            <CueToolbar
+              cue={selCue}
+              posCs={posCs}
+              theme={theme}
+              canMerge={selIndex >= 0 && selIndex < editor.cues.length - 1}
+              onSplit={onSplit}
+              onMerge={() => {
+                armRowsReflow();
+                editor.mergeNext(selCue.id);
+              }}
+              onDelete={() => {
+                armRowsReflow();
+                editor.remove(selCue.id);
+                clearSelection();
+              }}
+            />
+          </Animated.View>
         )}
 
-        <ScrollView
-          ref={scrollRef}
-          style={styles.list}
-          contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 96 }]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          onScrollBeginDrag={onUserScrollStart}
-          onScrollEndDrag={onUserScrollSettle}
-          onMomentumScrollEnd={onUserScrollSettle}>
-          {editor.cues.length === 0 && (
-            <ThemedText themeColor="textSecondary" style={styles.empty}>
-              No captions yet. Add a cue at the playhead to start.
-            </ThemedText>
-          )}
-          {editor.cues.map((cue) => (
-            <View
-              key={cue.id}
-              onLayout={(e: LayoutChangeEvent) =>
-                offsets.current.set(cue.id, e.nativeEvent.layout.y)
-              }>
-              <CueRow
-                cue={cue}
-                state={
-                  cue.id === editingId ? 'editing' : cue.id === selectedId ? 'selected' : 'view'
-                }
-                playing={cue.id === playingId}
-                posCs={posCs}
-                theme={theme}
-                onSelect={() => selectCue(cue)}
-                onBeginTextEdit={() => beginTextEdit(cue.id)}
-                onChangeText={(t) => editor.setText(cue.id, t)}
-                onEndTextEdit={endTextEdit}
-              />
-            </View>
-          ))}
-          {showReset && (
-            <Pressable
-              onPress={onResetToAuto}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.resetLink, pressed && styles.pressedLink]}>
-              <ThemedText type="footnote" themeColor="textSecondary">
-                Reset to automatic captions
+        <Animated.View style={styles.list} layout={reflowList ? LIST_REFLOW : undefined}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.list}
+            contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 96 }]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            onScrollBeginDrag={onUserScrollStart}
+            onScrollEndDrag={onUserScrollSettle}
+            onMomentumScrollEnd={onUserScrollSettle}>
+            {editor.cues.length === 0 && (
+              <ThemedText themeColor="textSecondary" style={styles.empty}>
+                No captions yet. Add one at the playhead to start.
               </ThemedText>
-            </Pressable>
-          )}
-        </ScrollView>
+            )}
+            {editor.cues.map((cue) => (
+              <Animated.View
+                key={cue.id}
+                layout={rowsReflow ? LIST_REFLOW : undefined}
+                // Always set: Reanimated reads `exiting` from the props a row last rendered
+                // with, so arming it in the render that removes the row came too late. Rows only
+                // unmount when a caption goes (delete, merge, undo, reset), never while typing.
+                exiting={ROW_EXIT}
+                onLayout={(e: LayoutChangeEvent) =>
+                  offsets.current.set(cue.id, e.nativeEvent.layout.y)
+                }>
+                <CueRow
+                  cue={cue}
+                  state={
+                    cue.id === editingId ? 'editing' : cue.id === selectedId ? 'selected' : 'view'
+                  }
+                  playing={cue.id === playingId}
+                  // Only the playing row reads the playhead; the rest keep a constant 0 and skip
+                  // the playback re-renders (CueRow is memoized).
+                  posCs={cue.id === playingId ? posCs : 0}
+                  theme={theme}
+                  onSelect={selectCue}
+                  onBeginTextEdit={beginTextEdit}
+                  onChangeText={setText}
+                  onEndTextEdit={endTextEdit}
+                />
+              </Animated.View>
+            ))}
+            {showReset && (
+              <Pressable
+                onPress={onResetToAuto}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.resetLink, pressed && styles.pressedLink]}>
+                <ThemedText type="footnote" themeColor="textSecondary">
+                  Reset to automatic captions
+                </ThemedText>
+              </Pressable>
+            )}
+          </ScrollView>
+        </Animated.View>
 
         {mode === 'browse' && (
-          <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.two }]}>
-            <Pressable
+          <Animated.View
+            entering={FOOTER_ENTER}
+            exiting={FOOTER_EXIT}
+            style={[styles.footer, { paddingBottom: insets.bottom + Spacing.two }]}>
+            <PrimaryButton
+              variant="card"
+              label="Add caption"
+              icon="plus"
               onPress={onAddCue}
-              accessibilityRole="button"
-              style={({ pressed }) => [
-                styles.footerBtn,
-                { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                pressed && styles.pressed,
-              ]}>
-              <Icon name="plus" size={18} tintColor={theme.text} />
-              <ThemedText>Add cue</ThemedText>
-            </Pressable>
-          </View>
+              style={styles.footerBtn}
+            />
+          </Animated.View>
         )}
       </KeyboardAvoidingView>
-
-      <ModelSwitcherModal visible={modelSheetVisible} onClose={() => setModelSheetVisible(false)} />
     </ThemedView>
   );
 }
+
+/** The preview's width, in % of the screen: browsing, and text mode (keyboard up). */
+const PREVIEW_FULL = 56;
+const PREVIEW_COMPACT = 36;
+
+/** The list's glide when the toolbar docks or the footer leaves (see `reflowList`), and the
+ * rows' when one is deleted, split or merged (see `rowsReflow`). */
+const LIST_REFLOW = LinearTransition.duration(ListReflowMs).easing(EaseOut);
+// Opacity-only fades, so they play under Reduce Motion too (nothing moves).
+const ROW_EXIT = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
+const TOOLBAR_ENTER = FadeIn.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
+const FOOTER_ENTER = TOOLBAR_ENTER;
+const FOOTER_EXIT = FadeOut.duration(120).easing(EaseOut).reduceMotion(ReduceMotion.Never);
+// The ▶ badge zooms (like the recorder preview's): scale only, never an opacity on the glass.
+const BADGE_ENTER = ZoomIn.duration(150);
+const BADGE_EXIT = ZoomOut.duration(150);
+
+// The header's right-hand cluster: three 40pt buttons, 8pt apart.
+const HEADER_BTN = 40;
+const HEADER_ACTIONS_WIDTH = HEADER_BTN * 3 + Spacing.two * 2;
 
 function HeaderBtn({
   name,
@@ -438,7 +573,6 @@ function HeaderBtn({
   valueText,
   disabled,
   onPress,
-  tintColor,
 }: {
   name: IconName;
   label: string;
@@ -450,9 +584,9 @@ function HeaderBtn({
   valueText?: string;
   disabled: boolean;
   onPress: () => void;
-  tintColor?: string;
 }) {
   const mode = useThemeMode();
+  const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -466,10 +600,13 @@ function HeaderBtn({
       style={({ pressed }) => [
         styles.headerBtn,
         ControlScrim[mode],
+        // "On" fills the circle with the accent and keeps the glyph white: a red glyph on the
+        // grey scrim was ~1.3:1 in light mode, barely readable.
+        selected && { backgroundColor: theme.accent, borderColor: 'transparent' },
         disabled && styles.headerBtnDisabled,
         pressed && styles.pressed,
       ]}>
-      <Icon name={name} size={20} weight="semibold" tintColor={tintColor ?? '#fff'} />
+      <Icon name={name} size={20} weight="semibold" tintColor="#fff" />
     </Pressable>
   );
 }
@@ -477,10 +614,9 @@ function HeaderBtn({
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   centerAll: { alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
-  // ≥44pt tall tap target (22pt line + 11 each side).
-  linkBtn: { paddingHorizontal: Spacing.three, paddingVertical: 11 },
-  pressed: { opacity: 0.85 },
-  pressedLink: { opacity: 0.6 },
+  stateWrap: { alignSelf: 'stretch', paddingHorizontal: Spacing.three },
+  pressed: { opacity: Opacity.pressed },
+  pressedLink: { opacity: Opacity.pressedGlyph },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -488,10 +624,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
   },
+  // Inset past the wider (right-hand) button cluster on BOTH sides, so the title stays centred
+  // and can never run under the ✕ or the buttons; it shrinks to fit instead (adjustsFontSizeToFit).
   headerTitleWrap: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    left: Spacing.three + HEADER_ACTIONS_WIDTH,
+    right: Spacing.three + HEADER_ACTIONS_WIDTH,
     bottom: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',
@@ -500,24 +638,28 @@ const styles = StyleSheet.create({
   // Same 40pt scrim circle as the ✕ beside it (and export's captions button), so the header
   // reads as one set.
   headerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: HEADER_BTN,
+    height: HEADER_BTN,
+    borderRadius: HEADER_BTN / 2,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerBtnDisabled: { opacity: 0.35 },
+  headerBtnDisabled: { opacity: Opacity.disabled },
+  // Width is animated (`previewWidth`): 56% browsing, 36% in text mode.
   previewCard: {
     aspectRatio: 9 / 16,
     overflow: 'hidden',
-    borderRadius: 12,
+    borderRadius: Radius.row,
+    borderCurve: 'continuous',
     backgroundColor: '#000',
     alignSelf: 'center',
   },
-  previewFull: { width: '56%', marginVertical: Spacing.two },
-  // Text mode: smaller so the editing row stays visible above the keyboard.
-  previewCompact: { width: '36%', marginVertical: Spacing.one },
+  previewCardFull: { marginVertical: Spacing.two },
+  previewCardCompact: { marginVertical: Spacing.one },
+  // Sized inline to the full preview and scaled from its top-left corner (`layerScale`), so it
+  // always covers the card exactly.
+  previewLayer: { position: 'absolute', left: 0, top: 0, transformOrigin: 'top left' },
   playOverlay: {
     position: 'absolute',
     top: 0,
@@ -536,7 +678,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingLeft: 3,
   },
-  playBadgeCompact: { width: 32, height: 32, borderRadius: 16, paddingLeft: 2 },
   list: { flex: 1 },
   listContent: { padding: Spacing.three },
   empty: { textAlign: 'center', marginTop: Spacing.five },
@@ -546,14 +687,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingTop: Spacing.two,
   },
-  footerBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    gap: Spacing.two,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 52,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
+  footerBtn: { flex: 1 },
 });

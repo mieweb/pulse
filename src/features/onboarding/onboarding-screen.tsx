@@ -20,14 +20,40 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PrimaryButton } from '@/components/primary-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { CardShadow, Opacity, Spacing } from '@/constants/theme';
 import { markOnboardingComplete } from '@/db/settings';
 import { ONBOARDING_STEPS } from '@/features/onboarding/steps';
 import { useTheme } from '@/hooks/use-theme';
 
-/** A single page indicator that grows/brightens as its page scrolls into view. */
+const DOT = 8;
+const DOT_ACTIVE = 22;
+const DOT_GAP = Spacing.two;
+/**
+ * The dot row's width, the same at every scroll position: the page arriving widens its dot by as
+ * much as the page leaving narrows its own, so one active dot's width is always shared out.
+ */
+const DOTS_WIDTH = DOT_ACTIVE + (ONBOARDING_STEPS.length - 1) * (DOT + DOT_GAP);
+
+/** How wide dot `i` is with the pages scrolled to `x` (pages `width` wide). */
+function dotWidth(i: number, x: number, width: number): number {
+  'worklet';
+  return interpolate(
+    x,
+    [(i - 1) * width, i * width, (i + 1) * width],
+    [DOT, DOT_ACTIVE, DOT],
+    Extrapolation.CLAMP,
+  );
+}
+
+/**
+ * A single page indicator that grows/brightens as its page scrolls into view. Absolutely placed
+ * in a fixed track and childless, so its width and position change every scroll frame without
+ * laying out anything else: in a flowing row, each frame's width change re-laid the whole row.
+ * Its offset is the dots before it at their resting width, plus however much they've grown.
+ */
 function Dot({
   index,
   scrollX,
@@ -40,10 +66,18 @@ function Dot({
   color: string;
 }) {
   const style = useAnimatedStyle(() => {
-    const input = [(index - 1) * width, index * width, (index + 1) * width];
+    const x = scrollX.get();
+    let offset = index * (DOT + DOT_GAP);
+    for (let i = 0; i < index; i++) offset += dotWidth(i, x, width) - DOT;
     return {
-      width: interpolate(scrollX.value, input, [8, 22, 8], Extrapolation.CLAMP),
-      opacity: interpolate(scrollX.value, input, [0.35, 1, 0.35], Extrapolation.CLAMP),
+      width: dotWidth(index, x, width),
+      transform: [{ translateX: offset }],
+      opacity: interpolate(
+        x,
+        [(index - 1) * width, index * width, (index + 1) * width],
+        [0.35, 1, 0.35],
+        Extrapolation.CLAMP,
+      ),
     };
   });
   return <Animated.View style={[styles.dot, { backgroundColor: color }, style]} />;
@@ -58,7 +92,7 @@ export function OnboardingScreen() {
   const [index, setIndex] = useState(0);
 
   const onScroll = useAnimatedScrollHandler((e) => {
-    scrollX.value = e.contentOffset.x;
+    scrollX.set(e.contentOffset.x);
   });
 
   const isLast = index === ONBOARDING_STEPS.length - 1;
@@ -81,14 +115,15 @@ export function OnboardingScreen() {
   };
 
   return (
-    <ThemedView style={styles.container}>
+    // Grouped, like the other full-screen screens: the white icon tile reads as a card on it.
+    <ThemedView type="groupedBackground" style={styles.container}>
       <View style={[styles.topBar, { paddingTop: insets.top + Spacing.two }]}>
         <Pressable
           onPress={() => finish(false)}
           hitSlop={12}
           accessibilityRole="button"
           style={({ pressed }) => pressed && styles.pressedText}>
-          <ThemedText type="smallBold" themeColor="textSecondary">
+          <ThemedText type="subheadlineEmphasized" themeColor="textSecondary">
             Skip
           </ThemedText>
         </Pressable>
@@ -114,11 +149,7 @@ export function OnboardingScreen() {
             {item.image ? (
               <Image source={item.image} style={styles.logo} contentFit="contain" />
             ) : (
-              <View
-                style={[
-                  styles.iconCard,
-                  { backgroundColor: theme.backgroundElement, borderColor: theme.border },
-                ]}>
+              <View style={[styles.iconCard, { backgroundColor: theme.card }]}>
                 <Icon name={item.symbol ?? 'sparkles'} size={56} tintColor={theme.accent} />
               </View>
             )}
@@ -134,7 +165,7 @@ export function OnboardingScreen() {
                         <View style={[styles.recordDot, { backgroundColor: theme.accent }]} />
                       </View>
                     ) : bullet.icon ? (
-                      <Icon name={bullet.icon} size={19} tintColor={theme.accent} />
+                      <Icon name={bullet.icon} size={19} tintColor={theme.accent} scalesWithText />
                     ) : (
                       <View style={[styles.bulletDot, { backgroundColor: theme.accent }]} />
                     )}
@@ -155,17 +186,7 @@ export function OnboardingScreen() {
             <Dot key={step.key} index={i} scrollX={scrollX} width={width} color={theme.accent} />
           ))}
         </View>
-        <Pressable
-          onPress={next}
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.cta,
-            { backgroundColor: theme.accent, opacity: pressed ? 0.85 : 1 },
-          ]}>
-          <ThemedText style={{ color: theme.onAccent }}>
-            {isLast ? 'Start recording' : 'Next'}
-          </ThemedText>
-        </Pressable>
+        <PrimaryButton label={isLast ? 'Start recording' : 'Next'} onPress={next} />
       </View>
     </ThemedView>
   );
@@ -173,10 +194,12 @@ export function OnboardingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // The app's 16 pt full-screen gutter for the bar and the footer; the pages' text keeps a
+  // narrower column (32 pt each side), easier to read at a glance.
   topBar: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: Spacing.three,
   },
   page: {
     flexGrow: 1,
@@ -194,7 +217,8 @@ const styles = StyleSheet.create({
     width: 116,
     height: 116,
     borderRadius: 28,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderCurve: 'continuous',
+    ...CardShadow,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -212,11 +236,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: Spacing.three,
   },
-  // Fixed lead column, sized to the first text line (lineHeight 24) and centering whatever
-  // glyph it holds — so icon, dot, and record bullets all align to the first line of text.
+  // Fixed lead column, sized to the first text line (body's lineHeight 22) and centering
+  // whatever glyph it holds — so icon, dot, and record bullets all align to the first line.
   bulletLead: {
-    width: 24,
-    height: 24,
+    width: 22,
+    height: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -243,23 +267,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   footer: {
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: Spacing.three,
     gap: Spacing.four,
   },
+  // A fixed track the dots are placed in (see `Dot`), centred in the footer.
   dots: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
+    alignSelf: 'center',
+    width: DOTS_WIDTH,
     height: 10,
   },
-  dot: { height: 8, borderRadius: 4 },
-  pressedText: { opacity: 0.6 },
-  // The app's standard primary button (export, captions, About, permission gate).
-  cta: {
-    height: 52,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
+  dot: {
+    position: 'absolute',
+    top: (10 - DOT) / 2,
+    left: 0,
+    height: DOT,
+    borderRadius: DOT / 2,
   },
+  pressedText: { opacity: Opacity.pressedGlyph },
 });

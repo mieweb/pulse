@@ -1,27 +1,32 @@
-// The drag-to-trash callbacks imperatively mutate refs + Reanimated shared values from
-// gesture event handlers (not during render) — the controller pattern the React-Compiler
-// immutability/refs rules flag. Disabled for this file, as in use-preview/playhead-cursor.
-/* eslint-disable react-hooks/immutability */
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   interpolateColor,
+  ReduceMotion,
   useAnimatedRef,
   useAnimatedStyle,
+  useReducedMotion,
   useScrollViewOffset,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import Sortable from 'react-native-sortables';
+import Sortable, {
+  type DragMoveParams,
+  type DragStartParams,
+  type SortableGridDragEndParams,
+} from 'react-native-sortables';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { GlassPill } from '@/components/glass-pill';
-import { Accent, ControlScrim, Spacing } from '@/constants/theme';
+import { EaseOut } from '@/constants/motion';
+import { Accent, ControlScrim, Opacity, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
 import { useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
-import { formatDurationPadded } from '@/utils/format';
+import { formatDuration } from '@/utils/format';
+import { haptics } from '@/utils/haptics';
 import { effMs } from '@/utils/segment-window';
 import { PlayheadCursor, type Cursor } from './playhead-cursor';
 import {
@@ -42,6 +47,24 @@ import {
 const TRASH_SIZE = 56;
 // Nudge the trash below the record button's exact center so it clears the preview modal.
 const TRASH_DROP_OFFSET = 18;
+// Never skipped for Reduce Motion: what they drive is opacity and colour (the scale that rides
+// along is dropped under Reduce Motion, see trashStyle).
+const TRASH_FADE = { duration: 150, easing: EaseOut, reduceMotion: ReduceMotion.Never };
+const TRASH_HOVER = { duration: 120, easing: EaseOut, reduceMotion: ReduceMotion.Never };
+// How much the trash grows while a clip hovers it.
+const TRASH_HOVER_SCALE = 0.12;
+// Once a clip is over the trash, it stays over until it leaves the grown circle (6% a side of 56 pt
+// is the hover scale's 62.7 pt): testing the resting rect both ways made the edge flicker in and
+// out, a haptic each time.
+const TRASH_EXIT_MARGIN = TRASH_HOVER_SCALE / 2;
+// Captured by the drag-move worklet, which can only call a JS function through scheduleOnRN.
+const hoverHaptic = haptics.tap;
+// The thumbs' labels (length, clip number) stay at their size whatever the text size: the 48 pt
+// thumb doesn't grow, so a larger label only covers the frame (at the largest size "00:01" ran
+// edge to edge), the way Photos keeps its thumbnails' durations fixed.
+const THUMB_TEXT_SCALE = 1;
+
+type TrashRect = { x: number; y: number; w: number; h: number };
 
 type Props = {
   segments: Segment[];
@@ -103,32 +126,115 @@ function Bar({
     // Preview opened before a pending scroll-to-newest ran — drop it; playhead-follow owns
     // the scroll now, and a stale flag would otherwise fire on a LATER content-size change.
     if (cursor) stickToEnd.current = false;
-    if (segments.length < prevCount.current) restoreOffset.current = scrollOffset.value;
+    if (segments.length < prevCount.current) restoreOffset.current = scrollOffset.get();
     else if (segments.length > prevCount.current && !cursor) stickToEnd.current = true;
     prevCount.current = segments.length;
   }, [segments.length, scrollOffset, cursor]);
 
   // Drag-to-trash. The trash floats above the bar, shown only while dragging; dropping a clip
-  // on it deletes that clip — otherwise the drag just reorders. Hit-testing is done from the
-  // drag's touch position (onDragMove) against the trash's measured window rect.
+  // on it deletes that clip — otherwise the drag just reorders. Hit-testing runs on the UI
+  // thread from the drag's touch position (onDragMove, a worklet) against the trash's measured
+  // window rect, and only a crossing in or out does anything: animate the highlight, tap.
+  // Hidden while previewing (see the trash below), so drags there only reorder.
+  const trashShown = !cursor;
   const trashRef = useRef<View>(null);
-  const trashRect = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const trashRect = useSharedValue<TrashRect | null>(null);
   const draggedKey = useRef<string | null>(null);
-  const overTrash = useRef(false);
+  const overTrash = useSharedValue(false);
   const vis = useSharedValue(0); // 0→1 trash fade-in during a drag
   const over = useSharedValue(0); // highlight when a dragged clip hovers the trash
 
-  const measureTrash = () =>
-    trashRef.current?.measureInWindow((x, y, w, h) => {
-      trashRect.current = { x, y, w, h };
-    });
+  // Measures the static target around the trash, not the trash itself: the trash is scaled
+  // (0.85 while it fades in), and measureInWindow reports the scaled rect — a target ~15% small.
+  const measureTrash = useCallback(
+    () =>
+      trashRef.current?.measureInWindow((x, y, w, h) => {
+        trashRect.set({ x, y, w, h });
+      }),
+    [trashRect],
+  );
 
+  // Reduce Motion keeps the fade and the colour change and drops the scale.
+  const reduceMotion = useReducedMotion();
   const trashStyle = useAnimatedStyle(() => ({
-    opacity: vis.value,
-    transform: [{ scale: 0.85 + 0.15 * vis.value + 0.12 * over.value }],
-    backgroundColor: interpolateColor(over.value, [0, 1], ['rgba(0,0,0,0.6)', Accent]),
-    borderColor: interpolateColor(over.value, [0, 1], ['rgba(255,255,255,0.4)', '#fff']),
+    opacity: vis.get(),
+    transform: reduceMotion
+      ? []
+      : [{ scale: 0.85 + 0.15 * vis.get() + TRASH_HOVER_SCALE * over.get() }],
+    backgroundColor: interpolateColor(over.get(), [0, 1], ['rgba(0,0,0,0.6)', Accent]),
+    borderColor: interpolateColor(over.get(), [0, 1], ['rgba(255,255,255,0.4)', '#fff']),
   }));
+
+  // The drag callbacks are stable, so the grid doesn't re-wrap them on every render; the
+  // parent's callbacks are read through this ref, kept current after each render.
+  const latest = useRef({ onDelete, onReorder, onDragActiveChange });
+  useEffect(() => {
+    latest.current = { onDelete, onReorder, onDragActiveChange };
+  });
+
+  const onDragStart = useCallback(
+    ({ key }: DragStartParams) => {
+      haptics.pickUp();
+      draggedKey.current = key;
+      overTrash.set(false);
+      over.set(0);
+      if (trashShown) {
+        vis.set(withTiming(1, TRASH_FADE));
+        measureTrash();
+      }
+      dragScroll.set(true); // pause playhead-follow so it can't fight the grid autoscroll
+      setDragActive(true); // hide → so the viewport gets its space
+      latest.current.onDragActiveChange?.(true);
+    },
+    [trashShown, measureTrash, overTrash, over, vis, dragScroll],
+  );
+
+  const onDragMove = useCallback(
+    ({ touchData }: DragMoveParams) => {
+      'worklet';
+      if (!trashShown) return;
+      const r = trashRect.get();
+      const was = overTrash.get();
+      // Leaving is tested against the grown rect (see TRASH_EXIT_MARGIN), entering the resting one.
+      const mx = was && r ? r.w * TRASH_EXIT_MARGIN : 0;
+      const my = was && r ? r.h * TRASH_EXIT_MARGIN : 0;
+      const inside =
+        !!r &&
+        touchData.absoluteX >= r.x - mx &&
+        touchData.absoluteX <= r.x + r.w + mx &&
+        touchData.absoluteY >= r.y - my &&
+        touchData.absoluteY <= r.y + r.h + my;
+      if (inside === was) return;
+      overTrash.set(inside);
+      over.set(withTiming(inside ? 1 : 0, TRASH_HOVER));
+      if (inside) scheduleOnRN(hoverHaptic);
+    },
+    [trashShown, trashRect, overTrash, over],
+  );
+
+  const onDragEnd = useCallback(
+    ({ data }: SortableGridDragEndParams<Segment>) => {
+      vis.set(withTiming(0, TRASH_FADE));
+      // Dropped on the trash → delete that clip; otherwise persist the new order.
+      const key = draggedKey.current;
+      const deleting = overTrash.get() && !!key;
+      // A delete leaves the trash red as it fades: easing it back to grey at the moment the
+      // delete lands read as "cancelled". (The next drag starts it grey again.)
+      if (!deleting) over.set(withTiming(0, TRASH_HOVER));
+      if (deleting && key) {
+        haptics.drop();
+        latest.current.onDelete(key);
+      } else {
+        latest.current.onReorder(data.map((s) => s.id));
+      }
+      overTrash.set(false);
+      draggedKey.current = null;
+      dragScroll.set(false);
+      setDragActive(false); // restore → now the drag is done
+      latest.current.onDragActiveChange?.(false);
+    },
+    [vis, over, overTrash, dragScroll],
+  );
 
   return (
     // Teleports the dragged thumbnail to a portal outlet rendered OUTSIDE the horizontal
@@ -155,21 +261,26 @@ function Bar({
             never intercepts touches; it's purely a drop zone hit-tested from the drag position.
             Hidden while previewing: it would float over the full-bleed video stage, and the
             preview's own 🗑 covers deletion — drags are reorder-only there. */}
-        {!cursor && (
+        {trashShown && (
           <View style={styles.trashWrap} pointerEvents="none">
-            <Animated.View
+            {/* The measured drop target: never transformed, so its rect is the trash at rest.
+                Not collapsable, or Android could flatten it away and leave nothing to measure. */}
+            <View
               ref={trashRef}
+              collapsable={false}
               onLayout={measureTrash}
-              style={[styles.trash, trashStyle]}>
-              <Icon name="trash.fill" size={22} tintColor="#fff" />
-            </Animated.View>
+              style={styles.trashTarget}>
+              <Animated.View style={[styles.trash, trashStyle]}>
+                <Icon name="trash.fill" size={22} tintColor="#fff" />
+              </Animated.View>
+            </View>
           </View>
         )}
 
         <View
           style={styles.viewport}
           onLayout={(e) => {
-            viewportW.value = e.nativeEvent.layout.width;
+            viewportW.set(e.nativeEvent.layout.width);
           }}>
           <Animated.ScrollView
             ref={scrollRef}
@@ -177,10 +288,10 @@ function Bar({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.content}
             onContentSizeChange={(w) => {
-              contentW.value = w;
+              contentW.set(w);
               // Restore the pre-delete offset now the remaining thumbs have laid out.
               if (restoreOffset.current != null) {
-                const target = Math.min(restoreOffset.current, Math.max(0, w - viewportW.value));
+                const target = Math.min(restoreOffset.current, Math.max(0, w - viewportW.get()));
                 restoreOffset.current = null;
                 scrollRef.current?.scrollTo({ x: target, animated: false });
               }
@@ -205,45 +316,9 @@ function Bar({
               // to open a gap, which made long bars feel like they scattered on pickup.
               // Note the semantics: dropping 1 on 5 exchanges them (2–4 stay put).
               strategy="swap"
-              onDragStart={({ key }) => {
-                draggedKey.current = key;
-                overTrash.current = false;
-                over.value = 0;
-                // No trash while previewing — the target isn't rendered (see above).
-                if (!cursor) {
-                  vis.value = withTiming(1, { duration: 150 });
-                  measureTrash();
-                }
-                dragScroll.value = true; // pause playhead-follow so it can't fight the grid autoscroll
-                setDragActive(true); // hide → so the viewport gets its space
-                onDragActiveChange?.(true);
-              }}
-              onDragMove={({ touchData }) => {
-                const r = trashRect.current;
-                const inside =
-                  !cursor &&
-                  !!r &&
-                  touchData.absoluteX >= r.x &&
-                  touchData.absoluteX <= r.x + r.w &&
-                  touchData.absoluteY >= r.y &&
-                  touchData.absoluteY <= r.y + r.h;
-                if (inside !== overTrash.current) {
-                  overTrash.current = inside;
-                  over.value = withTiming(inside ? 1 : 0, { duration: 120 });
-                }
-              }}
-              onDragEnd={({ data }) => {
-                vis.value = withTiming(0, { duration: 150 });
-                over.value = withTiming(0, { duration: 120 });
-                // Dropped on the trash → delete that clip; otherwise persist the new order.
-                if (overTrash.current && draggedKey.current) onDelete(draggedKey.current);
-                else onReorder(data.map((s) => s.id));
-                overTrash.current = false;
-                draggedKey.current = null;
-                dragScroll.value = false;
-                setDragActive(false); // restore → now the drag is done
-                onDragActiveChange?.(false);
-              }}
+              onDragStart={onDragStart}
+              onDragMove={onDragMove}
+              onDragEnd={onDragEnd}
               renderItem={({ item }) => (
                 <SegmentThumb
                   segment={item}
@@ -274,7 +349,7 @@ function Bar({
             onPress={onNext}
             accessibilityRole="button"
             accessibilityLabel="Next"
-            style={({ pressed }) => [styles.next, { opacity: pressed ? 0.85 : 1 }]}>
+            style={({ pressed }) => [styles.next, pressed && styles.nextPressed]}>
             <Icon name="arrow.right" size={22} weight="semibold" tintColor="#fff" />
           </Pressable>
         )}
@@ -326,8 +401,17 @@ function SegmentThumb({
       {durationMs > 0 && (
         <View style={styles.durationWrap} pointerEvents="none">
           <View style={styles.duration}>
-            <Text style={styles.durationText} numberOfLines={1}>
-              {formatDurationPadded(durationMs)}
+            {/* Shrinks to fit rather than overflow the 48 pt thumb: an hour-long clip's
+                "1:02:03". */}
+            <Text
+              style={styles.durationText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+              maxFontSizeMultiplier={THUMB_TEXT_SCALE}>
+              {/* Under a second still reads as one: "00:00" looks like an empty or broken clip
+                  (the draft card does the same). */}
+              {formatDuration(Math.max(durationMs, 1000), { pad: true })}
             </Text>
           </View>
         </View>
@@ -340,7 +424,7 @@ function SegmentThumb({
           3 and 12" stays meaningful however the draft is shuffled. */}
       <View style={styles.badgeWrap} pointerEvents="none">
         <View style={styles.badge}>
-          <Text style={styles.badgeText} numberOfLines={1}>
+          <Text style={styles.badgeText} numberOfLines={1} maxFontSizeMultiplier={THUMB_TEXT_SCALE}>
             {segment.label || '≡'}
           </Text>
         </View>
@@ -348,6 +432,9 @@ function SegmentThumb({
     </View>
   );
 }
+
+/** Matches the draft card's thumbnail (draft-card.tsx). */
+const THUMB_RADIUS = 10;
 
 const styles = StyleSheet.create({
   bar: {
@@ -358,6 +445,7 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.three,
     paddingHorizontal: Spacing.two,
     borderRadius: Spacing.three,
+    borderCurve: 'continuous',
   },
   // The bar's glass background (dark-scrim fallback via GlassPill) — fills the bar behind
   // its content and carries the rounding.
@@ -368,6 +456,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     borderRadius: Spacing.three,
+    borderCurve: 'continuous',
     overflow: 'hidden',
   },
   barSurfaceScrim: { borderWidth: StyleSheet.hairlineWidth },
@@ -384,6 +473,7 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
   },
+  trashTarget: { width: TRASH_SIZE, height: TRASH_SIZE },
   trash: {
     width: TRASH_SIZE,
     height: TRASH_SIZE,
@@ -412,6 +502,9 @@ const styles = StyleSheet.create({
     width: THUMB_WIDTH,
     height: THUMB_HEIGHT,
     backgroundColor: 'rgba(255,255,255,0.12)',
+    // The same corners as the home screen's draft thumbnails (a thumbnail, not the video).
+    borderRadius: THUMB_RADIUS,
+    borderCurve: 'continuous',
     // Border space is reserved (transparent) at all times so going active only changes the
     // color — adding the border on activation would otherwise shift the inner box (and the
     // absolutely-positioned grab handle) inward by 2px.
@@ -432,6 +525,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    // Inside the 2 pt selection ring, so its corners follow the ring's inner edge.
+    borderRadius: THUMB_RADIUS - 2,
+    borderCurve: 'continuous',
   },
   // Full-width wrapper so the badge centers horizontally regardless of its text width.
   durationWrap: {
@@ -442,14 +538,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   duration: {
+    maxWidth: '100%',
     paddingHorizontal: 3,
     paddingVertical: 1,
     borderRadius: 3,
+    borderCurve: 'continuous',
     backgroundColor: 'rgba(0,0,0,0.6)',
   },
   durationText: {
     color: '#fff',
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
@@ -493,4 +591,5 @@ const styles = StyleSheet.create({
     // The viewport's scrub lanes are symmetric (top + bottom), so the thumbs sit on the
     // bar's centerline and the button centers naturally — no offset needed.
   },
+  nextPressed: { opacity: Opacity.pressed },
 });

@@ -1,8 +1,9 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedReaction } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Camera,
@@ -10,9 +11,11 @@ import {
   type PhysicalDeviceType,
   useCameraDevice,
 } from 'react-native-vision-camera';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedView } from '@/components/themed-view';
 import { GlassPill } from '@/components/glass-pill';
+import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { ControlScrim, Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { CloseButton } from '@/features/recorder/close-button';
@@ -24,7 +27,7 @@ import {
 } from '@/features/recorder/lens-selector';
 import { PermissionGate } from '@/features/recorder/permission-gate';
 import { PreviewModal } from '@/features/recorder/preview-modal';
-import { RecordButton } from '@/features/recorder/record-button';
+import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
@@ -36,7 +39,8 @@ import { useRecorderPermissions } from '@/features/recorder/use-recorder-permiss
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { formatDurationPadded } from '@/utils/format';
+import { formatDuration } from '@/utils/format';
+import { haptics, muteHaptics } from '@/utils/haptics';
 import { closeToHome } from '@/utils/navigation';
 import { clipRender } from '@/utils/segment-window';
 
@@ -56,6 +60,8 @@ const PREVIEW_CLOSE_SETTLE_MS = 50;
 
 export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
+  // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
+  const textSizeKey = useTextSizeKey();
   const theme = useTheme();
   const mode = useThemeMode();
   const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
@@ -118,8 +124,9 @@ export default function RecorderScreen() {
   // recording. During preview the playhead position is shown inside the preview card instead.
   const totalMs = useRecordingTimer(segments, recordStartedAt);
 
-  // Trimming = RNVT's full-screen editor, launched from the ✂ button in the preview modal.
-  const { openTrim } = useVideoTrim(draftId);
+  // Trimming = RNVT's full-screen editor, launched from the ✂ button in the preview modal. Its
+  // trash deletes through the same immediate delete as the preview's 🗑.
+  const { openTrim } = useVideoTrim(draftId, deleteSegment);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
@@ -325,7 +332,7 @@ export default function RecorderScreen() {
   );
 
   // Hold-to-record needs more than reacquireThen: acquire() is awaited, and the gesture's
-  // release fires synchronously via runOnJS — a quick press-release could run onHoldEnd
+  // release reaches JS straight away via scheduleOnRN — a quick press-release could run onHoldEnd
   // BEFORE the delayed startHoldRecording() (holdInitiatedRef still false, so nothing to
   // stop), and the start would then fire AFTER the gesture ended, leaving an unheld
   // in-progress recording. Every hold edge bumps a sequence number; the delayed start is
@@ -341,17 +348,32 @@ export default function RecorderScreen() {
     endHoldRecording();
   }, [endHoldRecording]);
 
-  const { zoomSv, holdActive, buttonGesture, screenGesture, resetZoom, setZoomTo } =
-    useRecorderGestures({
-      onToggle: reacquireThen(toggleRecording),
-      onHoldStart,
-      onHoldEnd,
-      onFocus,
-      enabled: cameraReady && !previewing && !dragging,
-      neutralZoom,
-      minZoom: device?.minZoom ?? 1,
-      maxZoom: device ? Math.min(device.maxZoom, MAX_ZOOM_FACTOR) : 1,
-    });
+  const {
+    zoomSv,
+    chipTarget,
+    holdActive,
+    pressed,
+    buttonGesture,
+    screenGesture,
+    resetZoom,
+    setZoomTo,
+  } = useRecorderGestures({
+    onToggle: reacquireThen(toggleRecording),
+    onHoldStart,
+    onHoldEnd,
+    onFocus,
+    enabled: cameraReady && !previewing && !dragging,
+    neutralZoom,
+    minZoom: device?.minZoom ?? 1,
+    maxZoom: device ? Math.min(device.maxZoom, MAX_ZOOM_FACTOR) : 1,
+  });
+
+  // The camera allows haptics (see <Camera>), so mute them while a clip records: the mic would
+  // pick one up. Start's haptic fires before capture begins, so it still lands.
+  useEffect(() => {
+    muteHaptics(isRecording);
+    return () => muteHaptics(false);
+  }, [isRecording]);
 
   // Zoom factors aren't portable across a flip, so reset to neutral 1x. (A lens chip sets its
   // own factor; flipping mid-recording already stops the recording natively.)
@@ -361,27 +383,25 @@ export default function RecorderScreen() {
 
   // The highlighted lens chip tracks the LIVE zoom (pinch / drag / chip-tap all move zoomSv),
   // so it reflects whichever physical lens the current factor sits on — the highest preset whose
-  // boundary the zoom has reached. runOnJS only fires when the active lens actually changes.
+  // boundary the zoom has reached. While a chip's ramp runs it shows that chip's target instead,
+  // so the highlight lands with the tap and its haptic, not 220 ms later, and never passes
+  // through 1x on the way from 0.5x to Tele. JS is called only when the active lens changes.
   const [activeLens, setActiveLens] = useState(DEFAULT_LENS_LABEL);
   useAnimatedReaction(
     () => {
+      const target = chipTarget.get();
+      const zoom = target >= 0 ? target : zoomSv.get();
       let label = lensPresets[0]?.label;
       for (const p of lensPresets) {
-        if (zoomSv.value >= p.zoom) label = p.label;
+        if (zoom >= p.zoom) label = p.label;
       }
       return label;
     },
     (label, prev) => {
-      if (label != null && label !== prev) runOnJS(setActiveLens)(label);
+      if (label != null && label !== prev) scheduleOnRN(setActiveLens, label);
     },
     [lensPresets],
   );
-
-  const confirmDeleteSegment = (id: string) =>
-    Alert.alert('Delete clip?', 'This clip will be removed from the draft.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteSegment(id) },
-    ]);
 
   if (!permissions.ready) return <ThemedView style={styles.fill} />;
   if (!permissions.granted) {
@@ -408,6 +428,10 @@ export default function RecorderScreen() {
 
   return (
     <View style={styles.fill}>
+      {/* Light over the live camera whatever the theme; the preview's backdrop follows the theme,
+          so the bar does too. Only while this screen is focused: the last StatusBar mounted wins,
+          and the recorder stays mounted under Export, which should get the root's again. */}
+      {focused && <StatusBar style={previewing ? (mode === 'dark' ? 'light' : 'dark') : 'light'} />}
       {device && (
         <Camera
           ref={cameraRef}
@@ -421,6 +445,10 @@ export default function RecorderScreen() {
           // follows the (locked) UI orientation, so sideways recordings stay portrait: the
           // sensor frame is unchanged, only the rotation tag stops following the gyro.
           orientationSource="interface"
+          // iOS mutes every haptic while a capture session runs unless this is on, which left the
+          // recorder's haptics (record start, hold, lens, clips and the trash) silent. None fire
+          // while a clip records, though (the mic would pick them up): see `muteHaptics` below.
+          allowHapticsAndSystemSoundsPlayback
           // Zoom/torch are gated until the session has started — but only on Android: CameraX
           // rejects control calls on an inactive camera (OperationCanceledException), so applying
           // these props on mount — before `onStarted` — throws unhandled rejections there.
@@ -446,7 +474,14 @@ export default function RecorderScreen() {
           // device support so it never throws; tap-to-focus stays snappy via `responsiveness`.
           enableSmoothAutoFocus={device?.supportsSmoothAutoFocus ?? false}
           onConfigured={onSessionConfigured}
-          onStarted={onCameraReady}
+          onStarted={() => {
+            onCameraReady();
+            // The capture session reconfigures the app's audio session as it starts, after the
+            // focus effect's acquire, which drops the "allow haptics" setting (iOS honours it only
+            // on activation): the recorder was silent until the first recording re-acquired.
+            // Re-acquiring here, the same call every record tap makes, applies it from the start.
+            if (!muted && !callActive && !previewing) void acquireFocus();
+          }}
           onError={onCameraError}
         />
       )}
@@ -488,13 +523,24 @@ export default function RecorderScreen() {
               ✕ beside it, since glass has nothing to refract on the themed backdrop. */}
           {previewing ? (
             <View style={[styles.timerPill, styles.previewTimerPill, ControlScrim[mode]]}>
-              <Text style={styles.timerText}>
-                {formatDurationPadded(preview.globalMs)} / {formatDurationPadded(preview.totalMs)}
+              <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
+                {/* Both floor: a playhead shouldn't read a second ahead, and with the total
+                    rounding up the end read "00:07 / 00:08" on a 7.6 s draft. */}
+                {formatDuration(preview.globalMs, { pad: true, floor: true })} /{' '}
+                {/* A draft under a second still reads 00:01, as on Home and the clip strip. */}
+                {formatDuration(preview.totalMs > 0 ? Math.max(1000, preview.totalMs) : 0, {
+                  pad: true,
+                  floor: true,
+                })}
               </Text>
             </View>
           ) : (
             <GlassPill style={styles.timerPill}>
-              <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
+              <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
+                {/* Floored like a playhead while recording, so it doesn't tick to the next
+                    second half a second early; at rest it rounds, like the draft's total on Home. */}
+                {formatDuration(totalMs, { pad: true, floor: recordStartedAt != null })}
+              </Text>
             </GlassPill>
           )}
           {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
@@ -538,9 +584,15 @@ export default function RecorderScreen() {
                 preview.pause();
                 openTrim(seg);
               }}
-              onDelete={() => preview.activeId && confirmDeleteSegment(preview.activeId)}
+              // Deletes at once, like drag-to-trash (see useRecorder), and with the same haptic as a
+              // drop on the trash.
+              onDelete={() => {
+                if (!preview.activeId) return;
+                haptics.drop();
+                deleteSegment(preview.activeId);
+              }}
               // Only for an edited clip: back to the untouched original. No confirm — the edits
-              // are one ✂ away, and undoing edits before ➡️ reuses the saved merge (#212).
+              // are one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
               onReset={
                 preview.active?.editState || preview.active?.editedFilename
                   ? () => preview.activeId && resetSegment(preview.activeId)
@@ -555,10 +607,12 @@ export default function RecorderScreen() {
           style={[styles.bottom, { paddingBottom: insets.bottom + Spacing.three }]}
           pointerEvents="box-none">
           {/* Record button is hidden entirely while previewing — the preview surface owns the
-              screen then. During a drag it's faded out (opacity 0, layout kept) so the floating
-              trash above the bar has clear space and nothing shifts. */}
+              screen then. During a drag the record controls go (opacity 0, layout kept) so the
+              floating trash above the bar has clear space and nothing shifts. The lens pill
+              steps out and back rather than fading with the others: it's glass, and a partly
+              transparent ancestor makes iOS draw glass flat, sometimes for good. */}
           {!previewing && (
-            <View style={{ opacity: dragging ? 0 : 1 }}>
+            <View style={{ transform: [{ scale: dragging ? 0 : 1 }] }}>
               <LensSelector
                 presets={lensPresets}
                 selected={activeLens}
@@ -573,26 +627,27 @@ export default function RecorderScreen() {
               <RecordButton
                 gesture={buttonGesture}
                 holdActive={holdActive}
+                pressed={pressed}
                 isRecording={isRecording}
                 cameraReady={cameraReady}
                 dragging={dragging}
               />
               {/* Faded out with the record button during a drag so the trash has clear space. */}
-              <View style={[styles.importWrap, { opacity: dragging ? 0 : 1 }]}>
+              <Animated.View
+                style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
                 <ImportButton
                   onPress={importClip}
                   disabled={isRecording || dragging}
                   busy={isImporting}
                 />
-              </View>
+              </Animated.View>
             </View>
           )}
 
           <SegmentBar
             segments={segments}
             onReorder={reorderSegments}
-            // Drag-to-trash deletes immediately (the deliberate drag IS the confirmation) —
-            // no Alert here, unlike the preview modal's 🗑 which still confirms.
+            // Drag-to-trash deletes at once, same as the preview's 🗑.
             onDelete={deleteSegment}
             onDragActiveChange={setDragging}
             onSelect={(id) => {
@@ -629,6 +684,7 @@ const styles = StyleSheet.create({
     width: RETICLE_SIZE,
     height: RETICLE_SIZE,
     borderRadius: 8,
+    borderCurve: 'continuous',
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.9)',
   },

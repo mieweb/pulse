@@ -1,9 +1,12 @@
-// Gesture callbacks imperatively drive shared values and latest-callback refs by design —
-// same situation the React-Compiler rules flag in playhead-cursor.tsx.
-/* eslint-disable react-hooks/immutability, react-hooks/refs */
+// The gestures dispatch through latest-callback refs written during render — the pattern the
+// React-Compiler refs rule flags. Disabled for this file.
+/* eslint-disable react-hooks/refs */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
-import { runOnJS, useSharedValue, withTiming } from 'react-native-reanimated';
+import { ReduceMotion, useSharedValue, withTiming } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
+
+import { haptics } from '@/utils/haptics';
 
 /** Press-and-hold this long on the record button to enter hold-to-record. */
 const HOLD_MS = 250;
@@ -42,16 +45,23 @@ export function useRecorderGestures({
   // tracks zoom per-frame with no JS round-trip or quantization. The value is an absolute zoom
   // factor in [minZoom, maxZoom]; 1 is the neutral 1x lens.
   const zoomSv = useSharedValue(1);
+  // The factor a lens chip is animating zoom to, -1 when none. The chip highlight reads this over
+  // the live zoom while the ramp runs, so it moves with the tap and its haptic instead of 220 ms
+  // later, and a 0.5x → Tele ramp doesn't light 1x on the way through.
+  const chipTarget = useSharedValue(-1);
   const dragBase = useSharedValue(0);
   const pinchBase = useSharedValue(0);
   const holdActive = useSharedValue(false);
+  // A finger is down on the record button and no hold has taken over yet — the button's
+  // touch-down feedback (taps only act on release, so this is the only immediate response).
+  const pressed = useSharedValue(false);
   // Mirror the device's zoom bounds into shared values so the worklets always clamp against
   // the current device (bounds change on flip / lens device).
   const minSv = useSharedValue(minZoom);
   const maxSv = useSharedValue(maxZoom);
   useEffect(() => {
-    minSv.value = minZoom;
-    maxSv.value = maxZoom;
+    minSv.set(minZoom);
+    maxSv.set(maxZoom);
   }, [minZoom, maxZoom, minSv, maxSv]);
 
   // The gestures are memoized but the recorder's callbacks are recreated each render —
@@ -65,15 +75,25 @@ export function useRecorderGestures({
   onHoldEndRef.current = onHoldEnd;
   onFocusRef.current = onFocus;
 
-  const fireToggle = useCallback(() => onToggleRef.current(), []);
-  const fireHoldStart = useCallback(() => onHoldStartRef.current(), []);
+  // Haptics fire before the recorder acts: they're muted while a clip records (recorder.tsx), so
+  // a start haptic after capture began would never be felt, and a stop tap gives none.
+  const fireToggle = useCallback(() => {
+    haptics.tap();
+    onToggleRef.current();
+  }, []);
+  const fireHoldStart = useCallback(() => {
+    haptics.pickUp();
+    onHoldStartRef.current();
+  }, []);
   const fireHoldEnd = useCallback(() => onHoldEndRef.current(), []);
   const fireFocus = useCallback((x: number, y: number) => onFocusRef.current(x, y), []);
 
   const { buttonGesture, screenGesture } = useMemo(() => {
     const writeZoom = (next: number) => {
       'worklet';
-      zoomSv.value = Math.min(Math.max(next, minSv.value), maxSv.value);
+      // A finger took over (cancelling any chip ramp): the highlight follows the live zoom again.
+      chipTarget.set(-1);
+      zoomSv.set(Math.min(Math.max(next, minSv.get()), maxSv.get()));
     };
 
     // Hold-to-record and vertical drag-zoom are ONE recognizer on the record button: the
@@ -82,20 +102,27 @@ export function useRecorderGestures({
     const holdPan = Gesture.Pan()
       .enabled(enabled)
       .activateAfterLongPress(HOLD_MS)
+      // Touch-down on the button, before tap or hold has been decided.
+      .onBegin(() => {
+        pressed.set(true);
+      })
       .onStart(() => {
-        holdActive.value = true;
-        dragBase.value = zoomSv.value;
-        runOnJS(fireHoldStart)();
+        // The hold's own scale takes over from the press, in the same frame as its haptic.
+        pressed.set(false);
+        holdActive.set(true);
+        dragBase.set(zoomSv.get());
+        scheduleOnRN(fireHoldStart);
       })
       .onUpdate((e) => {
         // Finger up (negative translationY) zooms in; multiplicative so it scales with range.
-        writeZoom(dragBase.value * 2 ** (-e.translationY / DRAG_DOUBLING_PX));
+        writeZoom(dragBase.get() * 2 ** (-e.translationY / DRAG_DOUBLING_PX));
       })
       .onFinalize(() => {
+        pressed.set(false);
         // Fires on END and CANCELLED alike (unmount, navigation) — the stop always lands.
-        if (holdActive.value) {
-          holdActive.value = false;
-          runOnJS(fireHoldEnd)();
+        if (holdActive.get()) {
+          holdActive.set(false);
+          scheduleOnRN(fireHoldEnd);
         }
       });
 
@@ -103,7 +130,7 @@ export function useRecorderGestures({
       .enabled(enabled)
       .maxDuration(HOLD_MS) // a completed hold can never also fire the toggle
       .onEnd((_e, success) => {
-        if (success) runOnJS(fireToggle)();
+        if (success) scheduleOnRN(fireToggle);
       });
 
     // Two-finger pinch on the preview surface, mapped multiplicatively onto the zoom factor.
@@ -112,10 +139,10 @@ export function useRecorderGestures({
       // A two-finger pinch on the preview must not cancel an in-flight hold-record.
       .simultaneousWithExternalGesture(holdPan)
       .onStart(() => {
-        pinchBase.value = zoomSv.value;
+        pinchBase.set(zoomSv.get());
       })
       .onUpdate((e) => {
-        writeZoom(pinchBase.value * e.scale ** PINCH_SENSITIVITY);
+        writeZoom(pinchBase.get() * e.scale ** PINCH_SENSITIVITY);
       });
 
     // Single-finger tap on the preview → focus to that point (tap-to-focus). One finger vs the
@@ -124,7 +151,7 @@ export function useRecorderGestures({
       .enabled(enabled)
       .maxDuration(HOLD_MS)
       .onEnd((e, success) => {
-        if (success) runOnJS(fireFocus)(e.x, e.y);
+        if (success) scheduleOnRN(fireFocus, e.x, e.y);
       });
 
     return {
@@ -138,9 +165,11 @@ export function useRecorderGestures({
     fireHoldEnd,
     fireFocus,
     zoomSv,
+    chipTarget,
     dragBase,
     pinchBase,
     holdActive,
+    pressed,
     minSv,
     maxSv,
   ]);
@@ -148,19 +177,40 @@ export function useRecorderGestures({
   // Reset to the neutral 1x lens — on a flip, and once when the device (and its real neutral
   // factor) first resolves, so the camera opens at 1x instead of the ultra-wide minZoom.
   const resetZoom = useCallback(() => {
-    zoomSv.value = Math.min(Math.max(neutralZoom, minZoom), maxZoom);
-  }, [zoomSv, neutralZoom, minZoom, maxZoom]);
+    chipTarget.set(-1);
+    zoomSv.set(Math.min(Math.max(neutralZoom, minZoom), maxZoom));
+  }, [zoomSv, chipTarget, neutralZoom, minZoom, maxZoom]);
 
   // Animate zoom to a specific factor — used by the lens chips (0.5x / 1x / Tele are zoom
   // presets). VisionCamera switches the physical camera as the factor crosses the device's
   // lens-switch boundaries, so a short timing animation gives the smooth lens transition their
   // startZoomAnimation API is meant for (a direct gesture write below cancels it, as expected).
+  // Runs under Reduce Motion too: it's the camera moving between lenses, not UI decoration, and
+  // a jump would make the lens switch itself abrupt.
+  // The target is cleared only by a ramp that FINISHED: one cut short by another chip already
+  // carries that chip's target, and a finger or reset clears it itself.
   const setZoomTo = useCallback(
     (factor: number) => {
-      zoomSv.value = withTiming(Math.min(Math.max(factor, minZoom), maxZoom), { duration: 220 });
+      const target = Math.min(Math.max(factor, minZoom), maxZoom);
+      chipTarget.set(target);
+      zoomSv.set(
+        withTiming(target, { duration: 220, reduceMotion: ReduceMotion.Never }, (finished) => {
+          'worklet';
+          if (finished) chipTarget.set(-1);
+        }),
+      );
     },
-    [zoomSv, minZoom, maxZoom],
+    [zoomSv, chipTarget, minZoom, maxZoom],
   );
 
-  return { zoomSv, holdActive, buttonGesture, screenGesture, resetZoom, setZoomTo };
+  return {
+    zoomSv,
+    chipTarget,
+    holdActive,
+    pressed,
+    buttonGesture,
+    screenGesture,
+    resetZoom,
+    setZoomTo,
+  };
 }
