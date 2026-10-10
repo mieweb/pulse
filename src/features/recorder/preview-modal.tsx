@@ -8,7 +8,7 @@ import { probeVideo } from 'react-native-video-trim';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ThemedText } from '@/components/themed-text';
-import { ControlScrim, Spacing } from '@/constants/theme';
+import { ControlScrim, Radius, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { absolutize } from '@/utils/file-store';
 import { displaySize } from '@/utils/import-normalization';
@@ -106,6 +106,10 @@ export function PreviewModal({
   const geometric = edit && hasGeometry(edit) ? edit : null;
   const source = useSourceSize(geometric?.file ?? null);
   const geometry = geometric ? previewGeometry(stage, source, geometric) : null;
+  // An unedited clip is 9:16 (recordings are portrait, and imports are conformed to the
+  // recorder's format), so its picture is the largest 9:16 box in the stage, as on export.
+  // Boxing it lets the corners round the picture itself rather than the space around it.
+  const plain = !geometric ? fitPortrait(stage) : null;
   // Player status — the ▶ badge shows only when playback is truly PARKED (readyToPlay and
   // not playing). Gating on !isPlaying alone flashed the badge through every clip switch:
   // selectSegment pauses for the swap, so the badge blinked for the load's duration.
@@ -165,9 +169,17 @@ export function PreviewModal({
             const { width, height } = e.nativeEvent.layout;
             setStage({ width, height });
           }}>
-          {/* One stable wrapper, so toggling an edit never remounts the video view: the whole
-              stage when unedited, else the cropped box (clips the transformed picture). */}
-          <View style={geometry ? [styles.cropBox, geometry.box] : StyleSheet.absoluteFill}>
+          {/* One stable wrapper, so toggling an edit never remounts the video view: the 9:16
+              box when unedited, else the cropped box (clips the transformed picture). Both
+              round the picture's corners, like export's and the captions editor's previews. */}
+          <View
+            style={
+              geometry
+                ? [styles.cropBox, geometry.box]
+                : plain
+                  ? [styles.cropBox, plain]
+                  : StyleSheet.absoluteFill
+            }>
             <VideoView
               style={
                 geometry
@@ -254,6 +266,14 @@ export function PreviewModal({
   );
 }
 
+/** The largest 9:16 box centred in `stage`; null until the stage has a size. */
+function fitPortrait(stage: Size) {
+  if (stage.width <= 0 || stage.height <= 0) return null;
+  const width = Math.min(stage.width, (stage.height * 9) / 16);
+  const height = (width * 16) / 9;
+  return { left: (stage.width - width) / 2, top: (stage.height - height) / 2, width, height };
+}
+
 const styles = StyleSheet.create({
   pressed: { opacity: 0.85 },
   stage: {
@@ -268,7 +288,12 @@ const styles = StyleSheet.create({
     marginVertical: Spacing.two,
   },
   fill: { flex: 1 },
-  cropBox: { position: 'absolute', overflow: 'hidden' },
+  cropBox: {
+    position: 'absolute',
+    overflow: 'hidden',
+    borderRadius: Radius.row,
+    borderCurve: 'continuous',
+  },
   playOverlay: {
     position: 'absolute',
     top: 0,
