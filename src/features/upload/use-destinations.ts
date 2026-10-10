@@ -40,37 +40,40 @@ export function setPendingRemoval(update: (ids: Set<string>) => void) {
   for (const listener of pendingListeners) listener();
 }
 
-// Deletes under way, so a pairing can wait for them (`settleRemovals`): re-pairing a link whose
-// row is mid-delete must add it back after the delete, not have the delete remove it again.
-const removalsInFlight = new Set<Promise<void>>();
+// Pool writes that race each other (an Undo's delete, a re-pair's add) run one at a time, in the
+// order they were asked for: a delete then decides what to remove only when its turn comes, after
+// any re-pair before it took its row back out of `pendingRemoval`.
+let poolWrites: Promise<unknown> = Promise.resolve();
+
+/** Runs `write` after every pool write queued before it; its result (or error) is the caller's. */
+export function queuePoolWrite<T>(write: () => Promise<T>): Promise<T> {
+  const run = poolWrites.then(write);
+  poolWrites = run.catch(() => {});
+  return run;
+}
+
 // A deleted row stays in `pendingRemoval` a beat after it's gone: the live query re-reads only
 // after the delete lands, and dropping it from the set before that would flash the row back.
 const FORGET_AFTER_MS = 2000;
 
 /**
- * Delete the removed destinations that are still waiting on their Undo (pairing the same link
- * again in the meantime takes its row back out of the set, and it's kept). On failure the rows
- * come back and the error is rethrown.
+ * Delete the removed destinations that are still waiting on their Undo when the write's turn
+ * comes (a re-pair of the same link takes its row back out of the set, and it's kept). Rows whose
+ * delete failed come back at once, the rest a beat after they're gone; any failure is rethrown.
  */
 export function commitRemoval(ids: string[]): Promise<void> {
-  const still = ids.filter((id) => pendingRemoval.has(id));
-  const unhide = () => setPendingRemoval((pending) => still.forEach((id) => pending.delete(id)));
-  const run = Promise.all(still.map((id) => deleteDestination(id))).then(
-    () => void setTimeout(unhide, FORGET_AFTER_MS),
-    (e: unknown) => {
-      unhide();
-      throw e;
-    },
-  );
-  removalsInFlight.add(run);
-  const done = () => void removalsInFlight.delete(run);
-  run.then(done, done);
-  return run;
-}
-
-/** Resolves once every delete under way has landed (or failed). */
-export function settleRemovals(): Promise<void> {
-  return Promise.allSettled([...removalsInFlight]).then(() => {});
+  return queuePoolWrite(async () => {
+    const still = ids.filter((id) => pendingRemoval.has(id));
+    const results = await Promise.allSettled(still.map((id) => deleteDestination(id)));
+    const unhide = (gone: string[]) =>
+      setPendingRemoval((pending) => gone.forEach((id) => pending.delete(id)));
+    const failed = still.filter((_, i) => results[i].status === 'rejected');
+    const deleted = still.filter((_, i) => results[i].status === 'fulfilled');
+    unhide(failed);
+    setTimeout(() => unhide(deleted), FORGET_AFTER_MS);
+    const error = results.find((r) => r.status === 'rejected');
+    if (error) throw (error as PromiseRejectedResult).reason;
+  });
 }
 
 function subscribePendingRemoval(listener: () => void) {
@@ -140,12 +143,18 @@ export function useDestinations() {
   );
 
   // Garbage-collect rows whose token has actually lapsed so they don't linger as dead state.
-  // Only acts on tokens we've loaded and can decode as expired (never on "unknown").
+  // Only acts on tokens we've loaded and can decode as expired (never on "unknown"). Queued with
+  // the other pool writes, and re-read on its turn: re-pairing the same link gives that row a
+  // fresh token, which must not be deleted on the strength of the old one.
   useEffect(() => {
     for (const r of rows) {
       const token = tokens[r.id];
       if (token !== undefined && isTokenExpired(token, now)) {
-        void deleteDestination(r.id);
+        void queuePoolWrite(async () => {
+          if (isTokenExpired(await getDestinationToken(r.id), Date.now())) {
+            await deleteDestination(r.id);
+          }
+        }).catch(() => {});
       }
     }
   }, [rows, tokens, now]);

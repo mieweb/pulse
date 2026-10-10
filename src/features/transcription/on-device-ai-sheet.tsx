@@ -142,8 +142,24 @@ export function OnDeviceAiSheet() {
     showUndoToast({
       title: 'Model removed',
       message: getModel(id)?.label,
-      onUndo: () => void restoreModel(id),
-      onCommit: () => void freeRemovedModel(),
+      // Failures say so, like the removal itself: an Undo that couldn't restore the selection,
+      // or weights that couldn't be freed from disk.
+      onUndo: () =>
+        void restoreModel(id).catch((e: unknown) =>
+          showToast({
+            kind: 'error',
+            title: 'Couldn’t restore the model',
+            message: userMessage(e, 'Choose it again in On-device AI.', 'restore model'),
+          }),
+        ),
+      onCommit: () =>
+        void freeRemovedModel().catch((e: unknown) =>
+          showToast({
+            kind: 'error',
+            title: 'Couldn’t free the model’s space',
+            message: userMessage(e, 'Try removing it again.', 'free model'),
+          }),
+        ),
     });
   };
 

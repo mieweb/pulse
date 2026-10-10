@@ -10,7 +10,7 @@ import { hasNonAsciiHost, hostOf, shortHost } from '@/utils/format';
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
 import { uploads } from './upload-manager';
-import { setPendingRemoval, settleRemovals } from './use-destinations';
+import { queuePoolWrite, setPendingRemoval } from './use-destinations';
 
 const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> = {
   'unsupported-version':
@@ -126,23 +126,20 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             return;
           }
           // Added to the device-wide pool (not a single slot) — any draft can pick it at
-          // upload time, and several servers can be paired at once. After any removal still
-          // deleting: re-pairing a link whose row is mid-delete adds it back once it's gone,
-          // rather than refreshing a row the delete then removes.
-          return settleRemovals()
-            .then(() =>
-              addDestination({
-                server: link.server,
-                token: link.token,
-                artifactId: link.artifactId,
-              }),
-            )
-            .then((id) => {
-              // The same link again keeps its row id: if that row was just removed and its Undo is
-              // still up, pairing brings it back instead of the removal deleting it afterwards.
-              setPendingRemoval((pending) => pending.delete(id));
-              showToast(`Connected to ${shortHost(host)} — pick it when you upload`);
+          // upload time, and several servers can be paired at once. Queued with the removals'
+          // deletes (`queuePoolWrite`): the same link again keeps its row id, and taking that row
+          // out of a pending removal inside the same write means a removal queued after it
+          // keeps the row, and one queued before it has deleted the row before this adds it.
+          return queuePoolWrite(async () => {
+            const id = await addDestination({
+              server: link.server,
+              token: link.token,
+              artifactId: link.artifactId,
             });
+            setPendingRemoval((pending) => pending.delete(id));
+          }).then(() => {
+            showToast(`Connected to ${shortHost(host)} — pick it when you upload`);
+          });
         })
         .catch(() => {
           // Let the same link be retried — nothing was persisted, so silently swallowing this
