@@ -16,6 +16,8 @@ import {
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import Animated, {
   FadeIn,
@@ -269,13 +271,21 @@ function Editor({
     const y = offsets.current.get(playingId);
     if (y != null) scrollRef.current?.scrollTo({ y: Math.max(0, y - 96), animated: true });
   }, [playingId, selectedId, editingId]);
+  // For the editor's tip, which points at the first caption: whether that caption is in view (the
+  // list rests at the top) and the list isn't being dragged.
+  const [listDragging, setListDragging] = useState(false);
+  const [listAtTop, setListAtTop] = useState(true);
+  const onListScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const atTop = e.nativeEvent.contentOffset.y <= LIST_TOP_SLOP;
+    if (atTop !== listAtTop) setListAtTop(atTop);
+  };
   const onUserScrollStart = () => {
-    // Scrolling moves the first caption, which the editor's tip points at: its moment has passed.
-    editTip.dismiss();
+    setListDragging(true);
     followSuspendedRef.current = true;
     if (suspendTimerRef.current) clearTimeout(suspendTimerRef.current);
   };
   const onUserScrollSettle = () => {
+    setListDragging(false);
     if (suspendTimerRef.current) clearTimeout(suspendTimerRef.current);
     suspendTimerRef.current = setTimeout(() => {
       followSuspendedRef.current = false;
@@ -364,13 +374,18 @@ function Editor({
 
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
 
-  // Once, while browsing a list with captions: how to select a caption and edit its words.
-  // Only while paused: playback scrolls the list to the playing caption, away from the first one.
-  // Playing or scrolling the list once it's up ends it (see `onUserScrollStart`).
-  const editTip = useTip('captionEdit', mode === 'browse' && !isPlaying && editor.cues.length > 0, {
-    delayMs: 800,
-    learned: mode !== 'browse',
-  });
+  // Once, while browsing a list with captions: how to select a caption and edit its words. Only
+  // while the first caption, which it points at, is in view and still: paused (playback scrolls the
+  // list to the playing caption), the list at the top and not being dragged. Playing or scrolling
+  // once it's up ends it; before it shows, they only put it off.
+  const editTip = useTip(
+    'captionEdit',
+    mode === 'browse' && !isPlaying && listAtTop && !listDragging && editor.cues.length > 0,
+    {
+      delayMs: 800,
+      learned: mode !== 'browse',
+    },
+  );
 
   return (
     <ThemedView type="groupedBackground" style={styles.fill}>
@@ -490,6 +505,8 @@ function Editor({
             contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 96 }]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            onScroll={onListScroll}
+            scrollEventThrottle={64}
             onScrollBeginDrag={onUserScrollStart}
             onScrollEndDrag={onUserScrollSettle}
             onMomentumScrollEnd={onUserScrollSettle}>
@@ -562,6 +579,9 @@ function Editor({
     </ThemedView>
   );
 }
+
+/** How far the caption list can scroll and still count as at the top (its first caption in view). */
+const LIST_TOP_SLOP = 24;
 
 /** The preview's width, in % of the screen: browsing, and text mode (keyboard up). */
 const PREVIEW_FULL = 56;

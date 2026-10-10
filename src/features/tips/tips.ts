@@ -15,9 +15,10 @@ export type Tip = {
 };
 
 /**
- * Every tip in the app. Each shows once, at the moment it's useful, and is gone for good once
- * it's closed or its moment passes. They replace the old three-page tour: the welcome screen says
- * what Pulse is, the tips teach the controls where they are.
+ * Every tip in the app. Each shows once, at the moment it's useful. Once shown, it's gone for good
+ * when it's closed or its moment passes; before it shows, its moment passing only puts it off, and
+ * only the action it teaches retires it (`useTip`). They replace the old three-page tour: the
+ * welcome screen says what Pulse is, the tips teach the controls where they are.
  */
 export const TIPS = {
   record: {
