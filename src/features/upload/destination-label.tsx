@@ -2,14 +2,13 @@ import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
-import { displayServer } from '@/utils/format';
+import { hostOf } from '@/utils/format';
 
 /**
  * What a destination is called, the same wherever it's listed (destinations sheet rows, the export
  * picker's chips): the host app's own words when the pairing link carries them (`label` and
- * `app`, #252 §4: "Huddle feed · TimeHuddle") with the server under it, else just the server. The
- * server is its host plus any path (`displayServer`): two servers on one host differ only there.
- * Two pairings to one server can be different destinations, so the label is what tells them apart.
+ * `app`, #252 §4: "Huddle feed · TimeHuddle") with the host under it, else just the host. Two
+ * pairings to one server can be different destinations, so the label is what tells them apart.
  */
 export function DestinationLabel({
   server,
@@ -23,7 +22,7 @@ export function DestinationLabel({
   /** `row` for the destinations sheet, `chip` for the export picker's narrower chips. */
   size?: 'row' | 'chip';
 }) {
-  const host = displayServer(server);
+  const host = hostOf(server);
   const title = label ? (app ? `${label} · ${app}` : label) : host;
   const chip = size === 'chip';
   return (

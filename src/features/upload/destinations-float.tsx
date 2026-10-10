@@ -8,7 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { EaseOut } from '@/constants/motion';
 import { FloatShadow, Opacity, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { displayServer, formatCount } from '@/utils/format';
+import { formatCount, hostOf } from '@/utils/format';
 
 import { useDestinations } from './use-destinations';
 
@@ -75,9 +75,8 @@ export function DestinationsFloat() {
           },
         ]}>
         <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} />
-        {/* Host plus path (`displayServer`), so two servers on one host don't read alike; middle
-            truncation keeps both ends visible. Capped so the largest text sizes grow the pill
-            without it towering over the FAB beside it. */}
+        {/* Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. Capped so the
+            largest text sizes grow the pill without it towering over the FAB beside it. */}
         <ThemedText
           type="subheadlineEmphasized"
           numberOfLines={1}
@@ -85,7 +84,7 @@ export function DestinationsFloat() {
           maxFontSizeMultiplier={1.6}
           style={styles.pillLabel}>
           {destinations.length === 1
-            ? displayServer(destinations[0].server)
+            ? hostOf(destinations[0].server)
             : formatCount(destinations.length, 'destination', 'destinations')}
         </ThemedText>
       </Pressable>

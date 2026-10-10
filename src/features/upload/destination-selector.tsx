@@ -4,7 +4,7 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { displayServer } from '@/utils/format';
+import { hostOf } from '@/utils/format';
 import { haptics } from '@/utils/haptics';
 
 import { DestinationLabel } from './destination-label';
@@ -48,7 +48,7 @@ export function DestinationSelector({
             }}
             accessibilityRole="radio"
             accessibilityState={{ selected }}
-            accessibilityLabel={`Upload to ${displayServer(d.server)}, ${d.expiryLabel}`}
+            accessibilityLabel={`Upload to ${hostOf(d.server)}, ${d.expiryLabel}`}
             style={({ pressed }) => [
               styles.chip,
               {

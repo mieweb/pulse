@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { checkCapabilities } from '@/features/upload/capabilities';
 import { useDestinations } from '@/features/upload/use-destinations';
-import { displayServer } from '@/utils/format';
+import { hostOf } from '@/utils/format';
 
 import type { ServerCompat } from './details';
 
@@ -25,7 +25,7 @@ export function useServerCompatibility(): ServerCompat[] {
     for (const server of servers) {
       void checkCapabilities(server).then((result) => {
         if (cancelled) return;
-        const host = displayServer(server);
+        const host = hostOf(server);
         const compat: ServerCompat = result.ok
           ? {
               server,
@@ -55,6 +55,6 @@ export function useServerCompatibility(): ServerCompat[] {
   }, [servers]);
 
   return servers.map(
-    (server) => results[server] ?? { server, host: displayServer(server), status: 'checking' },
+    (server) => results[server] ?? { server, host: hostOf(server), status: 'checking' },
   );
 }

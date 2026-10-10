@@ -42,20 +42,6 @@ export function hostOf(url: string): string {
 }
 
 /**
- * A server URL for a label: its host, plus its path when it has one, so two servers on one host
- * ("apps.example.org/team-a", "apps.example.org/team-b") read differently.
- */
-export function displayServer(url: string): string {
-  try {
-    const u = new URL(url);
-    const path = u.pathname.replace(/\/+$/, '');
-    return path ? `${u.host}${path}` : u.host;
-  } catch {
-    return url;
-  }
-}
-
-/**
  * Whether a host has characters outside ASCII. A look-alike ("miеweb.org" with a Cyrillic "е")
  * renders the same as the real domain, so a prompt asking someone to trust a host flags these.
  */

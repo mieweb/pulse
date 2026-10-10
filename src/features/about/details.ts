@@ -3,9 +3,7 @@ import { protocolRangeLabel } from '@/features/upload/client-identity';
 import { type BuildInfo, commitLabel, utcLabel, versionLabel } from './build-info';
 
 /**
- * One paired server's compatibility with this app, from a live `/capabilities` check. `host` is the
- * server as labels name it (`displayServer`: host plus any path), so a bug report tells apart two
- * servers on one host.
+ * One paired server's compatibility with this app, from a live `/capabilities` check.
  */
 export type ServerCompat = { server: string; host: string } & (
   | { status: 'checking' }

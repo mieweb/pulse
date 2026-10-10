@@ -20,7 +20,7 @@ import { EaseOut, ListReflowMs } from '@/constants/motion';
 import { CardShadow, Opacity, Radius, Spacing, type ThemeColor } from '@/constants/theme';
 import { useToast } from '@/features/toast/toast-provider';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { displayServer, formatCount } from '@/utils/format';
+import { formatCount, hostOf } from '@/utils/format';
 import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
 
@@ -111,9 +111,9 @@ export function DestinationsSheet() {
     setPendingRemoval((pending) => ids.forEach((id) => pending.add(id)));
     const show = () => setPendingRemoval((pending) => ids.forEach((id) => pending.delete(id)));
     showUndoToast({
-      // One names the server it was (host plus path, as its row did); several are counted.
+      // One names the server it was (its host, as its row did); several are counted.
       ...(removed.length === 1
-        ? { title: 'Destination removed', message: displayServer(removed[0].server) }
+        ? { title: 'Destination removed', message: hostOf(removed[0].server) }
         : { title: `${formatCount(removed.length, 'destination', 'destinations')} removed` }),
       onUndo: show,
       onCommit: () => {
@@ -246,7 +246,7 @@ function DestinationRow({
         onPress={onRemove}
         hitSlop={8}
         accessibilityRole="button"
-        accessibilityLabel={`Remove ${displayServer(server)}`}
+        accessibilityLabel={`Remove ${hostOf(server)}`}
         style={({ pressed }) => [styles.delete, pressed && styles.pressed]}>
         <Icon name="trash" size={20} tintColor={theme.accent} />
       </Pressable>

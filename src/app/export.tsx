@@ -50,7 +50,7 @@ import { useUpload } from '@/features/upload/use-upload';
 import { useUploadAnnouncement, useWatchLink } from '@/features/upload/use-uploads';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
-import { displayServer, formatClipCount, formatDuration } from '@/utils/format';
+import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
 import { closeToHome } from '@/utils/navigation';
 import { effMs } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
@@ -104,9 +104,7 @@ export default function ExportScreen() {
   // while the merge runs — a failed merge has its own Retry above, so the button just stays disabled.
   const uploadReady = state.status === 'done';
   // Host plus path, so two servers on one host ("…/team-a", "…/team-b") don't read the same.
-  const selectedHost = upload.selectedDestination
-    ? displayServer(upload.selectedDestination.server)
-    : '';
+  const selectedHost = upload.selectedDestination ? hostOf(upload.selectedDestination.server) : '';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
   const uState = upload.state;
