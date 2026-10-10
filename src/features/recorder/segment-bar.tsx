@@ -401,6 +401,9 @@ function SegmentThumb({
   );
 }
 
+/** Matches the draft card's thumbnail (draft-card.tsx). */
+const THUMB_RADIUS = 10;
+
 const styles = StyleSheet.create({
   bar: {
     flexDirection: 'row',
@@ -466,6 +469,9 @@ const styles = StyleSheet.create({
     width: THUMB_WIDTH,
     height: THUMB_HEIGHT,
     backgroundColor: 'rgba(255,255,255,0.12)',
+    // The same corners as the home screen's draft thumbnails (a thumbnail, not the video).
+    borderRadius: THUMB_RADIUS,
+    borderCurve: 'continuous',
     // Border space is reserved (transparent) at all times so going active only changes the
     // color — adding the border on activation would otherwise shift the inner box (and the
     // absolutely-positioned grab handle) inward by 2px.
@@ -486,6 +492,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    // Inside the 2 pt selection ring, so its corners follow the ring's inner edge.
+    borderRadius: THUMB_RADIUS - 2,
+    borderCurve: 'continuous',
   },
   // Full-width wrapper so the badge centers horizontally regardless of its text width.
   durationWrap: {
