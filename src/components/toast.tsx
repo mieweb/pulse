@@ -376,8 +376,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1000,
   },
-  slide: { alignSelf: 'stretch' },
-  press: { alignSelf: 'stretch', alignItems: 'center' },
+  // Both hug the card (the container centres them): stretched across the lane, they made the
+  // empty space beside a short toast catch taps and swipes meant for the screen underneath.
+  slide: { maxWidth: '100%' },
+  press: { maxWidth: '100%' },
   banner: {
     paddingVertical: Spacing.three,
     paddingHorizontal: Spacing.three,

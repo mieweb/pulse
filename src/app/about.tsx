@@ -105,7 +105,7 @@ export default function AboutScreen() {
   const surface = { backgroundColor: theme.card };
 
   return (
-    <View collapsable={false} style={styles.fill}>
+    <View collapsable={false} style={scrolls ? styles.fill : undefined}>
       {/* No title bar: the app icon, name and version open the sheet, and the content flows on
           from there. The sheet sizes to it and doesn't scroll (a scroll view breaks a
           `fitToContents` sheet's layout); at large text sizes or on a short screen, where it would

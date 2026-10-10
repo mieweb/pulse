@@ -3,11 +3,7 @@ import { desc, eq } from 'drizzle-orm';
 
 import { db } from './client';
 import { uploadDestinations } from './schema';
-import {
-  deleteDestinationToken,
-  getDestinationToken,
-  setDestinationToken,
-} from './secure-token';
+import { deleteDestinationToken, getDestinationToken, setDestinationToken } from './secure-token';
 
 /**
  * A server the device has paired with (via a `pulsecam://` deep link) but no draft has
@@ -38,11 +34,27 @@ export const destinationsQuery = db
   .orderBy(desc(uploadDestinations.createdAt));
 
 /**
+ * Pairing and the expiry sweep, one at a time. The sweep decides from a token it loaded earlier;
+ * run alongside a re-pair of the same row, it could delete the row just after the re-pair gave it
+ * a fresh token. In turn, the sweep reads the token again and sees the fresh one.
+ */
+let pairingQueue: Promise<unknown> = Promise.resolve();
+function oneAtATime<T>(run: () => Promise<T>): Promise<T> {
+  const result = pairingQueue.then(run, run);
+  pairingQueue = result.catch(() => {});
+  return result;
+}
+
+/**
  * Add a paired destination to the pool. Deduped by `(server, artifactId)` — re-scanning the
  * same link (same server-minted artifact) refreshes that row's token in place instead of
  * piling up duplicates. Returns the row id (existing or freshly minted).
  */
-export async function addDestination(dest: PairedDestination): Promise<string> {
+export function addDestination(dest: PairedDestination): Promise<string> {
+  return oneAtATime(() => insertOrRefresh(dest));
+}
+
+async function insertOrRefresh(dest: PairedDestination): Promise<string> {
   const meta: PairedDestinationMeta = {
     server: dest.server,
     artifactId: dest.artifactId,
@@ -91,4 +103,18 @@ export async function deleteDestination(id: string): Promise<boolean> {
   // Best-effort: once the row is gone the link is spent, whatever happens to its token.
   await deleteDestinationToken(id).catch(() => {});
   return rows.length > 0;
+}
+
+/**
+ * The expiry sweep's delete: removes the row only if its token, read again now, is still
+ * `expired` (see `oneAtATime`). Returns whether it did.
+ */
+export function deleteDestinationIfExpired(
+  id: string,
+  expired: (token: string | null) => boolean,
+): Promise<boolean> {
+  return oneAtATime(async () => {
+    const token = await getDestinationToken(id);
+    return expired(token) ? deleteDestination(id) : false;
+  });
 }

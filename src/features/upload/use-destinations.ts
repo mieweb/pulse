@@ -1,7 +1,11 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
-import { deleteDestination, destinationsQuery } from '@/db/destinations';
+import {
+  deleteDestination,
+  deleteDestinationIfExpired,
+  destinationsQuery,
+} from '@/db/destinations';
 import { getDestinationToken } from '@/db/secure-token';
 import { useNow } from '@/hooks/use-now';
 
@@ -110,7 +114,10 @@ export function useDestinations() {
     for (const r of rows) {
       const token = tokens[r.id];
       if (token !== undefined && isTokenExpired(token, now)) {
-        void deleteDestination(r.id);
+        // Decided again from the stored token when it runs: a re-pair may have refreshed it.
+        void deleteDestinationIfExpired(r.id, (stored) => isTokenExpired(stored, Date.now())).catch(
+          () => {},
+        );
       }
     }
   }, [rows, tokens, now]);

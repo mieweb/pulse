@@ -92,6 +92,7 @@ export function OnDeviceAiSheet() {
     haptics.tap();
     // The choice is saved first: if it can't be, the previous model stays selected and on disk,
     // and the sheet stays open saying so.
+    const previous = selectedId;
     try {
       await setSelectedModel(id);
     } catch (e) {
@@ -104,8 +105,21 @@ export function OnDeviceAiSheet() {
       return;
     }
     // Free the previous model's contexts + delete other weights now; the new model itself is
-    // downloaded lazily at export time (no background loop pulls it here anymore).
-    void applyModelSelection(getModel(id));
+    // downloaded lazily at export time (no background loop pulls it here anymore). The sheet stays
+    // up until that's done, so a reopened sheet can't start a second change over it. If it fails,
+    // the previous model is selected again and the sheet stays open, so choosing again retries.
+    try {
+      await applyModelSelection(getModel(id));
+    } catch (e) {
+      await setSelectedModel(previous).catch(() => {});
+      changing.current = false;
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t switch the model',
+        message: userMessage(e, 'Try again.', 'switch model'),
+      });
+      return;
+    }
     closeIfOpen();
   };
 
