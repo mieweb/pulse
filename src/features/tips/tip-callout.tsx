@@ -1,3 +1,4 @@
+import { useIsFocused } from 'expo-router';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { AccessibilityInfo, type LayoutRectangle, Pressable, StyleSheet, View } from 'react-native';
 import Animated, { withTiming } from 'react-native-reanimated';
@@ -54,8 +55,11 @@ export function CalloutAnchor({
   useEffect(() => {
     if (!shown) return;
     let last = '';
+    // A measurement still in flight when the tip closes must not bring the callout back.
+    let alive = true;
     const measure = () =>
       ref.current?.measureInWindow((x, y, width, height) => {
+        if (!alive) return;
         const key = `${x},${y},${width},${height}`;
         if (key === last || width === 0) return;
         last = key;
@@ -64,6 +68,7 @@ export function CalloutAnchor({
     measure();
     const timer = setInterval(measure, REMEASURE_MS);
     return () => {
+      alive = false;
       clearInterval(timer);
       if (current?.id === id) setCallout(null);
     };
@@ -108,8 +113,12 @@ const exit = () => {
 /**
  * Where the screen's callout tip is drawn: put it last in a full-screen screen's root, over
  * everything. It lets every touch through except the callout's ✕.
+ *
+ * Only the focused screen's layer draws: a screen left mounted under another (the recorder under
+ * Export) would otherwise draw the same callout behind it, and announce it a second time.
  */
 export function TipLayer() {
+  const focused = useIsFocused();
   const callout = useSyncExternalStore(subscribe, () => current);
   const ref = useRef<View>(null);
   // The layer's own place in the window and size: the anchors measure in window coordinates.
@@ -124,7 +133,9 @@ export function TipLayer() {
       onLayout={() =>
         ref.current?.measureInWindow((x, y, width, height) => setFrame({ x, y, width, height }))
       }>
-      {callout && frame && <CalloutBubble key={callout.id} callout={callout} frame={frame} />}
+      {focused && callout && frame && (
+        <CalloutBubble key={callout.id} callout={callout} frame={frame} />
+      )}
     </View>
   );
 }
