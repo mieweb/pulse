@@ -22,7 +22,12 @@ import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
 
 import { DestinationLabel } from './destination-label';
-import { type DestinationOption, setPendingRemoval, useDestinations } from './use-destinations';
+import {
+  type DestinationOption,
+  isPendingRemoval,
+  setPendingRemoval,
+  useDestinations,
+} from './use-destinations';
 
 /**
  * Up to this many, the sheet sizes to its rows. Beyond, it opens at about 60% height and
@@ -102,21 +107,25 @@ export function DestinationsSheet() {
           ? 'Destination removed'
           : `${formatCount(ids.length, 'destination', 'destinations')} removed`,
       onUndo: show,
-      onCommit: () =>
-        void Promise.all(ids.map((id) => deleteDestination(id)))
-          .catch((e: unknown) =>
-            showToast({
-              kind: 'error',
-              title:
-                ids.length === 1
-                  ? 'Couldn’t remove the destination'
-                  : 'Couldn’t remove the destinations',
-              message: userMessage(e, 'Try again.', 'destinations'),
-            }),
-          )
-          // Shown again only once the rows are gone (or the delete failed and they're still there),
-          // so a removed row doesn't flash back in between.
-          .finally(show),
+      onCommit: () => {
+        // Only the ones still waiting: pairing the same link again in the meantime takes its row
+        // back out of the pending set (see upload-deep-link-provider), and must not be deleted.
+        const still = ids.filter(isPendingRemoval);
+        void Promise.all(still.map((id) => deleteDestination(id))).catch((e: unknown) => {
+          // Back in the list only when the delete failed. Deleted rows stay in the pending set:
+          // the live query re-reads a beat after the delete, and showing them before that would
+          // flash them back.
+          setPendingRemoval((pending) => still.forEach((id) => pending.delete(id)));
+          showToast({
+            kind: 'error',
+            title:
+              still.length === 1
+                ? 'Couldn’t remove the destination'
+                : 'Couldn’t remove the destinations',
+            message: userMessage(e, 'Try again.', 'destinations'),
+          });
+        });
+      },
     });
   };
 

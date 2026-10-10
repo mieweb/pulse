@@ -29,6 +29,7 @@ import { PreviewModal } from '@/features/recorder/preview-modal';
 import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
+import { useToast } from '@/features/toast/toast-provider';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
 import { usePreview } from '@/features/recorder/use-preview';
 import { useRecorder } from '@/features/recorder/use-recorder';
@@ -39,6 +40,7 @@ import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDurationPadded } from '@/utils/format';
+import { userMessage } from '@/utils/user-message';
 import { closeToHome } from '@/utils/navigation';
 import { clipRender } from '@/utils/segment-window';
 
@@ -58,6 +60,7 @@ const PREVIEW_CLOSE_SETTLE_MS = 50;
 
 export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
   const theme = useTheme();
   const mode = useThemeMode();
   const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
@@ -614,9 +617,17 @@ export default function RecorderScreen() {
             onNext={
               draftId
                 ? () =>
-                    void commitDraftDeletes(draftId)
-                      .catch(() => {})
-                      .then(() => router.push({ pathname: '/export', params: { draftId } }))
+                    void commitDraftDeletes(draftId).then(
+                      () => router.push({ pathname: '/export', params: { draftId } }),
+                      // The clip is back on the bar; stay here rather than export a clip the
+                      // person deleted.
+                      (e: unknown) =>
+                        showToast({
+                          kind: 'error',
+                          title: 'Couldn’t delete the clip',
+                          message: userMessage(e, 'Try again.', 'delete clip'),
+                        }),
+                    )
                 : undefined
             }
           />

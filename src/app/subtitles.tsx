@@ -320,12 +320,16 @@ function Editor({
   const showReset = (rowEdited || editor.dirty) && editor.cues.length > 0;
   // No confirm: the reset is undoable (see resetCuesRef), and the toast offers the Undo where
   // the eye already is.
+  // The reset's Undo lives in this editor, so it can't outlive it: leaving the screen closes the
+  // toast (the reset stands) rather than leaving an Undo up that would undo nothing.
+  const closeResetToastRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => closeResetToastRef.current?.(), []);
   const onResetToAuto = () => {
     clearSelection();
     const next = editor.resetTo(autoLines);
     resetCuesRef.current = next;
     setRowEdited(false);
-    showUndoToast({
+    closeResetToastRef.current = showUndoToast({
       title: 'Automatic captions restored',
       // Only while the reset is still the latest step — a later edit is the header Undo's.
       onUndo: () => {

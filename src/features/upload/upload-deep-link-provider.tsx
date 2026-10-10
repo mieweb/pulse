@@ -10,6 +10,7 @@ import { hasNonAsciiHost, hostOf, shortHost } from '@/utils/format';
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
 import { uploads } from './upload-manager';
+import { setPendingRemoval } from './use-destinations';
 
 const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> = {
   'unsupported-version':
@@ -130,7 +131,10 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             server: link.server,
             token: link.token,
             artifactId: link.artifactId,
-          }).then(() => {
+          }).then((id) => {
+            // The same link again keeps its row id: if that row was just removed and its Undo is
+            // still up, pairing brings it back instead of the removal deleting it afterwards.
+            setPendingRemoval((pending) => pending.delete(id));
             showToast(`Connected to ${shortHost(host)} — pick it when you upload`);
           });
         })

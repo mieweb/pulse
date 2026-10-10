@@ -40,6 +40,11 @@ export function setPendingRemoval(update: (ids: Set<string>) => void) {
   for (const listener of pendingListeners) listener();
 }
 
+/** Whether `id` was removed and is still waiting on its Undo toast. */
+export function isPendingRemoval(id: string): boolean {
+  return pendingRemoval.has(id);
+}
+
 function subscribePendingRemoval(listener: () => void) {
   pendingListeners.add(listener);
   return () => {

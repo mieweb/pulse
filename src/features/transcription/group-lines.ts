@@ -11,9 +11,10 @@ const MAX_DUR_CS = 700;
 const SENTENCE_END = /[.!?…。！？]["')\]」』]?$/;
 
 // Punctuation that hugs the word before it (whisper emits it as its own token: "Hello", ",").
-const CLOSING = /^[,.!?;:…%)\]」』。、！？]/;
-// Hiragana, katakana and CJK ideographs: written without spaces between characters.
-const CJK = /[\u3040-\u30ff\u3400-\u9fff]/;
+const CLOSING = /^[,.!?;:…%)\]」』。、！？，：；）】》〉]/;
+// Hiragana, katakana, CJK ideographs, CJK punctuation (、。「」) and full-width forms (，：！):
+// written without spaces between them.
+const CJK = /[\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
 
 /**
  * Whether a space goes between two caption words when they're joined for display: none before
