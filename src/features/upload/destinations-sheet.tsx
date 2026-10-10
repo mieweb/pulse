@@ -26,8 +26,8 @@ import { userMessage } from '@/utils/user-message';
 
 import { DestinationLabel } from './destination-label';
 import {
+  commitRemoval,
   type DestinationOption,
-  isPendingRemoval,
   setPendingRemoval,
   useDestinations,
 } from './use-destinations';
@@ -85,7 +85,7 @@ export function DestinationsSheet() {
   const mode = useThemeMode();
   const insets = useSafeAreaInsets();
   const { showToast, showUndoToast } = useToast();
-  const { destinations: pool, deleteDestination } = useDestinations();
+  const { destinations: pool } = useDestinations();
   const destinations = useMemo(() => [...pool].sort(byExpiry), [pool]);
   // Same decision as the route's options (`destinationsSheetOptions`), from the same count.
   const { count } = useLocalSearchParams<{ count?: string }>();
@@ -116,25 +116,18 @@ export function DestinationsSheet() {
         ? { title: 'Destination removed', message: hostOf(removed[0].server) }
         : { title: `${formatCount(removed.length, 'destination', 'destinations')} removed` }),
       onUndo: show,
-      onCommit: () => {
-        // Only the ones still waiting: pairing the same link again in the meantime takes its row
-        // back out of the pending set (see upload-deep-link-provider), and must not be deleted.
-        const still = ids.filter(isPendingRemoval);
-        void Promise.all(still.map((id) => deleteDestination(id))).catch((e: unknown) => {
-          // Back in the list only when the delete failed. Deleted rows stay in the pending set:
-          // the live query re-reads a beat after the delete, and showing them before that would
-          // flash them back.
-          setPendingRemoval((pending) => still.forEach((id) => pending.delete(id)));
+      // Deletes the ones still waiting (`commitRemoval`); a failure brings them back.
+      onCommit: () =>
+        void commitRemoval(ids).catch((e: unknown) =>
           showToast({
             kind: 'error',
             title:
-              still.length === 1
+              ids.length === 1
                 ? 'Couldn’t remove the destination'
                 : 'Couldn’t remove the destinations',
             message: userMessage(e, 'Try again.', 'destinations'),
-          });
-        });
-      },
+          }),
+        ),
     });
   };
 

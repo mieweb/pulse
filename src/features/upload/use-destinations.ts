@@ -40,9 +40,37 @@ export function setPendingRemoval(update: (ids: Set<string>) => void) {
   for (const listener of pendingListeners) listener();
 }
 
-/** Whether `id` was removed and is still waiting on its Undo toast. */
-export function isPendingRemoval(id: string): boolean {
-  return pendingRemoval.has(id);
+// Deletes under way, so a pairing can wait for them (`settleRemovals`): re-pairing a link whose
+// row is mid-delete must add it back after the delete, not have the delete remove it again.
+const removalsInFlight = new Set<Promise<void>>();
+// A deleted row stays in `pendingRemoval` a beat after it's gone: the live query re-reads only
+// after the delete lands, and dropping it from the set before that would flash the row back.
+const FORGET_AFTER_MS = 2000;
+
+/**
+ * Delete the removed destinations that are still waiting on their Undo (pairing the same link
+ * again in the meantime takes its row back out of the set, and it's kept). On failure the rows
+ * come back and the error is rethrown.
+ */
+export function commitRemoval(ids: string[]): Promise<void> {
+  const still = ids.filter((id) => pendingRemoval.has(id));
+  const unhide = () => setPendingRemoval((pending) => still.forEach((id) => pending.delete(id)));
+  const run = Promise.all(still.map((id) => deleteDestination(id))).then(
+    () => void setTimeout(unhide, FORGET_AFTER_MS),
+    (e: unknown) => {
+      unhide();
+      throw e;
+    },
+  );
+  removalsInFlight.add(run);
+  const done = () => void removalsInFlight.delete(run);
+  run.then(done, done);
+  return run;
+}
+
+/** Resolves once every delete under way has landed (or failed). */
+export function settleRemovals(): Promise<void> {
+  return Promise.allSettled([...removalsInFlight]).then(() => {});
 }
 
 function subscribePendingRemoval(listener: () => void) {
@@ -122,5 +150,9 @@ export function useDestinations() {
     }
   }, [rows, tokens, now]);
 
-  return { destinations, deleteDestination };
+  // The pool plus the rows an Undo can still bring back: what the destinations sheet sizes itself
+  // for when it opens, so an Undo while it's open can't outgrow a fitted sheet.
+  const countWithPending = destinations.length + rows.filter((r) => pending.has(r.id)).length;
+
+  return { destinations, countWithPending, deleteDestination };
 }

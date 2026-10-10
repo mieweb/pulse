@@ -38,7 +38,7 @@ export function DestinationsFloat() {
   const insets = useSafeAreaInsets();
   const dark = useThemeMode() === 'dark';
   // Less any the destinations sheet just removed, while their Undo is up.
-  const { destinations } = useDestinations();
+  const { destinations, countWithPending } = useDestinations();
 
   if (destinations.length === 0) return null;
 
@@ -52,11 +52,12 @@ export function DestinationsFloat() {
       pointerEvents="box-none"
       style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
       <Pressable
-        // The count picks the sheet's size up front (`destinationsSheetOptions`).
+        // The count picks the sheet's size up front (`destinationsSheetOptions`), counting rows an
+        // Undo still pending could bring back while the sheet is open.
         onPress={() =>
           router.push({
             pathname: '/destinations',
-            params: { count: String(destinations.length) },
+            params: { count: String(countWithPending) },
           })
         }
         accessibilityRole="button"

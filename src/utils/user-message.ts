@@ -6,8 +6,8 @@
  */
 export function userMessage(error: unknown, fallback: string, context = 'error'): string {
   const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  // Debug logs capture console output, so the full error stays available there.
-  console.warn(`[${context}]`, raw || String(error));
+  // Debug logs capture console output, so the full error (with its stack) stays available there.
+  console.warn(`[${context}]`, error);
   const looksTechnical =
     !raw ||
     raw.length > 120 ||

@@ -13,12 +13,19 @@ import { deleteDraft, deleteSegment, segmentsForDraft } from '@/db/drafts';
  * clip hidden too.
  */
 
-type Pending = { draftId: string; committed: boolean; closeToast?: () => void };
+type Pending = {
+  draftId: string;
+  /** The delete, once started (by the toast going, or `commitDraftDeletes`): every caller awaits
+   * this same one, so Next can't read the db while a delete it didn't start is still running. */
+  commit?: Promise<void>;
+  closeToast?: () => void;
+};
 
 const pending = new Map<string, Pending>();
-// Committed ids stay hidden for good: the row is gone a moment later, but the live query only
-// re-runs after the delete lands, and un-hiding before that would flash the clip back.
+// A deleted clip stays hidden a beat after its row is gone (`FORGET_AFTER_MS`): the live queries
+// re-run only after the delete lands, and un-hiding before that would flash the clip back.
 let hidden: ReadonlySet<string> = new Set();
+const FORGET_AFTER_MS = 2000;
 // The drafts those hidden clips belong to, kept as long as `hidden` keeps the ids, so Home knows
 // which cards to recount (see `useDraftsWithHiddenClips`).
 const ownerOf = new Map<string, string>();
@@ -60,7 +67,7 @@ export function useDraftsWithHiddenClips(): ReadonlySet<string> {
 
 /** Hide a clip now; `commitClipDelete` or `restoreClip` settles it. */
 export function hideClip(id: string, draftId: string) {
-  pending.set(id, { draftId, committed: false });
+  pending.set(id, { draftId });
   ownerOf.set(id, draftId);
   publish(new Set(hidden).add(id));
 }
@@ -74,7 +81,7 @@ export function setClipToastCloser(id: string, closeToast: () => void) {
 /** Undo: show the clip again. False when it was already deleted for real (see `commitDraftDeletes`). */
 export function restoreClip(id: string): boolean {
   const entry = pending.get(id);
-  if (!entry || entry.committed) return false;
+  if (!entry || entry.commit) return false;
   pending.delete(id);
   const next = new Set(hidden);
   next.delete(id);
@@ -82,19 +89,25 @@ export function restoreClip(id: string): boolean {
   return true;
 }
 
-/** Delete the clip for real. On failure the clip is shown again and the error rethrown. */
-export async function commitClipDelete(id: string): Promise<void> {
+/** Delete the clip for real (once, however many callers ask). On failure the clip is shown
+ * again and the error rethrown. */
+export function commitClipDelete(id: string): Promise<void> {
   const entry = pending.get(id);
-  if (!entry || entry.committed) return;
-  entry.committed = true;
+  if (!entry) return Promise.resolve();
+  entry.commit ??= runCommit(id, entry);
+  return entry.commit;
+}
+
+async function runCommit(id: string, entry: Pending): Promise<void> {
   try {
     await deleteSegment(id);
   } catch (e) {
-    entry.committed = false;
+    entry.commit = undefined;
     restoreClip(id);
     throw e;
   }
   pending.delete(id);
+  setTimeout(() => forget(id), FORGET_AFTER_MS);
   if (openDrafts.has(entry.draftId)) return;
   try {
     const rest = await segmentsForDraft(entry.draftId);
@@ -105,11 +118,22 @@ export async function commitClipDelete(id: string): Promise<void> {
   }
 }
 
-/** Commit every pending delete in a draft now, before something reads the draft from the db. */
+/** A deleted clip's row is long gone from every live query: stop tracking it. */
+function forget(id: string) {
+  ownerOf.delete(id);
+  const next = new Set(hidden);
+  next.delete(id);
+  publish(next);
+}
+
+/**
+ * Commit every pending delete in a draft now, including ones already under way, before something
+ * reads the draft from the db (export).
+ */
 export async function commitDraftDeletes(draftId: string): Promise<void> {
-  const entries = [...pending].filter(([, p]) => p.draftId === draftId && !p.committed);
-  // Start the deletes first, then close their toasts: a closed toast commits too, and finding
-  // the delete already under way it does nothing, so no Undo stays up that can't undo.
+  const entries = [...pending].filter(([, p]) => p.draftId === draftId);
+  // Start (or join) the deletes first, then close their toasts: a closed toast commits too, and
+  // joins the delete already under way, so no Undo stays up that can't undo.
   const commits = entries.map(([id]) => commitClipDelete(id));
   for (const [, entry] of entries) entry.closeToast?.();
   await Promise.all(commits);

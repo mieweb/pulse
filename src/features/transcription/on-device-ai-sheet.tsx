@@ -14,6 +14,7 @@ import { CardShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { selectedModelQuery, setSelectedModel } from '@/db/settings';
 import { useToast } from '@/features/toast/toast-provider';
 import { useTheme } from '@/hooks/use-theme';
+import { userMessage } from '@/utils/user-message';
 import { haptics } from '@/utils/haptics';
 import { tallSheetFits } from '@/utils/sheet-fit';
 
@@ -78,7 +79,7 @@ export function OnDeviceAiSheet() {
   const selectedId = data[0]?.value ?? null;
   const status = useTranscriptionStatus();
   const busy = statusLine(status);
-  const { showUndoToast } = useToast();
+  const { showToast, showUndoToast } = useToast();
   const close = () => router.back();
   // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
   const [scrolls] = useState(() => !tallSheetFits());
@@ -124,8 +125,19 @@ export function OnDeviceAiSheet() {
     </Pressable>
   );
 
-  const removeModel = (id: string) => {
-    void setSelectedModel(null);
+  // The selection is cleared before the sheet closes and the Undo appears, so Undo and the commit
+  // both see it cleared; if it can't be, nothing changed and the toast says so.
+  const removeModel = async (id: string) => {
+    try {
+      await setSelectedModel(null);
+    } catch (e) {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t remove the model',
+        message: userMessage(e, 'Try again.', 'remove model'),
+      });
+      return;
+    }
     close();
     showUndoToast({
       title: 'Model removed',
@@ -245,7 +257,7 @@ export function OnDeviceAiSheet() {
         {selectedId && (
           <DestructiveAction
             label="Remove model & free up space"
-            onPress={() => removeModel(selectedId)}
+            onPress={() => void removeModel(selectedId)}
           />
         )}
       </SheetBody>

@@ -214,22 +214,22 @@ export function PlayheadCursor({
       cursorX,
     ],
   );
-  const autoScroll = useFrameCallback(onScrubFrame, false);
+  // Always running while the playhead is on screen (the preview): an idle frame returns on its
+  // first line (`fingerDown`), and a scrub starts the moment the finger lands. Switching it on
+  // from JS (setActive is JS-only) waited for a JS thread that may be busy seeking.
+  useFrameCallback(onScrubFrame, true);
 
-  // Scrub start / end on JS: the frame loop's switch and the preview's badge suppression.
-  // setActive is JS-only, so the loop starts once JS takes this — the finger state it reads is
-  // already current by then. The end runs after the final seek (queued first), so the follow
-  // resumes from the settled position; a re-grab that landed in between owns the scrub instead.
+  // Scrub start / end on JS: the preview's badge suppression. The end runs after the final seek
+  // (queued first), so the follow resumes from the settled position; a re-grab that landed in
+  // between owns the scrub instead.
   const beginScrub = useCallback(() => {
-    autoScroll.setActive(true);
     onScrubbingChangeRef.current?.(true);
-  }, [autoScroll]);
+  }, []);
   const endScrub = useCallback(() => {
     if (fingerDown.get()) return;
     scrubbing.set(false);
-    autoScroll.setActive(false);
     onScrubbingChangeRef.current?.(false);
-  }, [autoScroll, fingerDown, scrubbing]);
+  }, [fingerDown, scrubbing]);
 
   // The pan runs on the UI thread and is built once (its deps are stable shared values and
   // callbacks), so a finger move never waits on a JS thread busy seeking, and GestureDetector
