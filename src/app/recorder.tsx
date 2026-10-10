@@ -580,8 +580,8 @@ export default function RecorderScreen() {
                 preview.pause();
                 openTrim(seg);
               }}
-              // Deletes at once with a toast, like drag-to-trash (see useRecorder), and with the
-              // same haptic as a drop on the trash.
+              // Deletes at once, like drag-to-trash (see useRecorder), and with the same haptic as a
+              // drop on the trash.
               onDelete={() => {
                 if (!preview.activeId) return;
                 haptics.drop();
@@ -643,7 +643,7 @@ export default function RecorderScreen() {
           <SegmentBar
             segments={segments}
             onReorder={reorderSegments}
-            // Drag-to-trash deletes at once with a toast, same as the preview's 🗑.
+            // Drag-to-trash deletes at once, same as the preview's 🗑.
             onDelete={deleteSegment}
             onDragActiveChange={setDragging}
             onSelect={(id) => {

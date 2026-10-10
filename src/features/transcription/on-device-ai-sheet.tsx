@@ -141,8 +141,8 @@ export function OnDeviceAiSheet() {
 
   // The selection is cleared first, so captions stop using the model; if it can't be, nothing
   // changed, the sheet stays open and the toast says so. Then its weights go from disk, and only
-  // once they're gone does the sheet close and say so. If they can't be freed, the model is
-  // selected again, so Remove is still there to try once more.
+  // once they're gone does the sheet close. If they can't be freed, the model is selected again,
+  // so Remove is still there to try once more.
   const removeModel = async (id: string) => {
     if (changing.current) return;
     changing.current = true;
@@ -170,7 +170,6 @@ export function OnDeviceAiSheet() {
       return;
     }
     closeIfOpen();
-    showToast({ kind: 'info', title: 'Model removed', message: getModel(id)?.label });
   };
 
   if (confirming) {

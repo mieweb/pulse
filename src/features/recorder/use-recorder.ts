@@ -24,7 +24,6 @@ import {
   resetEdit,
   segmentsForDraft,
 } from '@/db/drafts';
-import type { Segment } from '@/db/schema';
 import {
   CAMERA_FACING_KEY,
   CAMERA_MUTED_KEY,
@@ -628,9 +627,8 @@ export function useRecorder(initialDraftId?: string) {
   }
 
   // No confirm: the clip goes at once, from any of the recorder's three trashes (the preview's
-  // 🗑, drag-to-trash, the editor's), and a toast says which one went.
+  // 🗑, drag-to-trash, the editor's).
   async function removeSegment(id: string) {
-    const clip = segments.find((s) => s.id === id);
     try {
       await deleteSegment(id);
     } catch (e) {
@@ -639,19 +637,16 @@ export function useRecorder(initialDraftId?: string) {
         title: 'Couldn’t delete the clip',
         message: userMessage(e, 'Try again.', 'delete clip'),
       });
-      return;
     }
-    showToast({ kind: 'info', title: 'Clip deleted', message: clipName(clip) });
   }
 
-  // No confirm either: back to the untouched original at once (the edit's files go with it), and
-  // a toast says so. The edit is one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
+  // No confirm either: back to the untouched original at once (the edit's files go with it). The
+  // edit is one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
   async function revertEdits(id: string) {
     // A second tap before the first revert lands (the control goes once the row updates) would
     // regenerate the same cover and delete the same files again.
     if (revertingRef.current.has(id)) return;
     revertingRef.current.add(id);
-    const clip = segments.find((s) => s.id === id);
     try {
       await resetEdit(id);
     } catch (e) {
@@ -660,11 +655,9 @@ export function useRecorder(initialDraftId?: string) {
         title: 'Couldn’t remove the edits',
         message: userMessage(e, 'Try again.', 'reset edit'),
       });
-      return;
     } finally {
       revertingRef.current.delete(id);
     }
-    showToast({ kind: 'info', title: 'Edits removed', message: clipName(clip) });
   }
 
   function cycleStabilization() {
@@ -710,9 +703,4 @@ export function useRecorder(initialDraftId?: string) {
     resetSegment: (id: string) => void revertEdits(id),
     reorderSegments: (ids: string[]) => void reorderSegments(ids),
   };
-}
-
-/** A clip as its toast names it: the number on its badge in the strip ("Clip 3"). */
-function clipName(clip: Segment | undefined): string | undefined {
-  return clip?.label ? `Clip ${clip.label}` : undefined;
 }

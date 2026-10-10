@@ -74,7 +74,7 @@ export function useVideoTrim(draftId: string | null, onDelete: (segmentId: strin
         })();
       }),
       // The trash was tapped and the editor has closed. No confirm on either side: the recorder
-      // deletes it at once with its toast, like every other delete.
+      // deletes it at once, like every other delete.
       Native.onDelete(() => {
         const segmentId = pendingSegmentId.current;
         pendingSegmentId.current = null;
@@ -110,7 +110,7 @@ export function useVideoTrim(draftId: string | null, onDelete: (segmentId: strin
       // enableEditTools defaults true (crop/rotate/flip/mute/speed exposed).
       editState: segment.editState ?? undefined,
       speedOptions: speedMenu(customSpeeds.current),
-      // Deletes at once with a toast, like the preview's 🗑 and drag-to-trash (see onDelete).
+      // Deletes at once, like the preview's 🗑 and drag-to-trash (see onDelete).
       enableDeleteButton: true,
       enableDeleteDialog: false,
     });

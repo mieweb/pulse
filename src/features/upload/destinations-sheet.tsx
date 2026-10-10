@@ -1,12 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -19,7 +13,7 @@ import { EaseOut, ListReflowMs } from '@/constants/motion';
 import { CardShadow, Opacity, Radius, Spacing, type ThemeColor } from '@/constants/theme';
 import { useToast } from '@/features/toast/toast-provider';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { formatCount, hostOf } from '@/utils/format';
+import { hostOf } from '@/utils/format';
 import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
 
@@ -96,8 +90,7 @@ export function DestinationsSheet() {
     else if (hadDestinations.current && router.canGoBack()) router.back();
   }, [empty]);
 
-  // Removed at once, no confirmation, and a toast says what went. Removing the last one closes
-  // the sheet (above); the toast stays up over home.
+  // Removed at once, no confirmation. Removing the last one closes the sheet (above).
   const remove = (removed: DestinationOption[]) => {
     void Promise.allSettled(removed.map((d) => deleteDestination(d.id))).then((results) => {
       const failed = results.find((r) => r.status === 'rejected');
@@ -111,15 +104,7 @@ export function DestinationsSheet() {
               : 'Couldn’t remove the destinations',
           message: userMessage(failed.reason, 'Try again.', 'destinations'),
         });
-        return;
       }
-      showToast({
-        kind: 'info',
-        // One names the server it was (its host, as its row did); several are counted.
-        ...(removed.length === 1
-          ? { title: 'Destination removed', message: hostOf(removed[0].server) }
-          : { title: `${formatCount(removed.length, 'destination', 'destinations')} removed` }),
-      });
     });
   };
 

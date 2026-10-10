@@ -124,33 +124,24 @@ export default function HomeScreen() {
     });
   };
 
-  // No confirm dialog: the card goes at once, and the toast says which one went.
-  const removeDraft = (draftId: string, name: string | null) => {
+  // No confirm dialog: the card goes at once.
+  const removeDraft = (draftId: string) => {
     setDeletingIds((prev) => new Set(prev).add(draftId));
     // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft` refuses an
     // uploading draft, so there's no live run to stop first.
-    deleteDraft(draftId).then(
-      () =>
-        showToast({
-          kind: 'info',
-          title: 'Draft deleted',
-          // Which one, when it has a name; an unnamed draft's "Untitled" would say nothing.
-          message: name && name !== 'Untitled' ? name : undefined,
-        }),
-      (e: unknown) => {
-        // The card comes back, so it never vanishes without its delete having happened.
-        setDeletingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(draftId);
-          return next;
-        });
-        showToast({
-          kind: 'error',
-          title: 'Couldn’t delete the draft',
-          message: userMessage(e, 'Try again.', 'delete'),
-        });
-      },
-    );
+    deleteDraft(draftId).catch((e: unknown) => {
+      // The card comes back, so it never vanishes without its delete having happened.
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(draftId);
+        return next;
+      });
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t delete the draft',
+        message: userMessage(e, 'Try again.', 'delete'),
+      });
+    });
   };
 
   // Built per-render from the open draft; new actions are added here.
@@ -338,7 +329,7 @@ export default function HomeScreen() {
                       uploading={item.uploadStatus === 'uploading'}
                       besidePill={item.uploadStatus === 'uploaded'}
                       onRename={() => setEditingDraftId(item.id)}
-                      onDelete={() => removeDraft(item.id, name)}
+                      onDelete={() => removeDraft(item.id)}
                     />
                   )}
                   onSubmitName={(input) => submitRename(item.id, item.name, input)}

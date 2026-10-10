@@ -41,7 +41,6 @@ import { segmentsForDraft } from '@/db/drafts';
 import { clearEditedTranscript, getDraftTranscriptRow } from '@/db/transcripts';
 import { selectedModelQuery } from '@/db/settings';
 import { CloseButton } from '@/features/recorder/close-button';
-import { useToast } from '@/features/toast/toast-provider';
 import { CaptionOverlay } from '@/features/transcription/caption-overlay';
 import { CueRow } from '@/features/transcription/cue-row';
 import { CueToolbar } from '@/features/transcription/cue-toolbar';
@@ -152,7 +151,6 @@ function Editor({
 }) {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
-  const { showToast } = useToast();
   const editor = useSubtitleEditor(initial);
 
   // On-device AI model in use for this draft's captions — surfaced here (not just at first pick)
@@ -352,16 +350,11 @@ function Editor({
   const [rowEdited, setRowEdited] = useState(savedJson != null);
   const showReset = (rowEdited || editor.dirty) && editor.cues.length > 0;
   // No confirm: the reset is a step in the editor's history (see resetCuesRef), so the header
-  // Undo brings the edits back; the toast just says it happened.
+  // Undo brings the edits back.
   const onResetToAuto = () => {
     clearSelection();
     resetCuesRef.current = editor.resetTo(autoLines);
     setRowEdited(false);
-    showToast({
-      kind: 'info',
-      title: 'Captions reset',
-      message: 'Back to the automatic captions',
-    });
   };
 
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
