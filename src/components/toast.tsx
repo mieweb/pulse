@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { EaseOut } from '@/constants/motion';
-import { FloatShadow, Spacing, SystemColors } from '@/constants/theme';
+import { FloatShadow, Opacity, Spacing, SystemColors } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 
 import { Icon, type IconName } from './icon';
@@ -72,8 +72,14 @@ const LIQUID_GLASS = isLiquidGlassAvailable();
  */
 const FROST = { light: 'rgba(255,255,255,0.78)', dark: 'rgba(28,28,30,0.78)' } as const;
 
-/** Far enough above the safe area to start (and leave) fully off screen. */
-const OFFSCREEN = 160;
+/**
+ * Far enough above the safe area to start (and leave) fully off screen, for the tallest toast the
+ * text caps allow: a 3-line title and 2-line message at 1.6× is ≈ 204 pt of banner, plus the
+ * 8 pt it sits below the safe area and FloatShadow's 16 pt reach. A fixed distance rather than the
+ * measured height: the slide in starts before the banner's first layout, so a measured one would
+ * still need this as its fallback, and the steep ease-out covers the extra distance off screen.
+ */
+const OFFSCREEN = 240;
 /**
  * A release whose projected end (pt above where the finger started) passes this, or an upward
  * flick faster than this (pt/s), swipes the toast away.
@@ -96,8 +102,11 @@ const EXIT = { duration: 240, easing: EaseOut };
  * default (follow the system) would make this fade instant too.
  */
 const FADE = { duration: 200, easing: EaseOut, reduceMotion: ReduceMotion.Never };
-/** A replacing toast's content fading in over the surface that stays put. */
-const SWAP_MS = 150;
+/**
+ * A replacing toast's content fading in over the surface that stays put. Opacity only, so it
+ * stays under Reduce Motion (`Never`): gentler than a snap, and nothing moves.
+ */
+const SWAP_IN = FadeIn.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 /** Rubber-banding for a pull past the resting point: 1:1 at first, never past the limit. */
 function rubberBand(offset: number): number {
@@ -251,10 +260,7 @@ export function Toast({
   const body = (
     // Keyed by id so a replacement swaps in whole (and any press on the old action button ends
     // with it). Opacity on this child of the glass is fine; it's an ancestor's that blanks it.
-    <Animated.View
-      key={id}
-      entering={id === firstId ? undefined : FadeIn.duration(SWAP_MS).easing(EaseOut)}
-      style={styles.row}>
+    <Animated.View key={id} entering={id === firstId ? undefined : SWAP_IN} style={styles.row}>
       <Icon name={ICONS[kind]} size={22} tintColor={iconColor(kind, mode)} />
       <View style={styles.text}>
         <ThemedText type="headline" numberOfLines={3} maxFontSizeMultiplier={1.6}>
@@ -285,7 +291,10 @@ export function Toast({
           accessibilityRole="button"
           style={({ pressed }) => [
             styles.action,
-            { backgroundColor: theme.backgroundSelected },
+            // `cardRaisedPressed`, a step off the banner's `cardRaised`: dark's
+            // `backgroundSelected` is the same gray as the card banner, so the pill vanished on
+            // it (Android, iOS before 26). On the glass it's a pill over the frost either way.
+            { backgroundColor: theme.cardRaisedPressed },
             pressed && styles.pressed,
           ]}>
           <ThemedText
@@ -368,6 +377,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   actionLabel: { fontWeight: '600' },
-  // Matches the app's other filled controls.
-  pressed: { opacity: 0.85 },
+  // Matches the app's other filled controls. On a child of the glass, never an ancestor.
+  pressed: { opacity: Opacity.pressed },
 });

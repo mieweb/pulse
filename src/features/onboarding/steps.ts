@@ -31,7 +31,8 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
     image: require('../../../assets/images/pulse-logo-master-2048.png'),
     title: 'Welcome to Pulse',
     bullets: [
-      { text: 'Everything runs on your device — your recordings are never uploaded.' },
+      // Not "never uploaded": a paired server is one tap away on the export screen.
+      { text: 'Your recordings stay on your device unless you upload them.' },
       { text: 'No account, no sign-in — get started in seconds.' },
       { text: 'Swipe through to learn what every button does.' },
     ],
@@ -43,7 +44,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
     bullets: [
       {
         record: true,
-        text: 'Hold the shutter to record a clip; lift to pause, hold again to add the next one.',
+        text: 'Tap the shutter to start and stop a clip, or hold it and let go — every take adds the next clip.',
       },
       {
         icon: 'play.fill',
@@ -51,16 +52,17 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
       },
       {
         icon: 'scissors',
-        text: 'Tap the scissors in a clip’s preview to trim its start and end.',
+        text: 'Tap the scissors in a clip’s preview to trim, crop, rotate, mute, or change its speed.',
       },
+      // No icon: nothing on screen draws one for reordering (the clip itself is what you hold).
+      { text: 'Press and hold a clip, then drag it onto another to swap their places.' },
       {
-        icon: 'line.3.horizontal',
-        text: 'Press and hold a clip, then drag to reorder your timeline.',
+        icon: 'trash.fill',
+        text: 'Drag a clip onto the trash to delete it — Undo brings it back.',
       },
-      { icon: 'trash', text: 'Drag a clip onto the trash to delete it from the segment bar.' },
       {
         icon: 'arrow.triangle.2.circlepath.camera',
-        text: 'Flip cameras, switch lenses, pinch to zoom, fire the torch, steady your shot with stabilization, or mute audio.',
+        text: 'Flip cameras, switch lenses, pinch to zoom, turn on the flash, steady your shot with stabilization, or mute audio.',
       },
     ],
   },
@@ -69,22 +71,24 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
     symbol: 'captions.bubble.fill',
     title: 'Caption, polish & share',
     bullets: [
-      {
-        icon: 'sparkles',
-        text: 'Every clip is captioned automatically — tap Model to choose a transcription model, from Base to multilingual Large Turbo.',
-      },
+      { icon: 'arrow.right', text: 'Tap Next to merge all your clips into one seamless video.' },
+      // Captions are off until a model is chosen: "Add captions" (this glyph) on the export
+      // screen opens On-device AI, as the caption editor's wand does later.
       {
         icon: 'captions.bubble',
-        text: 'Open the caption editor to split, merge, edit, or delete individual cues.',
+        text: 'Tap Add captions to choose a model, from Base to multilingual Large Turbo — captions are made on your device.',
+      },
+      {
+        icon: 'arrow.triangle.merge',
+        text: 'In the caption editor, fix any caption’s words, or split, merge, or delete captions.',
       },
       {
         icon: 'arrow.uturn.backward',
-        text: 'Nudge any cue ±100 ms with the playhead, or reset it back to auto.',
+        text: 'Undo and redo as you go, or reset to the automatic captions.',
       },
-      { icon: 'arrow.right', text: 'Export merges all your clips into one seamless video.' },
       {
         icon: 'square.and.arrow.up',
-        text: 'Share via the system sheet, or save to Photos or Files.',
+        text: 'Share via the system sheet, save to Photos or Files, or upload to a server you’ve paired.',
       },
       {
         icon: 'square.and.arrow.down',

@@ -3,6 +3,7 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useReducedMotion } from 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { MigrationGate } from '@/db/migrate';
@@ -44,18 +45,25 @@ export default function RootLayout() {
  * theme and status bar can't drift from the app's own colors when the user flips the switch. */
 function ThemedNavigation() {
   const isDark = useThemeMode() === 'dark';
+  // The full-screen modals slide up from the bottom; under Reduce Motion they fade in place
+  // instead (`fullScreenModal` + `fade` is iOS's cross-dissolve), so nothing travels the screen.
+  const reduceMotion = useReducedMotion();
+  const fullScreen = {
+    presentation: 'fullScreenModal',
+    animation: reduceMotion ? 'fade' : 'default',
+  } as const;
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
       <ToastProvider>
         <UploadDeepLinkProvider>
           <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="recorder" options={{ presentation: 'fullScreenModal' }} />
-            <Stack.Screen name="export" options={{ presentation: 'fullScreenModal' }} />
+            <Stack.Screen name="recorder" options={fullScreen} />
+            <Stack.Screen name="export" options={fullScreen} />
             {/* Explicit: a route pushed above a modal otherwise inherits `modal` (an iOS page
                 sheet), which left a dead band above the captions header and put its ✕ on a
                 different side than the other sheet. Full-screen matches export beneath it. */}
-            <Stack.Screen name="subtitles" options={{ presentation: 'fullScreenModal' }} />
+            <Stack.Screen name="subtitles" options={fullScreen} />
             <Stack.Screen
               name="about"
               options={() => ({
@@ -86,10 +94,7 @@ function ThemedNavigation() {
                 ),
               })}
             />
-            <Stack.Screen
-              name="onboarding"
-              options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
-            />
+            <Stack.Screen name="onboarding" options={{ ...fullScreen, gestureEnabled: false }} />
           </Stack>
         </UploadDeepLinkProvider>
       </ToastProvider>

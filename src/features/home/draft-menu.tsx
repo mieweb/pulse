@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ActionMenu, type Anchor } from '@/components/action-menu';
 import { Icon } from '@/components/icon';
+import { Opacity } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 import { type DraftMenuProps, draftMenuActions } from './draft-menu-actions';
@@ -28,7 +29,7 @@ export function DraftMenu(props: DraftMenuProps) {
         hitSlop={{ top: 10, bottom: 10, left: props.besidePill ? 2 : 10, right: 10 }}
         accessibilityRole="button"
         accessibilityLabel="Draft options"
-        style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]}>
+        style={({ pressed }) => [styles.more, { opacity: pressed ? Opacity.pressedGlyph : 1 }]}>
         <Icon name="ellipsis" size={18} tintColor={theme.textSecondary} />
       </Pressable>
       <ActionMenu

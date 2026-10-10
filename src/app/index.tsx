@@ -3,18 +3,20 @@ import { router } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
-import Animated, { FadeOut, LinearTransition } from 'react-native-reanimated';
+import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { EaseOut, ListReflowMs } from '@/constants/motion';
-import { FloatShadow, Radius, Spacing } from '@/constants/theme';
+import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { deleteDraft, draftListQuery, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
 import { DraftMenu } from '@/features/home/draft-menu';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
+import { usePendingClipDeletes } from '@/features/recorder/clip-deletes';
 import { useToast } from '@/features/toast/toast-provider';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
 import { useNow } from '@/hooks/use-now';
@@ -36,8 +38,9 @@ const DATE_LABEL_REFRESH_MS = 60_000;
 // every one of them jumping a row.
 const LIST_REFLOW = LinearTransition.duration(ListReflowMs).easing(EaseOut);
 // Only an exit, no `entering`: the list mounts cells as they scroll into view, and those would
-// fade in while scrolling.
-const CARD_EXIT = FadeOut.duration(150);
+// fade in while scrolling. Opacity only, so it stays under Reduce Motion (`Never`): gentler than
+// the card vanishing, and nothing moves.
+const CARD_EXIT = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 export default function HomeScreen() {
   // First-run gate: pushes the onboarding tour over home when not yet completed.
@@ -57,6 +60,9 @@ export default function HomeScreen() {
   );
   // Rows hidden optimistically while their delete waits out its Undo toast, then while in flight.
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set());
+  // Clips deleted in the recorder whose Undo is still up: their rows are still in the db, so the
+  // query still counts them. Left out here too, so the card matches the recorder it opens.
+  const pendingClipDeletes = usePendingClipDeletes();
 
   // Multi-select for `.pulse` export. `selectionMode` swaps the header for a selection toolbar
   // and turns each card into a checkbox; `selectedIds` tracks the chosen drafts.
@@ -84,7 +90,16 @@ export default function HomeScreen() {
     }
   }
 
-  const visibleDrafts = drafts.filter((d) => !deletingIds.has(d.id));
+  // Each draft as it will be once its pending clip deletes land. One whose every clip is pending
+  // is hidden like a deleted draft: committing them drops the draft too (`commitClipDelete`).
+  const visibleDrafts = drafts.flatMap((d) => {
+    if (deletingIds.has(d.id)) return [];
+    const pending = pendingClipDeletes.get(d.id);
+    if (!pending) return [d];
+    const segmentCount = d.segmentCount - pending.count;
+    if (segmentCount <= 0) return [];
+    return [{ ...d, segmentCount, durationMs: Math.max(0, d.durationMs - pending.durationMs) }];
+  });
   const allSelected = visibleDrafts.length > 0 && visibleDrafts.every((d) => selectedIds.has(d.id));
 
   const exitSelection = () => {
@@ -100,6 +115,9 @@ export default function HomeScreen() {
       return next;
     });
   };
+
+  const exporting = transferState === 'exporting';
+  const shareDisabled = selectedIds.size === 0 || (busy && !exporting);
 
   const toggleSelectAll = () =>
     setSelectedIds(allSelected ? new Set() : new Set(visibleDrafts.map((d) => d.id)));
@@ -128,10 +146,12 @@ export default function HomeScreen() {
 
   // No confirm dialog: the card goes at once and the toast offers Undo. Nothing touches the DB or
   // the clips on disk until the toast goes away without Undo, so Undo is a plain unhide.
-  const deleteWithUndo = (draftId: string) => {
+  const deleteWithUndo = (draftId: string, name: string | null) => {
     setDeletingIds((prev) => new Set(prev).add(draftId));
     showUndoToast({
       title: 'Draft deleted',
+      // Which one, when it has a name; an unnamed draft's "Untitled" would say nothing.
+      message: name && name !== 'Untitled' ? name : undefined,
       onUndo: () => unhide(draftId),
       onCommit: () => {
         // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft`
@@ -161,7 +181,7 @@ export default function HomeScreen() {
             style={({ pressed }) => [styles.selectionAction, pressed && styles.pressedText]}>
             <ThemedText themeColor="accent">Cancel</ThemedText>
           </Pressable>
-          <ThemedText type="smallBold">
+          <ThemedText type="subheadlineEmphasized">
             {selectedIds.size === 0
               ? 'Select drafts'
               : formatCount(selectedIds.size, 'selected', 'selected')}
@@ -286,13 +306,11 @@ export default function HomeScreen() {
 
       {visibleDrafts.length === 0 ? (
         <View style={styles.empty}>
-          <Icon name="video.badge.plus" size={52} tintColor={theme.textSecondary} />
-          <ThemedText type="title3" style={styles.emptyTitle}>
-            No drafts yet
-          </ThemedText>
-          <ThemedText themeColor="textSecondary" style={styles.emptyHint}>
-            Tap + to record your first video.
-          </ThemedText>
+          <StateMessage
+            icon="video.badge.plus"
+            title="No drafts yet"
+            message="Tap + to record your first video."
+          />
         </View>
       ) : (
         <Animated.FlatList
@@ -303,62 +321,69 @@ export default function HomeScreen() {
             styles.list,
             { paddingBottom: insets.bottom + Spacing.six + Spacing.four },
           ]}
-          renderItem={({ item }) => (
-            <Animated.View exiting={CARD_EXIT}>
-              <DraftCard
-                id={item.id}
-                uploadStatus={item.uploadStatus}
-                name={pendingRename?.id === item.id ? pendingRename.name : item.name}
-                firstSegmentFilename={item.firstSegmentFilename}
-                firstSegmentThumbnail={item.firstSegmentThumbnail}
-                segmentCount={item.segmentCount}
-                durationMs={item.durationMs}
-                lastModified={item.lastModified}
-                now={now}
-                editing={editingDraftId === item.id}
-                selectionMode={selectionMode}
-                selected={selectedIds.has(item.id)}
-                onPress={() => {
-                  if (selectionMode) toggleSelected(item.id);
-                  // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
-                  else if (item.uploadStatus !== 'uploading')
-                    router.push({ pathname: '/recorder', params: { draftId: item.id } });
-                }}
-                onLongPress={
-                  item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
-                }
-                menu={(watchLink) => (
-                  <DraftMenu
-                    draftId={item.id}
-                    watchLink={watchLink}
-                    uploading={item.uploadStatus === 'uploading'}
-                    besidePill={item.uploadStatus === 'uploaded'}
-                    onRename={() => setEditingDraftId(item.id)}
-                    onDelete={() => deleteWithUndo(item.id)}
-                  />
-                )}
-                onSubmitName={(input) => submitRename(item.id, item.name, input)}
-              />
-            </Animated.View>
-          )}
+          renderItem={({ item }) => {
+            const name = pendingRename?.id === item.id ? pendingRename.name : item.name;
+            return (
+              <Animated.View exiting={CARD_EXIT}>
+                <DraftCard
+                  id={item.id}
+                  uploadStatus={item.uploadStatus}
+                  name={name}
+                  firstSegmentFilename={item.firstSegmentFilename}
+                  firstSegmentThumbnail={item.firstSegmentThumbnail}
+                  segmentCount={item.segmentCount}
+                  durationMs={item.durationMs}
+                  lastModified={item.lastModified}
+                  now={now}
+                  editing={editingDraftId === item.id}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(item.id)}
+                  onPress={() => {
+                    if (selectionMode) toggleSelected(item.id);
+                    // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
+                    else if (item.uploadStatus !== 'uploading')
+                      router.push({ pathname: '/recorder', params: { draftId: item.id } });
+                  }}
+                  onLongPress={
+                    item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
+                  }
+                  menu={(watchLink) => (
+                    <DraftMenu
+                      draftId={item.id}
+                      watchLink={watchLink}
+                      uploading={item.uploadStatus === 'uploading'}
+                      besidePill={item.uploadStatus === 'uploaded'}
+                      onRename={() => setEditingDraftId(item.id)}
+                      onDelete={() => deleteWithUndo(item.id, name)}
+                    />
+                  )}
+                  onSubmitName={(input) => submitRename(item.id, item.name, input)}
+                />
+              </Animated.View>
+            );
+          }}
         />
       )}
 
       {selectionMode ? (
         <Pressable
           onPress={() => shareDrafts([...selectedIds])}
+          // Busy isn't disabled: while it exports it ignores taps but stays at full strength
+          // with its spinner. Dimmed only when there's nothing to share, or an import (no
+          // spinner here) holds the transfer.
           disabled={selectedIds.size === 0 || busy}
           accessibilityRole="button"
           accessibilityLabel="Share selected drafts"
+          accessibilityState={{ disabled: shareDisabled, busy: exporting }}
           style={({ pressed }) => [
             styles.fab,
             {
               backgroundColor: theme.accent,
               bottom: insets.bottom + Spacing.four,
-              opacity: selectedIds.size === 0 || busy ? 0.35 : pressed ? 0.85 : 1,
+              opacity: shareDisabled ? Opacity.disabled : pressed ? Opacity.pressed : 1,
             },
           ]}>
-          {transferState === 'exporting' ? (
+          {exporting ? (
             <ActivityIndicator color={theme.onAccent} />
           ) : (
             <Icon
@@ -379,7 +404,7 @@ export default function HomeScreen() {
             {
               backgroundColor: theme.accent,
               bottom: insets.bottom + Spacing.four,
-              opacity: pressed ? 0.85 : 1,
+              opacity: pressed ? Opacity.pressed : 1,
             },
           ]}>
           <Icon name="plus" size={28} weight="semibold" tintColor={theme.onAccent} />
@@ -401,7 +426,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
+    // The cards' 16 pt gutter. The buttons carry their own inner padding, so their pressed fill
+    // lines up with the cards' edge and the glyphs sit a little inside it.
+    paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
   },
   // No title — the actions alone, trailing-aligned. (Selection mode keeps space-between.)
@@ -409,8 +436,8 @@ const styles = StyleSheet.create({
   // Same 44pt row as the normal header's buttons (`headerButton.minHeight`), so entering or
   // leaving export selection doesn't change the header's height and shift the drafts.
   selectionAction: { minHeight: 44, justifyContent: 'center' },
-  pressedText: { opacity: 0.6 },
-  disabled: { opacity: 0.35 },
+  pressedText: { opacity: Opacity.pressedGlyph },
+  disabled: { opacity: Opacity.disabled },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   // Shared header action: icon stacked above its label, with a ≥44×44pt touch target (HIG).
   headerButton: {
@@ -428,27 +455,14 @@ const styles = StyleSheet.create({
   headerButtonLabel: { fontWeight: '600' },
   devRowWrap: {
     alignItems: 'flex-end',
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
   },
   list: {
     paddingHorizontal: Spacing.three,
     gap: Spacing.two,
   },
-  empty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.five,
-  },
-  // Size/leading come from the `title3` type; keep it semibold for the empty-state heading.
-  emptyTitle: {
-    fontWeight: '600',
-  },
-  emptyHint: {
-    textAlign: 'center',
-  },
+  empty: { flex: 1, justifyContent: 'center' },
   fab: {
     position: 'absolute',
     right: Spacing.four,

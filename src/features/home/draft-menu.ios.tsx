@@ -19,7 +19,13 @@ export function DraftMenu(props: DraftMenuProps) {
     // this a tap opened the draft (the card's press) along with the menu, and a hold reached the
     // card's long press too. Claiming the touch keeps the card out of it; the SwiftUI menu still
     // gets the native touch and opens on a tap.
-    <View style={styles.trigger} onStartShouldSetResponder={() => true}>
+    // Labelled here, as Android's ⋯ is: the SwiftUI glyph inside has no name of its own, so
+    // VoiceOver read it as an unlabelled image.
+    <View
+      style={styles.trigger}
+      onStartShouldSetResponder={() => true}
+      accessibilityRole="button"
+      accessibilityLabel="Draft options">
       <Host style={styles.fill}>
         <Menu
           label={

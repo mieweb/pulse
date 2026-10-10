@@ -1,7 +1,12 @@
 import type { SymbolViewProps } from 'expo-symbols';
 import { Icon } from '@/components/icon';
 import { Modal, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
-import Animated, { Keyframe } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  Keyframe,
+  ReduceMotion,
+  useReducedMotion,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -40,6 +45,11 @@ const MENU_ENTERING = new Keyframe({
   0: { opacity: 0, transform: [{ scale: 0.95 }] },
   100: { opacity: 1, transform: [{ scale: 1 }], easing: EaseOut },
 }).duration(150);
+/**
+ * Under Reduce Motion, a fade in place instead of the grow. `Never`, so it still fades (gentler
+ * than popping in) rather than following the system to instant: nothing moves either way.
+ */
+const MENU_ENTERING_REDUCED = FadeIn.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 /**
  * A popover menu anchored to a control (e.g. a ⋯ button) rather than a bottom sheet. Pops
@@ -50,6 +60,7 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { width: screenW, height: screenH } = useWindowDimensions();
+  const reduceMotion = useReducedMotion();
 
   if (!anchor) return null;
 
@@ -70,7 +81,7 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
           {/* `cardRaised`: white in light, and in dark one gray above the cards it floats over —
               the card fill itself left the menu indistinguishable from the card under it. */}
           <Animated.View
-            entering={MENU_ENTERING}
+            entering={reduceMotion ? MENU_ENTERING_REDUCED : MENU_ENTERING}
             style={[
               styles.card,
               {

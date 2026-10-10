@@ -1,7 +1,14 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import Animated, {
+  Easing,
+  ReduceMotion,
+  useAnimatedProps,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
 
 import { ThemedText } from '@/components/themed-text';
@@ -10,7 +17,7 @@ import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
 import type { WatchLink } from '@/features/upload/upload-manager';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
-import { useTheme, useThemeMode } from '@/hooks/use-theme';
+import { useTheme } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatClipCount, formatDuration } from '@/utils/format';
 import { formatRelativeDate } from '@/utils/relative-date';
@@ -75,9 +82,6 @@ export function DraftCard({
   onSubmitName,
 }: Props) {
   const theme = useTheme();
-  // The app's resolved mode (manual Light/Dark override, else OS) — not the OS scheme, which
-  // gave a light card a white shadow when Light was pinned on a dark-mode phone.
-  const isDark = useThemeMode() === 'dark';
   const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
 
   // An upload in progress is a ring on the cover — from the live state, or the persisted status
@@ -105,8 +109,6 @@ export function DraftCard({
           {
             backgroundColor: theme.backgroundSelected,
             borderColor: theme.border,
-            // Opposite-tone shadow so it reads in both modes: black in light, white in dark.
-            shadowColor: isDark ? '#fff' : '#000',
           },
         ]}>
         {thumbnail ? (
@@ -138,17 +140,17 @@ export function DraftCard({
             maxLength={NAME_MAX_LENGTH}
             returnKeyType="done"
             onEndEditing={(e) => onSubmitName?.(dropSplitSurrogate(e.nativeEvent.text).trim())}
-            style={[styles.name, styles.nameInput, { color: theme.text }]}
+            style={[styles.nameInput, { color: theme.text }]}
           />
         ) : (
-          <ThemedText style={styles.name} numberOfLines={1}>
+          <ThemedText type="headline" numberOfLines={1}>
             {name || 'Untitled'}
           </ThemedText>
         )}
         {/* Two lines, so a narrow card (an uploaded draft's link button beside ⋯, larger text)
             wraps the date onto a second line instead of cutting it off. */}
-        <ThemedText themeColor="textSecondary" type="small" numberOfLines={2}>
-          {formatClipCount(segmentCount)} · {formatDuration(durationMs)} ·{' '}
+        <ThemedText themeColor="textSecondary" type="subheadline" numberOfLines={2}>
+          {formatClipCount(segmentCount)} · {formatDuration(cardDuration(durationMs))} ·{' '}
           {formatRelativeDate(lastModified, now)}
         </ThemedText>
       </View>
@@ -232,14 +234,45 @@ function LinkButton({ link, name }: { link: WatchLink; name: string | null }) {
   );
 }
 
+/**
+ * The total as the card shows it. `formatDuration` rounds to whole seconds, so a draft of one
+ * very short clip (a tap of the shutter) read "0:00", as if it held nothing. Anything recorded
+ * reads at least one second; only an empty draft reads 0:00.
+ */
+function cardDuration(ms: number): number {
+  return ms > 0 ? Math.max(ms, 1000) : 0;
+}
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
 const RING = 28;
 const RING_STROKE = 3;
 const RING_R = (RING - RING_STROKE) / 2;
 const RING_C = 2 * Math.PI * RING_R;
 
-/** A small determinate ring shown over a draft's cover while it uploads (white on a dark scrim). */
+/**
+ * A small determinate ring shown over a draft's cover while it uploads (white on a dark scrim).
+ * Each progress update glides over 250 ms, linear, as the merge ring does: a stream of updates
+ * reads as one steady sweep instead of a jump per update. `Never`, because Reanimated's default
+ * would make Reduce Motion snap it, and the sweep is the progress itself, not decoration.
+ */
 function UploadRing({ progress }: { progress: number }) {
   const clamped = Math.max(0.03, Math.min(1, progress));
+  // Starts where the upload is, so a card that mounts mid-upload (scrolled in, relaunched) doesn't
+  // sweep up from empty.
+  const value = useSharedValue(clamped);
+  useEffect(() => {
+    value.set(
+      withTiming(clamped, {
+        duration: 250,
+        easing: Easing.linear,
+        reduceMotion: ReduceMotion.Never,
+      }),
+    );
+  }, [clamped, value]);
+  const animatedProps = useAnimatedProps(() => ({
+    strokeDashoffset: RING_C * (1 - value.get()),
+  }));
   return (
     <Svg width={RING} height={RING}>
       <Circle
@@ -250,7 +283,7 @@ function UploadRing({ progress }: { progress: number }) {
         strokeWidth={RING_STROKE}
         fill="none"
       />
-      <Circle
+      <AnimatedCircle
         cx={RING / 2}
         cy={RING / 2}
         r={RING_R}
@@ -259,7 +292,7 @@ function UploadRing({ progress }: { progress: number }) {
         strokeLinecap="round"
         fill="none"
         strokeDasharray={RING_C}
-        strokeDashoffset={RING_C * (1 - clamped)}
+        animatedProps={animatedProps}
         transform={`rotate(-90 ${RING / 2} ${RING / 2})`}
       />
     </Svg>
@@ -303,8 +336,9 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
     // Lift the cover off the card so it pops a little. A hairline ring carries the separation
     // in dark mode (where a black shadow is invisible against the dark card); the shadow does
-    // the lifting in light mode.
+    // the lifting in light mode. Black in both: a white shadow glowed around the cover in dark.
     borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.15,
     shadowRadius: 3,
@@ -320,14 +354,12 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
-  name: {
-    fontWeight: '600',
-  },
   nameInput: {
-    // Match the name Text (body: 17/22) exactly so swapping in the input never changes the
+    // Match the name Text (headline: 17/22, semibold) exactly so swapping in the input never changes the
     // text size or the body height (which would nudge the subtitle). A floor, not a fixed height:
     // at a larger text size the input grows with its text instead of clipping it.
     fontSize: 17,
+    fontWeight: '600',
     minHeight: 22,
     padding: 0,
   },
