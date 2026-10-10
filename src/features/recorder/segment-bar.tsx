@@ -59,8 +59,10 @@ const TRASH_HOVER_SCALE = 0.12;
 const TRASH_EXIT_MARGIN = TRASH_HOVER_SCALE / 2;
 // Captured by the drag-move worklet, which can only call a JS function through scheduleOnRN.
 const hoverHaptic = haptics.tap;
-// Text over video grows with Dynamic Type only this far: the thumbs and pills don't grow with it.
-const MAX_FONT_SCALE = 1.3;
+// The thumbs' labels (length, clip number) stay at their size whatever the text size: the 48 pt
+// thumb doesn't grow, so a larger label only covers the frame (at the largest size "00:01" ran
+// edge to edge), the way Photos keeps its thumbnails' durations fixed.
+const THUMB_TEXT_SCALE = 1;
 
 type TrashRect = { x: number; y: number; w: number; h: number };
 
@@ -399,14 +401,14 @@ function SegmentThumb({
       {durationMs > 0 && (
         <View style={styles.durationWrap} pointerEvents="none">
           <View style={styles.duration}>
-            {/* Shrinks to fit rather than overflow the 44 pt thumb: an hour-long clip's
-                "1:02:03", or a larger text size. */}
+            {/* Shrinks to fit rather than overflow the 48 pt thumb: an hour-long clip's
+                "1:02:03". */}
             <Text
               style={styles.durationText}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.7}
-              maxFontSizeMultiplier={MAX_FONT_SCALE}>
+              maxFontSizeMultiplier={THUMB_TEXT_SCALE}>
               {/* Under a second still reads as one: "00:00" looks like an empty or broken clip
                   (the draft card does the same). */}
               {formatDuration(Math.max(durationMs, 1000), { pad: true })}
@@ -422,7 +424,7 @@ function SegmentThumb({
           3 and 12" stays meaningful however the draft is shuffled. */}
       <View style={styles.badgeWrap} pointerEvents="none">
         <View style={styles.badge}>
-          <Text style={styles.badgeText} numberOfLines={1} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+          <Text style={styles.badgeText} numberOfLines={1} maxFontSizeMultiplier={THUMB_TEXT_SCALE}>
             {segment.label || '≡'}
           </Text>
         </View>
