@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useCallback } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect } from 'react';
+import { BackHandler, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -36,14 +36,25 @@ export function OnboardingScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
 
-  const finish = useCallback(() => {
+  // Continue goes on to the recorder; Android's Back goes back to Home. Either way the welcome is
+  // done: Back is the way past it without recording, as Skip was on the old tour.
+  const finish = useCallback((toRecorder: boolean) => {
     // Don't block navigation on the write, but don't swallow a failure either —
     // if this never persists, the welcome re-shows on every launch.
     markOnboardingComplete().catch((e) => {
       console.warn('[onboarding] failed to persist completion; onboarding will re-show', e);
     });
-    router.replace('/recorder');
+    if (toRecorder) router.replace('/recorder');
+    else router.back();
   }, []);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      finish(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [finish]);
 
   return (
     // Grouped, like the other full-screen screens.
@@ -89,7 +100,7 @@ export function OnboardingScreen() {
             No account needed. Your recordings stay on this device unless you share or upload them.
           </ThemedText>
         </View>
-        <PrimaryButton label="Continue" onPress={finish} />
+        <PrimaryButton label="Continue" onPress={() => finish(true)} />
       </Animated.View>
     </ThemedView>
   );
