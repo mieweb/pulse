@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -235,13 +235,20 @@ export async function setEditState(segmentId: string, editState: string): Promis
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
+/** The edit `resetEdit` cleared: what `restoreEdit` puts back, and what `dropResetEditFiles` cleans up. */
+export type ClearedEdit = {
+  draftId: string;
+} & Pick<Segment, 'editState' | 'editedDurationMs' | 'editedFilename' | 'thumbnail'>;
+
 /**
  * Reset a segment back to its pristine original — clear the edit (settings and any legacy baked
- * file), so it plays whole and the editor next opens fresh.
+ * file), so it plays whole and the editor next opens fresh. Returns what it cleared (null when the
+ * clip is gone). The edit's files stay on disk so the reset can be undone (`restoreEdit`); call
+ * `dropResetEditFiles` once it can't be.
  */
-export async function resetEdit(segmentId: string): Promise<void> {
+export async function resetEdit(segmentId: string): Promise<ClearedEdit | null> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
-  if (!seg) return;
+  if (!seg) return null;
   await beginClipMutation(seg.draftId);
   // Revert the cover to the pristine original's thumbnail.
   const thumbRel = thumbRelPath(seg.draftId, segmentId);
@@ -255,15 +262,63 @@ export async function resetEdit(segmentId: string): Promise<void> {
       thumbnail: ok ? thumbRel : null,
     })
     .where(eq(segments.id, segmentId));
-  // Drop the now-orphaned edited file and thumb only after the row no longer references them.
-  if (seg.editedFilename) {
-    deleteSegmentFile(seg.editedFilename);
-    deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
-  }
-  // The prior cover may be from an older revision than `editedFilename` (kept as a fallback
-  // after a failed re-edit thumb generation) — drop it too, but never the fresh `thumbRel`.
-  if (seg.thumbnail && seg.thumbnail !== thumbRel) deleteSegmentFile(seg.thumbnail);
   await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
+  return {
+    draftId: seg.draftId,
+    editState: seg.editState,
+    editedDurationMs: seg.editedDurationMs,
+    editedFilename: seg.editedFilename,
+    thumbnail: seg.thumbnail,
+  };
+}
+
+/**
+ * Undo a `resetEdit`: point the row back at the edit it cleared, whose files are still on disk.
+ * Only while the clip is still reset — an edit saved since wins, and false says nothing was
+ * restored (the clip was re-edited or deleted), so the caller drops the old files instead.
+ */
+export async function restoreEdit(segmentId: string, cleared: ClearedEdit): Promise<boolean> {
+  const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
+  if (!seg) return false;
+  await beginClipMutation(seg.draftId);
+  const rows = await db
+    .update(segments)
+    .set({
+      editState: cleared.editState,
+      editedDurationMs: cleared.editedDurationMs,
+      editedFilename: cleared.editedFilename,
+      thumbnail: cleared.thumbnail,
+    })
+    .where(
+      and(eq(segments.id, segmentId), isNull(segments.editState), isNull(segments.editedFilename)),
+    )
+    .returning({ id: segments.id });
+  if (rows.length === 0) return false;
+  // The pristine thumb the reset rendered stays on disk, as after any edit, ready for a reset.
+  await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
+  return true;
+}
+
+/**
+ * Once a reset can no longer be undone: delete the files the cleared edit used (a legacy baked
+ * file and its thumb, the edit's cover). Anything the row points at again is kept, and so is the
+ * pristine thumb, so this is safe whatever happened to the clip in between.
+ */
+export async function dropResetEditFiles(segmentId: string, cleared: ClearedEdit): Promise<void> {
+  const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
+  const inUse = new Set([
+    seg?.editedFilename,
+    seg?.thumbnail,
+    thumbRelPath(cleared.draftId, segmentId),
+  ]);
+  const files = [
+    cleared.editedFilename,
+    cleared.editedFilename && editedThumbRelPath(cleared.editedFilename),
+    cleared.thumbnail,
+  ];
+  for (const file of new Set(files)) {
+    if (file && !inUse.has(file)) deleteSegmentFile(file);
+  }
 }
 
 /** Persist a new clip ordering (ids in target order) for a single draft. */

@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import { GestureDetector, type ComposedGesture } from 'react-native-gesture-handler';
 import Animated, {
-  cubicBezier,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
@@ -10,8 +9,8 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 
-import { Accent } from '@/constants/theme';
-import { EaseOut } from '@/constants/motion';
+import { Accent, Opacity } from '@/constants/theme';
+import { EaseOut, EaseOutCss } from '@/constants/motion';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 
 const INNER_SIZE = 60;
@@ -32,13 +31,18 @@ const HOLD_OUT_MS = 120;
 
 /**
  * The record controls fade out while a clip is dragged (the trash takes their place) and back
- * when it's dropped — one timing for every piece so they leave and return together. EaseOut as a
- * CSS timing function, so a React state flip animates without a shared value per control.
+ * when it's dropped — one timing for every piece that fades, so they leave and return together
+ * (the lens pill steps instead, being glass: see recorder.tsx). The disabled dim a recording puts
+ * on the rail, the lens chips and the + uses it too. EaseOut as a CSS timing function, so a React
+ * state flip animates without a shared value per control.
+ * Opacity only, so it should run under Reduce Motion too, and it does: Reanimated's CSS
+ * transitions have no Reduce Motion switch. Never on a glass view's ancestor: a partly
+ * transparent parent draws the glass flat (see `Opacity`).
  */
 export const CONTROLS_FADE = {
   transitionProperty: 'opacity',
   transitionDuration: 150,
-  transitionTimingFunction: cubicBezier(0.23, 1, 0.32, 1),
+  transitionTimingFunction: EaseOutCss,
 } as const;
 
 /**
@@ -110,7 +114,7 @@ export function RecordButton({
       <Animated.View
         accessibilityRole="button"
         accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
-        style={[CONTROLS_FADE, { opacity: dragging ? 0 : cameraReady ? 1 : 0.35 }]}>
+        style={[CONTROLS_FADE, { opacity: dragging ? 0 : cameraReady ? 1 : Opacity.disabled }]}>
         <Animated.View style={[styles.recordOuter, ringStyle]}>
           <Animated.View style={[styles.recordInner, innerStyle]} />
         </Animated.View>

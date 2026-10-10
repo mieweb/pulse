@@ -45,6 +45,10 @@ export function useRecorderGestures({
   // tracks zoom per-frame with no JS round-trip or quantization. The value is an absolute zoom
   // factor in [minZoom, maxZoom]; 1 is the neutral 1x lens.
   const zoomSv = useSharedValue(1);
+  // The factor a lens chip is animating zoom to, -1 when none. The chip highlight reads this over
+  // the live zoom while the ramp runs, so it moves with the tap and its haptic instead of 220 ms
+  // later, and a 0.5x → Tele ramp doesn't light 1x on the way through.
+  const chipTarget = useSharedValue(-1);
   const dragBase = useSharedValue(0);
   const pinchBase = useSharedValue(0);
   const holdActive = useSharedValue(false);
@@ -87,6 +91,8 @@ export function useRecorderGestures({
   const { buttonGesture, screenGesture } = useMemo(() => {
     const writeZoom = (next: number) => {
       'worklet';
+      // A finger took over (cancelling any chip ramp): the highlight follows the live zoom again.
+      chipTarget.set(-1);
       zoomSv.set(Math.min(Math.max(next, minSv.get()), maxSv.get()));
     };
 
@@ -159,6 +165,7 @@ export function useRecorderGestures({
     fireHoldEnd,
     fireFocus,
     zoomSv,
+    chipTarget,
     dragBase,
     pinchBase,
     holdActive,
@@ -170,8 +177,9 @@ export function useRecorderGestures({
   // Reset to the neutral 1x lens — on a flip, and once when the device (and its real neutral
   // factor) first resolves, so the camera opens at 1x instead of the ultra-wide minZoom.
   const resetZoom = useCallback(() => {
+    chipTarget.set(-1);
     zoomSv.set(Math.min(Math.max(neutralZoom, minZoom), maxZoom));
-  }, [zoomSv, neutralZoom, minZoom, maxZoom]);
+  }, [zoomSv, chipTarget, neutralZoom, minZoom, maxZoom]);
 
   // Animate zoom to a specific factor — used by the lens chips (0.5x / 1x / Tele are zoom
   // presets). VisionCamera switches the physical camera as the factor crosses the device's
@@ -179,17 +187,30 @@ export function useRecorderGestures({
   // startZoomAnimation API is meant for (a direct gesture write below cancels it, as expected).
   // Runs under Reduce Motion too: it's the camera moving between lenses, not UI decoration, and
   // a jump would make the lens switch itself abrupt.
+  // The target is cleared only by a ramp that FINISHED: one cut short by another chip already
+  // carries that chip's target, and a finger or reset clears it itself.
   const setZoomTo = useCallback(
     (factor: number) => {
+      const target = Math.min(Math.max(factor, minZoom), maxZoom);
+      chipTarget.set(target);
       zoomSv.set(
-        withTiming(Math.min(Math.max(factor, minZoom), maxZoom), {
-          duration: 220,
-          reduceMotion: ReduceMotion.Never,
+        withTiming(target, { duration: 220, reduceMotion: ReduceMotion.Never }, (finished) => {
+          'worklet';
+          if (finished) chipTarget.set(-1);
         }),
       );
     },
-    [zoomSv, minZoom, maxZoom],
+    [zoomSv, chipTarget, minZoom, maxZoom],
   );
 
-  return { zoomSv, holdActive, pressed, buttonGesture, screenGesture, resetZoom, setZoomTo };
+  return {
+    zoomSv,
+    chipTarget,
+    holdActive,
+    pressed,
+    buttonGesture,
+    screenGesture,
+    resetZoom,
+    setZoomTo,
+  };
 }

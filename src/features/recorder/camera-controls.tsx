@@ -1,9 +1,13 @@
 import type { SymbolViewProps } from 'expo-symbols';
+import type { ReactNode } from 'react';
 import { Icon } from '@/components/icon';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
-import { Accent, Spacing } from '@/constants/theme';
+import { Accent, Opacity, Spacing } from '@/constants/theme';
+import { haptics } from '@/utils/haptics';
+import { CONTROLS_FADE } from './record-button';
 import type { CameraFacing, StabilizationMode } from './use-recorder';
 
 const STABILIZATION_LABELS: Record<StabilizationMode, string> = {
@@ -107,27 +111,62 @@ function ControlButton({
 }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        // A camera setting changed: the same tap as a lens chip. (The rail is locked while a clip
+        // records, when haptics are muted anyway.)
+        haptics.tap();
+        onPress();
+      }}
       disabled={disabled}
       hitSlop={6}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={({ pressed }) => [styles.wrap, { opacity: disabled ? 0.35 : pressed ? 0.7 : 1 }]}>
-      <GlassPill style={styles.button}>
-        <Icon
-          name={icon}
-          size={24}
-          weight="medium"
-          tintColor={tint}
-          style={dimmed ? styles.dimmedIcon : undefined}
-        />
-      </GlassPill>
-      {caption && (
-        <Text style={[styles.caption, { color: tint }]} maxFontSizeMultiplier={1.3}>
-          {caption}
-        </Text>
+      style={styles.wrap}>
+      {({ pressed }) => (
+        <>
+          <GlassPill style={styles.button}>
+            <Dim disabled={disabled} pressed={pressed}>
+              <Icon
+                name={icon}
+                size={24}
+                weight="medium"
+                tintColor={tint}
+                style={dimmed ? styles.dimmedIcon : undefined}
+              />
+            </Dim>
+          </GlassPill>
+          {caption && (
+            <Dim disabled={disabled} pressed={pressed}>
+              <Text style={[styles.caption, { color: tint }]} maxFontSizeMultiplier={1.3}>
+                {caption}
+              </Text>
+            </Dim>
+          )}
+        </>
       )}
     </Pressable>
+  );
+}
+
+/**
+ * Press and disabled dimming for what's INSIDE a glass pill (and the caption under it), never the
+ * pill: a partly transparent ancestor makes iOS draw the glass flat, and it can stay that way. The
+ * disabled dim fades with the record controls (a recording locks the rail as it starts); the press
+ * dim answers the finger at once.
+ */
+function Dim({
+  disabled,
+  pressed,
+  children,
+}: {
+  disabled: boolean;
+  pressed: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Animated.View style={[CONTROLS_FADE, { opacity: disabled ? Opacity.disabled : 1 }]}>
+      <View style={pressed && styles.pressed}>{children}</View>
+    </Animated.View>
   );
 }
 
@@ -160,6 +199,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
     textShadowOffset: { width: 0, height: 1 },
   },
-  // Distinct from the 0.35 whole-button disabled treatment: the pill stays at full opacity.
+  // Distinct from the disabled treatment, which dims the caption too.
   dimmedIcon: { opacity: 0.45 },
+  pressed: { opacity: Opacity.pressed },
 });

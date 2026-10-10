@@ -49,11 +49,16 @@ public class CallDetectorModule: Module {
   // end each exactly once — calling UIApplication.endBackgroundTask twice on the same id is an
   // unbalanced end that iOS warns about.
   private var activeTasks = Set<Int>()
+  // Ids whose expiration handler ran before beginBackgroundTask had recorded them as active (iOS
+  // can call it at once when no background time is left): begin then ends the task itself instead
+  // of handing JS an id iOS is about to kill the app over.
+  private var expiredTasks = Set<Int>()
   private let tasksLock = NSLock()
 
-  private func endTask(_ rawId: Int) {
+  private func endTask(_ rawId: Int, expired: Bool = false) {
     tasksLock.lock()
     let wasActive = activeTasks.remove(rawId) != nil
+    if !wasActive && expired { expiredTasks.insert(rawId) }
     tasksLock.unlock()
     guard wasActive else { return }
     let taskId = UIBackgroundTaskIdentifier(rawValue: rawId)
@@ -159,12 +164,16 @@ public class CallDetectorModule: Module {
     Function("beginBackgroundTask") { () -> Int in
       var taskId: UIBackgroundTaskIdentifier = .invalid
       taskId = UIApplication.shared.beginBackgroundTask(withName: "PulseFinalizeRecording") {
-        self.endTask(taskId.rawValue)
+        self.endTask(taskId.rawValue, expired: true)
       }
       let rawId = taskId.rawValue
       self.tasksLock.lock()
-      self.activeTasks.insert(rawId)
+      let expiredAlready = self.expiredTasks.remove(rawId) != nil
+      if !expiredAlready { self.activeTasks.insert(rawId) }
       self.tasksLock.unlock()
+      if expiredAlready && taskId != .invalid {
+        UIApplication.shared.endBackgroundTask(taskId)
+      }
       return rawId
     }
 
@@ -176,19 +185,37 @@ public class CallDetectorModule: Module {
     // playAndRecord with the camera's mic attached) unless this is on, and it only takes effect
     // when set BEFORE the session is activated — so JS calls it right before activating
     // (useAudioFocus), rather than relying on VisionCamera's own setting, which lands whenever the
-    // camera configures. A failure leaves haptics muted, nothing worse.
+    // camera configures. A failure leaves haptics muted, nothing worse, so it isn't thrown to JS;
+    // it's logged, so a silent recorder can be traced to it from the device console.
     Function("allowHapticsWhileRecording") { (allow: Bool) in
-      try? AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(allow)
+      do {
+        try AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(allow)
+      } catch {
+        NSLog("[CallDetector] setAllowHapticsAndSystemSoundsDuringRecording(%@) failed: %@",
+              allow ? "true" : "false", String(describing: error))
+      }
     }
 
     OnStartObserving {
       self.stateLock.lock()
       self.observing = true
-      let active = self.interruptionActive
       self.stateLock.unlock()
-      // Emit the current state immediately — interruptions only push future *changes*, so a latch
-      // set before the listener attached would otherwise be missed.
-      self.emitCallState(active)
+      // Emit the current state right away — interruptions only push future *changes*, so a latch
+      // set before the listener attached would otherwise be missed. Read and sent on main, where
+      // the interruption handlers send theirs: snapshotting here (the module thread) and queueing
+      // the send let a newer `.began`/`.ended` sent directly on main be overtaken by the stale
+      // snapshot, leaving JS on the wrong state. On main every send is in order, and this one
+      // carries the latch as it is when it runs, so the last event JS sees always matches it.
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self else { return }
+        self.stateLock.lock()
+        let active = self.interruptionActive
+        let observing = self.observing
+        self.stateLock.unlock()
+        if observing {
+          self.sendEvent("onCallStateChange", ["isActive": active])
+        }
+      }
     }
 
     OnStopObserving {

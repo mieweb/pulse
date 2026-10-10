@@ -19,10 +19,13 @@ import {
   addSegment,
   createDraft,
   deleteDraft,
+  dropResetEditFiles,
   reorderSegments,
   resetEdit,
+  restoreEdit,
   segmentsForDraft,
 } from '@/db/drafts';
+import type { Segment } from '@/db/schema';
 import {
   CAMERA_FACING_KEY,
   CAMERA_MUTED_KEY,
@@ -650,6 +653,7 @@ export function useRecorder(initialDraftId?: string) {
     hideClip(id, draftId, clip ? (clip.editedDurationMs ?? clip.durationMs) : 0);
     const closeToast = showUndoToast({
       title: 'Clip deleted',
+      message: clipName(clip),
       onUndo: () => void restoreClip(id),
       onCommit: () =>
         void commitClipDelete(id).catch((e: unknown) =>
@@ -661,6 +665,56 @@ export function useRecorder(initialDraftId?: string) {
         ),
     });
     setClipToastCloser(id, closeToast);
+  }
+
+  // The open "Edits removed" toast's closer (closing commits). One at most: a newer toast replaces
+  // it, which commits it too.
+  const resetToastRef = useRef<(() => void) | null>(null);
+
+  // Revert edits with Undo instead of a confirm, like a delete: the clip goes back to its original
+  // now, and the edit comes back on Undo. Its files (the cover, a legacy baked file) stay on disk
+  // until the toast commits, which is what lets Undo just point the row back at them. Applied to
+  // the db straight away rather than hidden like a delete: the preview, Home and the export all
+  // read the row, so each sees the reverted clip without knowing about pending resets. The same
+  // holds for legacy clips (a baked file, no settings): the row's file and cover come back as they
+  // were, which is safer than rebuilding an edit from settings they don't have.
+  async function revertEdits(id: string) {
+    const clip = allSegments.find((s) => s.id === id);
+    let cleared: Awaited<ReturnType<typeof resetEdit>>;
+    try {
+      cleared = await resetEdit(id);
+    } catch (e) {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t remove the edits',
+        message: userMessage(e, 'Try again.', 'reset edit'),
+      });
+      return;
+    }
+    if (!cleared) return;
+    const edit = cleared;
+    // Nothing left to undo: free the old edit's files. Never throws into the toast.
+    const drop = () => void dropResetEditFiles(id, edit).catch(() => {});
+    resetToastRef.current = showUndoToast({
+      title: 'Edits removed',
+      message: clipName(clip),
+      onUndo: () =>
+        void restoreEdit(id, edit).then(
+          // Not restored: the clip was edited again or deleted meanwhile, and that stands.
+          (restored) => {
+            if (!restored) drop();
+          },
+          (e: unknown) => {
+            drop();
+            showToast({
+              kind: 'error',
+              title: 'Couldn’t restore the edits',
+              message: userMessage(e, 'Try again.', 'restore edit'),
+            });
+          },
+        ),
+      onCommit: drop,
+    });
   }
 
   // The bar reorders only the clips it shows. A clip awaiting its delete keeps its slot (and
@@ -712,7 +766,15 @@ export function useRecorder(initialDraftId?: string) {
     toggleMute: () => setMuted((prev) => !prev),
     cycleStabilization,
     deleteSegment: removeSegment,
-    resetSegment: (id: string) => void resetEdit(id),
+    resetSegment: (id: string) => void revertEdits(id),
+    // Before something reads the draft from the db (export): a revert still showing its Undo is
+    // made final, so Undo can't put back an edit the export has already been made without.
+    settleEditResets: () => resetToastRef.current?.(),
     reorderSegments: reorderVisible,
   };
+}
+
+/** A clip as its Undo toast names it: the number on its badge in the strip ("Clip 3"). */
+function clipName(clip: Segment | undefined): string | undefined {
+  return clip?.label ? `Clip ${clip.label}` : undefined;
 }

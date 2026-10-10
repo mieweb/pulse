@@ -1,4 +1,5 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
@@ -39,8 +40,8 @@ import { useRecorderPermissions } from '@/features/recorder/use-recorder-permiss
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { formatDurationPadded } from '@/utils/format';
-import { muteHaptics } from '@/utils/haptics';
+import { formatDuration } from '@/utils/format';
+import { haptics, muteHaptics } from '@/utils/haptics';
 import { userMessage } from '@/utils/user-message';
 import { closeToHome } from '@/utils/navigation';
 import { clipRender } from '@/utils/segment-window';
@@ -96,6 +97,7 @@ export default function RecorderScreen() {
     cycleStabilization,
     deleteSegment,
     resetSegment,
+    settleEditResets,
     reorderSegments,
   } = useRecorder(draftIdParam);
 
@@ -124,8 +126,9 @@ export default function RecorderScreen() {
   // recording. During preview the playhead position is shown inside the preview card instead.
   const totalMs = useRecordingTimer(segments, recordStartedAt);
 
-  // Trimming = RNVT's full-screen editor, launched from the ✂ button in the preview modal.
-  const { openTrim } = useVideoTrim(draftId);
+  // Trimming = RNVT's full-screen editor, launched from the ✂ button in the preview modal. Its
+  // trash deletes through the same Undo delete as the preview's 🗑.
+  const { openTrim } = useVideoTrim(draftId, deleteSegment);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
@@ -347,17 +350,25 @@ export default function RecorderScreen() {
     endHoldRecording();
   }, [endHoldRecording]);
 
-  const { zoomSv, holdActive, pressed, buttonGesture, screenGesture, resetZoom, setZoomTo } =
-    useRecorderGestures({
-      onToggle: reacquireThen(toggleRecording),
-      onHoldStart,
-      onHoldEnd,
-      onFocus,
-      enabled: cameraReady && !previewing && !dragging,
-      neutralZoom,
-      minZoom: device?.minZoom ?? 1,
-      maxZoom: device ? Math.min(device.maxZoom, MAX_ZOOM_FACTOR) : 1,
-    });
+  const {
+    zoomSv,
+    chipTarget,
+    holdActive,
+    pressed,
+    buttonGesture,
+    screenGesture,
+    resetZoom,
+    setZoomTo,
+  } = useRecorderGestures({
+    onToggle: reacquireThen(toggleRecording),
+    onHoldStart,
+    onHoldEnd,
+    onFocus,
+    enabled: cameraReady && !previewing && !dragging,
+    neutralZoom,
+    minZoom: device?.minZoom ?? 1,
+    maxZoom: device ? Math.min(device.maxZoom, MAX_ZOOM_FACTOR) : 1,
+  });
 
   // The camera allows haptics (see <Camera>), so mute them while a clip records: the mic would
   // pick one up. Start's haptic fires before capture begins, so it still lands.
@@ -374,13 +385,17 @@ export default function RecorderScreen() {
 
   // The highlighted lens chip tracks the LIVE zoom (pinch / drag / chip-tap all move zoomSv),
   // so it reflects whichever physical lens the current factor sits on — the highest preset whose
-  // boundary the zoom has reached. JS is called only when the active lens actually changes.
+  // boundary the zoom has reached. While a chip's ramp runs it shows that chip's target instead,
+  // so the highlight lands with the tap and its haptic, not 220 ms later, and never passes
+  // through 1x on the way from 0.5x to Tele. JS is called only when the active lens changes.
   const [activeLens, setActiveLens] = useState(DEFAULT_LENS_LABEL);
   useAnimatedReaction(
     () => {
+      const target = chipTarget.get();
+      const zoom = target >= 0 ? target : zoomSv.get();
       let label = lensPresets[0]?.label;
       for (const p of lensPresets) {
-        if (zoomSv.get() >= p.zoom) label = p.label;
+        if (zoom >= p.zoom) label = p.label;
       }
       return label;
     },
@@ -415,6 +430,10 @@ export default function RecorderScreen() {
 
   return (
     <View style={styles.fill}>
+      {/* Light over the live camera whatever the theme; the preview's backdrop follows the theme,
+          so the bar does too. Only while this screen is focused: the last StatusBar mounted wins,
+          and the recorder stays mounted under Export, which should get the root's again. */}
+      {focused && <StatusBar style={previewing ? (mode === 'dark' ? 'light' : 'dark') : 'light'} />}
       {device && (
         <Camera
           ref={cameraRef}
@@ -507,13 +526,18 @@ export default function RecorderScreen() {
           {previewing ? (
             <View style={[styles.timerPill, styles.previewTimerPill, ControlScrim[mode]]}>
               <Text style={styles.timerText} maxFontSizeMultiplier={1.3}>
-                {formatDurationPadded(preview.globalMs)} / {formatDurationPadded(preview.totalMs)}
+                {/* The position floors (a playhead shouldn't read a second ahead); the total
+                    rounds, as clip lengths do everywhere. */}
+                {formatDuration(preview.globalMs, { pad: true, floor: true })} /{' '}
+                {formatDuration(preview.totalMs, { pad: true })}
               </Text>
             </View>
           ) : (
             <GlassPill style={styles.timerPill}>
               <Text style={styles.timerText} maxFontSizeMultiplier={1.3}>
-                {formatDurationPadded(totalMs)}
+                {/* Floored like a playhead while recording, so it doesn't tick to the next
+                    second half a second early; at rest it rounds, like the draft's total on Home. */}
+                {formatDuration(totalMs, { pad: true, floor: recordStartedAt != null })}
               </Text>
             </GlassPill>
           )}
@@ -558,10 +582,16 @@ export default function RecorderScreen() {
                 preview.pause();
                 openTrim(seg);
               }}
-              // Deletes at once with an Undo toast, like drag-to-trash (see useRecorder).
-              onDelete={() => preview.activeId && deleteSegment(preview.activeId)}
-              // Only for an edited clip: back to the untouched original. No confirm — the edits
-              // are one ✂ away, and undoing edits before ➡️ reuses the saved merge (#212).
+              // Deletes at once with an Undo toast, like drag-to-trash (see useRecorder), and with
+              // the same haptic as a drop on the trash.
+              onDelete={() => {
+                if (!preview.activeId) return;
+                haptics.drop();
+                deleteSegment(preview.activeId);
+              }}
+              // Only for an edited clip: back to the untouched original. No confirm: it comes
+              // with an Undo toast (see useRecorder), and undoing edits before ➡️ reuses the saved
+              // merge (#212).
               onReset={
                 preview.active?.editState || preview.active?.editedFilename
                   ? () => preview.activeId && resetSegment(preview.activeId)
@@ -576,17 +606,19 @@ export default function RecorderScreen() {
           style={[styles.bottom, { paddingBottom: insets.bottom + Spacing.three }]}
           pointerEvents="box-none">
           {/* Record button is hidden entirely while previewing — the preview surface owns the
-              screen then. During a drag it fades out (opacity 0, layout kept) so the floating
-              trash above the bar has clear space and nothing shifts. */}
+              screen then. During a drag the record controls go (opacity 0, layout kept) so the
+              floating trash above the bar has clear space and nothing shifts. The lens pill
+              steps out and back rather than fading with the others: it's glass, and a partly
+              transparent ancestor makes iOS draw glass flat, sometimes for good. */}
           {!previewing && (
-            <Animated.View style={[CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
+            <View style={{ opacity: dragging ? 0 : 1 }}>
               <LensSelector
                 presets={lensPresets}
                 selected={activeLens}
                 onSelect={(preset) => setZoomTo(preset.zoom)}
                 disabled={isRecording || dragging}
               />
-            </Animated.View>
+            </View>
           )}
 
           {!previewing && (
@@ -632,10 +664,12 @@ export default function RecorderScreen() {
                 : undefined
             }
             // Export reads the draft from the db, so a delete still showing its Undo is made
-            // final first — otherwise the hidden clip would be exported.
+            // final first — otherwise the hidden clip would be exported. So is a revert of edits,
+            // whose Undo would otherwise change a clip the export was already made from.
             onNext={
               draftId
-                ? () =>
+                ? () => {
+                    settleEditResets();
                     void commitDraftDeletes(draftId).then(
                       () => router.push({ pathname: '/export', params: { draftId } }),
                       // The clip is back on the bar; stay here rather than export a clip the
@@ -646,7 +680,8 @@ export default function RecorderScreen() {
                           title: 'Couldn’t delete the clip',
                           message: userMessage(e, 'Try again.', 'delete clip'),
                         }),
-                    )
+                    );
+                  }
                 : undefined
             }
           />

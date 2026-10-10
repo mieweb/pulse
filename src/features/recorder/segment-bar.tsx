@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   interpolateColor,
+  ReduceMotion,
   useAnimatedRef,
   useAnimatedStyle,
+  useReducedMotion,
   useScrollViewOffset,
   useSharedValue,
   withTiming,
@@ -19,11 +21,11 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import { GlassPill } from '@/components/glass-pill';
 import { EaseOut } from '@/constants/motion';
-import { Accent, ControlScrim, Spacing } from '@/constants/theme';
+import { Accent, ControlScrim, Opacity, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
 import { useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
-import { formatDurationPadded } from '@/utils/format';
+import { formatDuration } from '@/utils/format';
 import { haptics } from '@/utils/haptics';
 import { effMs } from '@/utils/segment-window';
 import { PlayheadCursor, type Cursor } from './playhead-cursor';
@@ -45,8 +47,16 @@ import {
 const TRASH_SIZE = 56;
 // Nudge the trash below the record button's exact center so it clears the preview modal.
 const TRASH_DROP_OFFSET = 18;
-const TRASH_FADE = { duration: 150, easing: EaseOut };
-const TRASH_HOVER = { duration: 120, easing: EaseOut };
+// Never skipped for Reduce Motion: what they drive is opacity and colour (the scale that rides
+// along is dropped under Reduce Motion, see trashStyle).
+const TRASH_FADE = { duration: 150, easing: EaseOut, reduceMotion: ReduceMotion.Never };
+const TRASH_HOVER = { duration: 120, easing: EaseOut, reduceMotion: ReduceMotion.Never };
+// How much the trash grows while a clip hovers it.
+const TRASH_HOVER_SCALE = 0.12;
+// Once a clip is over the trash, it stays over until it leaves the grown circle (6% a side of 56 pt
+// is the hover scale's 62.7 pt): testing the resting rect both ways made the edge flicker in and
+// out, a haptic each time.
+const TRASH_EXIT_MARGIN = TRASH_HOVER_SCALE / 2;
 // Captured by the drag-move worklet, which can only call a JS function through scheduleOnRN.
 const hoverHaptic = haptics.tap;
 // Text over video grows with Dynamic Type only this far: the thumbs and pills don't grow with it.
@@ -132,6 +142,8 @@ function Bar({
   const vis = useSharedValue(0); // 0→1 trash fade-in during a drag
   const over = useSharedValue(0); // highlight when a dragged clip hovers the trash
 
+  // Measures the static target around the trash, not the trash itself: the trash is scaled
+  // (0.85 while it fades in), and measureInWindow reports the scaled rect — a target ~15% small.
   const measureTrash = useCallback(
     () =>
       trashRef.current?.measureInWindow((x, y, w, h) => {
@@ -140,9 +152,13 @@ function Bar({
     [trashRect],
   );
 
+  // Reduce Motion keeps the fade and the colour change and drops the scale.
+  const reduceMotion = useReducedMotion();
   const trashStyle = useAnimatedStyle(() => ({
     opacity: vis.get(),
-    transform: [{ scale: 0.85 + 0.15 * vis.get() + 0.12 * over.get() }],
+    transform: reduceMotion
+      ? []
+      : [{ scale: 0.85 + 0.15 * vis.get() + TRASH_HOVER_SCALE * over.get() }],
     backgroundColor: interpolateColor(over.get(), [0, 1], ['rgba(0,0,0,0.6)', Accent]),
     borderColor: interpolateColor(over.get(), [0, 1], ['rgba(255,255,255,0.4)', '#fff']),
   }));
@@ -176,13 +192,17 @@ function Bar({
       'worklet';
       if (!trashShown) return;
       const r = trashRect.get();
+      const was = overTrash.get();
+      // Leaving is tested against the grown rect (see TRASH_EXIT_MARGIN), entering the resting one.
+      const mx = was && r ? r.w * TRASH_EXIT_MARGIN : 0;
+      const my = was && r ? r.h * TRASH_EXIT_MARGIN : 0;
       const inside =
         !!r &&
-        touchData.absoluteX >= r.x &&
-        touchData.absoluteX <= r.x + r.w &&
-        touchData.absoluteY >= r.y &&
-        touchData.absoluteY <= r.y + r.h;
-      if (inside === overTrash.get()) return;
+        touchData.absoluteX >= r.x - mx &&
+        touchData.absoluteX <= r.x + r.w + mx &&
+        touchData.absoluteY >= r.y - my &&
+        touchData.absoluteY <= r.y + r.h + my;
+      if (inside === was) return;
       overTrash.set(inside);
       over.set(withTiming(inside ? 1 : 0, TRASH_HOVER));
       if (inside) scheduleOnRN(hoverHaptic);
@@ -193,10 +213,13 @@ function Bar({
   const onDragEnd = useCallback(
     ({ data }: SortableGridDragEndParams<Segment>) => {
       vis.set(withTiming(0, TRASH_FADE));
-      over.set(withTiming(0, TRASH_HOVER));
       // Dropped on the trash → delete that clip (with Undo); otherwise persist the new order.
       const key = draggedKey.current;
-      if (overTrash.get() && key) {
+      const deleting = overTrash.get() && !!key;
+      // A delete leaves the trash red as it fades: easing it back to grey at the moment the
+      // delete lands read as "cancelled". (The next drag starts it grey again.)
+      if (!deleting) over.set(withTiming(0, TRASH_HOVER));
+      if (deleting && key) {
         haptics.drop();
         latest.current.onDelete(key);
       } else {
@@ -238,12 +261,17 @@ function Bar({
             preview's own 🗑 covers deletion — drags are reorder-only there. */}
         {trashShown && (
           <View style={styles.trashWrap} pointerEvents="none">
-            <Animated.View
+            {/* The measured drop target: never transformed, so its rect is the trash at rest.
+                Not collapsable, or Android could flatten it away and leave nothing to measure. */}
+            <View
               ref={trashRef}
+              collapsable={false}
               onLayout={measureTrash}
-              style={[styles.trash, trashStyle]}>
-              <Icon name="trash.fill" size={22} tintColor="#fff" />
-            </Animated.View>
+              style={styles.trashTarget}>
+              <Animated.View style={[styles.trash, trashStyle]}>
+                <Icon name="trash.fill" size={22} tintColor="#fff" />
+              </Animated.View>
+            </View>
           </View>
         )}
 
@@ -319,7 +347,7 @@ function Bar({
             onPress={onNext}
             accessibilityRole="button"
             accessibilityLabel="Next"
-            style={({ pressed }) => [styles.next, { opacity: pressed ? 0.85 : 1 }]}>
+            style={({ pressed }) => [styles.next, pressed && styles.nextPressed]}>
             <Icon name="arrow.right" size={22} weight="semibold" tintColor="#fff" />
           </Pressable>
         )}
@@ -379,7 +407,9 @@ function SegmentThumb({
               adjustsFontSizeToFit
               minimumFontScale={0.7}
               maxFontSizeMultiplier={MAX_FONT_SCALE}>
-              {formatDurationPadded(durationMs)}
+              {/* Under a second still reads as one: "00:00" looks like an empty or broken clip
+                  (the draft card does the same). */}
+              {formatDuration(Math.max(durationMs, 1000), { pad: true })}
             </Text>
           </View>
         </View>
@@ -441,6 +471,7 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
   },
+  trashTarget: { width: TRASH_SIZE, height: TRASH_SIZE },
   trash: {
     width: TRASH_SIZE,
     height: TRASH_SIZE,
@@ -558,4 +589,5 @@ const styles = StyleSheet.create({
     // The viewport's scrub lanes are symmetric (top + bottom), so the thumbs sit on the
     // bar's centerline and the button centers naturally — no offset needed.
   },
+  nextPressed: { opacity: Opacity.pressed },
 });
