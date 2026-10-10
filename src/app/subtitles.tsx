@@ -363,7 +363,10 @@ function Editor({
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
 
   // Once, while browsing a list with captions: how to select a caption and edit its words.
-  const editTip = useTip('captionEdit', mode === 'browse' && editor.cues.length > 0, 800);
+  const editTip = useTip('captionEdit', mode === 'browse' && editor.cues.length > 0, {
+    delayMs: 800,
+    learned: mode !== 'browse',
+  });
 
   return (
     <ThemedView type="groupedBackground" style={styles.fill}>

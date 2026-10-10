@@ -420,8 +420,14 @@ export default function RecorderScreen() {
     },
   );
   const shutterIdle = focused && cameraReady && !previewing && !isRecording && !shutterTouched;
-  const recordTip = useTip('record', shutterIdle && segments.length === 0, 1000);
-  const clipsTip = useTip('clips', shutterIdle && !dragging && segments.length > 0, 2000);
+  const recordTip = useTip('record', shutterIdle && segments.length === 0, {
+    delayMs: 1000,
+    learned: isRecording,
+  });
+  const clipsTip = useTip('clips', shutterIdle && !dragging && segments.length > 0, {
+    delayMs: 2000,
+    learned: previewing || dragging,
+  });
   const closeTips = () => {
     recordTip.dismiss();
     clipsTip.dismiss();

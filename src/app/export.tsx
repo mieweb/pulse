@@ -183,7 +183,7 @@ export default function ExportScreen() {
   const captionsTip = useTip(
     'captions',
     state.status === 'done' && !uploading && transcription.state.status === 'no-model',
-    800,
+    { delayMs: 800 },
   );
 
   return (
@@ -194,8 +194,15 @@ export default function ExportScreen() {
           <CaptionsButton
             status={transcription.state.status}
             hasCaptions={captionLines.length > 0}
-            onEditCaptions={openCaptionEditor}
-            onAddCaptions={() => router.push('/on-device-ai')}
+            // Either press means the button's been found: the tip is done, even before it showed.
+            onEditCaptions={() => {
+              captionsTip.retire();
+              openCaptionEditor();
+            }}
+            onAddCaptions={() => {
+              captionsTip.retire();
+              router.push('/on-device-ai');
+            }}
             tip={
               captionsTip.mounted && (
                 <TipAnchor

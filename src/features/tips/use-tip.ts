@@ -30,42 +30,63 @@ const EXIT_MS = 400;
  * no clips yet); the tip shows `delayMs` after that turns true, if it hasn't been shown before and
  * no other tip is showing.
  *
- * Once shown, it's done whichever way it goes: closed, its moment passing (the person did the
- * thing it was about, or moved on), or its screen closing. It never comes back, as Apple's TipKit
- * tips don't, so nobody is taught the same control twice.
+ * Once shown, it's done whichever way it goes: closed, its moment passing, or its screen closing.
+ * Before it shows, a moment passing only puts it off; `learned` turning true (the person did the
+ * thing it teaches) or `retire()` ends it for good, shown or not, as TipKit's invalidation does —
+ * so nobody is taught a control they've already found, or the same control twice.
  */
-export function useTip(id: TipId, eligible: boolean, delayMs = 500) {
+export function useTip(
+  id: TipId,
+  eligible: boolean,
+  { delayMs = 500, learned = false }: { delayMs?: number; learned?: boolean } = {},
+) {
   // `undefined` until the shown ids load; a tip only mounts its anchor once it's known unseen.
   const [unseen, setUnseen] = useState<boolean | undefined>(undefined);
+  const unseenRef = useRef<boolean | undefined>(undefined);
   const [shown, setShown] = useState(false);
   const shownRef = useRef(false);
-  // Set on close: the anchor outlives it for the exit animation, but the tip mustn't show again.
+  // Set when it's done: the anchor outlives a shown tip for its exit, but it mustn't show again.
   const doneRef = useRef(false);
   const unmountTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     void loadSeen().then((ids) => {
-      if (!cancelled) setUnseen(!ids.has(id) && !ids.has(ALL));
+      if (cancelled) return;
+      // Retired while this read was in flight (`learned` came first): stays done.
+      unseenRef.current = !doneRef.current && !ids.has(id) && !ids.has(ALL);
+      setUnseen(unseenRef.current);
     });
     return () => {
       cancelled = true;
     };
   }, [id]);
 
-  const dismiss = useCallback(() => {
-    if (!shownRef.current) return;
-    shownRef.current = false;
+  /** Done for good, shown or not: hidden if it's up, and remembered. */
+  const retire = useCallback(() => {
+    if (doneRef.current || unseenRef.current === false) return;
     doneRef.current = true;
+    const wasShown = shownRef.current;
+    shownRef.current = false;
     if (active === id) active = null;
     setShown(false);
     // Unmounting the anchor with the popover still up would cut its exit short.
-    unmountTimer.current = setTimeout(() => setUnseen(false), EXIT_MS);
+    unmountTimer.current = setTimeout(() => setUnseen(false), wasShown ? EXIT_MS : 0);
     void loadSeen().then((ids) => ids.add(id));
     markTipSeen(id).catch((e: unknown) => console.warn('[tips] failed to save a shown tip', e));
   }, [id]);
 
-  // Show after the delay once it's the tip's moment; done for good if the moment passes.
+  /** Closes the tip if it's showing (and so retires it); does nothing before it shows. */
+  const dismiss = useCallback(() => {
+    if (shownRef.current) retire();
+  }, [retire]);
+
+  useEffect(() => {
+    if (learned) retire();
+  }, [learned, retire]);
+
+  // Show after the delay once it's the tip's moment; done for good if the moment passes while
+  // it's up, put off if it passes before.
   useEffect(() => {
     if (!unseen || doneRef.current) return;
     if (!eligible) {
@@ -74,7 +95,7 @@ export function useTip(id: TipId, eligible: boolean, delayMs = 500) {
     }
     if (shownRef.current) return;
     const timer = setTimeout(() => {
-      if (active != null) return;
+      if (active != null || doneRef.current) return;
       active = id;
       shownRef.current = true;
       setShown(true);
@@ -91,5 +112,5 @@ export function useTip(id: TipId, eligible: boolean, delayMs = 500) {
     [dismiss],
   );
 
-  return { mounted: unseen === true, shown, dismiss };
+  return { mounted: unseen === true, shown, dismiss, retire };
 }
