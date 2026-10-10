@@ -38,7 +38,7 @@ export type ToastContent = {
   title: string;
   /** Optional second line: the detail or the next step ("Scan a new link to try again."). */
   message?: string;
-  /** Optional button at the end ("Undo", "Retry"); tapping it also dismisses the toast. */
+  /** Optional button at the end ("Retry"); tapping it also dismisses the toast. */
   action?: ToastAction;
 };
 
@@ -144,8 +144,7 @@ export function Toast({
   id: number;
   content: ToastContent;
   leaving: boolean;
-  /** `reason` is 'action' when the action button closed it, else 'dismissed'. */
-  onDismiss: (id: number, reason?: 'action' | 'dismissed') => void;
+  onDismiss: (id: number) => void;
   /**
    * A finger is on the toast: hold it up. The tap target, the action button and the swipe each
    * call this and `onRelease` in pairs, and can overlap (a drag cancels the press it began as).
@@ -243,7 +242,7 @@ export function Toast({
                 },
               ),
             );
-            scheduleOnRN(onDismiss, id, 'dismissed');
+            scheduleOnRN(onDismiss, id);
           } else {
             y.set(withSpring(0, { velocity: e.velocityY, dampingRatio: 0.8, duration: 350 }));
           }
@@ -301,7 +300,7 @@ export function Toast({
           // Dismiss first: an action that shows a toast of its own ("Retrying…") must not have
           // that new toast dismissed right after.
           onPress={() => {
-            onDismiss(id, 'action');
+            onDismiss(id);
             action.onPress();
           }}
           // The button owns this touch, so it holds the toast itself while pressed.

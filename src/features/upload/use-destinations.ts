@@ -25,73 +25,22 @@ export type DestinationOption = {
 };
 
 /**
- * Destinations removed in the sheet whose Undo toast is still up: left out of the pool everywhere
- * (the sheet, the home pill, export's chips) but not deleted until the toast goes, so Undo only
- * shows them again and an upload can't pick one that's about to go. Module-level, not sheet
- * state: the toast outlives the sheet, which closes when its last row goes.
- */
-let pendingRemoval: ReadonlySet<string> = new Set();
-const pendingListeners = new Set<() => void>();
-
-export function setPendingRemoval(update: (ids: Set<string>) => void) {
-  const next = new Set(pendingRemoval);
-  update(next);
-  pendingRemoval = next;
-  for (const listener of pendingListeners) listener();
-}
-
-/**
  * Tokens written by a re-pair of a row that already existed (the same link again keeps its row
  * id). Each `useDestinations` loads tokens only when its set of row ids changes, so without this a
  * screen already open would keep using the row's old token; it reads these first instead.
  */
 let repairedTokens: ReadonlyMap<string, string | null> = new Map();
+const repairedListeners = new Set<() => void>();
 
 export function noteRepairedToken(id: string, token: string | null) {
   repairedTokens = new Map(repairedTokens).set(id, token);
-  for (const listener of pendingListeners) listener();
+  for (const listener of repairedListeners) listener();
 }
 
-// Pool writes that race each other (an Undo's delete, a re-pair's add) run one at a time, in the
-// order they were asked for: a delete then decides what to remove only when its turn comes, after
-// any re-pair before it took its row back out of `pendingRemoval`.
-let poolWrites: Promise<unknown> = Promise.resolve();
-
-/** Runs `write` after every pool write queued before it; its result (or error) is the caller's. */
-export function queuePoolWrite<T>(write: () => Promise<T>): Promise<T> {
-  const run = poolWrites.then(write);
-  poolWrites = run.catch(() => {});
-  return run;
-}
-
-// A deleted row stays in `pendingRemoval` a beat after it's gone: the live query re-reads only
-// after the delete lands, and dropping it from the set before that would flash the row back.
-const FORGET_AFTER_MS = 2000;
-
-/**
- * Delete the removed destinations that are still waiting on their Undo when the write's turn
- * comes (a re-pair of the same link takes its row back out of the set, and it's kept). Rows whose
- * delete failed come back at once, the rest a beat after they're gone; any failure is rethrown.
- */
-export function commitRemoval(ids: string[]): Promise<void> {
-  return queuePoolWrite(async () => {
-    const still = ids.filter((id) => pendingRemoval.has(id));
-    const results = await Promise.allSettled(still.map((id) => deleteDestination(id)));
-    const unhide = (gone: string[]) =>
-      setPendingRemoval((pending) => gone.forEach((id) => pending.delete(id)));
-    const failed = still.filter((_, i) => results[i].status === 'rejected');
-    const deleted = still.filter((_, i) => results[i].status === 'fulfilled');
-    unhide(failed);
-    setTimeout(() => unhide(deleted), FORGET_AFTER_MS);
-    const error = results.find((r) => r.status === 'rejected');
-    if (error) throw (error as PromiseRejectedResult).reason;
-  });
-}
-
-function subscribePendingRemoval(listener: () => void) {
-  pendingListeners.add(listener);
+function subscribeRepairedTokens(listener: () => void) {
+  repairedListeners.add(listener);
   return () => {
-    pendingListeners.delete(listener);
+    repairedListeners.delete(listener);
   };
 }
 
@@ -109,8 +58,7 @@ export function useDestinations() {
   // Reactive wall-clock so expiry filtering/labels re-evaluate as time passes, even without a DB
   // write — a token can lapse while the user just sits on the screen.
   const now = useNow(EXPIRY_CHECK_INTERVAL_MS);
-  const pending = useSyncExternalStore(subscribePendingRemoval, () => pendingRemoval);
-  const repaired = useSyncExternalStore(subscribePendingRemoval, () => repairedTokens);
+  const repaired = useSyncExternalStore(subscribeRepairedTokens, () => repairedTokens);
 
   // Tokens live in secure-store keyed by row id; load them into a map keyed on id. Re-fires only
   // when the set of ids changes, not on every render.
@@ -146,7 +94,7 @@ export function useDestinations() {
       rows
         // Only once its token has loaded: before that it would read as a tokenless link, and
         // uploading with it would spend the link on a certain 401.
-        .filter((r) => tokenOf(r.id) !== undefined && !pending.has(r.id))
+        .filter((r) => tokenOf(r.id) !== undefined)
         .map((r) => ({ ...r, token: tokenOf(r.id) ?? null }))
         .filter((r) => !isTokenExpired(r.token, now))
         .map((r) => ({
@@ -158,29 +106,19 @@ export function useDestinations() {
           expiryLabel: formatExpiry(r.token, now),
         })),
     // `now` intentionally in deps so an expiry that passes between ticks re-filters the list.
-    [rows, tokenOf, now, pending],
+    [rows, tokenOf, now],
   );
 
   // Garbage-collect rows whose token has actually lapsed so they don't linger as dead state.
-  // Only acts on tokens we've loaded and can decode as expired (never on "unknown"). Queued with
-  // the other pool writes, and re-read on its turn: re-pairing the same link gives that row a
-  // fresh token, which must not be deleted on the strength of the old one.
+  // Only acts on tokens we've loaded and can decode as expired (never on "unknown").
   useEffect(() => {
     for (const r of rows) {
       const token = tokenOf(r.id);
       if (token !== undefined && isTokenExpired(token, now)) {
-        void queuePoolWrite(async () => {
-          if (isTokenExpired(await getDestinationToken(r.id), Date.now())) {
-            await deleteDestination(r.id);
-          }
-        }).catch(() => {});
+        void deleteDestination(r.id);
       }
     }
   }, [rows, tokenOf, now]);
 
-  // The pool plus the rows an Undo can still bring back: what the destinations sheet sizes itself
-  // for when it opens, so an Undo while it's open can't outgrow a fitted sheet.
-  const countWithPending = destinations.length + rows.filter((r) => pending.has(r.id)).length;
-
-  return { destinations, countWithPending, deleteDestination };
+  return { destinations, deleteDestination };
 }

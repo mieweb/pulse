@@ -11,12 +11,11 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { EaseOut, ListReflowMs } from '@/constants/motion';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
-import { deleteDraft, type DraftListClip, draftListQuery, renameDraft } from '@/db/drafts';
+import { deleteDraft, draftListQuery, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
 import { DraftMenu } from '@/features/home/draft-menu';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
-import { useDraftsWithHiddenClips, useHiddenClips } from '@/features/recorder/clip-deletes';
 import { useToast } from '@/features/toast/toast-provider';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
 import { useNow } from '@/hooks/use-now';
@@ -34,8 +33,8 @@ const DevSeedRow = __DEV__
 /** How often the cards' date labels ("Just now", "Today, 2:30 PM", …) re-evaluate. */
 const DATE_LABEL_REFRESH_MS = 60_000;
 
-// A deleted (or undone) card closes (or opens) its gap with the cards below gliding, instead of
-// every one of them jumping a row.
+// A deleted card closes its gap with the cards below gliding, instead of every one of them jumping
+// a row.
 const LIST_REFLOW = LinearTransition.duration(ListReflowMs).easing(EaseOut);
 // Only an exit, no `entering`: the list mounts cells as they scroll into view, and those would
 // fade in while scrolling. Opacity only, so it stays under Reduce Motion (`Never`): gentler than
@@ -58,19 +57,15 @@ export default function HomeScreen() {
   const [pendingRename, setPendingRename] = useState<{ id: string; name: string | null } | null>(
     null,
   );
-  // Rows hidden optimistically while their delete waits out its Undo toast, then while in flight.
+  // Rows hidden optimistically while their delete is in flight.
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set());
-  // Clips deleted in the recorder whose Undo is still up: their rows are still in the db, so the
-  // query still counts them. Left out here too, so the card matches the recorder it opens.
-  const hiddenClips = useHiddenClips();
-  const draftsWithHiddenClips = useDraftsWithHiddenClips();
 
   // Multi-select for `.pulse` export. `selectionMode` swaps the header for a selection toolbar
   // and turns each card into a checkbox; `selectedIds` tracks the chosen drafts.
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const { busy, state: transferState, shareDrafts, importDrafts } = useDraftTransfer();
-  const { showToast, showUndoToast } = useToast();
+  const { showToast } = useToast();
 
   // Appearance preference (system-follow / pinned light / pinned dark), persisted so it
   // survives restarts (see `useTheme`).
@@ -91,27 +86,7 @@ export default function HomeScreen() {
     }
   }
 
-  // Each draft as it will be once its pending clip deletes land: its clips (from the same query)
-  // without the hidden ones, by id, so the count, length and cover match the recorder's strip and
-  // never lag the delete. One left with no clips is hidden like a deleted draft: committing its
-  // deletes drops the draft too (`commitClipDelete`).
-  const visibleDrafts = drafts.flatMap((d) => {
-    if (deletingIds.has(d.id)) return [];
-    if (!draftsWithHiddenClips.has(d.id)) return [d];
-    const clips = (JSON.parse(d.clipsJson) as DraftListClip[]).filter(
-      (c) => !hiddenClips.has(c.id),
-    );
-    if (clips.length === 0) return [];
-    return [
-      {
-        ...d,
-        segmentCount: clips.length,
-        durationMs: clips.reduce((sum, c) => sum + c.ms, 0),
-        firstSegmentFilename: clips[0].file,
-        firstSegmentThumbnail: clips[0].thumb,
-      },
-    ];
-  });
+  const visibleDrafts = drafts.filter((d) => !deletingIds.has(d.id));
   const allSelected = visibleDrafts.length > 0 && visibleDrafts.every((d) => selectedIds.has(d.id));
 
   const exitSelection = () => {
@@ -149,36 +124,33 @@ export default function HomeScreen() {
     });
   };
 
-  const unhide = (draftId: string) =>
-    setDeletingIds((prev) => {
-      const next = new Set(prev);
-      next.delete(draftId);
-      return next;
-    });
-
-  // No confirm dialog: the card goes at once and the toast offers Undo. Nothing touches the DB or
-  // the clips on disk until the toast goes away without Undo, so Undo is a plain unhide.
-  const deleteWithUndo = (draftId: string, name: string | null) => {
+  // No confirm dialog: the card goes at once, and the toast says which one went.
+  const removeDraft = (draftId: string, name: string | null) => {
     setDeletingIds((prev) => new Set(prev).add(draftId));
-    showUndoToast({
-      title: 'Draft deleted',
-      // Which one, when it has a name; an unnamed draft's "Untitled" would say nothing.
-      message: name && name !== 'Untitled' ? name : undefined,
-      onUndo: () => unhide(draftId),
-      onCommit: () => {
-        // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft`
-        // refuses an uploading draft, so there's no live run to stop first.
-        deleteDraft(draftId).catch((e) => {
-          // The card comes back, so it never vanishes without its delete having happened.
-          unhide(draftId);
-          showToast({
-            kind: 'error',
-            title: 'Couldn’t delete the draft',
-            message: userMessage(e, 'Try again.', 'delete'),
-          });
+    // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft` refuses an
+    // uploading draft, so there's no live run to stop first.
+    deleteDraft(draftId).then(
+      () =>
+        showToast({
+          kind: 'info',
+          title: 'Draft deleted',
+          // Which one, when it has a name; an unnamed draft's "Untitled" would say nothing.
+          message: name && name !== 'Untitled' ? name : undefined,
+        }),
+      (e: unknown) => {
+        // The card comes back, so it never vanishes without its delete having happened.
+        setDeletingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(draftId);
+          return next;
+        });
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t delete the draft',
+          message: userMessage(e, 'Try again.', 'delete'),
         });
       },
-    });
+    );
   };
 
   // Built per-render from the open draft; new actions are added here.
@@ -366,7 +338,7 @@ export default function HomeScreen() {
                       uploading={item.uploadStatus === 'uploading'}
                       besidePill={item.uploadStatus === 'uploaded'}
                       onRename={() => setEditingDraftId(item.id)}
-                      onDelete={() => deleteWithUndo(item.id, name)}
+                      onDelete={() => removeDraft(item.id, name)}
                     />
                   )}
                   onSubmitName={(input) => submitRename(item.id, item.name, input)}

@@ -215,7 +215,7 @@ function Bar({
   const onDragEnd = useCallback(
     ({ data }: SortableGridDragEndParams<Segment>) => {
       vis.set(withTiming(0, TRASH_FADE));
-      // Dropped on the trash → delete that clip (with Undo); otherwise persist the new order.
+      // Dropped on the trash → delete that clip; otherwise persist the new order.
       const key = draggedKey.current;
       const deleting = overTrash.get() && !!key;
       // A delete leaves the trash red as it fades: easing it back to grey at the moment the

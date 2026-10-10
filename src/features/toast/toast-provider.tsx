@@ -35,30 +35,10 @@ const HAPTICS: Record<ToastKind, (() => void) | undefined> = {
   error: haptics.error,
 };
 
-/**
- * Why a toast went away: its `action` was tapped, it timed out, the person dismissed it (tap,
- * swipe, VoiceOver escape), or another toast replaced it.
- */
-export type ToastCloseReason = 'action' | 'timeout' | 'dismissed' | 'replaced';
-
 export type ToastOptions = Omit<ToastContent, 'kind'> & {
   kind?: ToastKind;
   /** Overrides the reading-time default (`durationFor`). */
   duration?: number;
-  /** Called exactly once when this toast goes away, with why. */
-  onClose?: (reason: ToastCloseReason) => void;
-};
-
-/**
- * An optimistic action with an Undo: the caller has already applied it on screen. `onUndo` puts
- * it back if Undo is tapped; `onCommit` makes it permanent once the toast goes any other way
- * (times out, is dismissed, or is replaced by another toast).
- */
-export type UndoToastOptions = {
-  title: string;
-  message?: string;
-  onUndo: () => void;
-  onCommit: () => void;
 };
 
 /**
@@ -71,11 +51,7 @@ type ShowToast = {
   (text: string, kind?: ToastKind): void;
 };
 
-type ToastContextValue = {
-  showToast: ShowToast;
-  /** Returns `commitNow`: closes this toast if it's still up, which commits (no Undo after). */
-  showUndoToast: (options: UndoToastOptions) => () => void;
-};
+type ToastContextValue = { showToast: ShowToast };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
@@ -114,20 +90,13 @@ function ToastSurface(props: React.ComponentProps<typeof Toast>) {
  * stays and its content changes). Tapping a toast or swiping it up dismisses it early; holding it
  * keeps it up. A toast unmounts once `Toast` reports its exit finished.
  *
- * With a screen reader on, a toast with an action (Undo) stays until it's used, dismissed or
+ * With a screen reader on, a toast with an action stays until it's used, dismissed or
  * replaced: a few seconds isn't long enough to find and reach the button by swiping through the
  * screen. That's what Android's own Snackbar does with TalkBack on. Without an action there's
  * nothing to reach, and the announcement has already read it out.
  */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<{ id: number; content: ToastContent } | null>(null);
-  // The up toast's `onClose`, called once (then cleared) whichever way it goes.
-  const onCloseRef = useRef<ToastOptions['onClose']>(undefined);
-  const close = useCallback((reason: ToastCloseReason) => {
-    const onClose = onCloseRef.current;
-    onCloseRef.current = undefined;
-    onClose?.(reason);
-  }, []);
   const [leaving, setLeaving] = useState(false);
   // The same, for callbacks: a toast on its way out can't be held, released or dismissed again.
   const leavingRef = useRef(false);
@@ -148,14 +117,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const dismiss = useCallback(
-    (id: number, reason: ToastCloseReason = 'dismissed') => {
+    (id: number) => {
       if (id !== currentId.current || leavingRef.current) return;
-      close(reason);
       clearTimers();
       leavingRef.current = true;
       setLeaving(true);
     },
-    [clearTimers, close],
+    [clearTimers],
   );
 
   // The exit has played (or the swipe threw it off screen): unmount, unless a newer toast has
@@ -188,10 +156,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const showToast = useCallback<ShowToast>(
     (input: ToastOptions | string, kind?: ToastKind) => {
-      const { kind: k = 'success', duration, onClose, ...rest } = toOptions(input, kind);
+      const { kind: k = 'success', duration, ...rest } = toOptions(input, kind);
       const content = { ...rest, kind: k };
-      close('replaced');
-      onCloseRef.current = onClose;
       const id = ++nextId.current;
       currentId.current = id;
       clearTimers();
@@ -203,31 +169,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       HAPTICS[content.kind]?.();
       persistent.current = !!content.action && screenReader.current;
       if (!persistent.current) {
-        timers.current.push(
-          setTimeout(() => dismiss(id, 'timeout'), duration ?? durationFor(content)),
-        );
+        timers.current.push(setTimeout(() => dismiss(id), duration ?? durationFor(content)));
       }
     },
-    [clearTimers, close, dismiss],
-  );
-
-  const showUndoToast = useCallback(
-    ({ title, message, onUndo, onCommit }: UndoToastOptions) => {
-      showToast({
-        kind: 'info',
-        title,
-        message,
-        action: { label: 'Undo', onPress: onUndo },
-        onClose: (reason) => {
-          if (reason !== 'action') onCommit();
-        },
-      });
-      // For a caller that has to commit before the toast would go (export reading the draft):
-      // closing it commits, and leaves no Undo up that could no longer undo anything.
-      const id = nextId.current;
-      return () => dismiss(id, 'dismissed');
-    },
-    [showToast, dismiss],
+    [clearTimers, dismiss],
   );
 
   // Cached so `showToast` can decide synchronously; kept current as it's switched on and off.
@@ -245,17 +190,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Leaving the app's root (a reload) commits whatever is pending rather than dropping it.
-  useEffect(
-    () => () => {
-      clearTimers();
-      close('replaced');
-    },
-    [clearTimers, close],
-  );
+  useEffect(() => clearTimers, [clearTimers]);
 
   return (
-    <ToastContext.Provider value={{ showToast, showUndoToast }}>
+    <ToastContext.Provider value={{ showToast }}>
       {children}
       {toast && (
         // Not keyed by id: a replacement reuses the banner that's up (or on its way out), so

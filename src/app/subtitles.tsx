@@ -152,7 +152,7 @@ function Editor({
 }) {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
-  const { showUndoToast } = useToast();
+  const { showToast } = useToast();
   const editor = useSubtitleEditor(initial);
 
   // On-device AI model in use for this draft's captions — surfaced here (not just at first pick)
@@ -173,7 +173,7 @@ function Editor({
     seekToRef.current = seekTo;
   });
 
-  const { toLines, setText, endCoalescing, undo } = editor;
+  const { toLines, setText, endCoalescing } = editor;
   const lines = useMemo(() => toLines(), [toLines]);
   const { markCleared } = useAutosaveTranscript({
     draftId,
@@ -183,26 +183,15 @@ function Editor({
     savedJson,
   });
 
-  // Reset to automatic captions is one undoable edit (header Undo, or the toast's, brings the
-  // edits back). The row follows the cues: whenever they ARE the reset list — the reset itself,
-  // or an undo/redo back to it — the row is unlocked again (`clearEditedTranscript`, re-armed
-  // gate), and undoing away from it makes the editor dirty so the autosave locks it with the
-  // edits. Declared after useAutosaveTranscript so this runs after its effect and cancels the
-  // save it would otherwise queue for the reset list.
+  // Reset to automatic captions is one undoable edit (the header Undo brings the edits back).
+  // The row follows the cues: whenever they ARE the reset list — the reset itself, or an
+  // undo/redo back to it — the row is unlocked again (`clearEditedTranscript`, re-armed gate),
+  // and undoing away from it makes the editor dirty so the autosave locks it with the edits.
+  // Declared after useAutosaveTranscript so this runs after its effect and cancels the save it
+  // would otherwise queue for the reset list.
   const resetCuesRef = useRef<Cue[] | null>(null);
-  const cuesRef = useRef(editor.cues);
-  // The reset toast's closer, while its Undo can still act (see onResetToAuto).
-  const closeResetToastRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    cuesRef.current = editor.cues;
-    if (editor.cues !== resetCuesRef.current) {
-      // Any edit after the reset (or an undo off it) makes the toast's Undo a dead button — it
-      // only undoes the reset while the reset is the latest step. Close it; the header Undo
-      // still walks back through every step, the reset included.
-      closeResetToastRef.current?.();
-      closeResetToastRef.current = null;
-      return;
-    }
+    if (editor.cues !== resetCuesRef.current) return;
     markCleared();
     void clearEditedTranscript(draftId);
   }, [editor.cues, markCleared, draftId]);
@@ -362,26 +351,16 @@ function Editor({
 
   const [rowEdited, setRowEdited] = useState(savedJson != null);
   const showReset = (rowEdited || editor.dirty) && editor.cues.length > 0;
-  // No confirm: the reset is undoable (see resetCuesRef), and the toast offers the Undo where
-  // the eye already is.
-  // The reset's Undo lives in this editor, so it can't outlive it: leaving the screen closes the
-  // toast (the reset stands) rather than leaving an Undo up that would undo nothing.
-  useEffect(() => () => closeResetToastRef.current?.(), []);
+  // No confirm: the reset is a step in the editor's history (see resetCuesRef), so the header
+  // Undo brings the edits back; the toast just says it happened.
   const onResetToAuto = () => {
     clearSelection();
-    const next = editor.resetTo(autoLines);
-    resetCuesRef.current = next;
+    resetCuesRef.current = editor.resetTo(autoLines);
     setRowEdited(false);
-    closeResetToastRef.current = showUndoToast({
+    showToast({
+      kind: 'info',
       title: 'Captions reset',
       message: 'Back to the automatic captions',
-      // Only while the reset is still the latest step — a later edit closes the toast (see the
-      // effect above), and this guards the moment in between.
-      onUndo: () => {
-        if (cuesRef.current === next) undo();
-      },
-      // Already applied and persisted by the effect above; nothing is pending.
-      onCommit: () => {},
     });
   };
 

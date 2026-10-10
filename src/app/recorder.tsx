@@ -18,7 +18,6 @@ import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { ControlScrim, Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
-import { commitDraftDeletes } from '@/features/recorder/clip-deletes';
 import { CloseButton } from '@/features/recorder/close-button';
 import { ImportButton } from '@/features/recorder/import-button';
 import {
@@ -31,7 +30,6 @@ import { PreviewModal } from '@/features/recorder/preview-modal';
 import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
-import { useToast } from '@/features/toast/toast-provider';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
 import { usePreview } from '@/features/recorder/use-preview';
 import { useRecorder } from '@/features/recorder/use-recorder';
@@ -43,7 +41,6 @@ import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
 import { haptics, muteHaptics } from '@/utils/haptics';
-import { userMessage } from '@/utils/user-message';
 import { closeToHome } from '@/utils/navigation';
 import { clipRender } from '@/utils/segment-window';
 
@@ -65,7 +62,6 @@ export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
   const textSizeKey = useTextSizeKey();
-  const { showToast } = useToast();
   const theme = useTheme();
   const mode = useThemeMode();
   const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
@@ -100,7 +96,6 @@ export default function RecorderScreen() {
     cycleStabilization,
     deleteSegment,
     resetSegment,
-    settleEditResets,
     reorderSegments,
   } = useRecorder(draftIdParam);
 
@@ -130,7 +125,7 @@ export default function RecorderScreen() {
   const totalMs = useRecordingTimer(segments, recordStartedAt);
 
   // Trimming = RNVT's full-screen editor, launched from the ✂ button in the preview modal. Its
-  // trash deletes through the same Undo delete as the preview's 🗑.
+  // trash deletes through the same immediate delete as the preview's 🗑.
   const { openTrim } = useVideoTrim(draftId, deleteSegment);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
@@ -585,16 +580,15 @@ export default function RecorderScreen() {
                 preview.pause();
                 openTrim(seg);
               }}
-              // Deletes at once with an Undo toast, like drag-to-trash (see useRecorder), and with
-              // the same haptic as a drop on the trash.
+              // Deletes at once with a toast, like drag-to-trash (see useRecorder), and with the
+              // same haptic as a drop on the trash.
               onDelete={() => {
                 if (!preview.activeId) return;
                 haptics.drop();
                 deleteSegment(preview.activeId);
               }}
-              // Only for an edited clip: back to the untouched original. No confirm: it comes
-              // with an Undo toast (see useRecorder), and undoing edits before ➡️ reuses the saved
-              // merge (#212).
+              // Only for an edited clip: back to the untouched original. No confirm — the edits
+              // are one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
               onReset={
                 preview.active?.editState || preview.active?.editedFilename
                   ? () => preview.activeId && resetSegment(preview.activeId)
@@ -649,7 +643,7 @@ export default function RecorderScreen() {
           <SegmentBar
             segments={segments}
             onReorder={reorderSegments}
-            // Drag-to-trash deletes at once with an Undo toast, same as the preview's 🗑.
+            // Drag-to-trash deletes at once with a toast, same as the preview's 🗑.
             onDelete={deleteSegment}
             onDragActiveChange={setDragging}
             onSelect={(id) => {
@@ -666,27 +660,8 @@ export default function RecorderScreen() {
                   }
                 : undefined
             }
-            // Export reads the draft from the db, so a delete still showing its Undo is made
-            // final first — otherwise the hidden clip would be exported. So is a revert of edits,
-            // whose Undo would otherwise change a clip the export was already made from.
             onNext={
-              draftId
-                ? () => {
-                    void settleEditResets()
-                      .then(() => commitDraftDeletes(draftId))
-                      .then(
-                        () => router.push({ pathname: '/export', params: { draftId } }),
-                        // The clip is back on the bar; stay here rather than export a clip the
-                        // person deleted.
-                        (e: unknown) =>
-                          showToast({
-                            kind: 'error',
-                            title: 'Couldn’t delete the clip',
-                            message: userMessage(e, 'Try again.', 'delete clip'),
-                          }),
-                      );
-                  }
-                : undefined
+              draftId ? () => router.push({ pathname: '/export', params: { draftId } }) : undefined
             }
           />
         </View>

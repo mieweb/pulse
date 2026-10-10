@@ -25,12 +25,7 @@ import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
 
 import { DestinationLabel } from './destination-label';
-import {
-  commitRemoval,
-  type DestinationOption,
-  setPendingRemoval,
-  useDestinations,
-} from './use-destinations';
+import { type DestinationOption, useDestinations } from './use-destinations';
 
 /**
  * Up to this many, the sheet sizes to its rows. Beyond, it opens at about 60% height and
@@ -41,8 +36,7 @@ import {
 const MAX_FITTED = 5;
 
 /**
- * A removed row fades out while the rows after it close the gap; an undone remove opens it again.
- * The fade is opacity only, so it runs under Reduce Motion too (Reanimated's default would skip it
+ * A removed row fades out while the rows after it close the gap. The fade is opacity only, so it runs under Reduce Motion too (Reanimated's default would skip it
  * and drop the row at once).
  */
 const ROW_LAYOUT = LinearTransition.duration(ListReflowMs).easing(EaseOut);
@@ -84,8 +78,8 @@ export function DestinationsSheet() {
   const theme = useTheme();
   const mode = useThemeMode();
   const insets = useSafeAreaInsets();
-  const { showToast, showUndoToast } = useToast();
-  const { destinations: pool } = useDestinations();
+  const { showToast } = useToast();
+  const { destinations: pool, deleteDestination } = useDestinations();
   const destinations = useMemo(() => [...pool].sort(byExpiry), [pool]);
   // Same decision as the route's options (`destinationsSheetOptions`), from the same count.
   const { count } = useLocalSearchParams<{ count?: string }>();
@@ -103,31 +97,30 @@ export function DestinationsSheet() {
     else if (hadDestinations.current && router.canGoBack()) router.back();
   }, [empty]);
 
-  // Removed at once, with an Undo instead of a confirmation: the rows hide now and are deleted
-  // when the toast goes (times out, is dismissed, or another toast replaces it). Removing the last
-  // one closes the sheet (above); the toast stays up over home, and Undo brings the pill back.
+  // Removed at once, no confirmation, and a toast says what went. Removing the last one closes
+  // the sheet (above); the toast stays up over home.
   const remove = (removed: DestinationOption[]) => {
-    const ids = removed.map((d) => d.id);
-    setPendingRemoval((pending) => ids.forEach((id) => pending.add(id)));
-    const show = () => setPendingRemoval((pending) => ids.forEach((id) => pending.delete(id)));
-    showUndoToast({
-      // One names the server it was (its host, as its row did); several are counted.
-      ...(removed.length === 1
-        ? { title: 'Destination removed', message: hostOf(removed[0].server) }
-        : { title: `${formatCount(removed.length, 'destination', 'destinations')} removed` }),
-      onUndo: show,
-      // Deletes the ones still waiting (`commitRemoval`); a failure brings them back.
-      onCommit: () =>
-        void commitRemoval(ids).catch((e: unknown) =>
-          showToast({
-            kind: 'error',
-            title:
-              ids.length === 1
-                ? 'Couldn’t remove the destination'
-                : 'Couldn’t remove the destinations',
-            message: userMessage(e, 'Try again.', 'destinations'),
-          }),
-        ),
+    void Promise.allSettled(removed.map((d) => deleteDestination(d.id))).then((results) => {
+      const failed = results.find((r) => r.status === 'rejected');
+      if (failed) {
+        // Any that did go are gone from the list; the rest stay, so trying again is one tap.
+        showToast({
+          kind: 'error',
+          title:
+            removed.length === 1
+              ? 'Couldn’t remove the destination'
+              : 'Couldn’t remove the destinations',
+          message: userMessage(failed.reason, 'Try again.', 'destinations'),
+        });
+        return;
+      }
+      showToast({
+        kind: 'info',
+        // One names the server it was (its host, as its row did); several are counted.
+        ...(removed.length === 1
+          ? { title: 'Destination removed', message: hostOf(removed[0].server) }
+          : { title: `${formatCount(removed.length, 'destination', 'destinations')} removed` }),
+      });
     });
   };
 

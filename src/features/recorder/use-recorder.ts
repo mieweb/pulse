@@ -5,7 +5,7 @@ import {
   UIImagePickerPreferredAssetRepresentationMode,
 } from 'expo-image-picker';
 import { usePermissions } from 'expo-media-library';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
 import { isValidFile, deleteFile } from 'react-native-video-trim';
 import {
@@ -19,10 +19,9 @@ import {
   addSegment,
   createDraft,
   deleteDraft,
-  dropResetEditFiles,
+  deleteSegment,
   reorderSegments,
   resetEdit,
-  restoreEdit,
   segmentsForDraft,
 } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
@@ -41,14 +40,6 @@ import { userMessage } from '@/utils/user-message';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
-import {
-  commitClipDelete,
-  hideClip,
-  setClipToastCloser,
-  markDraftOpen,
-  restoreClip,
-  useHiddenClips,
-} from './clip-deletes';
 import { importLog } from './import-log';
 import { getRecorderFormat, learnRecorderFormat } from './recorder-format';
 import { useCallState } from './use-call-state';
@@ -191,15 +182,8 @@ export function useRecorder(initialDraftId?: string) {
     };
   }, [videoOutput, cameraReady, isRecording, connectionEpoch]);
 
-  const { data: allSegments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
-  // A deleted clip is hidden while its Undo toast is up (clip-deletes); the screen only ever
-  // sees the clips that are staying.
-  const hiddenClips = useHiddenClips();
-  const segments = useMemo(
-    () => allSegments.filter((s) => !hiddenClips.has(s.id)),
-    [allSegments, hiddenClips],
-  );
-  const { showToast, showUndoToast } = useToast();
+  const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
+  const { showToast } = useToast();
 
   // Library access for the + import — granular (photo+video) like the camera/mic gate,
   // but requested just-in-time on tap (§2.3). Granting up front also lets the picker's
@@ -244,14 +228,11 @@ export function useRecorder(initialDraftId?: string) {
   const everHadSegments = useRef(false);
   useEffect(() => {
     draftIdRef.current = draftId;
-    if (draftId) return markDraftOpen(draftId);
   }, [draftId]);
-  // Counts clips whose delete is still pending too: leaving with only those left must keep the
-  // draft, since Undo can still bring them back. If the delete commits, it drops the draft then.
   useEffect(() => {
-    segmentCount.current = allSegments.length;
-    if (allSegments.length > 0) everHadSegments.current = true;
-  }, [allSegments]);
+    segmentCount.current = segments.length;
+    if (segments.length > 0) everHadSegments.current = true;
+  }, [segments]);
   useEffect(
     () => () => {
       // Backstop for a recording still live at unmount — the gesture's onFinalize is the
@@ -644,55 +625,29 @@ export function useRecorder(initialDraftId?: string) {
     });
   }
 
-  // Delete with Undo instead of a confirm: the clip disappears now and is deleted for real when
-  // the toast goes away without Undo (see clip-deletes). Restoring puts it back in its slot.
-  function removeSegment(id: string) {
-    if (!draftId) return;
-    const clip = allSegments.find((s) => s.id === id);
-    hideClip(id, draftId);
-    const closeToast = showUndoToast({
-      title: 'Clip deleted',
-      message: clipName(clip),
-      onUndo: () => void restoreClip(id),
-      onCommit: () =>
-        void commitClipDelete(id).catch((e: unknown) =>
-          showToast({
-            kind: 'error',
-            title: 'Couldn’t delete the clip',
-            message: userMessage(e, 'Try again.', 'delete clip'),
-          }),
-        ),
-    });
-    setClipToastCloser(id, closeToast);
-  }
-
-  // The open "Edits removed" toast's closer (closing commits). One at most: a newer toast replaces
-  // it, which commits it too.
-  const resetToastRef = useRef<(() => void) | null>(null);
-
-  // Revert edits with Undo instead of a confirm, like a delete: the clip goes back to its original
-  // now, and the edit comes back on Undo. Its files (the cover, a legacy baked file) stay on disk
-  // until the toast commits, which is what lets Undo just point the row back at them. Applied to
-  // the db straight away rather than hidden like a delete: the preview, Home and the export all
-  // read the row, so each sees the reverted clip without knowing about pending resets. The same
-  // holds for legacy clips (a baked file, no settings): the row's file and cover come back as they
-  // were, which is safer than rebuilding an edit from settings they don't have.
-  // Edit writes still under way (a revert's reset, an Undo's restore), so Next can wait for them
-  // (see `settleEditResets`) instead of exporting a row about to change underneath it.
-  const editWrites = useRef(new Set<Promise<void>>());
-  function trackEditWrite(work: Promise<void>) {
-    const run = work.finally(() => editWrites.current.delete(run));
-    editWrites.current.add(run);
-  }
-  function revertEdits(id: string) {
-    trackEditWrite(revertEditsNow(id));
-  }
-
-  async function revertEditsNow(id: string) {
-    const clip = allSegments.find((s) => s.id === id);
-    let cleared: Awaited<ReturnType<typeof resetEdit>>;
+  // No confirm: the clip goes at once, from any of the recorder's three trashes (the preview's
+  // 🗑, drag-to-trash, the editor's), and a toast says which one went.
+  async function removeSegment(id: string) {
+    const clip = segments.find((s) => s.id === id);
     try {
-      cleared = await resetEdit(id);
+      await deleteSegment(id);
+    } catch (e) {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t delete the clip',
+        message: userMessage(e, 'Try again.', 'delete clip'),
+      });
+      return;
+    }
+    showToast({ kind: 'info', title: 'Clip deleted', message: clipName(clip) });
+  }
+
+  // No confirm either: back to the untouched original at once (the edit's files go with it), and
+  // a toast says so. The edit is one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
+  async function revertEdits(id: string) {
+    const clip = segments.find((s) => s.id === id);
+    try {
+      await resetEdit(id);
     } catch (e) {
       showToast({
         kind: 'error',
@@ -701,41 +656,7 @@ export function useRecorder(initialDraftId?: string) {
       });
       return;
     }
-    if (!cleared) return;
-    const edit = cleared;
-    // Nothing left to undo: free the old edit's files. Never throws into the toast.
-    const drop = () => void dropResetEditFiles(id, edit).catch(() => {});
-    resetToastRef.current = showUndoToast({
-      title: 'Edits removed',
-      message: clipName(clip),
-      onUndo: () =>
-        trackEditWrite(
-          restoreEdit(id, edit).then(
-            // Not restored: the clip was edited again or deleted meanwhile, and that stands.
-            (restored) => {
-              if (!restored) drop();
-            },
-            (e: unknown) => {
-              drop();
-              showToast({
-                kind: 'error',
-                title: 'Couldn’t restore the edits',
-                message: userMessage(e, 'Try again.', 'restore edit'),
-              });
-            },
-          ),
-        ),
-      onCommit: drop,
-    });
-  }
-
-  // The bar reorders only the clips it shows. A clip awaiting its delete keeps its slot (and
-  // its `order`): Undo then restores it in place, and the renumbering can't collide with its
-  // slot on the unique (draft, order) index.
-  function reorderVisible(ids: string[]) {
-    let next = 0;
-    const full = allSegments.map((s) => (hiddenClips.has(s.id) ? s.id : ids[next++]));
-    void reorderSegments(next === ids.length ? full : ids);
+    showToast({ kind: 'info', title: 'Edits removed', message: clipName(clip) });
   }
 
   function cycleStabilization() {
@@ -777,21 +698,13 @@ export function useRecorder(initialDraftId?: string) {
     toggleTorch: () => setTorch((prev) => !prev),
     toggleMute: () => setMuted((prev) => !prev),
     cycleStabilization,
-    deleteSegment: removeSegment,
-    resetSegment: (id: string) => revertEdits(id),
-    // Before something reads the draft from the db (export): a revert still showing its Undo is
-    // made final, so Undo can't put back an edit the export has already been made without.
-    // Export reads the db: let any revert still resetting finish, then close its Undo (the
-    // revert stands), so the export can't use the edit and an Undo can't change it afterwards.
-    settleEditResets: async () => {
-      await Promise.all(editWrites.current);
-      resetToastRef.current?.();
-    },
-    reorderSegments: reorderVisible,
+    deleteSegment: (id: string) => void removeSegment(id),
+    resetSegment: (id: string) => void revertEdits(id),
+    reorderSegments: (ids: string[]) => void reorderSegments(ids),
   };
 }
 
-/** A clip as its Undo toast names it: the number on its badge in the strip ("Clip 3"). */
+/** A clip as its toast names it: the number on its badge in the strip ("Clip 3"). */
 function clipName(clip: Segment | undefined): string | undefined {
   return clip?.label ? `Clip ${clip.label}` : undefined;
 }

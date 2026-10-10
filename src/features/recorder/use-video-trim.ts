@@ -24,8 +24,8 @@ const Native = VideoTrim as Spec;
  * `editState` applied (settings and undo/redo history), so it reopens where the user left off.
  * Save encodes nothing (`renderOnSave: false`): the editor closes at once and hands back the new
  * `editState`, stored via `setEditState` — the preview applies it live and the export's merge
- * renders it, once. The editor's trash button hands the clip to `onDelete`, the recorder's
- * delete with Undo, so it behaves exactly like the preview's 🗑 and drag-to-trash.
+ * renders it, once. The editor's trash button hands the clip to `onDelete`, the recorder's own
+ * delete, so it behaves exactly like the preview's 🗑 and drag-to-trash.
  */
 export function useVideoTrim(draftId: string | null, onDelete: (segmentId: string) => void) {
   // The editor is fire-and-forget (showEditor) and its events carry no correlation id, so we
@@ -74,8 +74,7 @@ export function useVideoTrim(draftId: string | null, onDelete: (segmentId: strin
         })();
       }),
       // The trash was tapped and the editor has closed. No confirm on either side: the recorder
-      // hides the clip with an Undo toast, and deletes it for real only when the toast goes (or
-      // before export), like every other delete. Deleting the row here instead skipped all of it.
+      // deletes it at once with its toast, like every other delete.
       Native.onDelete(() => {
         const segmentId = pendingSegmentId.current;
         pendingSegmentId.current = null;
@@ -111,7 +110,7 @@ export function useVideoTrim(draftId: string | null, onDelete: (segmentId: strin
       // enableEditTools defaults true (crop/rotate/flip/mute/speed exposed).
       editState: segment.editState ?? undefined,
       speedOptions: speedMenu(customSpeeds.current),
-      // Deletes at once with an Undo toast, like the preview's 🗑 and drag-to-trash (see onDelete).
+      // Deletes at once with a toast, like the preview's 🗑 and drag-to-trash (see onDelete).
       enableDeleteButton: true,
       enableDeleteDialog: false,
     });

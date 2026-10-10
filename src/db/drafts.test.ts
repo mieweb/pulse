@@ -105,7 +105,7 @@ const MUTATIONS: Mutation[] = [
   ],
   ['deleteSegment', () => deleteSegment('s1'), [[SEG]], [[{ value: 0 }]]],
   ['setEditState', () => setEditState('s1', EDIT), [[SEG]], []],
-  ['resetEdit', () => resetEdit('s1'), [[{ ...SEG, editedFilename: 'e.mp4' }]], []],
+  ['resetEdit', () => resetEdit('s1'), [[SEG]], []],
   ['reorderSegments', () => reorderSegments(['s1']), [[SEG]], [[SEG]]],
   ['renameDraft', () => renameDraft('d1', 'New name'), [], []],
   ['deleteDraft', () => deleteDraft('d1'), [], []],

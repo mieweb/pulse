@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -28,24 +28,6 @@ const sizeMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 /** Matches the active ring, so selecting a row doesn't shift the list. */
 const RING_WIDTH = 1.5;
 
-/** The selected model id as stored now (the sheet, and its live query, may be gone by then). */
-async function storedModelId(): Promise<string | null> {
-  return (await selectedModelQuery)[0]?.value ?? null;
-}
-
-/**
- * Removing the model is undoable: the selection clears at once (captions stop using it), and the
- * weights are deleted only when the Undo toast goes. Both steps act only if nothing was picked in
- * between, so they never undo or delete a model chosen while the toast was up.
- */
-async function restoreModel(id: string) {
-  if ((await storedModelId()) === null) await setSelectedModel(id);
-}
-
-async function freeRemovedModel() {
-  if ((await storedModelId()) === null) await applyModelSelection(null);
-}
-
 function statusLine(status: ReturnType<typeof useTranscriptionStatus>): string | null {
   switch (status.kind) {
     case 'deleting':
@@ -70,7 +52,7 @@ function statusLine(status: ReturnType<typeof useTranscriptionStatus>): string |
  * previous model's weights/contexts (`applyModelSelection`); the new model is downloaded lazily the
  * next time a draft is exported, not here — so selecting records intent without blocking on a
  * download. A large model not on disk yet asks first, in the sheet itself. The active model can be
- * removed here to free disk, with an Undo. Same sheet style as the pairing and destinations sheets.
+ * removed here to free disk. Same sheet style as the pairing and destinations sheets.
  */
 export function OnDeviceAiSheet() {
   const theme = useTheme();
@@ -79,22 +61,29 @@ export function OnDeviceAiSheet() {
   const selectedId = data[0]?.value ?? null;
   const status = useTranscriptionStatus();
   const busy = statusLine(status);
-  const { showToast, showUndoToast } = useToast();
+  const { showToast } = useToast();
   const close = () => router.back();
   // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
   const [scrolls] = useState(() => !tallSheetFits());
   // A large model not on disk yet: the sheet asks first, in place of the list. Choosing it doesn't
   // download it here; captions download it when they next run (`useMergedTranscription`).
   const [confirming, setConfirming] = useState<WhisperModel | null>(null);
+  // A switch or removal under way. Each ends by closing the sheet, so a second tap while the first
+  // is still saving would start another change and close twice, popping the screen underneath
+  // too. Cleared only when a change fails and the sheet stays open.
+  const changing = useRef(false);
 
   // Only ever a different model (`choose` closes on the selected one): the selection changed.
   const select = async (id: string) => {
+    if (changing.current) return;
+    changing.current = true;
     haptics.tap();
     // The choice is saved first: if it can't be, the previous model stays selected and on disk,
     // and the sheet stays open saying so.
     try {
       await setSelectedModel(id);
     } catch (e) {
+      changing.current = false;
       showToast({
         kind: 'error',
         title: 'Couldn’t switch the model',
@@ -109,6 +98,8 @@ export function OnDeviceAiSheet() {
   };
 
   const choose = (id: string) => {
+    // Its close is already coming (see `changing`).
+    if (changing.current) return;
     if (id === selectedId) {
       close();
       return;
@@ -136,12 +127,15 @@ export function OnDeviceAiSheet() {
     </Pressable>
   );
 
-  // The selection is cleared before the sheet closes and the Undo appears, so Undo and the commit
-  // both see it cleared; if it can't be, nothing changed and the toast says so.
+  // The selection is cleared first, so captions stop using the model; if it can't be, nothing
+  // changed, the sheet stays open and the toast says so. Then its weights go from disk at once.
   const removeModel = async (id: string) => {
+    if (changing.current) return;
+    changing.current = true;
     try {
       await setSelectedModel(null);
     } catch (e) {
+      changing.current = false;
       showToast({
         kind: 'error',
         title: 'Couldn’t remove the model',
@@ -149,29 +143,15 @@ export function OnDeviceAiSheet() {
       });
       return;
     }
+    void applyModelSelection(null).catch((e: unknown) =>
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t free the model’s space',
+        message: userMessage(e, 'Try removing it again.', 'free model'),
+      }),
+    );
     close();
-    showUndoToast({
-      title: 'Model removed',
-      message: getModel(id)?.label,
-      // Failures say so, like the removal itself: an Undo that couldn't restore the selection,
-      // or weights that couldn't be freed from disk.
-      onUndo: () =>
-        void restoreModel(id).catch((e: unknown) =>
-          showToast({
-            kind: 'error',
-            title: 'Couldn’t restore the model',
-            message: userMessage(e, 'Choose it again in On-device AI.', 'restore model'),
-          }),
-        ),
-      onCommit: () =>
-        void freeRemovedModel().catch((e: unknown) =>
-          showToast({
-            kind: 'error',
-            title: 'Couldn’t free the model’s space',
-            message: userMessage(e, 'Try removing it again.', 'free model'),
-          }),
-        ),
-    });
+    showToast({ kind: 'info', title: 'Model removed', message: getModel(id)?.label });
   };
 
   if (confirming) {

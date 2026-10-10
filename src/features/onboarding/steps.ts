@@ -56,10 +56,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
       },
       // No icon: nothing on screen draws one for reordering (the clip itself is what you hold).
       { text: 'Press and hold a clip, then drag it onto another to swap their places.' },
-      {
-        icon: 'trash.fill',
-        text: 'Drag a clip onto the trash to delete it — Undo brings it back.',
-      },
+      { icon: 'trash.fill', text: 'Drag a clip onto the trash to delete it.' },
       {
         icon: 'arrow.triangle.2.circlepath.camera',
         text: 'Flip cameras, switch lenses, pinch to zoom, turn on the flash, steady your shot with stabilization, or mute audio.',
