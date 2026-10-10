@@ -145,11 +145,6 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
   const mode = useThemeMode();
   const tip = TIPS[callout.id];
 
-  // VoiceOver / TalkBack read the tip as it appears, as they do a system popover.
-  useEffect(() => {
-    AccessibilityInfo.announceForAccessibility(`${tip.title}. ${tip.message}`);
-  }, [tip]);
-
   const rect = {
     x: callout.rect.x - frame.x,
     y: callout.rect.y - frame.y,
@@ -163,6 +158,16 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
     rect.y >= frame.height ||
     rect.x + rect.width <= 0 ||
     rect.x >= frame.width;
+
+  // VoiceOver / TalkBack read the tip as it appears, as they do a system popover: once, and only
+  // when it's actually drawn.
+  const announced = useRef(false);
+  useEffect(() => {
+    if (offScreen || announced.current) return;
+    announced.current = true;
+    AccessibilityInfo.announceForAccessibility(`${tip.title}. ${tip.message}`);
+  }, [offScreen, tip]);
+
   if (offScreen) return null;
   const centerX = rect.x + rect.width / 2;
   // Above a control in the lower half of the screen, below one in the upper half.

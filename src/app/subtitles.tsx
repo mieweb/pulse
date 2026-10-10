@@ -509,6 +509,9 @@ function Editor({
             scrollEventThrottle={64}
             onScrollBeginDrag={onUserScrollStart}
             onScrollEndDrag={onUserScrollSettle}
+            // A fling keeps moving after the finger lifts: still the person's scroll, so playback
+            // doesn't follow yet and the editor's tip doesn't arm mid-fling.
+            onMomentumScrollBegin={onUserScrollStart}
             onMomentumScrollEnd={onUserScrollSettle}>
             {editor.cues.length === 0 && (
               <ThemedText themeColor="textSecondary" style={styles.empty}>
