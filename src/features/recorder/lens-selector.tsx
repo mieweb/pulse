@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
+import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Opacity } from '@/constants/theme';
 import { haptics } from '@/utils/haptics';
 import { CONTROLS_FADE } from './record-button';
@@ -31,6 +32,7 @@ export function LensSelector({
   onSelect: (preset: LensPreset) => void;
   disabled: boolean;
 }) {
+  const textSizeKey = useTextSizeKey();
   if (presets.length < 2) return null;
 
   const active = selected ?? DEFAULT_LENS_LABEL;
@@ -65,6 +67,7 @@ export function LensSelector({
             ]}>
             {/* The chip is a fixed 28 pt over live video — it grows with the text only so far. */}
             <Text
+              key={textSizeKey}
               style={[styles.label, preset.label === active && styles.labelActive]}
               maxFontSizeMultiplier={1.3}>
               {preset.label}

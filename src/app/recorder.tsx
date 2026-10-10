@@ -15,6 +15,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedView } from '@/components/themed-view';
 import { GlassPill } from '@/components/glass-pill';
+import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { ControlScrim, Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { commitDraftDeletes } from '@/features/recorder/clip-deletes';
@@ -62,6 +63,8 @@ const PREVIEW_CLOSE_SETTLE_MS = 50;
 
 export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
+  // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
+  const textSizeKey = useTextSizeKey();
   const { showToast } = useToast();
   const theme = useTheme();
   const mode = useThemeMode();
@@ -525,7 +528,7 @@ export default function RecorderScreen() {
               ✕ beside it, since glass has nothing to refract on the themed backdrop. */}
           {previewing ? (
             <View style={[styles.timerPill, styles.previewTimerPill, ControlScrim[mode]]}>
-              <Text style={styles.timerText} maxFontSizeMultiplier={1.3}>
+              <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
                 {/* Both floor: a playhead shouldn't read a second ahead, and with the total
                     rounding up the end read "00:07 / 00:08" on a 7.6 s draft. */}
                 {formatDuration(preview.globalMs, { pad: true, floor: true })} /{' '}
@@ -534,7 +537,7 @@ export default function RecorderScreen() {
             </View>
           ) : (
             <GlassPill style={styles.timerPill}>
-              <Text style={styles.timerText} maxFontSizeMultiplier={1.3}>
+              <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
                 {/* Floored like a playhead while recording, so it doesn't tick to the next
                     second half a second early; at rest it rounds, like the draft's total on Home. */}
                 {formatDuration(totalMs, { pad: true, floor: recordStartedAt != null })}

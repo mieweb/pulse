@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { GlassPill } from '@/components/glass-pill';
+import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Accent, Opacity, Spacing } from '@/constants/theme';
 import { haptics } from '@/utils/haptics';
 import { CONTROLS_FADE } from './record-button';
@@ -109,6 +110,7 @@ function ControlButton({
   dimmed?: boolean;
   disabled?: boolean;
 }) {
+  const textSizeKey = useTextSizeKey();
   return (
     <Pressable
       onPress={() => {
@@ -137,7 +139,10 @@ function ControlButton({
           </GlassPill>
           {caption && (
             <Dim disabled={disabled} pressed={pressed}>
-              <Text style={[styles.caption, { color: tint }]} maxFontSizeMultiplier={1.3}>
+              <Text
+                key={textSizeKey}
+                style={[styles.caption, { color: tint }]}
+                maxFontSizeMultiplier={1.3}>
                 {caption}
               </Text>
             </Dim>
