@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { deleteDestination, destinationsQuery } from '@/db/destinations';
 import { getDestinationToken } from '@/db/secure-token';
@@ -25,22 +25,23 @@ export type DestinationOption = {
 };
 
 /**
- * Tokens written by a re-pair of a row that already existed (the same link again keeps its row
- * id). Each `useDestinations` loads tokens only when its set of row ids changes, so without this a
- * screen already open would keep using the row's old token; it reads these first instead.
+ * Bumped when a pairing rewrites the token of a row that already existed (the same link again
+ * keeps its row id). Each `useDestinations` loads tokens only when its set of row ids changes, so
+ * without this a screen already open would keep the row's old token; a bump makes every one
+ * reload them from secure-store.
  */
-let repairedTokens: ReadonlyMap<string, string | null> = new Map();
-const repairedListeners = new Set<() => void>();
+let tokensVersion = 0;
+const tokensListeners = new Set<() => void>();
 
-export function noteRepairedToken(id: string, token: string | null) {
-  repairedTokens = new Map(repairedTokens).set(id, token);
-  for (const listener of repairedListeners) listener();
+export function reloadDestinationTokens() {
+  tokensVersion += 1;
+  for (const listener of tokensListeners) listener();
 }
 
-function subscribeRepairedTokens(listener: () => void) {
-  repairedListeners.add(listener);
+function subscribeTokens(listener: () => void) {
+  tokensListeners.add(listener);
   return () => {
-    repairedListeners.delete(listener);
+    tokensListeners.delete(listener);
   };
 }
 
@@ -58,10 +59,10 @@ export function useDestinations() {
   // Reactive wall-clock so expiry filtering/labels re-evaluate as time passes, even without a DB
   // write — a token can lapse while the user just sits on the screen.
   const now = useNow(EXPIRY_CHECK_INTERVAL_MS);
-  const repaired = useSyncExternalStore(subscribeRepairedTokens, () => repairedTokens);
+  const version = useSyncExternalStore(subscribeTokens, () => tokensVersion);
 
   // Tokens live in secure-store keyed by row id; load them into a map keyed on id. Re-fires only
-  // when the set of ids changes, not on every render.
+  // when the set of ids changes or a pairing rewrote a token (`version`), not on every render.
   const idsKey = useMemo(() => rows.map((r) => r.id).join(','), [rows]);
   const [tokens, setTokens] = useState<Record<string, string | null>>({});
   useEffect(() => {
@@ -81,21 +82,15 @@ export function useDestinations() {
     return () => {
       cancelled = true;
     };
-  }, [idsKey]);
-
-  // A re-paired row's fresh token wins over the one loaded before it (see `repairedTokens`).
-  const tokenOf = useCallback(
-    (id: string) => (repaired.has(id) ? repaired.get(id) : tokens[id]),
-    [repaired, tokens],
-  );
+  }, [idsKey, version]);
 
   const destinations: DestinationOption[] = useMemo(
     () =>
       rows
         // Only once its token has loaded: before that it would read as a tokenless link, and
         // uploading with it would spend the link on a certain 401.
-        .filter((r) => tokenOf(r.id) !== undefined)
-        .map((r) => ({ ...r, token: tokenOf(r.id) ?? null }))
+        .filter((r) => r.id in tokens)
+        .map((r) => ({ ...r, token: tokens[r.id] ?? null }))
         .filter((r) => !isTokenExpired(r.token, now))
         .map((r) => ({
           id: r.id,
@@ -106,19 +101,19 @@ export function useDestinations() {
           expiryLabel: formatExpiry(r.token, now),
         })),
     // `now` intentionally in deps so an expiry that passes between ticks re-filters the list.
-    [rows, tokenOf, now],
+    [rows, tokens, now],
   );
 
   // Garbage-collect rows whose token has actually lapsed so they don't linger as dead state.
   // Only acts on tokens we've loaded and can decode as expired (never on "unknown").
   useEffect(() => {
     for (const r of rows) {
-      const token = tokenOf(r.id);
+      const token = tokens[r.id];
       if (token !== undefined && isTokenExpired(token, now)) {
         void deleteDestination(r.id);
       }
     }
-  }, [rows, tokenOf, now]);
+  }, [rows, tokens, now]);
 
   return { destinations, deleteDestination };
 }

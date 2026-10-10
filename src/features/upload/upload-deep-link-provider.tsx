@@ -10,7 +10,7 @@ import { hasNonAsciiHost, hostOf, shortHost } from '@/utils/format';
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
 import { uploads } from './upload-manager';
-import { noteRepairedToken } from './use-destinations';
+import { reloadDestinationTokens } from './use-destinations';
 
 const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> = {
   'unsupported-version':
@@ -131,9 +131,9 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             server: link.server,
             token: link.token,
             artifactId: link.artifactId,
-          }).then((id) => {
-            // The same link again keeps its row id: open screens pick up the fresh token.
-            noteRepairedToken(id, link.token);
+          }).then(() => {
+            // The same link again keeps its row id: open screens reload its fresh token.
+            reloadDestinationTokens();
             showToast(`Connected to ${shortHost(host)} — pick it when you upload`);
           });
         })
