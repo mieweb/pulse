@@ -30,7 +30,7 @@ export function DestinationLabel({
     <View style={styles.label}>
       {/* The host keeps its domain's end visible ("…mieweb.org"); a label keeps its start. */}
       <ThemedText
-        type={chip ? 'smallBold' : 'headline'}
+        type={chip ? 'subheadlineEmphasized' : 'headline'}
         numberOfLines={1}
         ellipsizeMode={label ? 'tail' : 'middle'}>
         {title}

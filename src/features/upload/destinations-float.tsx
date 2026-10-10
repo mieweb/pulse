@@ -1,14 +1,14 @@
 import { router } from 'expo-router';
 import { Pressable, StyleSheet } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { EaseOut } from '@/constants/motion';
-import { FloatShadow, Spacing } from '@/constants/theme';
+import { FloatShadow, Opacity, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { formatCount, hostOf } from '@/utils/format';
+import { displayServer, formatCount } from '@/utils/format';
 
 import { useDestinations } from './use-destinations';
 
@@ -18,9 +18,12 @@ const FAB_CLEARANCE = Spacing.four + FAB_SIZE + Spacing.three;
 /** Longest the pill gets on wide screens, so it stays a pill rather than a bar. */
 const PILL_MAX_WIDTH = 280;
 
-/** The pill fades in when the first server is paired and out when the last one goes. */
-const ENTERING = FadeIn.duration(200).easing(EaseOut);
-const EXITING = FadeOut.duration(150).easing(EaseOut);
+/**
+ * The pill fades in when the first server is paired and out when the last one goes. Opacity only,
+ * so it runs under Reduce Motion too: Reanimated's default would skip it there and pop the pill in.
+ */
+const ENTERING = FadeIn.duration(200).easing(EaseOut).reduceMotion(ReduceMotion.Never);
+const EXITING = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 /**
  * A floating pill on the home screen surfacing the device-wide pool of paired upload destinations
@@ -68,18 +71,21 @@ export function DestinationsFloat() {
             // Floating, so one step up in dark mode, where the shadow doesn't show: on `card` it
             // blended into the draft cards it floats over.
             backgroundColor: dark ? theme.cardRaised : theme.card,
-            opacity: pressed ? 0.85 : 1,
+            opacity: pressed ? Opacity.pressed : 1,
           },
         ]}>
         <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} />
-        {/* Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
+        {/* Host plus path (`displayServer`), so two servers on one host don't read alike; middle
+            truncation keeps both ends visible. Capped so the largest text sizes grow the pill
+            without it towering over the FAB beside it. */}
         <ThemedText
-          type="smallBold"
+          type="subheadlineEmphasized"
           numberOfLines={1}
           ellipsizeMode="middle"
+          maxFontSizeMultiplier={1.6}
           style={styles.pillLabel}>
           {destinations.length === 1
-            ? hostOf(destinations[0].server)
+            ? displayServer(destinations[0].server)
             : formatCount(destinations.length, 'destination', 'destinations')}
         </ThemedText>
       </Pressable>
@@ -92,8 +98,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: Spacing.four,
     right: FAB_CLEARANCE,
-    // Same height and bottom as the FAB, so the pill centres on the FAB's centre line.
-    height: FAB_SIZE,
+    // At least the FAB's height, same bottom, so the pill centres on the FAB's centre line; a pill
+    // grown by large text grows the lane upward instead of spilling out of it.
+    minHeight: FAB_SIZE,
     justifyContent: 'center',
     alignItems: 'flex-start',
   },
@@ -102,7 +109,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-    height: 44,
+    // 44 pt; the label's cap (1.6 × a 20 pt line, plus this padding) keeps it there at the largest
+    // text sizes, and a minimum rather than a fixed height means it grows instead of clipping if
+    // that ever changes.
+    minHeight: 44,
+    paddingVertical: Spacing.one,
     paddingHorizontal: Spacing.three,
     borderRadius: 22,
     ...FloatShadow,

@@ -2,9 +2,10 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Radius, Spacing } from '@/constants/theme';
+import { CardShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { displayServer } from '@/utils/format';
+import { haptics } from '@/utils/haptics';
 
 import { DestinationLabel } from './destination-label';
 import type { DestinationOption } from './use-destinations';
@@ -39,7 +40,12 @@ export function DestinationSelector({
         return (
           <Pressable
             key={d.id}
-            onPress={() => onSelect(d.id)}
+            onPress={() => {
+              // A tap that moves the selection; re-tapping the selected chip changes nothing.
+              if (selected) return;
+              haptics.tap();
+              onSelect(d.id);
+            }}
             accessibilityRole="radio"
             accessibilityState={{ selected }}
             accessibilityLabel={`Upload to ${displayServer(d.server)}, ${d.expiryLabel}`}
@@ -100,5 +106,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three - (RING_WIDTH - StyleSheet.hairlineWidth),
   },
   chipHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
-  pressed: { opacity: 0.85 },
+  // A card-surface control: dims while pressed rather than swapping its fill.
+  pressed: { opacity: Opacity.pressed },
 });

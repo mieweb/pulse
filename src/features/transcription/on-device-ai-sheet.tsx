@@ -6,12 +6,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { PrimaryButton } from '@/components/primary-button';
+import { SectionHeader } from '@/components/section-header';
 import { SheetBody } from '@/components/sheet-body';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Radius, Spacing } from '@/constants/theme';
+import { CardShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { selectedModelQuery, setSelectedModel } from '@/db/settings';
 import { useToast } from '@/features/toast/toast-provider';
 import { useTheme } from '@/hooks/use-theme';
+import { haptics } from '@/utils/haptics';
 import { tallSheetFits } from '@/utils/sheet-fit';
 
 import { currentDeviceProfile } from './device-profile';
@@ -47,8 +49,9 @@ function statusLine(status: ReturnType<typeof useTranscriptionStatus>): string |
     case 'deleting':
       return 'Removing previous model…';
     case 'downloading': {
+      // Floored, so it never reads 100% while the download is still running.
       const pct =
-        status.totalBytes > 0 ? Math.round((status.bytesWritten / status.totalBytes) * 100) : 0;
+        status.totalBytes > 0 ? Math.floor((status.bytesWritten / status.totalBytes) * 100) : 0;
       return `Downloading model… ${pct}%`;
     }
     case 'transcribing':
@@ -82,7 +85,9 @@ export function OnDeviceAiSheet() {
   // download it here; captions download it when they next run (`useMergedTranscription`).
   const [confirming, setConfirming] = useState<WhisperModel | null>(null);
 
+  // Only ever a different model (`choose` closes on the selected one): the selection changed.
   const select = (id: string) => {
+    haptics.tap();
     void setSelectedModel(id);
     // Free the previous model's contexts + delete other weights now; the new model itself is
     // downloaded lazily at export time (no background loop pulls it here anymore).
@@ -173,8 +178,9 @@ export function OnDeviceAiSheet() {
           </ThemedText>
         </View>
 
+        {/* A card like the rows below it, so it reads as part of the sheet, not a hole in it. */}
         {busy && (
-          <View style={[styles.status, { backgroundColor: theme.backgroundElement }]}>
+          <View style={[styles.status, { backgroundColor: theme.card }]}>
             <ActivityIndicator size="small" color={theme.accent} />
             <ThemedText type="footnote" themeColor="textSecondary">
               {busy}
@@ -182,60 +188,59 @@ export function OnDeviceAiSheet() {
           </View>
         )}
 
-        {/* First (and currently only) feature. Future on-device features slot in as new sections. */}
+        {/* First (and currently only) feature. Future on-device features slot in as new sections,
+            each under the app's section header (as on About), with its note under the list like a
+            grouped list's footer. */}
         <View style={styles.section}>
-          <View style={styles.sectionTitle}>
-            <ThemedText type="headline">Captions</ThemedText>
-            <Icon
-              name="captions.bubble.fill"
-              size={18}
-              tintColor={selectedId ? theme.accent : theme.textSecondary}
-            />
+          <SectionHeader title="Captions" />
+
+          {/* A plain list, not a ScrollView: iOS takes over a form sheet's first scroll view, which
+            breaks its layout under `fitToContents`. The catalog is a handful of models. */}
+          <View style={styles.list}>
+            {MODELS.map((model) => {
+              const active = model.id === selectedId;
+              // Device-aware caveat (RAM floor / Android CPU-only inference) appended to the
+              // model's base note — computed here, not in the catalog, so models.ts stays pure.
+              const caveat = modelCaveat(model, currentDeviceProfile());
+              return (
+                <Pressable
+                  key={model.id}
+                  onPress={() => choose(model.id)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: active }}
+                  style={({ pressed }) => [
+                    styles.row,
+                    {
+                      backgroundColor: pressed ? theme.backgroundSelected : theme.card,
+                      borderColor: active ? theme.accent : 'transparent',
+                    },
+                  ]}>
+                  <View style={styles.rowText}>
+                    <View style={styles.rowTitle}>
+                      <ThemedText type="headline">{model.label}</ThemedText>
+                      <ThemedText type="footnote" themeColor="textSecondary">
+                        {model.name}
+                      </ThemedText>
+                    </View>
+                    <ThemedText type="footnote" themeColor="textSecondary">
+                      {model.note}
+                      {caveat ? ` · ${caveat}` : ''} · {sizeMb(model.approxBytes)}
+                    </ThemedText>
+                  </View>
+                  {active && (
+                    <Icon name="checkmark.circle.fill" size={24} tintColor={theme.accent} />
+                  )}
+                </Pressable>
+              );
+            })}
           </View>
-          <ThemedText type="footnote" themeColor="textSecondary">
+
+          <ThemedText type="footnote" themeColor="textSecondary" style={styles.sectionNote}>
             Transcribed when you export. Only the selected model stays on disk.
           </ThemedText>
         </View>
 
-        {/* A plain list, not a ScrollView: iOS takes over a form sheet's first scroll view, which
-          breaks its layout under `fitToContents`. The catalog is a handful of models. */}
-        <View style={styles.list}>
-          {MODELS.map((model) => {
-            const active = model.id === selectedId;
-            // Device-aware caveat (RAM floor / Android CPU-only inference) appended to the
-            // model's base note — computed here, not in the catalog, so models.ts stays pure.
-            const caveat = modelCaveat(model, currentDeviceProfile());
-            return (
-              <Pressable
-                key={model.id}
-                onPress={() => choose(model.id)}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: active }}
-                style={({ pressed }) => [
-                  styles.row,
-                  {
-                    backgroundColor: pressed ? theme.backgroundSelected : theme.card,
-                    borderColor: active ? theme.accent : 'transparent',
-                  },
-                ]}>
-                <View style={styles.rowText}>
-                  <View style={styles.rowTitle}>
-                    <ThemedText type="headline">{model.label}</ThemedText>
-                    <ThemedText type="footnote" themeColor="textSecondary">
-                      {model.name}
-                    </ThemedText>
-                  </View>
-                  <ThemedText type="footnote" themeColor="textSecondary">
-                    {model.note}
-                    {caveat ? ` · ${caveat}` : ''} · {sizeMb(model.approxBytes)}
-                  </ThemedText>
-                </View>
-                {active && <Icon name="checkmark.circle.fill" size={24} tintColor={theme.accent} />}
-              </Pressable>
-            );
-          })}
-        </View>
-
+        {/* The app's destructive text action, centred below the list. */}
         {selectedId && (
           <Pressable
             onPress={() => removeModel(selectedId)}
@@ -243,7 +248,7 @@ export function OnDeviceAiSheet() {
             accessibilityRole="button"
             style={({ pressed }) => [styles.remove, pressed && styles.pressed]}>
             <Icon name="trash" size={16} tintColor={theme.accent} />
-            <ThemedText type="body" themeColor="accent" style={styles.removeText}>
+            <ThemedText type="subheadlineEmphasized" themeColor="accent">
               Remove model & free up space
             </ThemedText>
           </Pressable>
@@ -271,9 +276,12 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     borderRadius: Radius.card,
     borderCurve: 'continuous',
+    ...CardShadow,
   },
-  section: { gap: Spacing.half },
-  sectionTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  // Header, list and note spaced as About's sections are.
+  section: { gap: Spacing.two },
+  // Inset to the rows' content, as the section header is.
+  sectionNote: { paddingHorizontal: Spacing.three },
   list: { gap: Spacing.two },
   row: {
     flexDirection: 'row',
@@ -287,15 +295,17 @@ const styles = StyleSheet.create({
   },
   rowText: { flex: 1, gap: Spacing.half },
   rowTitle: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.two, flexWrap: 'wrap' },
+  // A 20 pt line padded to 36 pt; with the hit slop, a 52 pt target. Only as wide as its label.
   remove: {
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,
     paddingVertical: Spacing.two,
   },
-  removeText: { fontWeight: '600' },
   actions: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.two },
   action: { flex: 1 },
-  pressed: { opacity: 0.6 },
+  // The close and remove buttons are bare glyphs and text.
+  pressed: { opacity: Opacity.pressedGlyph },
 });

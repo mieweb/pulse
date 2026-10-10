@@ -8,13 +8,15 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { compatLabel, type ServerCompat } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Radius, Spacing, type ThemeColor } from '@/constants/theme';
+import { EaseOut, ListReflowMs } from '@/constants/motion';
+import { CardShadow, Opacity, Radius, Spacing, type ThemeColor } from '@/constants/theme';
 import { useToast } from '@/features/toast/toast-provider';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { displayServer, formatCount } from '@/utils/format';
@@ -37,8 +39,13 @@ import {
  */
 const MAX_FITTED = 5;
 
-/** Remove all is a 20 pt line of text: the slop makes it a 44 pt target. */
-const REMOVE_ALL_SLOP = { top: 12, bottom: 12, left: 8, right: 8 };
+/**
+ * A removed row fades out while the rows after it close the gap; an undone remove opens it again.
+ * The fade is opacity only, so it runs under Reduce Motion too (Reanimated's default would skip it
+ * and drop the row at once).
+ */
+const ROW_LAYOUT = LinearTransition.duration(ListReflowMs).easing(EaseOut);
+const ROW_EXITING = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 /**
  * Whether the sheet opens in its scrolling 60% → full-height mode: past `MAX_FITTED` rows, or at
@@ -98,14 +105,15 @@ export function DestinationsSheet() {
   // Removed at once, with an Undo instead of a confirmation: the rows hide now and are deleted
   // when the toast goes (times out, is dismissed, or another toast replaces it). Removing the last
   // one closes the sheet (above); the toast stays up over home, and Undo brings the pill back.
-  const remove = (ids: string[]) => {
+  const remove = (removed: DestinationOption[]) => {
+    const ids = removed.map((d) => d.id);
     setPendingRemoval((pending) => ids.forEach((id) => pending.add(id)));
     const show = () => setPendingRemoval((pending) => ids.forEach((id) => pending.delete(id)));
     showUndoToast({
-      title:
-        ids.length === 1
-          ? 'Destination removed'
-          : `${formatCount(ids.length, 'destination', 'destinations')} removed`,
+      // One names the server it was (host plus path, as its row did); several are counted.
+      ...(removed.length === 1
+        ? { title: 'Destination removed', message: displayServer(removed[0].server) }
+        : { title: `${formatCount(removed.length, 'destination', 'destinations')} removed` }),
       onUndo: show,
       onCommit: () => {
         // Only the ones still waiting: pairing the same link again in the meantime takes its row
@@ -129,14 +137,23 @@ export function DestinationsSheet() {
     });
   };
 
+  // Animated only when the sheet scrolls. A fitted sheet (`fitToContents`) is sized by iOS to its
+  // content: a removed row shrinks the content at once and iOS animates the sheet down to it, so a
+  // reflow on top would slide the rows (and the fading row) below the sheet's new bottom edge, out
+  // of step with the sheet's own resize. The scrolling sheet's height is its detent, not its
+  // content, so there the rows can close the gap themselves.
+  const layout = scrolls ? ROW_LAYOUT : undefined;
+  const exiting = scrolls ? ROW_EXITING : undefined;
+
   const rows = destinations.map((d) => (
-    <DestinationRow
-      key={d.id}
-      server={d.server}
-      expiryLabel={d.expiryLabel}
-      compat={compatOf(d.server)}
-      onRemove={() => remove([d.id])}
-    />
+    <Animated.View key={d.id} layout={layout} exiting={exiting}>
+      <DestinationRow
+        server={d.server}
+        expiryLabel={d.expiryLabel}
+        compat={compatOf(d.server)}
+        onRemove={() => remove([d])}
+      />
+    </Animated.View>
   ));
 
   // The list runs to the sheet's bottom edge; its own bottom padding clears the home indicator.
@@ -152,21 +169,25 @@ export function DestinationsSheet() {
         </ThemedText>
       </View>
 
-      {/* Remove all, at the right above the list; the rows speak for themselves. */}
-      <View style={styles.listHeader}>
-        <Pressable
-          onPress={() => remove(destinations.map((d) => d.id))}
-          hitSlop={REMOVE_ALL_SLOP}
-          accessibilityRole="button"
-          accessibilityLabel="Remove all destinations"
-          style={({ pressed }) => pressed && styles.pressed}>
-          <ThemedText type="subheadline" themeColor="accent" style={styles.removeAllLabel}>
-            Remove all
-          </ThemedText>
-        </Pressable>
-      </View>
-
       <View style={styles.list}>{rows}</View>
+
+      {/* The app's destructive text action, centred below the list. Only for two or more: a single
+          row already has its own trash. It moves with the rows as they reflow. */}
+      {destinations.length > 1 && (
+        <Animated.View layout={layout} exiting={exiting}>
+          <Pressable
+            onPress={() => remove(destinations)}
+            hitSlop={Spacing.two}
+            accessibilityRole="button"
+            accessibilityLabel="Remove all destinations"
+            style={({ pressed }) => [styles.removeAll, pressed && styles.pressed]}>
+            <Icon name="trash" size={16} tintColor={theme.accent} />
+            <ThemedText type="subheadlineEmphasized" themeColor="accent">
+              Remove all
+            </ThemedText>
+          </Pressable>
+        </Animated.View>
+      )}
     </>
   );
 
@@ -303,15 +324,17 @@ const styles = StyleSheet.create({
   // Room on the right for the floating close button.
   headerText: { gap: Spacing.one, paddingRight: Spacing.five },
   close: { position: 'absolute', top: Spacing.five, right: Spacing.four },
-  listHeader: {
+  list: { gap: Spacing.two },
+  // A 20 pt line padded to 36 pt; with the hit slop, a 52 pt target. Only as wide as its label,
+  // so a tap beside it doesn't remove everything.
+  removeAll: {
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingHorizontal: Spacing.three,
-    marginBottom: -Spacing.one,
+    justifyContent: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
   },
-  removeAllLabel: { fontWeight: '600' },
-  list: { gap: Spacing.two },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -334,5 +357,6 @@ const styles = StyleSheet.create({
   spinner: { transform: [{ scale: STATUS_ICON / SPINNER_SIZE }] },
   metaText: { flexShrink: 1 },
   delete: { padding: Spacing.two },
-  pressed: { opacity: 0.6 },
+  // The close, trash and Remove all buttons are bare glyphs and text.
+  pressed: { opacity: Opacity.pressedGlyph },
 });

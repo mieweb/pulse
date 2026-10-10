@@ -9,9 +9,10 @@ import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, View } fro
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
+import { SectionHeader } from '@/components/section-header';
 import { SheetBody } from '@/components/sheet-body';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Radius, Spacing } from '@/constants/theme';
+import { CardShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import {
   commitLabel,
   readBuildInfo,
@@ -141,7 +142,7 @@ export default function AboutScreen() {
               accessibilityHint="Copies the build and server details and the debug log for a bug report"
               style={({ pressed }) => [styles.copy, pressed && styles.pressedIcon]}>
               <Icon name="doc.on.doc" size={14} weight="semibold" tintColor={theme.accent} />
-              <ThemedText type="subheadline" themeColor="accent" style={styles.copyLabel}>
+              <ThemedText type="subheadlineEmphasized" themeColor="accent">
                 Copy details
               </ThemedText>
             </Pressable>
@@ -171,7 +172,10 @@ export default function AboutScreen() {
             accessibilityRole="link"
             accessibilityLabel="Compatibility and docs"
             accessibilityHint="Opens which Pulse and PulseVault versions work together"
-            style={({ pressed }) => [styles.inlineButton, pressed && styles.pressed]}>
+            style={({ pressed }) => [
+              styles.inlineButton,
+              pressed && { backgroundColor: theme.backgroundSelected },
+            ]}>
             <Icon name="link" size={18} tintColor={theme.accent} />
             <ThemedText themeColor="accent">Compatibility & docs</ThemedText>
           </Pressable>
@@ -188,7 +192,10 @@ export default function AboutScreen() {
             accessibilityRole="button"
             accessibilityLabel="Share logs"
             accessibilityState={{ busy: sharing }}
-            style={({ pressed }) => [styles.inlineButton, pressed && styles.pressed]}>
+            style={({ pressed }) => [
+              styles.inlineButton,
+              pressed && { backgroundColor: theme.backgroundSelected },
+            ]}>
             {sharing ? (
               <ActivityIndicator size="small" color={theme.accent} />
             ) : (
@@ -226,12 +233,7 @@ function Section({
 }) {
   return (
     <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <ThemedText type="caption1" themeColor="textSecondary" style={styles.sectionTitle}>
-          {title.toUpperCase()}
-        </ThemedText>
-        {action}
-      </View>
+      <SectionHeader title={title} action={action} />
       {/* The shadow sits on a wrapper: the card clips its rows to its corners, which would clip a
           shadow on the card itself. */}
       <View style={[styles.cardShadow, surface]}>
@@ -280,15 +282,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   section: { gap: Spacing.two },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.three,
-  },
-  sectionTitle: { letterSpacing: 0.5 },
   copy: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
-  copyLabel: { fontWeight: '600' },
   cardShadow: { borderRadius: Radius.card, borderCurve: 'continuous', ...CardShadow },
   card: { borderRadius: Radius.card, borderCurve: 'continuous', overflow: 'hidden' },
   row: {
@@ -303,6 +297,8 @@ const styles = StyleSheet.create({
   rowValue: { flexShrink: 1, textAlign: 'right' },
   status: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, flexShrink: 1 },
   note: { paddingHorizontal: Spacing.three, paddingTop: 12 },
+  // A full-width row inside a card: it swaps its fill on press, as in-card rows do (the card's
+  // overflow clipping rounds the fill at the card's corners), rather than dimming.
   inlineButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -310,6 +306,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: 12,
   },
-  pressed: { opacity: 0.85 },
-  pressedIcon: { opacity: 0.6 },
+  // Copy details and the close button are bare glyphs and text.
+  pressedIcon: { opacity: Opacity.pressedGlyph },
 });

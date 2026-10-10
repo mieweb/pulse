@@ -5,7 +5,7 @@ import { Alert, AppState } from 'react-native';
 
 import { addDestination } from '@/db/destinations';
 import { useToast } from '@/features/toast/toast-provider';
-import { hasNonAsciiHost, hostOf, shortHost } from '@/utils/format';
+import { displayServer, hasNonAsciiHost, hostOf, shortHost } from '@/utils/format';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
 import { parseUploadDeepLink } from './deep-link';
@@ -99,7 +99,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
     if (!result.ok) {
       showToast({
         kind: 'error',
-        title: 'Can’t open this link',
+        title: 'Couldn’t open this link',
         message: REJECTION_MESSAGE[result.reason],
       });
       return;
@@ -120,7 +120,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
           if (!capResult.ok) {
             showToast({
               kind: 'error',
-              title: 'Can’t connect',
+              title: 'Couldn’t connect',
               message: CAPABILITIES_REJECTION_MESSAGE[capResult.reason],
             });
             return;
@@ -135,7 +135,12 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
             // The same link again keeps its row id: if that row was just removed and its Undo is
             // still up, pairing brings it back instead of the removal deleting it afterwards.
             setPendingRemoval((pending) => pending.delete(id));
-            showToast(`Connected to ${shortHost(host)} — pick it when you upload`);
+            // Host plus path, as the pill and the sheet name it: two servers on one host differ
+            // only in the path. The trust prompt above keeps the bare host, which is what a
+            // look-alike imitates.
+            showToast(
+              `Connected to ${shortHost(displayServer(link.server))} — pick it when you upload`,
+            );
           });
         })
         .catch(() => {
@@ -144,7 +149,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
           handledUrl.current = null;
           showToast({
             kind: 'error',
-            title: 'Can’t connect',
+            title: 'Couldn’t connect',
             message: CAPABILITIES_REJECTION_MESSAGE.unreachable,
           });
         });
