@@ -156,9 +156,14 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
     width: callout.rect.width,
     height: callout.rect.height,
   };
-  // The control is off screen (scrolled away): no callout to point at nothing; it comes back with
-  // the control.
-  if (rect.y + rect.height <= 0 || rect.y >= frame.height) return null;
+  // The control is off screen (scrolled away, up or sideways): no callout to point at nothing; it
+  // comes back with the control.
+  const offScreen =
+    rect.y + rect.height <= 0 ||
+    rect.y >= frame.height ||
+    rect.x + rect.width <= 0 ||
+    rect.x >= frame.width;
+  if (offScreen) return null;
   const centerX = rect.x + rect.width / 2;
   // Above a control in the lower half of the screen, below one in the upper half.
   const above = rect.y + rect.height / 2 > frame.height / 2;
