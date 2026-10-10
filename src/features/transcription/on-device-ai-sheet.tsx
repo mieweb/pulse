@@ -280,7 +280,12 @@ export function OnDeviceAiSheet() {
                     </ThemedText>
                   </View>
                   {active && (
-                    <Icon name="checkmark.circle.fill" size={24} tintColor={theme.accent} />
+                    <Icon
+                      name="checkmark.circle.fill"
+                      size={24}
+                      tintColor={theme.accent}
+                      scalesWithText
+                    />
                   )}
                 </Pressable>
               );

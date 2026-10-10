@@ -165,7 +165,7 @@ export function OnboardingScreen() {
                         <View style={[styles.recordDot, { backgroundColor: theme.accent }]} />
                       </View>
                     ) : bullet.icon ? (
-                      <Icon name={bullet.icon} size={19} tintColor={theme.accent} />
+                      <Icon name={bullet.icon} size={19} tintColor={theme.accent} scalesWithText />
                     ) : (
                       <View style={[styles.bulletDot, { backgroundColor: theme.accent }]} />
                     )}

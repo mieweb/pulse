@@ -28,7 +28,7 @@ export function DestructiveAction({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
       style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
-      <Icon name="trash" size={16} tintColor={theme.accent} />
+      <Icon name="trash" size={16} tintColor={theme.accent} scalesWithText />
       <ThemedText type="subheadlineEmphasized" themeColor="accent">
         {label}
       </ThemedText>

@@ -236,7 +236,12 @@ export default function ExportScreen() {
                   <ActivityIndicator size="small" color={theme.text} />
                 ) : (
                   <>
-                    <Icon name="square.and.arrow.up" size={14} tintColor={theme.text} />
+                    <Icon
+                      name="square.and.arrow.up"
+                      size={14}
+                      tintColor={theme.text}
+                      scalesWithText
+                    />
                     <ThemedText type="subheadline">Share</ThemedText>
                   </>
                 )}
@@ -268,12 +273,17 @@ export default function ExportScreen() {
                   <ActivityIndicator size="small" color={theme.text} />
                 ) : photos.status === 'saved' ? (
                   <>
-                    <Icon name="checkmark" size={14} tintColor={theme.text} />
+                    <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
                     <ThemedText type="subheadline">Saved</ThemedText>
                   </>
                 ) : (
                   <>
-                    <Icon name="square.and.arrow.down" size={14} tintColor={theme.text} />
+                    <Icon
+                      name="square.and.arrow.down"
+                      size={14}
+                      tintColor={theme.text}
+                      scalesWithText
+                    />
                     <ThemedText type="subheadline">Photos</ThemedText>
                   </>
                 )}
@@ -305,12 +315,12 @@ export default function ExportScreen() {
                   <ActivityIndicator size="small" color={theme.text} />
                 ) : docs.status === 'saved' ? (
                   <>
-                    <Icon name="checkmark" size={14} tintColor={theme.text} />
+                    <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
                     <ThemedText type="subheadline">Saved</ThemedText>
                   </>
                 ) : (
                   <>
-                    <Icon name="folder" size={14} tintColor={theme.text} />
+                    <Icon name="folder" size={14} tintColor={theme.text} scalesWithText />
                     <ThemedText type="subheadline">Files</ThemedText>
                   </>
                 )}

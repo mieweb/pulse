@@ -62,7 +62,7 @@ export function PrimaryButton({
       {busy ? (
         <ActivityIndicator color={color} />
       ) : (
-        icon && <Icon name={icon} size={18} tintColor={color} />
+        icon && <Icon name={icon} size={18} tintColor={color} scalesWithText />
       )}
       <ButtonLabel color={color} truncateMiddle={truncateMiddle}>
         {label}

@@ -108,7 +108,7 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
                   <ThemedText type="body" style={{ color: tint }}>
                     {action.label}
                   </ThemedText>
-                  <Icon name={action.icon} size={18} tintColor={tint} />
+                  <Icon name={action.icon} size={18} tintColor={tint} scalesWithText />
                 </Pressable>
               );
             })}

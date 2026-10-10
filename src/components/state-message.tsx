@@ -37,6 +37,7 @@ export function StateMessage({
           name={icon}
           size={48}
           tintColor={tone === 'accent' ? theme.accent : theme.textSecondary}
+          scalesWithText
         />
       )}
       <ThemedText type="title3" style={styles.title}>

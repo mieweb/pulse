@@ -149,7 +149,13 @@ export default function AboutScreen() {
               accessibilityLabel="Copy details"
               accessibilityHint="Copies the build and server details and the debug log for a bug report"
               style={({ pressed }) => [styles.copy, pressed && styles.pressedIcon]}>
-              <Icon name="doc.on.doc" size={14} weight="semibold" tintColor={theme.accent} />
+              <Icon
+                name="doc.on.doc"
+                size={14}
+                weight="semibold"
+                tintColor={theme.accent}
+                scalesWithText
+              />
               <ThemedText type="subheadlineEmphasized" themeColor="accent">
                 Copy details
               </ThemedText>
@@ -184,7 +190,7 @@ export default function AboutScreen() {
               styles.inlineButton,
               pressed && { backgroundColor: theme.backgroundSelected },
             ]}>
-            <Icon name="link" size={18} tintColor={theme.accent} />
+            <Icon name="link" size={18} tintColor={theme.accent} scalesWithText />
             <ThemedText themeColor="accent">Compatibility & docs</ThemedText>
           </Pressable>
         </Section>
@@ -207,7 +213,7 @@ export default function AboutScreen() {
             {sharing ? (
               <ActivityIndicator size="small" color={theme.accent} />
             ) : (
-              <Icon name="square.and.arrow.up" size={18} tintColor={theme.accent} />
+              <Icon name="square.and.arrow.up" size={18} tintColor={theme.accent} scalesWithText />
             )}
             <ThemedText themeColor="accent">Share logs</ThemedText>
           </Pressable>

@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,15 +10,9 @@ import { compatLabel, type ServerCompat } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
 import { ThemedText } from '@/components/themed-text';
 import { EaseOut, ListReflowMs } from '@/constants/motion';
-import {
-  CardShadow,
-  MaxTextScale,
-  Opacity,
-  Radius,
-  Spacing,
-  type ThemeColor,
-} from '@/constants/theme';
+import { CardShadow, Opacity, Radius, Spacing, type ThemeColor } from '@/constants/theme';
 import { useToast } from '@/features/toast/toast-provider';
+import { useTextScale } from '@/hooks/use-text-scale';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { hostOf } from '@/utils/format';
 import { tallSheetFits } from '@/utils/sheet-fit';
@@ -208,7 +202,7 @@ function DestinationRow({
   return (
     <View style={[styles.row, { backgroundColor: theme.card }]}>
       {/* The home pill's glyph and color: the row is a server, not an alert. */}
-      <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} />
+      <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} scalesWithText />
       <View style={styles.rowText}>
         <DestinationLabel server={server} />
         {compat && compat.status !== 'compatible' && compat.status !== 'checking' ? (
@@ -231,7 +225,7 @@ function DestinationRow({
   );
 }
 
-/** Size of the warning glyph. */
+/** Size of the warning glyph at the default text size; it grows with the text. */
 const STATUS_ICON = 13;
 /** The footnote line the warning icon centers on (ThemedText's `footnote`). */
 const FOOTNOTE_LINE = 18;
@@ -247,9 +241,9 @@ const FOOTNOTE_LINE = 18;
  */
 function RowProblem({ compat, expiryLabel }: { compat: ServerCompat; expiryLabel: string }) {
   const theme = useTheme();
-  // The icon stays on the first line's center when the text wraps; that line grows with text size,
-  // up to the same ceiling as the text itself.
-  const textScale = Math.min(useWindowDimensions().fontScale, MaxTextScale);
+  // The icon grows with the text and stays on the first line's center when the text wraps.
+  const textScale = useTextScale();
+  const iconSize = Math.round(STATUS_ICON * textScale);
   const color: ThemeColor = compat.status === 'unreachable' ? 'warning' : 'accent';
   return (
     <View
@@ -259,9 +253,13 @@ function RowProblem({ compat, expiryLabel }: { compat: ServerCompat; expiryLabel
       <View
         style={[
           styles.statusIcon,
-          { marginTop: Math.max(0, (FOOTNOTE_LINE * textScale - STATUS_ICON) / 2) },
+          {
+            width: iconSize,
+            height: iconSize,
+            marginTop: Math.max(0, (FOOTNOTE_LINE * textScale - iconSize) / 2),
+          },
         ]}>
-        <Icon name="exclamationmark.triangle.fill" size={STATUS_ICON} tintColor={theme[color]} />
+        <Icon name="exclamationmark.triangle.fill" size={iconSize} tintColor={theme[color]} />
       </View>
       <ThemedText type="footnote" themeColor="textSecondary" style={styles.metaText}>
         <ThemedText type="footnote" themeColor={color}>
@@ -300,8 +298,6 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: Spacing.half },
   meta: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.one },
   statusIcon: {
-    width: STATUS_ICON,
-    height: STATUS_ICON,
     alignItems: 'center',
     justifyContent: 'center',
   },

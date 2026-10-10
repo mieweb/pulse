@@ -73,7 +73,7 @@ export function DestinationsFloat() {
             opacity: pressed ? Opacity.pressed : 1,
           },
         ]}>
-        <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} />
+        <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} scalesWithText={1.6} />
         {/* Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. Capped so the
             largest text sizes grow the pill without it towering over the FAB beside it. */}
         <ThemedText

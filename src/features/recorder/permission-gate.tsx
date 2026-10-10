@@ -26,7 +26,7 @@ export function PermissionGate({
         // access is granted and the camera takes over.
         style={{ position: 'absolute', top: insets.top + Spacing.two, left: Spacing.three }}
       />
-      <Icon name="camera.fill" size={48} tintColor={theme.accent} />
+      <Icon name="camera.fill" size={48} tintColor={theme.accent} scalesWithText />
       <ThemedText type="title3" style={styles.title}>
         Camera access needed
       </ThemedText>

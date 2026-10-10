@@ -49,6 +49,8 @@ import {
 } from 'lucide-react-native';
 import { Platform, type StyleProp, type ViewStyle } from 'react-native';
 
+import { useTextScale } from '@/hooks/use-text-scale';
+
 export type IconName = SymbolViewProps['name'];
 type SymbolWeight = SymbolViewProps['weight'];
 
@@ -134,13 +136,28 @@ type IconProps = {
   weight?: SymbolWeight;
   tintColor?: string;
   style?: StyleProp<ViewStyle>;
+  /**
+   * An icon beside text grows with it, as SF Symbols in iOS text do: `true` up to the app's text
+   * ceiling, or a number for the lower cap of the text it sits with (a toast, a pill). Controls
+   * (toolbar, camera, close and icon-only buttons) leave it off and keep their size.
+   */
+  scalesWithText?: boolean | number;
 };
 
 /**
  * Cross-platform icon. Renders a native SF Symbol on iOS and the mapped Lucide glyph on
  * Android (where SF Symbols don't exist). Drop-in for the props we used on <Icon>.
  */
-export function Icon({ name, size = 24, weight, tintColor, style }: IconProps) {
+export function Icon({
+  name,
+  size: baseSize = 24,
+  weight,
+  tintColor,
+  style,
+  scalesWithText,
+}: IconProps) {
+  const textScale = useTextScale(typeof scalesWithText === 'number' ? scalesWithText : undefined);
+  const size = scalesWithText ? Math.round(baseSize * textScale) : baseSize;
   if (Platform.OS === 'ios') {
     return (
       <SymbolView name={name} size={size} weight={weight} tintColor={tintColor} style={style} />

@@ -284,7 +284,7 @@ export function Toast({
     // Keyed by id so a replacement swaps in whole (and any press on the old action button ends
     // with it). Opacity on this child of the glass is fine; it's an ancestor's that blanks it.
     <Animated.View key={id} entering={id === firstId ? undefined : SWAP_IN} style={styles.row}>
-      <Icon name={ICONS[kind]} size={22} tintColor={iconColor(kind, mode)} />
+      <Icon name={ICONS[kind]} size={22} tintColor={iconColor(kind, mode)} scalesWithText={1.6} />
       <View style={styles.text}>
         <ThemedText type="headline" numberOfLines={3} maxFontSizeMultiplier={1.6}>
           {title}
