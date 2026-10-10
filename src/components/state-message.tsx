@@ -17,12 +17,15 @@ export function StateMessage({
   title,
   message,
   tone = 'neutral',
+  messageLines,
   children,
 }: {
   icon?: IconName;
   title: string;
   message?: string;
   tone?: 'neutral' | 'accent';
+  /** Caps the message (e.g. an error text whose length the app doesn't control). */
+  messageLines?: number;
   /** The action(s) under the text, e.g. a PrimaryButton. */
   children?: ReactNode;
 }) {
@@ -40,7 +43,7 @@ export function StateMessage({
         {title}
       </ThemedText>
       {message && (
-        <ThemedText themeColor="textSecondary" style={styles.message}>
+        <ThemedText themeColor="textSecondary" numberOfLines={messageLines} style={styles.message}>
           {message}
         </ThemedText>
       )}

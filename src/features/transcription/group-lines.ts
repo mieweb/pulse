@@ -10,22 +10,29 @@ const MAX_DUR_CS = 700;
 // Western and CJK (。！？) sentence ends, optionally followed by a closing quote or bracket.
 const SENTENCE_END = /[.!?…。！？]["')\]」』]?$/;
 
-// Punctuation that hugs the word before it (whisper emits it as its own token: "Hello", ",").
-const CLOSING = /^[,.!?;:…%)\]」』。、！？，：；）】》〉]/;
-// Hiragana, katakana, CJK ideographs, CJK punctuation (、。「」) and full-width forms (，：！):
-// written without spaces between them.
-const CJK = /[\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
+// Punctuation that hugs the word before it (whisper emits it as its own token: "Hello", ","),
+// including Arabic and Urdu marks (، ؛ ؟ ۔), Devanagari dandas (। ॥) and closing quotes.
+const CLOSING = /^[,.!?;:…%)\]」』。、！？，：；）】》〉،؛؟۔।॥”’]/;
+// Punctuation that hugs the word after it: opening brackets and quotes, and Spanish ¿ ¡.
+const OPENING = /[(\[“‘¿¡「『（]$/;
+// Scripts written without spaces between words: Thai, Lao, Myanmar, Khmer, and hiragana,
+// katakana, CJK ideographs, CJK punctuation (、。「」) and full-width forms (，：！). Whisper still
+// emits their words as separate tokens, so a space would split every word. Hangul isn't here:
+// Korean puts spaces between words.
+const NO_SPACE_SCRIPT =
+  /[\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
 
 /**
  * Whether a space goes between two caption words when they're joined for display: none before
- * closing punctuation ("Hello," not "Hello ,") and none between two CJK characters ("我们", not
- * "我 们"). Every place that renders words in sequence (the cue text, the karaoke row, the
- * on-video overlay) uses this, so they all read the same.
+ * closing punctuation ("Hello," not "Hello ,"), none after opening punctuation ("(yes" not
+ * "( yes") and none between two characters of a script written without spaces ("我们", not
+ * "我 们"). Every place that renders words in sequence (the caption text, the karaoke row, the
+ * on-video overlay, the WebVTT export) uses this, so they all read the same.
  */
 export function spaceBefore(prev: string, word: string): boolean {
   if (!prev || !word) return false;
-  if (CLOSING.test(word)) return false;
-  return !(CJK.test(prev[prev.length - 1]) && CJK.test(word[0]));
+  if (CLOSING.test(word) || OPENING.test(prev)) return false;
+  return !(NO_SPACE_SCRIPT.test(prev[prev.length - 1]) && NO_SPACE_SCRIPT.test(word[0]));
 }
 
 /** Join caption words into display text with `spaceBefore`'s spacing. */

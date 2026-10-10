@@ -16,10 +16,19 @@ import { shareAsync } from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/primary-button';
+import { SectionHeader } from '@/components/section-header';
+import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { CloseButton } from '@/features/recorder/close-button';
-import { ButtonHeight, CardShadow, ControlScrim, Radius, Spacing } from '@/constants/theme';
+import {
+  ButtonHeight,
+  CardShadow,
+  ControlScrim,
+  Opacity,
+  Radius,
+  Spacing,
+} from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { segmentsForDraft } from '@/db/drafts';
 import { useExport } from '@/features/export/use-export';
@@ -41,7 +50,7 @@ import { useUpload } from '@/features/upload/use-upload';
 import { useUploadAnnouncement, useWatchLink } from '@/features/upload/use-uploads';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
-import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
+import { displayServer, formatClipCount, formatDuration } from '@/utils/format';
 import { closeToHome } from '@/utils/navigation';
 import { effMs } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
@@ -94,7 +103,10 @@ export default function ExportScreen() {
   // Uploading needs the video, so the Upload button waits for the merge. It only shows a spinner
   // while the merge runs — a failed merge has its own Retry above, so the button just stays disabled.
   const uploadReady = state.status === 'done';
-  const selectedHost = upload.selectedDestination ? hostOf(upload.selectedDestination.server) : '';
+  // Host plus path, so two servers on one host ("…/team-a", "…/team-b") don't read the same.
+  const selectedHost = upload.selectedDestination
+    ? displayServer(upload.selectedDestination.server)
+    : '';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
   const uState = upload.state;
@@ -185,13 +197,14 @@ export default function ExportScreen() {
       <View style={[styles.center, { paddingBottom: insets.bottom + Spacing.three }]}>
         {state.status === 'merging' && (
           <>
+            {/* The ring stands in for StateMessage's icon: it's the progress itself. */}
             <MergeProgressRing progress={state.progress} />
-            <ThemedText type="subtitle" style={styles.title}>
-              Merging…
-            </ThemedText>
-            <ThemedText themeColor="textSecondary">
-              Stitching {formatClipCount(clips.length)} into one video.
-            </ThemedText>
+            <View style={styles.stateWrap}>
+              <StateMessage
+                title="Merging…"
+                message={`Stitching ${formatClipCount(clips.length)} into one video.`}
+              />
+            </View>
           </>
         )}
 
@@ -214,10 +227,11 @@ export default function ExportScreen() {
                 accessibilityState={{ disabled: busy, busy }}
                 // 34pt pill + 5 each side = a 44pt tap target.
                 hitSlop={5}
+                // No disabled dimming while busy: the spinner stays at full strength, like
+                // Photos and Files beside it.
                 style={({ pressed }) => [
                   styles.smallButton,
                   elementSurface,
-                  busy && styles.disabled,
                   pressed && styles.pressed,
                 ]}>
                 {busy ? (
@@ -225,7 +239,7 @@ export default function ExportScreen() {
                 ) : (
                   <>
                     <Icon name="square.and.arrow.up" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Share</ThemedText>
+                    <ThemedText type="subheadline">Share</ThemedText>
                   </>
                 )}
               </Pressable>
@@ -257,12 +271,12 @@ export default function ExportScreen() {
                 ) : photos.status === 'saved' ? (
                   <>
                     <Icon name="checkmark" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Saved</ThemedText>
+                    <ThemedText type="subheadline">Saved</ThemedText>
                   </>
                 ) : (
                   <>
                     <Icon name="square.and.arrow.down" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Photos</ThemedText>
+                    <ThemedText type="subheadline">Photos</ThemedText>
                   </>
                 )}
               </Pressable>
@@ -294,12 +308,12 @@ export default function ExportScreen() {
                 ) : docs.status === 'saved' ? (
                   <>
                     <Icon name="checkmark" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Saved</ThemedText>
+                    <ThemedText type="subheadline">Saved</ThemedText>
                   </>
                 ) : (
                   <>
                     <Icon name="folder" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Files</ThemedText>
+                    <ThemedText type="subheadline">Files</ThemedText>
                   </>
                 )}
               </Pressable>
@@ -308,19 +322,16 @@ export default function ExportScreen() {
         )}
 
         {state.status === 'error' && (
-          <>
-            <Icon name="exclamationmark.triangle.fill" size={64} tintColor={theme.accent} />
-            <ThemedText type="subtitle" style={styles.title}>
-              Export failed
-            </ThemedText>
-            <ThemedText themeColor="textSecondary" numberOfLines={4} style={styles.errorMessage}>
-              {state.message}
-            </ThemedText>
-
-            <View style={styles.actions}>
+          <View style={styles.stateWrap}>
+            <StateMessage
+              icon="exclamationmark.triangle.fill"
+              tone="accent"
+              title="Export failed"
+              message={state.message}
+              messageLines={4}>
               <PrimaryButton label="Try again" icon="arrow.clockwise" onPress={run} />
-            </View>
-          </>
+            </StateMessage>
+          </View>
         )}
 
         {/* The UPLOAD section. The merge always runs (above) and the Upload button waits on
@@ -331,12 +342,7 @@ export default function ExportScreen() {
             buttons). */}
         {(upload.destinations.length > 0 || uState.status === 'uploading' || finished) && (
           <View style={styles.uploadSection}>
-            <ThemedText
-              type="caption1"
-              themeColor="textSecondary"
-              style={styles.uploadSectionLabel}>
-              UPLOAD
-            </ThemedText>
+            <SectionHeader title="Upload" />
 
             {uState.status === 'uploading' ? (
               <View style={[styles.uploadingBar, elementSurface]}>
@@ -454,6 +460,9 @@ function MergedPreview({
               nativeControls
               fullscreenOptions={{ enable: false }}
               allowsPictureInPicture={false}
+              // Android: the default SurfaceView ignores the card's clipping, so the video would
+              // draw square corners over the rounded card. A TextureView clips like any view.
+              surfaceType="textureView"
             />
             <View style={styles.captionLayer} pointerEvents="none">
               <CaptionOverlay lines={lines} positionMs={positionMs} />
@@ -547,12 +556,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
+    // The same 16pt gutter as the header, so the ✕ and the content share an edge.
+    paddingHorizontal: Spacing.three,
     // paddingBottom is inline — it tracks the safe-area inset.
   },
-  title: { marginTop: Spacing.two },
-  errorMessage: { textAlign: 'center' },
-  actions: { alignSelf: 'stretch', gap: Spacing.two, marginTop: Spacing.five },
+  // Full width, so StateMessage's actions (Try again) span the column instead of hugging the
+  // text.
+  stateWrap: { alignSelf: 'stretch' },
   actionsRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -601,7 +611,6 @@ const styles = StyleSheet.create({
     borderRadius: 17,
   },
   uploadSection: { alignSelf: 'stretch', gap: Spacing.two, marginTop: Spacing.two },
-  uploadSectionLabel: { letterSpacing: 0.5 },
   // The in-flight upload, in the Upload button's place: the same 52pt card, so nothing moves.
   uploadingBar: {
     flexDirection: 'row',
@@ -614,9 +623,8 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   uploadingLabel: { flex: 1, fontVariant: ['tabular-nums'] },
-  pressed: { opacity: 0.85 },
-  pressedIcon: { opacity: 0.6 },
-  disabled: { opacity: 0.35 },
+  pressed: { opacity: Opacity.pressed },
+  pressedIcon: { opacity: Opacity.pressedGlyph },
   finishedRow: { flexDirection: 'row', gap: Spacing.two },
   rowButton: { flex: 1 },
 });

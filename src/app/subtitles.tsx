@@ -13,6 +13,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from 'react-native';
@@ -21,17 +22,21 @@ import Animated, {
   FadeOut,
   interpolate,
   LinearTransition,
+  ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  ZoomIn,
+  ZoomOut,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/primary-button';
+import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { EaseOut } from '@/constants/motion';
-import { ControlScrim, Radius, Spacing } from '@/constants/theme';
+import { EaseOut, ListReflowMs } from '@/constants/motion';
+import { ControlScrim, Opacity, Radius, Spacing } from '@/constants/theme';
 import { segmentsForDraft } from '@/db/drafts';
 import { clearEditedTranscript, getDraftTranscriptRow } from '@/db/transcripts';
 import { selectedModelQuery } from '@/db/settings';
@@ -84,13 +89,16 @@ export default function SubtitlesScreen() {
   if (missing) {
     return (
       <ThemedView type="groupedBackground" style={[styles.fill, styles.centerAll]}>
-        <ThemedText>Captions unavailable — export the video first.</ThemedText>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.linkBtn, pressed && styles.pressedLink]}>
-          <ThemedText themeColor="accent">Go back</ThemedText>
-        </Pressable>
+        {/* A full-width wrap so the Go back button spans the column like the app's other
+            state actions, rather than hugging its label. */}
+        <View style={styles.stateWrap}>
+          <StateMessage
+            icon="captions.bubble"
+            title="Captions unavailable"
+            message="Export the video first.">
+            <PrimaryButton variant="card" label="Go back" onPress={() => router.back()} />
+          </StateMessage>
+        </View>
       </ThemedView>
     );
   }
@@ -183,9 +191,18 @@ function Editor({
   // save it would otherwise queue for the reset list.
   const resetCuesRef = useRef<Cue[] | null>(null);
   const cuesRef = useRef(editor.cues);
+  // The reset toast's closer, while its Undo can still act (see onResetToAuto).
+  const closeResetToastRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     cuesRef.current = editor.cues;
-    if (editor.cues !== resetCuesRef.current) return;
+    if (editor.cues !== resetCuesRef.current) {
+      // Any edit after the reset (or an undo off it) makes the toast's Undo a dead button — it
+      // only undoes the reset while the reset is the latest step. Close it; the header Undo
+      // still walks back through every step, the reset included.
+      closeResetToastRef.current?.();
+      closeResetToastRef.current = null;
+      return;
+    }
     markCleared();
     void clearEditedTranscript(draftId);
   }, [editor.cues, markCleared, draftId]);
@@ -204,13 +221,22 @@ function Editor({
   useEffect(() => {
     compact.set(withTiming(mode === 'text' ? 1 : 0, { duration: 250, easing: EaseOut }));
   }, [mode, compact]);
-  const previewSize = useAnimatedStyle(() => {
-    const t = compact.get();
-    return {
-      width: `${interpolate(t, [0, 1], [56, 36])}%` as const,
-      marginVertical: interpolate(t, [0, 1], [Spacing.two, Spacing.one]),
-    };
-  });
+  const previewWidth = useAnimatedStyle(() => ({
+    width: `${interpolate(compact.get(), [0, 1], [PREVIEW_FULL, PREVIEW_COMPACT])}%` as const,
+  }));
+  // The caption and ▶ layer is laid out once, at the full preview's size, and scaled with the
+  // card off the same `compact` value — so the caption text and the badge shrink in step with
+  // the width instead of switching size on the first frame of a 250ms ease. Scaling (rather
+  // than swapping font sizes when the ease ends) keeps the layout fixed: the caption never
+  // rewraps mid-animation, and browsing — where captions are actually read — is at 1×, drawn
+  // natively. Text mode shows them at 0.64× on a thumbnail-sized preview, where a slightly
+  // softer bitmap scale doesn't matter. Scale only: the ▶ is glass, which must never sit under
+  // an opacity.
+  const { width: windowWidth } = useWindowDimensions();
+  const layerWidth = (windowWidth * PREVIEW_FULL) / 100;
+  const layerScale = useAnimatedStyle(() => ({
+    transform: [{ scale: interpolate(compact.get(), [0, 1], [1, PREVIEW_COMPACT / PREVIEW_FULL]) }],
+  }));
 
   // The list glides when the toolbar docks or the footer leaves (browse ↔ timing), but not into
   // or out of text mode: there the preview's width animation and the KeyboardAvoidingView's
@@ -218,6 +244,23 @@ function Editor({
   const [modeChange, setModeChange] = useState({ from: mode, to: mode });
   if (modeChange.to !== mode) setModeChange({ from: modeChange.to, to: mode });
   const reflowList = mode !== 'text' && modeChange.from !== 'text';
+
+  // Rows glide (and a removed one fades) only in the render that shows a structural edit —
+  // delete, split, merge. Typing changes the list too, and must never animate the row being
+  // typed in. The handler arms it with the list it edits; the next list is the edited one, and
+  // anything after that (typing, undo) is no longer it. The timer disarms it once the glide is
+  // over (or after a no-op edit, which never produces a next list).
+  const [rowsEdit, setRowsEdit] = useState<{ from: Cue[]; to: Cue[] | null } | null>(null);
+  if (rowsEdit && !rowsEdit.to && editor.cues !== rowsEdit.from) {
+    setRowsEdit({ from: rowsEdit.from, to: editor.cues });
+  }
+  const rowsReflow = rowsEdit != null && rowsEdit.to === editor.cues;
+  useEffect(() => {
+    if (!rowsEdit) return;
+    const timer = setTimeout(() => setRowsEdit(null), ListReflowMs);
+    return () => clearTimeout(timer);
+  }, [rowsEdit]);
+  const armRowsReflow = () => setRowsEdit({ from: editor.cues, to: null });
 
   const playingId = useMemo(() => {
     const c = editor.cues.find((x) => posCs >= x.t0 && posCs <= x.t1);
@@ -312,6 +355,7 @@ function Editor({
 
   const onSplit = () => {
     if (!selCue) return;
+    armRowsReflow();
     const id = editor.splitAt(selCue.id, posCs);
     if (id) setSelectedId(id); // keep selection on the playhead's half
   };
@@ -322,7 +366,6 @@ function Editor({
   // the eye already is.
   // The reset's Undo lives in this editor, so it can't outlive it: leaving the screen closes the
   // toast (the reset stands) rather than leaving an Undo up that would undo nothing.
-  const closeResetToastRef = useRef<(() => void) | null>(null);
   useEffect(() => () => closeResetToastRef.current?.(), []);
   const onResetToAuto = () => {
     clearSelection();
@@ -330,8 +373,10 @@ function Editor({
     resetCuesRef.current = next;
     setRowEdited(false);
     closeResetToastRef.current = showUndoToast({
-      title: 'Automatic captions restored',
-      // Only while the reset is still the latest step — a later edit is the header Undo's.
+      title: 'Captions reset',
+      message: 'Back to the automatic captions',
+      // Only while the reset is still the latest step — a later edit closes the toast (see the
+      // effect above), and this guards the moment in between.
       onUndo: () => {
         if (cuesRef.current === next) undo();
       },
@@ -351,7 +396,14 @@ function Editor({
           <View
             style={[styles.headerTitleWrap, { top: insets.top + Spacing.two }]}
             pointerEvents="none">
-            <ThemedText type="headline">Captions</ThemedText>
+            <ThemedText
+              type="headline"
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+              maxFontSizeMultiplier={1.3}>
+              Captions
+            </ThemedText>
           </View>
           <CloseButton onPress={() => router.back()} />
           <View style={styles.headerActions}>
@@ -363,7 +415,6 @@ function Editor({
               valueText={selectedModel ? selectedModel.label : 'Off'}
               disabled={false}
               onPress={() => router.push('/on-device-ai')}
-              tintColor={selectedModel ? theme.accent : undefined}
             />
             <HeaderBtn
               name="arrow.uturn.backward"
@@ -380,7 +431,13 @@ function Editor({
           </View>
         </View>
 
-        <Animated.View style={[styles.previewCard, previewSize]}>
+        {/* The 4pt vertical margin snaps with the mode; only the width eases (`previewWidth`). */}
+        <Animated.View
+          style={[
+            styles.previewCard,
+            mode === 'text' ? styles.previewCardCompact : styles.previewCardFull,
+            previewWidth,
+          ]}>
           <Pressable
             style={StyleSheet.absoluteFill}
             onPress={togglePlay}
@@ -391,34 +448,49 @@ function Editor({
               player={player}
               contentFit="contain"
               nativeControls={false}
+              // Android: the default SurfaceView ignores the card's rounded clipping (and this
+              // card is resized every frame of the text-mode ease). A TextureView clips and
+              // resizes like any view — the same as the recorder's preview.
+              surfaceType="textureView"
             />
-            <View style={StyleSheet.absoluteFill} pointerEvents="none">
-              <CaptionOverlay
-                lines={lines}
-                positionMs={posCs * 10}
-                fontSize={mode === 'text' ? 12 : 17}
-              />
-            </View>
-            {!isPlaying && (
-              <View style={styles.playOverlay} pointerEvents="none">
-                <GlassPill style={[styles.playBadge, mode === 'text' && styles.playBadgeCompact]}>
-                  <Icon name="play.fill" size={mode === 'text' ? 15 : 22} tintColor="#fff" />
-                </GlassPill>
-              </View>
-            )}
+            <Animated.View
+              style={[
+                styles.previewLayer,
+                { width: layerWidth, height: (layerWidth * 16) / 9 },
+                layerScale,
+              ]}
+              pointerEvents="none">
+              <CaptionOverlay lines={lines} positionMs={posCs * 10} />
+              {!isPlaying && (
+                <Animated.View
+                  style={styles.playOverlay}
+                  entering={BADGE_ENTER}
+                  exiting={BADGE_EXIT}>
+                  <GlassPill style={styles.playBadge}>
+                    <Icon name="play.fill" size={22} tintColor="#fff" />
+                  </GlassPill>
+                </Animated.View>
+              )}
+            </Animated.View>
           </Pressable>
         </Animated.View>
 
+        {/* Fades in only. No exit fade: on timing → text the toolbar would linger over the list
+            as it moves up into its place, a ghost strip over the rows. */}
         {mode === 'timing' && selCue && (
-          <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(120)}>
+          <Animated.View entering={TOOLBAR_ENTER}>
             <CueToolbar
               cue={selCue}
               posCs={posCs}
               theme={theme}
               canMerge={selIndex >= 0 && selIndex < editor.cues.length - 1}
               onSplit={onSplit}
-              onMerge={() => editor.mergeNext(selCue.id)}
+              onMerge={() => {
+                armRowsReflow();
+                editor.mergeNext(selCue.id);
+              }}
               onDelete={() => {
+                armRowsReflow();
                 editor.remove(selCue.id);
                 clearSelection();
               }}
@@ -426,7 +498,7 @@ function Editor({
           </Animated.View>
         )}
 
-        <Animated.View style={styles.list} layout={reflowList ? ListReflow : undefined}>
+        <Animated.View style={styles.list} layout={reflowList ? LIST_REFLOW : undefined}>
           <ScrollView
             ref={scrollRef}
             style={styles.list}
@@ -438,12 +510,14 @@ function Editor({
             onMomentumScrollEnd={onUserScrollSettle}>
             {editor.cues.length === 0 && (
               <ThemedText themeColor="textSecondary" style={styles.empty}>
-                No captions yet. Add a cue at the playhead to start.
+                No captions yet. Add one at the playhead to start.
               </ThemedText>
             )}
             {editor.cues.map((cue) => (
-              <View
+              <Animated.View
                 key={cue.id}
+                layout={rowsReflow ? LIST_REFLOW : undefined}
+                exiting={rowsReflow ? ROW_EXIT : undefined}
                 onLayout={(e: LayoutChangeEvent) =>
                   offsets.current.set(cue.id, e.nativeEvent.layout.y)
                 }>
@@ -462,7 +536,7 @@ function Editor({
                   onChangeText={setText}
                   onEndTextEdit={endTextEdit}
                 />
-              </View>
+              </Animated.View>
             ))}
             {showReset && (
               <Pressable
@@ -479,12 +553,12 @@ function Editor({
 
         {mode === 'browse' && (
           <Animated.View
-            entering={FadeIn.duration(150)}
-            exiting={FadeOut.duration(120)}
+            entering={FOOTER_ENTER}
+            exiting={FOOTER_EXIT}
             style={[styles.footer, { paddingBottom: insets.bottom + Spacing.two }]}>
             <PrimaryButton
               variant="card"
-              label="Add cue"
+              label="Add caption"
               icon="plus"
               onPress={onAddCue}
               style={styles.footerBtn}
@@ -496,8 +570,25 @@ function Editor({
   );
 }
 
-/** The cue list's glide when the toolbar docks or the footer leaves (see `reflowList`). */
-const ListReflow = LinearTransition.duration(220).easing(EaseOut);
+/** The preview's width, in % of the screen: browsing, and text mode (keyboard up). */
+const PREVIEW_FULL = 56;
+const PREVIEW_COMPACT = 36;
+
+/** The list's glide when the toolbar docks or the footer leaves (see `reflowList`), and the
+ * rows' when one is deleted, split or merged (see `rowsReflow`). */
+const LIST_REFLOW = LinearTransition.duration(ListReflowMs).easing(EaseOut);
+// Opacity-only fades, so they play under Reduce Motion too (nothing moves).
+const ROW_EXIT = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
+const TOOLBAR_ENTER = FadeIn.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
+const FOOTER_ENTER = TOOLBAR_ENTER;
+const FOOTER_EXIT = FadeOut.duration(120).easing(EaseOut).reduceMotion(ReduceMotion.Never);
+// The ▶ badge zooms (like the recorder preview's): scale only, never an opacity on the glass.
+const BADGE_ENTER = ZoomIn.duration(150);
+const BADGE_EXIT = ZoomOut.duration(150);
+
+// The header's right-hand cluster: three 40pt buttons, 8pt apart.
+const HEADER_BTN = 40;
+const HEADER_ACTIONS_WIDTH = HEADER_BTN * 3 + Spacing.two * 2;
 
 function HeaderBtn({
   name,
@@ -507,7 +598,6 @@ function HeaderBtn({
   valueText,
   disabled,
   onPress,
-  tintColor,
 }: {
   name: IconName;
   label: string;
@@ -519,9 +609,9 @@ function HeaderBtn({
   valueText?: string;
   disabled: boolean;
   onPress: () => void;
-  tintColor?: string;
 }) {
   const mode = useThemeMode();
+  const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -535,10 +625,13 @@ function HeaderBtn({
       style={({ pressed }) => [
         styles.headerBtn,
         ControlScrim[mode],
+        // "On" fills the circle with the accent and keeps the glyph white: a red glyph on the
+        // grey scrim was ~1.3:1 in light mode, barely readable.
+        selected && { backgroundColor: theme.accent, borderColor: 'transparent' },
         disabled && styles.headerBtnDisabled,
         pressed && styles.pressed,
       ]}>
-      <Icon name={name} size={20} weight="semibold" tintColor={tintColor ?? '#fff'} />
+      <Icon name={name} size={20} weight="semibold" tintColor="#fff" />
     </Pressable>
   );
 }
@@ -546,10 +639,9 @@ function HeaderBtn({
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   centerAll: { alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
-  // ≥44pt tall tap target (22pt line + 11 each side).
-  linkBtn: { paddingHorizontal: Spacing.three, paddingVertical: 11 },
-  pressed: { opacity: 0.85 },
-  pressedLink: { opacity: 0.6 },
+  stateWrap: { alignSelf: 'stretch', paddingHorizontal: Spacing.three },
+  pressed: { opacity: Opacity.pressed },
+  pressedLink: { opacity: Opacity.pressedGlyph },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -557,10 +649,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
   },
+  // Inset past the wider (right-hand) button cluster on BOTH sides, so the title stays centred
+  // and can never run under the ✕ or the buttons; it shrinks to fit instead (adjustsFontSizeToFit).
   headerTitleWrap: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    left: Spacing.three + HEADER_ACTIONS_WIDTH,
+    right: Spacing.three + HEADER_ACTIONS_WIDTH,
     bottom: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',
@@ -569,15 +663,15 @@ const styles = StyleSheet.create({
   // Same 40pt scrim circle as the ✕ beside it (and export's captions button), so the header
   // reads as one set.
   headerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: HEADER_BTN,
+    height: HEADER_BTN,
+    borderRadius: HEADER_BTN / 2,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerBtnDisabled: { opacity: 0.35 },
-  // Width and vertical margin are animated (`previewSize`): 56% browsing, 36% in text mode.
+  headerBtnDisabled: { opacity: Opacity.disabled },
+  // Width is animated (`previewWidth`): 56% browsing, 36% in text mode.
   previewCard: {
     aspectRatio: 9 / 16,
     overflow: 'hidden',
@@ -586,6 +680,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     alignSelf: 'center',
   },
+  previewCardFull: { marginVertical: Spacing.two },
+  previewCardCompact: { marginVertical: Spacing.one },
+  // Sized inline to the full preview and scaled from its top-left corner (`layerScale`), so it
+  // always covers the card exactly.
+  previewLayer: { position: 'absolute', left: 0, top: 0, transformOrigin: 'top left' },
   playOverlay: {
     position: 'absolute',
     top: 0,
@@ -604,7 +703,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingLeft: 3,
   },
-  playBadgeCompact: { width: 32, height: 32, borderRadius: 16, paddingLeft: 2 },
   list: { flex: 1 },
   listContent: { padding: Spacing.three },
   empty: { textAlign: 'center', marginTop: Spacing.five },

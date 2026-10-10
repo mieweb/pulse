@@ -70,7 +70,11 @@ export function CaptionOverlay({ lines, positionMs, fontSize = 17 }: Props) {
           paddingHorizontal: pad,
           paddingVertical: pad / 2,
         }}>
-        <Text style={[styles.text, { fontSize, lineHeight: fontSize * 1.3 }]}>
+        {/* Capped like the app's other text over video: the caption grows with the text size,
+            but past 1.3× it would cover the frame it describes. */}
+        <Text
+          maxFontSizeMultiplier={1.3}
+          style={[styles.text, { fontSize, lineHeight: fontSize * 1.3 }]}>
           {words.map((w, i) => (
             <Text
               key={`${lineIdx}:${i}`}

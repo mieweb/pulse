@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon, type IconName } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, Spacing } from '@/constants/theme';
+import { CardShadow, Opacity, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { clock, cueLoad } from './cue-row';
 import { MIN_DUR_CS, type Cue } from './use-subtitle-editor';
@@ -87,8 +87,9 @@ function ToolBtn({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      // 30pt + 7 each side = a 44pt tap target.
-      hitSlop={7}
+      // 30pt + 7 above and below = 44pt tall. Sideways only 3 each: the buttons are 8pt apart,
+      // so 7 would overlap the neighbour's slop and a tap just right of Merge would hit Delete.
+      hitSlop={TOOL_HIT_SLOP}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !!disabled }}
@@ -103,6 +104,8 @@ function ToolBtn({
     </Pressable>
   );
 }
+
+const TOOL_HIT_SLOP = { top: 7, bottom: 7, left: 3, right: 3 };
 
 const styles = StyleSheet.create({
   strip: {
@@ -122,6 +125,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  toolDisabled: { opacity: 0.35 },
-  pressed: { opacity: 0.85 },
+  toolDisabled: { opacity: Opacity.disabled },
+  pressed: { opacity: Opacity.pressed },
 });

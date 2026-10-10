@@ -29,8 +29,9 @@ export function linesToVtt(lines: TranscriptLine[]): string {
       ? line.words
           .map((w, i) => {
             if (i === 0) return w.text;
-            // The same spacing as in the app ("Hello, world.", no spaces inside Chinese or
-            // Japanese), with the word's timestamp after any space so it marks the word itself.
+            // The same spacing as in the app ("Hello, world.", no spaces inside Chinese, Thai
+            // and other unspaced scripts), with the word's timestamp after any space so it marks
+            // the word itself.
             const space = spaceBefore(line.words![i - 1].text, w.text) ? ' ' : '';
             return `${space}<${msToVttTime(csToMs(w.t0))}>${w.text}`;
           })

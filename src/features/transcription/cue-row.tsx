@@ -124,7 +124,7 @@ export const CueRow = memo(function CueRow({
             type="subheadline"
             numberOfLines={2}
             style={[styles.text, !chars && { color: theme.textSecondary }]}>
-            {chars ? cue.text : 'Empty cue — tap to type'}
+            {chars ? cue.text : 'Empty caption — tap to type'}
           </ThemedText>
         )}
       </View>

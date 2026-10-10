@@ -76,7 +76,7 @@ export function MergeProgressRing({ progress }: { progress: number }) {
         <View style={styles.center}>
           {/* Shrinks to fit inside the ring at large text sizes rather than overflowing it. */}
           <ThemedText
-            type="subtitle"
+            type="title3"
             numberOfLines={1}
             adjustsFontSizeToFit
             maxFontSizeMultiplier={1.5}
@@ -98,5 +98,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: STROKE * 2,
   },
-  label: { fontVariant: ['tabular-nums'] },
+  label: { fontWeight: '600', fontVariant: ['tabular-nums'] },
 });

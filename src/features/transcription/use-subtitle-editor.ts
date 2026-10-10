@@ -248,15 +248,18 @@ export function useSubtitleEditor(initial: TranscriptLine[]) {
       if (!target || atCs <= target.t0 + MIN_DUR_CS || atCs >= target.t1 - MIN_DUR_CS) return null;
       const leftWords = target.words.filter((w) => w.t0 < atCs);
       const rightWords = target.words.filter((w) => w.t0 >= atCs);
-      const makeHalf = (words: TranscriptWord[], t0: number, t1: number): Cue => ({
-        id: nextId(),
+      const makeHalf = (id: string, words: TranscriptWord[], t0: number, t1: number): Cue => ({
+        id,
         text: joinWords(words.map((w) => w.text)).trim(),
         t0,
         t1,
         words,
       });
-      const left = makeHalf(leftWords, target.t0, Math.round(atCs));
-      const right = makeHalf(rightWords, Math.round(atCs), target.t1);
+      // The left half keeps the cue's id (as a merge keeps the first cue's): its row stays put
+      // and only the new right half appears below it, instead of the list swapping the row out
+      // for two new ones.
+      const left = makeHalf(id, leftWords, target.t0, Math.round(atCs));
+      const right = makeHalf(nextId(), rightWords, Math.round(atCs), target.t1);
       mutate(null, (cues) =>
         cues
           .filter((cue) => cue.id !== id)
