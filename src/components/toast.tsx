@@ -74,7 +74,7 @@ const FROST = { light: 'rgba(255,255,255,0.78)', dark: 'rgba(28,28,30,0.78)' } a
 
 /**
  * Far enough above the safe area to start (and leave) fully off screen, for the tallest toast the
- * text ceiling allows (`MaxTextScale`): a 3-line title and 2-line message is ≈ 180 pt of banner, plus the
+ * text caps allow: a 3-line title and 2-line message at 1.6× is ≈ 204 pt of banner, plus the
  * 8 pt it sits below the safe area and FloatShadow's 16 pt reach. A fixed distance rather than the
  * measured height: the slide in starts before the banner's first layout, so a measured one would
  * still need this as its fallback, and the steep ease-out covers the extra distance off screen.
@@ -286,11 +286,15 @@ export function Toast({
     <Animated.View key={id} entering={id === firstId ? undefined : SWAP_IN} style={styles.row}>
       <Icon name={ICONS[kind]} size={22} tintColor={iconColor(kind, mode)} />
       <View style={styles.text}>
-        <ThemedText type="headline" numberOfLines={3}>
+        <ThemedText type="headline" numberOfLines={3} maxFontSizeMultiplier={1.6}>
           {title}
         </ThemedText>
         {message && (
-          <ThemedText type="subheadline" themeColor="textSecondary" numberOfLines={2}>
+          <ThemedText
+            type="subheadline"
+            themeColor="textSecondary"
+            numberOfLines={2}
+            maxFontSizeMultiplier={1.6}>
             {message}
           </ThemedText>
         )}
@@ -320,7 +324,7 @@ export function Toast({
             type="subheadline"
             themeColor="accent"
             numberOfLines={1}
-
+            maxFontSizeMultiplier={1.6}
             style={styles.actionLabel}>
             {action.label}
           </ThemedText>

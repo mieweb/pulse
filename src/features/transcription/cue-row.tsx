@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { MaxTextScale, Radius, Spacing } from '@/constants/theme';
+import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
 import type { Cue } from './use-subtitle-editor';
@@ -114,8 +114,6 @@ export const CueRow = memo(function CueRow({
             placeholderTextColor={theme.textSecondary}
             multiline
             autoFocus
-            // The text it replaces stops at the app's text ceiling; so does the field.
-            maxFontSizeMultiplier={MaxTextScale}
             style={[styles.input, { color: theme.text }]}
           />
         ) : playing && chars > 0 && cue.words.length > 0 ? (

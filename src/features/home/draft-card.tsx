@@ -12,7 +12,7 @@ import Animated, {
 import Svg, { Circle } from 'react-native-svg';
 
 import { ThemedText } from '@/components/themed-text';
-import { CardShadow, MaxTextScale, Radius, Spacing } from '@/constants/theme';
+import { CardShadow, Radius, Spacing } from '@/constants/theme';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
 import type { WatchLink } from '@/features/upload/upload-manager';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
@@ -139,8 +139,6 @@ export function DraftCard({
             selectTextOnFocus
             maxLength={NAME_MAX_LENGTH}
             returnKeyType="done"
-            // The name it replaces stops at the app's text ceiling; so does the field.
-            maxFontSizeMultiplier={MaxTextScale}
             onEndEditing={(e) => onSubmitName?.(dropSplitSurrogate(e.nativeEvent.text).trim())}
             style={[styles.nameInput, { color: theme.text }]}
           />

@@ -75,7 +75,12 @@ export function MergeProgressRing({ progress }: { progress: number }) {
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <View style={styles.center}>
           {/* Shrinks to fit inside the ring at large text sizes rather than overflowing it. */}
-          <ThemedText type="title3" numberOfLines={1} adjustsFontSizeToFit style={styles.label}>
+          <ThemedText
+            type="title3"
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            maxFontSizeMultiplier={1.5}
+            style={styles.label}>
             {`${percent}%`}
           </ThemedText>
         </View>

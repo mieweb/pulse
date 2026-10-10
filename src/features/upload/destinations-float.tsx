@@ -80,6 +80,7 @@ export function DestinationsFloat() {
           type="subheadlineEmphasized"
           numberOfLines={1}
           ellipsizeMode="middle"
+          maxFontSizeMultiplier={1.6}
           style={styles.pillLabel}>
           {destinations.length === 1
             ? hostOf(destinations[0].server)
@@ -106,8 +107,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-    // 44 pt; the app's text ceiling (`MaxTextScale`) keeps it there at the largest text sizes, and
-    // a minimum rather than a fixed height means it grows instead of clipping if that changes.
+    // 44 pt; the label's cap (1.6 × a 20 pt line, plus this padding) keeps it there at the largest
+    // text sizes, and a minimum rather than a fixed height means it grows instead of clipping if
+    // that ever changes.
     minHeight: 44,
     paddingVertical: Spacing.one,
     paddingHorizontal: Spacing.three,
