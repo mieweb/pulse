@@ -10,7 +10,14 @@ import { compatLabel, type ServerCompat } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
 import { ThemedText } from '@/components/themed-text';
 import { EaseOut, ListReflowMs } from '@/constants/motion';
-import { CardShadow, Opacity, Radius, Spacing, type ThemeColor } from '@/constants/theme';
+import {
+  CardShadow,
+  MaxTextScale,
+  Opacity,
+  Radius,
+  Spacing,
+  type ThemeColor,
+} from '@/constants/theme';
 import { useToast } from '@/features/toast/toast-provider';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { hostOf } from '@/utils/format';
@@ -240,8 +247,9 @@ const FOOTNOTE_LINE = 18;
  */
 function RowProblem({ compat, expiryLabel }: { compat: ServerCompat; expiryLabel: string }) {
   const theme = useTheme();
-  // The icon stays on the first line's center when the text wraps; that line grows with text size.
-  const textScale = useWindowDimensions().fontScale;
+  // The icon stays on the first line's center when the text wraps; that line grows with text size,
+  // up to the same ceiling as the text itself.
+  const textScale = Math.min(useWindowDimensions().fontScale, MaxTextScale);
   const color: ThemeColor = compat.status === 'unreachable' ? 'warning' : 'accent';
   return (
     <View
