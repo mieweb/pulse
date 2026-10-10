@@ -270,6 +270,8 @@ function Editor({
     if (y != null) scrollRef.current?.scrollTo({ y: Math.max(0, y - 96), animated: true });
   }, [playingId, selectedId, editingId]);
   const onUserScrollStart = () => {
+    // Scrolling moves the first caption, which the editor's tip points at: its moment has passed.
+    editTip.dismiss();
     followSuspendedRef.current = true;
     if (suspendTimerRef.current) clearTimeout(suspendTimerRef.current);
   };
@@ -363,7 +365,9 @@ function Editor({
   const selIndex = selCue ? editor.cues.indexOf(selCue) : -1;
 
   // Once, while browsing a list with captions: how to select a caption and edit its words.
-  const editTip = useTip('captionEdit', mode === 'browse' && editor.cues.length > 0, {
+  // Only while paused: playback scrolls the list to the playing caption, away from the first one.
+  // Playing or scrolling the list once it's up ends it (see `onUserScrollStart`).
+  const editTip = useTip('captionEdit', mode === 'browse' && !isPlaying && editor.cues.length > 0, {
     delayMs: 800,
     learned: mode !== 'browse',
   });
