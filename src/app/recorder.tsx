@@ -145,12 +145,6 @@ export default function RecorderScreen() {
     }, []),
   );
 
-  // First-run tips, one at a time: the shutter before the first clip, then the clips once one
-  // has landed. Each goes for good when its moment passes (recording, opening a clip, leaving).
-  const liveCamera = focused && cameraReady && !previewing && !isRecording;
-  const recordTip = useTip('record', liveCamera && segments.length === 0);
-  const clipsTip = useTip('clips', liveCamera && !dragging && segments.length > 0, 800);
-
   // Audio focus: while the recorder is on screen capturing with a live mic, pause other apps'
   // audio (Spotify / podcasts) rather than mixing it in; restore on leave or mute. Gated on the
   // mic being live — a muted clip has no audio track, so there's nothing to seize focus for.
@@ -412,6 +406,28 @@ export default function RecorderScreen() {
     [lensPresets],
   );
 
+  // First-run tips, one at a time: the shutter before the first clip, then the clips once one
+  // has landed. They never get in the way of recording: one only appears once the shutter has
+  // been left alone for a moment (not touched, held or recording; 2 s after a take, so it can't pop
+  // up between takes), and the first touch anywhere on the recorder closes it — that touch carries
+  // on as usual, so a tap still records and a hold still records and zooms. Each tip is then done
+  // for good (see `useTip`).
+  const [shutterTouched, setShutterTouched] = useState(false);
+  useAnimatedReaction(
+    () => pressed.get() || holdActive.get(),
+    (touched, prev) => {
+      if (touched !== prev) scheduleOnRN(setShutterTouched, touched);
+    },
+  );
+  const shutterIdle = focused && cameraReady && !previewing && !isRecording && !shutterTouched;
+  const recordTip = useTip('record', shutterIdle && segments.length === 0, 1000);
+  const clipsTip = useTip('clips', shutterIdle && !dragging && segments.length > 0, 2000);
+  const closeTips = () => {
+    recordTip.dismiss();
+    clipsTip.dismiss();
+    return false; // never takes the touch: it goes on to the shutter, the camera or the control
+  };
+
   if (!permissions.ready) return <ThemedView style={styles.fill} />;
   if (!permissions.granted) {
     return <PermissionGate blocked={permissions.blocked} onRequest={permissions.request} />;
@@ -436,7 +452,7 @@ export default function RecorderScreen() {
   const handleClose = () => void finalizeRecording().then(closeToHome);
 
   return (
-    <View style={styles.fill}>
+    <View style={styles.fill} onStartShouldSetResponderCapture={closeTips}>
       {/* Light over the live camera whatever the theme; the preview's backdrop follows the theme,
           so the bar does too. Only while this screen is focused: the last StatusBar mounted wins,
           and the recorder stays mounted under Export, which should get the root's again. */}
