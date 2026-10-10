@@ -88,9 +88,20 @@ export function OnDeviceAiSheet() {
   const [confirming, setConfirming] = useState<WhisperModel | null>(null);
 
   // Only ever a different model (`choose` closes on the selected one): the selection changed.
-  const select = (id: string) => {
+  const select = async (id: string) => {
     haptics.tap();
-    void setSelectedModel(id);
+    // The choice is saved first: if it can't be, the previous model stays selected and on disk,
+    // and the sheet stays open saying so.
+    try {
+      await setSelectedModel(id);
+    } catch (e) {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t switch the model',
+        message: userMessage(e, 'Try again.', 'select model'),
+      });
+      return;
+    }
     // Free the previous model's contexts + delete other weights now; the new model itself is
     // downloaded lazily at export time (no background loop pulls it here anymore).
     void applyModelSelection(getModel(id));
@@ -108,7 +119,7 @@ export function OnDeviceAiSheet() {
       setConfirming(model);
       return;
     }
-    select(id);
+    void select(id);
   };
 
   const containerStyle = [styles.container, { paddingBottom: insets.bottom + Spacing.four }];
@@ -185,7 +196,7 @@ export function OnDeviceAiSheet() {
             />
             <PrimaryButton
               label={`Use ${confirming.label}`}
-              onPress={() => select(confirming.id)}
+              onPress={() => void select(confirming.id)}
               style={styles.action}
             />
           </View>

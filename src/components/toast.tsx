@@ -174,6 +174,8 @@ export function Toast({
   const opacity = useSharedValue(fade ? 0 : 1);
   // Where `y` was when the finger took it.
   const dragStart = useSharedValue(0);
+  // A drag holds the toast from its start until the pan finishes, however it finishes.
+  const dragging = useSharedValue(false);
   // A swipe that throws the toast away runs its own spring; the exit mustn't start a second one.
   const swiped = useSharedValue(false);
   const isLeaving = useSharedValue(leaving);
@@ -218,6 +220,7 @@ export function Toast({
         .onStart(() => {
           cancelAnimation(y);
           dragStart.set(y.get());
+          dragging.set(true);
           scheduleOnRN(onHold, id);
         })
         .onUpdate((e) => {
@@ -244,9 +247,30 @@ export function Toast({
           } else {
             y.set(withSpring(0, { velocity: e.velocityY, dampingRatio: 0.8, duration: 350 }));
           }
+        })
+        // The hold is released here, not in onEnd: a pan cancelled mid-drag (the system took the
+        // touch) skips onEnd, and its hold would keep the toast up for good. A cancelled drag
+        // also settles back, as onEnd would have.
+        .onFinalize((_, success) => {
+          if (!dragging.get()) return;
+          dragging.set(false);
+          if (!success) y.set(withSpring(0, { dampingRatio: 0.8, duration: 350 }));
           scheduleOnRN(onRelease, id);
         }),
-    [leaving, hidden, id, y, dragStart, swiped, isLeaving, onHold, onRelease, onDismiss, onExited],
+    [
+      leaving,
+      hidden,
+      id,
+      y,
+      dragStart,
+      dragging,
+      swiped,
+      isLeaving,
+      onHold,
+      onRelease,
+      onDismiss,
+      onExited,
+    ],
   );
 
   const slide = useAnimatedStyle(() =>

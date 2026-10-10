@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { deleteDestination, destinationsQuery } from '@/db/destinations';
 import { getDestinationToken } from '@/db/secure-token';
@@ -37,6 +37,18 @@ export function setPendingRemoval(update: (ids: Set<string>) => void) {
   const next = new Set(pendingRemoval);
   update(next);
   pendingRemoval = next;
+  for (const listener of pendingListeners) listener();
+}
+
+/**
+ * Tokens written by a re-pair of a row that already existed (the same link again keeps its row
+ * id). Each `useDestinations` loads tokens only when its set of row ids changes, so without this a
+ * screen already open would keep using the row's old token; it reads these first instead.
+ */
+let repairedTokens: ReadonlyMap<string, string | null> = new Map();
+
+export function noteRepairedToken(id: string, token: string | null) {
+  repairedTokens = new Map(repairedTokens).set(id, token);
   for (const listener of pendingListeners) listener();
 }
 
@@ -98,6 +110,7 @@ export function useDestinations() {
   // write — a token can lapse while the user just sits on the screen.
   const now = useNow(EXPIRY_CHECK_INTERVAL_MS);
   const pending = useSyncExternalStore(subscribePendingRemoval, () => pendingRemoval);
+  const repaired = useSyncExternalStore(subscribePendingRemoval, () => repairedTokens);
 
   // Tokens live in secure-store keyed by row id; load them into a map keyed on id. Re-fires only
   // when the set of ids changes, not on every render.
@@ -122,13 +135,19 @@ export function useDestinations() {
     };
   }, [idsKey]);
 
+  // A re-paired row's fresh token wins over the one loaded before it (see `repairedTokens`).
+  const tokenOf = useCallback(
+    (id: string) => (repaired.has(id) ? repaired.get(id) : tokens[id]),
+    [repaired, tokens],
+  );
+
   const destinations: DestinationOption[] = useMemo(
     () =>
       rows
         // Only once its token has loaded: before that it would read as a tokenless link, and
         // uploading with it would spend the link on a certain 401.
-        .filter((r) => r.id in tokens && !pending.has(r.id))
-        .map((r) => ({ ...r, token: tokens[r.id] ?? null }))
+        .filter((r) => tokenOf(r.id) !== undefined && !pending.has(r.id))
+        .map((r) => ({ ...r, token: tokenOf(r.id) ?? null }))
         .filter((r) => !isTokenExpired(r.token, now))
         .map((r) => ({
           id: r.id,
@@ -139,7 +158,7 @@ export function useDestinations() {
           expiryLabel: formatExpiry(r.token, now),
         })),
     // `now` intentionally in deps so an expiry that passes between ticks re-filters the list.
-    [rows, tokens, now, pending],
+    [rows, tokenOf, now, pending],
   );
 
   // Garbage-collect rows whose token has actually lapsed so they don't linger as dead state.
@@ -148,7 +167,7 @@ export function useDestinations() {
   // fresh token, which must not be deleted on the strength of the old one.
   useEffect(() => {
     for (const r of rows) {
-      const token = tokens[r.id];
+      const token = tokenOf(r.id);
       if (token !== undefined && isTokenExpired(token, now)) {
         void queuePoolWrite(async () => {
           if (isTokenExpired(await getDestinationToken(r.id), Date.now())) {
@@ -157,7 +176,7 @@ export function useDestinations() {
         }).catch(() => {});
       }
     }
-  }, [rows, tokens, now]);
+  }, [rows, tokenOf, now]);
 
   // The pool plus the rows an Undo can still bring back: what the destinations sheet sizes itself
   // for when it opens, so an Undo while it's open can't outgrow a fitted sheet.

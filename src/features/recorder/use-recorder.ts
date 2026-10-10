@@ -677,11 +677,15 @@ export function useRecorder(initialDraftId?: string) {
   // read the row, so each sees the reverted clip without knowing about pending resets. The same
   // holds for legacy clips (a baked file, no settings): the row's file and cover come back as they
   // were, which is safer than rebuilding an edit from settings they don't have.
-  // Reverts still awaiting their reset, so Next can wait for them (see `settleEditResets`).
-  const revertsInFlight = useRef(new Set<Promise<void>>());
+  // Edit writes still under way (a revert's reset, an Undo's restore), so Next can wait for them
+  // (see `settleEditResets`) instead of exporting a row about to change underneath it.
+  const editWrites = useRef(new Set<Promise<void>>());
+  function trackEditWrite(work: Promise<void>) {
+    const run = work.finally(() => editWrites.current.delete(run));
+    editWrites.current.add(run);
+  }
   function revertEdits(id: string) {
-    const run = revertEditsNow(id).finally(() => revertsInFlight.current.delete(run));
-    revertsInFlight.current.add(run);
+    trackEditWrite(revertEditsNow(id));
   }
 
   async function revertEditsNow(id: string) {
@@ -705,19 +709,21 @@ export function useRecorder(initialDraftId?: string) {
       title: 'Edits removed',
       message: clipName(clip),
       onUndo: () =>
-        void restoreEdit(id, edit).then(
-          // Not restored: the clip was edited again or deleted meanwhile, and that stands.
-          (restored) => {
-            if (!restored) drop();
-          },
-          (e: unknown) => {
-            drop();
-            showToast({
-              kind: 'error',
-              title: 'Couldn’t restore the edits',
-              message: userMessage(e, 'Try again.', 'restore edit'),
-            });
-          },
+        trackEditWrite(
+          restoreEdit(id, edit).then(
+            // Not restored: the clip was edited again or deleted meanwhile, and that stands.
+            (restored) => {
+              if (!restored) drop();
+            },
+            (e: unknown) => {
+              drop();
+              showToast({
+                kind: 'error',
+                title: 'Couldn’t restore the edits',
+                message: userMessage(e, 'Try again.', 'restore edit'),
+              });
+            },
+          ),
         ),
       onCommit: drop,
     });
@@ -778,7 +784,7 @@ export function useRecorder(initialDraftId?: string) {
     // Export reads the db: let any revert still resetting finish, then close its Undo (the
     // revert stands), so the export can't use the edit and an Undo can't change it afterwards.
     settleEditResets: async () => {
-      await Promise.all(revertsInFlight.current);
+      await Promise.all(editWrites.current);
       resetToastRef.current?.();
     },
     reorderSegments: reorderVisible,
