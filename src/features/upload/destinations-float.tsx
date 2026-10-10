@@ -1,4 +1,5 @@
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useRef } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 import Animated, { FadeIn, FadeOut, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,6 +39,14 @@ export function DestinationsFloat() {
   const insets = useSafeAreaInsets();
   const dark = useThemeMode() === 'dark';
   const { destinations } = useDestinations();
+  // One sheet per tap: a second tap before the first sheet is up would push another on top of it.
+  // Open again once Home is back in focus (the sheet closed).
+  const opening = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      opening.current = false;
+    }, []),
+  );
 
   if (destinations.length === 0) return null;
 
@@ -52,12 +61,14 @@ export function DestinationsFloat() {
       style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
       <Pressable
         // The count picks the sheet's size up front (`destinationsSheetOptions`).
-        onPress={() =>
+        onPress={() => {
+          if (opening.current) return;
+          opening.current = true;
           router.push({
             pathname: '/destinations',
             params: { count: String(destinations.length) },
-          })
-        }
+          });
+        }}
         accessibilityRole="button"
         accessibilityLabel={formatCount(
           destinations.length,
