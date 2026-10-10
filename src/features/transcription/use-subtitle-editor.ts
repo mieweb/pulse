@@ -8,6 +8,7 @@ import {
   undo as undoHistory,
   type History,
 } from './edit-history';
+import { joinWords } from './group-lines';
 import type { TranscriptLine, TranscriptWord } from './whisper';
 
 /** One editable caption cue. Times are centiseconds; `words` drives word-level highlighting. */
@@ -249,10 +250,7 @@ export function useSubtitleEditor(initial: TranscriptLine[]) {
       const rightWords = target.words.filter((w) => w.t0 >= atCs);
       const makeHalf = (words: TranscriptWord[], t0: number, t1: number): Cue => ({
         id: nextId(),
-        text: words
-          .map((w) => w.text)
-          .join(' ')
-          .trim(),
+        text: joinWords(words.map((w) => w.text)).trim(),
         t0,
         t1,
         words,
@@ -281,7 +279,7 @@ export function useSubtitleEditor(initial: TranscriptLine[]) {
         const second = sorted[index + 1];
         const merged: Cue = {
           id: first.id,
-          text: `${first.text} ${second.text}`.trim(),
+          text: joinWords([first.text, second.text]).trim(),
           t0: first.t0,
           t1: second.t1,
           words: [...first.words, ...second.words],
@@ -295,17 +293,23 @@ export function useSubtitleEditor(initial: TranscriptLine[]) {
     [mutate],
   );
 
-  /** Reseed the editor (e.g. "reset to auto"); marks the editor clean and clears history. */
-  const reset = useCallback(
-    (lines: TranscriptLine[]) => {
-      const next = seed(lines);
-      cuesRef.current = next;
-      historyRef.current = emptyHistory();
-      setCues(next);
+  /**
+   * Replace every cue with `lines` ("reset to automatic captions") as ONE undoable step, so the
+   * header Undo brings the edits back. `lines` become the clean baseline (`dirty` false), since
+   * they're what an unedited row shows; undoing away from them makes the editor dirty again.
+   * Returns the new list: undo/redo restore that same array, so the caller can tell by identity
+   * when the editor is back on it.
+   */
+  const resetTo = useCallback(
+    (lines: TranscriptLine[]): Cue[] => {
+      // Handler-time ids (not `seed`'s index ids), so a reseeded cue never reuses the id of a
+      // different cue still in the undo history.
+      const next = [...lines].sort((a, b) => a.t0 - b.t0).map((l) => lineToCue(l, nextId()));
+      mutate(null, () => next);
       setBaseline(serialize(next));
-      syncFlags();
+      return next;
     },
-    [seed, syncFlags],
+    [mutate, nextId],
   );
 
   const toLines = useCallback((): TranscriptLine[] => cuesToLines(cues), [cues]);
@@ -329,7 +333,7 @@ export function useSubtitleEditor(initial: TranscriptLine[]) {
     addCueAt,
     splitAt,
     mergeNext,
-    reset,
+    resetTo,
     toLines,
   };
 }

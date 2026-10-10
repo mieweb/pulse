@@ -1,3 +1,4 @@
+import { spaceBefore } from './group-lines';
 import type { TranscriptLine } from './whisper';
 
 // Our `TranscriptLine` times are centiseconds (1/100 s); WebVTT timestamps are milliseconds.
@@ -26,8 +27,14 @@ export function linesToVtt(lines: TranscriptLine[]): string {
     const timing = `${msToVttTime(csToMs(line.t0))} --> ${msToVttTime(csToMs(line.t1))}`;
     const text = line.words?.length
       ? line.words
-          .map((w, i) => (i === 0 ? w.text : `<${msToVttTime(csToMs(w.t0))}>${w.text}`))
-          .join(' ')
+          .map((w, i) => {
+            if (i === 0) return w.text;
+            // The same spacing as in the app ("Hello, world.", no spaces inside Chinese or
+            // Japanese), with the word's timestamp after any space so it marks the word itself.
+            const space = spaceBefore(line.words![i - 1].text, w.text) ? ' ' : '';
+            return `${space}<${msToVttTime(csToMs(w.t0))}>${w.text}`;
+          })
+          .join('')
       : line.text;
     return `${timing}\n${text}`;
   });

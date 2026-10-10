@@ -1,8 +1,11 @@
+import { memo } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { formatDuration } from '@/utils/format';
+import { spaceBefore } from './group-lines';
 import type { Cue } from './use-subtitle-editor';
 
 const CPS_WARN = 17;
@@ -20,11 +23,9 @@ export function cueLoad(cue: Cue): CueLoad {
   return 'ok';
 }
 
-// Rows show a coarse clock (m:ss); the timing bar's labels show tenths.
-export const clock = (cs: number) => {
-  const total = Math.floor(cs / 100);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-};
+// Rows show a coarse clock (m:ss, h:mm:ss on long videos); the timing bar's labels show tenths.
+// Floored, so a cue never reads a second later than it starts.
+export const clock = (cs: number) => formatDuration(cs * 10, { floor: true });
 
 export type CueRowState = 'view' | 'selected' | 'editing';
 
@@ -34,8 +35,12 @@ export type CueRowState = 'view' | 'selected' | 'editing';
  * The playing row renders its text karaoke-style — spoken words solid, the word under the
  * playhead in accent, upcoming words dimmed (the same behavior CaptionOverlay draws on video).
  * The timestamp is tinted by readability load (never a "cps" number in the UI).
+ *
+ * Memoized: playback re-renders the editor 10×/s, so only the playing row gets a live `posCs`
+ * (the caller passes 0 to the rest) and the callbacks take the cue, so the caller can pass the
+ * same functions to every row and the others skip those renders.
  */
-export function CueRow({
+export const CueRow = memo(function CueRow({
   cue,
   state,
   playing,
@@ -49,12 +54,13 @@ export function CueRow({
   cue: Cue;
   state: CueRowState;
   playing: boolean;
-  /** Playhead position (centiseconds) — drives the word highlight of the playing row. */
+  /** Playhead position (centiseconds) — drives the word highlight of the playing row. Pass 0 to
+   * rows that aren't playing, so they don't re-render on every tick. */
   posCs: number;
   theme: ReturnType<typeof useTheme>;
-  onSelect: () => void;
-  onBeginTextEdit: () => void;
-  onChangeText: (t: string) => void;
+  onSelect: (cue: Cue) => void;
+  onBeginTextEdit: (id: string) => void;
+  onChangeText: (id: string, text: string) => void;
   onEndTextEdit: () => void;
 }) {
   const chars = cue.text.trim().length;
@@ -71,8 +77,16 @@ export function CueRow({
 
   return (
     <Pressable
-      onPress={state === 'view' ? onSelect : state === 'selected' ? onBeginTextEdit : undefined}
+      onPress={
+        state === 'view'
+          ? () => onSelect(cue)
+          : state === 'selected'
+            ? () => onBeginTextEdit(cue.id)
+            : undefined
+      }
+      accessibilityRole="button"
       accessibilityLabel={state === 'view' ? 'Select caption' : 'Edit caption text'}
+      accessibilityState={{ selected: active }}
       style={({ pressed }) => [
         styles.row,
         {
@@ -89,11 +103,13 @@ export function CueRow({
         },
       ]}>
       <View style={[styles.inner, active && styles.innerActive]}>
-        <ThemedText style={[styles.tc, { color: tcColor }]}>{clock(cue.t0)}</ThemedText>
+        <ThemedText type="footnote" numberOfLines={1} style={[styles.tc, { color: tcColor }]}>
+          {clock(cue.t0)}
+        </ThemedText>
         {state === 'editing' ? (
           <TextInput
             value={cue.text}
-            onChangeText={onChangeText}
+            onChangeText={(text) => onChangeText(cue.id, text)}
             onBlur={onEndTextEdit}
             placeholder="Caption text"
             placeholderTextColor={theme.textSecondary}
@@ -105,6 +121,7 @@ export function CueRow({
           <KaraokeText words={cue.words} posCs={posCs} theme={theme} />
         ) : (
           <ThemedText
+            type="subheadline"
             numberOfLines={2}
             style={[styles.text, !chars && { color: theme.textSecondary }]}>
             {chars ? cue.text : 'Empty cue — tap to type'}
@@ -113,7 +130,7 @@ export function CueRow({
       </View>
     </Pressable>
   );
-}
+});
 
 /**
  * Word-level (karaoke) rendering of the playing cue's text. The active word is the one covering
@@ -135,7 +152,7 @@ function KaraokeText({
     if (posCs >= words[i].t0 && posCs <= words[i].t1) break;
   }
   return (
-    <ThemedText numberOfLines={2} style={styles.text}>
+    <ThemedText type="subheadline" numberOfLines={2} style={styles.text}>
       {words.map((w, i) => (
         <Text
           key={i}
@@ -143,7 +160,7 @@ function KaraokeText({
             color: i === active ? theme.accent : i < active ? theme.text : theme.textSecondary,
             fontWeight: i === active ? '600' : '400',
           }}>
-          {(i > 0 ? ' ' : '') + w.text}
+          {(i > 0 && spaceBefore(words[i - 1].text, w.text) ? ' ' : '') + w.text}
         </Text>
       ))}
     </ThemedText>
@@ -157,7 +174,8 @@ const RING_EXTRA = ACTIVE_RING - StyleSheet.hairlineWidth;
 
 const styles = StyleSheet.create({
   row: {
-    borderRadius: 12,
+    borderRadius: Radius.row,
+    borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: Spacing.two,
   },
@@ -172,7 +190,9 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two + 2 - RING_EXTRA,
     paddingHorizontal: Spacing.three - RING_EXTRA,
   },
-  tc: { fontSize: 13, fontVariant: ['tabular-nums'], width: 38 },
-  text: { flex: 1, fontSize: 15, lineHeight: 20 },
+  // A floor, not a fixed width: "1:02:03" or a large text size widens it rather than wrapping.
+  tc: { fontVariant: ['tabular-nums'], minWidth: 38 },
+  text: { flex: 1 },
+  // The subheadline type's metrics (a TextInput can't take a ThemedText type).
   input: { flex: 1, fontSize: 15, lineHeight: 20, padding: 0, textAlignVertical: 'top' },
 });

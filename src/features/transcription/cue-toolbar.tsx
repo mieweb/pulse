@@ -2,11 +2,12 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon, type IconName } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { CardShadow, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { clock, cueLoad } from './cue-row';
 import { MIN_DUR_CS, type Cue } from './use-subtitle-editor';
 
+// `clock` (m:ss, h:mm:ss from an hour) plus tenths: "1:04.3", "1:02:07.5".
 const fine = (cs: number) => `${clock(cs)}.${Math.floor((cs % 100) / 10)}`;
 
 /**
@@ -37,7 +38,7 @@ export function CueToolbar({
 
   return (
     <View style={styles.strip}>
-      <ThemedText style={[styles.times, { color: labelColor }]}>
+      <ThemedText type="footnote" style={[styles.times, { color: labelColor }]}>
         {fine(cue.t0)} – {fine(cue.t1)}
       </ThemedText>
       <View style={styles.tools}>
@@ -93,7 +94,8 @@ function ToolBtn({
       accessibilityState={{ disabled: !!disabled }}
       style={({ pressed }) => [
         styles.toolBtn,
-        { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+        // A card on the grouped background: lifted by a shadow, like the screen's other controls.
+        { backgroundColor: theme.card, ...CardShadow },
         disabled && styles.toolDisabled,
         pressed && styles.pressed,
       ]}>
@@ -111,13 +113,12 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.two,
     paddingBottom: Spacing.one,
   },
-  times: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  times: { fontVariant: ['tabular-nums'] },
   tools: { flexDirection: 'row', gap: Spacing.two },
   toolBtn: {
     width: 30,
     height: 30,
     borderRadius: 15,
-    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
