@@ -73,7 +73,8 @@ type ShowToast = {
 
 type ToastContextValue = {
   showToast: ShowToast;
-  showUndoToast: (options: UndoToastOptions) => void;
+  /** Returns `commitNow`: closes this toast if it's still up, which commits (no Undo after). */
+  showUndoToast: (options: UndoToastOptions) => () => void;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -211,7 +212,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 
   const showUndoToast = useCallback(
-    ({ title, message, onUndo, onCommit }: UndoToastOptions) =>
+    ({ title, message, onUndo, onCommit }: UndoToastOptions) => {
       showToast({
         kind: 'info',
         title,
@@ -220,8 +221,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         onClose: (reason) => {
           if (reason !== 'action') onCommit();
         },
-      }),
-    [showToast],
+      });
+      // For a caller that has to commit before the toast would go (export reading the draft):
+      // closing it commits, and leaves no Undo up that could no longer undo anything.
+      const id = nextId.current;
+      return () => dismiss(id, 'dismissed');
+    },
+    [showToast, dismiss],
   );
 
   // Cached so `showToast` can decide synchronously; kept current as it's switched on and off.

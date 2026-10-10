@@ -1,7 +1,8 @@
 import { Icon } from '@/components/icon';
-import { Pressable, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PrimaryButton } from '@/components/primary-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
@@ -32,15 +33,11 @@ export function PermissionGate({
       <ThemedText themeColor="textSecondary" style={styles.body}>
         Pulse records video with your camera and microphone.
       </ThemedText>
-      <Pressable
+      <PrimaryButton
+        label={blocked ? 'Open Settings' : 'Allow access'}
         onPress={onRequest}
-        style={({ pressed }) => [
-          styles.button,
-          { backgroundColor: theme.accent },
-          pressed && styles.pressed,
-        ]}>
-        <ThemedText themeColor="onAccent">{blocked ? 'Open Settings' : 'Allow access'}</ThemedText>
-      </Pressable>
+        style={styles.button}
+      />
     </ThemedView>
   );
 }
@@ -56,14 +53,6 @@ const styles = StyleSheet.create({
   // Same heading as the home empty state.
   title: { fontWeight: '600' },
   body: { textAlign: 'center' },
-  // The app's standard full-width primary button (export, captions, About).
-  button: {
-    marginTop: Spacing.two,
-    alignSelf: 'stretch',
-    height: 52,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pressed: { opacity: 0.85 },
+  // Full width, like the app's other primary actions (export, captions, About).
+  button: { marginTop: Spacing.two, alignSelf: 'stretch' },
 });

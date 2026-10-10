@@ -122,7 +122,11 @@ function ControlButton({
           style={dimmed ? styles.dimmedIcon : undefined}
         />
       </GlassPill>
-      {caption && <Text style={[styles.caption, { color: tint }]}>{caption}</Text>}
+      {caption && (
+        <Text style={[styles.caption, { color: tint }]} maxFontSizeMultiplier={1.3}>
+          {caption}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -148,7 +152,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 22,
   },
-  caption: { fontSize: 10, fontWeight: '600' },
+  // Over live video: the shadow keeps the caption readable on a bright scene.
+  caption: {
+    fontSize: 11,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowRadius: 2,
+    textShadowOffset: { width: 0, height: 1 },
+  },
   // Distinct from the 0.35 whole-button disabled treatment: the pill stays at full opacity.
   dimmedIcon: { opacity: 0.45 },
 });

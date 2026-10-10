@@ -1,8 +1,8 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedReaction } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Camera,
@@ -10,11 +10,13 @@ import {
   type PhysicalDeviceType,
   useCameraDevice,
 } from 'react-native-vision-camera';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedView } from '@/components/themed-view';
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
+import { commitDraftDeletes } from '@/features/recorder/clip-deletes';
 import { CloseButton } from '@/features/recorder/close-button';
 import { ImportButton } from '@/features/recorder/import-button';
 import {
@@ -24,7 +26,7 @@ import {
 } from '@/features/recorder/lens-selector';
 import { PermissionGate } from '@/features/recorder/permission-gate';
 import { PreviewModal } from '@/features/recorder/preview-modal';
-import { RecordButton } from '@/features/recorder/record-button';
+import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
@@ -325,7 +327,7 @@ export default function RecorderScreen() {
   );
 
   // Hold-to-record needs more than reacquireThen: acquire() is awaited, and the gesture's
-  // release fires synchronously via runOnJS — a quick press-release could run onHoldEnd
+  // release reaches JS straight away via scheduleOnRN — a quick press-release could run onHoldEnd
   // BEFORE the delayed startHoldRecording() (holdInitiatedRef still false, so nothing to
   // stop), and the start would then fire AFTER the gesture ended, leaving an unheld
   // in-progress recording. Every hold edge bumps a sequence number; the delayed start is
@@ -341,7 +343,7 @@ export default function RecorderScreen() {
     endHoldRecording();
   }, [endHoldRecording]);
 
-  const { zoomSv, holdActive, buttonGesture, screenGesture, resetZoom, setZoomTo } =
+  const { zoomSv, holdActive, pressed, buttonGesture, screenGesture, resetZoom, setZoomTo } =
     useRecorderGestures({
       onToggle: reacquireThen(toggleRecording),
       onHoldStart,
@@ -361,27 +363,21 @@ export default function RecorderScreen() {
 
   // The highlighted lens chip tracks the LIVE zoom (pinch / drag / chip-tap all move zoomSv),
   // so it reflects whichever physical lens the current factor sits on — the highest preset whose
-  // boundary the zoom has reached. runOnJS only fires when the active lens actually changes.
+  // boundary the zoom has reached. JS is called only when the active lens actually changes.
   const [activeLens, setActiveLens] = useState(DEFAULT_LENS_LABEL);
   useAnimatedReaction(
     () => {
       let label = lensPresets[0]?.label;
       for (const p of lensPresets) {
-        if (zoomSv.value >= p.zoom) label = p.label;
+        if (zoomSv.get() >= p.zoom) label = p.label;
       }
       return label;
     },
     (label, prev) => {
-      if (label != null && label !== prev) runOnJS(setActiveLens)(label);
+      if (label != null && label !== prev) scheduleOnRN(setActiveLens, label);
     },
     [lensPresets],
   );
-
-  const confirmDeleteSegment = (id: string) =>
-    Alert.alert('Delete clip?', 'This clip will be removed from the draft.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteSegment(id) },
-    ]);
 
   if (!permissions.ready) return <ThemedView style={styles.fill} />;
   if (!permissions.granted) {
@@ -488,13 +484,15 @@ export default function RecorderScreen() {
               ✕ beside it, since glass has nothing to refract on the themed backdrop. */}
           {previewing ? (
             <View style={[styles.timerPill, styles.previewTimerPill, ControlScrim[mode]]}>
-              <Text style={styles.timerText}>
+              <Text style={styles.timerText} maxFontSizeMultiplier={1.3}>
                 {formatDurationPadded(preview.globalMs)} / {formatDurationPadded(preview.totalMs)}
               </Text>
             </View>
           ) : (
             <GlassPill style={styles.timerPill}>
-              <Text style={styles.timerText}>{formatDurationPadded(totalMs)}</Text>
+              <Text style={styles.timerText} maxFontSizeMultiplier={1.3}>
+                {formatDurationPadded(totalMs)}
+              </Text>
             </GlassPill>
           )}
           {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
@@ -538,7 +536,8 @@ export default function RecorderScreen() {
                 preview.pause();
                 openTrim(seg);
               }}
-              onDelete={() => preview.activeId && confirmDeleteSegment(preview.activeId)}
+              // Deletes at once with an Undo toast, like drag-to-trash (see useRecorder).
+              onDelete={() => preview.activeId && deleteSegment(preview.activeId)}
               // Only for an edited clip: back to the untouched original. No confirm — the edits
               // are one ✂ away, and undoing edits before ➡️ reuses the saved merge (#212).
               onReset={
@@ -555,17 +554,17 @@ export default function RecorderScreen() {
           style={[styles.bottom, { paddingBottom: insets.bottom + Spacing.three }]}
           pointerEvents="box-none">
           {/* Record button is hidden entirely while previewing — the preview surface owns the
-              screen then. During a drag it's faded out (opacity 0, layout kept) so the floating
+              screen then. During a drag it fades out (opacity 0, layout kept) so the floating
               trash above the bar has clear space and nothing shifts. */}
           {!previewing && (
-            <View style={{ opacity: dragging ? 0 : 1 }}>
+            <Animated.View style={[CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
               <LensSelector
                 presets={lensPresets}
                 selected={activeLens}
                 onSelect={(preset) => setZoomTo(preset.zoom)}
                 disabled={isRecording || dragging}
               />
-            </View>
+            </Animated.View>
           )}
 
           {!previewing && (
@@ -573,26 +572,27 @@ export default function RecorderScreen() {
               <RecordButton
                 gesture={buttonGesture}
                 holdActive={holdActive}
+                pressed={pressed}
                 isRecording={isRecording}
                 cameraReady={cameraReady}
                 dragging={dragging}
               />
               {/* Faded out with the record button during a drag so the trash has clear space. */}
-              <View style={[styles.importWrap, { opacity: dragging ? 0 : 1 }]}>
+              <Animated.View
+                style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
                 <ImportButton
                   onPress={importClip}
                   disabled={isRecording || dragging}
                   busy={isImporting}
                 />
-              </View>
+              </Animated.View>
             </View>
           )}
 
           <SegmentBar
             segments={segments}
             onReorder={reorderSegments}
-            // Drag-to-trash deletes immediately (the deliberate drag IS the confirmation) —
-            // no Alert here, unlike the preview modal's 🗑 which still confirms.
+            // Drag-to-trash deletes at once with an Undo toast, same as the preview's 🗑.
             onDelete={deleteSegment}
             onDragActiveChange={setDragging}
             onSelect={(id) => {
@@ -609,8 +609,15 @@ export default function RecorderScreen() {
                   }
                 : undefined
             }
+            // Export reads the draft from the db, so a delete still showing its Undo is made
+            // final first — otherwise the hidden clip would be exported.
             onNext={
-              draftId ? () => router.push({ pathname: '/export', params: { draftId } }) : undefined
+              draftId
+                ? () =>
+                    void commitDraftDeletes(draftId)
+                      .catch(() => {})
+                      .then(() => router.push({ pathname: '/export', params: { draftId } }))
+                : undefined
             }
           />
         </View>
@@ -629,6 +636,7 @@ const styles = StyleSheet.create({
     width: RETICLE_SIZE,
     height: RETICLE_SIZE,
     borderRadius: 8,
+    borderCurve: 'continuous',
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.9)',
   },

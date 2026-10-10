@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { Alert } from 'react-native';
 import VideoTrim, { showEditor, type Spec } from 'react-native-video-trim';
 
 import { deleteSegment, setEditState } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
 import { Accent } from '@/constants/theme';
+import { useToast } from '@/features/toast/toast-provider';
 import { absolutize } from '@/utils/file-store';
+import { userMessage } from '@/utils/user-message';
 
 import {
   editStateSpeed,
@@ -34,6 +35,8 @@ export function useVideoTrim(draftId: string | null) {
     draftIdRef.current = draftId;
   }, [draftId]);
 
+  const { showToast } = useToast();
+
   // Recent custom speeds, offered in the editor's speed menu next time (#222).
   const customSpeeds = useRef<readonly number[]>([]);
   useEffect(() => {
@@ -52,8 +55,11 @@ export function useVideoTrim(draftId: string | null) {
           try {
             await setEditState(segmentId, editState);
           } catch (e) {
-            console.warn('[trim] failed to save edit', e);
-            Alert.alert('Couldn’t save the edit', 'Try again.');
+            showToast({
+              kind: 'error',
+              title: 'Couldn’t save the edit',
+              message: userMessage(e, 'Try again.', 'trim'),
+            });
             return;
           }
           const speeds = withCustomSpeed(customSpeeds.current, editStateSpeed(editState));
@@ -68,22 +74,28 @@ export function useVideoTrim(draftId: string | null) {
         const segmentId = pendingSegmentId.current;
         pendingSegmentId.current = null;
         if (!segmentId) return;
-        deleteSegment(segmentId).catch((e) => {
-          console.warn('[trim] failed to delete clip', e);
-          Alert.alert('Couldn’t delete the clip', 'Try again.');
-        });
+        deleteSegment(segmentId).catch((e: unknown) =>
+          showToast({
+            kind: 'error',
+            title: 'Couldn’t delete the clip',
+            message: userMessage(e, 'Try again.', 'trim'),
+          }),
+        );
       }),
       Native.onCancel(() => {
         pendingSegmentId.current = null;
       }),
       Native.onError(({ message }) => {
         pendingSegmentId.current = null;
-        console.warn('[trim] editor error', message);
-        Alert.alert('Couldn’t edit the clip', message || 'The editor reported an error.');
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t edit the clip',
+          message: userMessage(message, 'The editor reported an error.', 'trim'),
+        });
       }),
     ];
     return () => subs.forEach((s) => s.remove());
-  }, []);
+  }, [showToast]);
 
   const openTrim = (segment: Segment) => {
     if (!draftIdRef.current) return;
@@ -100,8 +112,8 @@ export function useVideoTrim(draftId: string | null) {
       // enableEditTools defaults true (crop/rotate/flip/mute/speed exposed).
       editState: segment.editState ?? undefined,
       speedOptions: speedMenu(customSpeeds.current),
-      // Deleting is the one irreversible action here, so it keeps its confirm (same copy as the
-      // preview's 🗑).
+      // Deleting is the one irreversible action here, so it keeps its confirm. (The preview's 🗑
+      // and drag-to-trash delete with an Undo toast instead.)
       enableDeleteButton: true,
       deleteDialogTitle: 'Delete clip?',
       deleteDialogMessage: 'This clip will be removed from the draft.',

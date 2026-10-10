@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { GlassPill } from '@/components/glass-pill';
+import { haptics } from '@/utils/haptics';
 
 /**
  * A selectable lens, expressed as a zoom factor on the (possibly multi-camera) device.
@@ -36,7 +37,10 @@ export function LensSelector({
       {presets.map((preset) => (
         <Pressable
           key={preset.label}
-          onPress={() => onSelect(preset)}
+          onPress={() => {
+            haptics.tap();
+            onSelect(preset);
+          }}
           disabled={disabled}
           // 28pt chip + 8 top/bottom = a 44pt tap target; sideways only half the 6pt gap, so
           // neighbouring chips' targets never overlap.
@@ -48,7 +52,10 @@ export function LensSelector({
             preset.label === active && styles.chipActive,
             { opacity: disabled ? 0.35 : pressed ? 0.7 : 1 },
           ]}>
-          <Text style={[styles.label, preset.label === active && styles.labelActive]}>
+          {/* The chip is a fixed 28 pt over live video — it grows with the text only so far. */}
+          <Text
+            style={[styles.label, preset.label === active && styles.labelActive]}
+            maxFontSizeMultiplier={1.3}>
             {preset.label}
           </Text>
         </Pressable>

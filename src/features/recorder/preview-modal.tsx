@@ -2,11 +2,12 @@ import { Icon } from '@/components/icon';
 import { useEvent } from 'expo';
 import { VideoView, type VideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { ZoomIn, ZoomOut } from 'react-native-reanimated';
 import { probeVideo } from 'react-native-video-trim';
 
 import { GlassPill } from '@/components/glass-pill';
+import { ThemedText } from '@/components/themed-text';
 import { ControlScrim, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { absolutize } from '@/utils/file-store';
@@ -30,6 +31,11 @@ const RESET_HIT_SLOP = 8;
 const PARK_BADGE_DELAY_MS = 150;
 // How long the transient ⏸ flash holds after playback starts before its fade-out begins.
 const PAUSE_FLASH_HOLD_MS = 600;
+// The ▶/⏸ badge's enter and exits, built once rather than on every render. The ⏸ exit is slower
+// — it's the tail of the flash's ~1s arc.
+const BADGE_ENTER = ZoomIn.duration(150);
+const BADGE_EXIT = ZoomOut.duration(150);
+const PAUSE_FLASH_EXIT = ZoomOut.duration(350);
 
 // Display size of each source file, probed once. Originals are pinned to the portrait
 // 1080×1920 contract (recorder pin, import/.pulse conform), the default until a probe lands.
@@ -191,8 +197,8 @@ export function PreviewModal({
             <Animated.View
               style={styles.playOverlay}
               pointerEvents="none"
-              entering={ZoomIn.duration(150)}
-              exiting={ZoomOut.duration(pauseFlash ? 350 : 150)}>
+              entering={BADGE_ENTER}
+              exiting={pauseFlash ? PAUSE_FLASH_EXIT : BADGE_EXIT}>
               <GlassPill style={[styles.playBadge, pauseFlash && styles.pauseBadge]}>
                 <Icon name={pauseFlash ? 'pause.fill' : 'play.fill'} size={28} tintColor="#fff" />
               </GlassPill>
@@ -214,7 +220,9 @@ export function PreviewModal({
               accessibilityLabel="Revert edits"
               style={({ pressed }) => pressed && styles.pressed}>
               <View style={[styles.resetPill, ControlScrim[mode]]}>
-                <Text style={styles.resetText}>Revert edits</Text>
+                <ThemedText type="footnote" style={styles.resetText} maxFontSizeMultiplier={1.3}>
+                  Revert edits
+                </ThemedText>
               </View>
             </Pressable>
           </View>
@@ -313,5 +321,7 @@ const styles = StyleSheet.create({
     borderRadius: RESET_PILL_HEIGHT / 2,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  resetText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  // Footnote, kept semibold and white on the scrim; the pill is a fixed 28 pt, so the text
+  // grows with Dynamic Type only so far.
+  resetText: { color: '#fff', fontWeight: '600' },
 });

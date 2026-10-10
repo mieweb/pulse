@@ -5,7 +5,7 @@ import {
   UIImagePickerPreferredAssetRepresentationMode,
 } from 'expo-image-picker';
 import { usePermissions } from 'expo-media-library';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
 import { isValidFile, deleteFile } from 'react-native-video-trim';
 import {
@@ -19,7 +19,6 @@ import {
   addSegment,
   createDraft,
   deleteDraft,
-  deleteSegment,
   reorderSegments,
   resetEdit,
   segmentsForDraft,
@@ -31,12 +30,22 @@ import {
   getRecorderPrefs,
   setSetting,
 } from '@/db/settings';
+import { useToast } from '@/features/toast/toast-provider';
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
 import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
 import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
+import { userMessage } from '@/utils/user-message';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
+import {
+  commitClipDelete,
+  hideClip,
+  setClipToastCloser,
+  markDraftOpen,
+  restoreClip,
+  useHiddenClips,
+} from './clip-deletes';
 import { importLog } from './import-log';
 import { getRecorderFormat, learnRecorderFormat } from './recorder-format';
 import { useCallState } from './use-call-state';
@@ -179,7 +188,15 @@ export function useRecorder(initialDraftId?: string) {
     };
   }, [videoOutput, cameraReady, isRecording, connectionEpoch]);
 
-  const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
+  const { data: allSegments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
+  // A deleted clip is hidden while its Undo toast is up (clip-deletes); the screen only ever
+  // sees the clips that are staying.
+  const hiddenClips = useHiddenClips();
+  const segments = useMemo(
+    () => allSegments.filter((s) => !hiddenClips.has(s.id)),
+    [allSegments, hiddenClips],
+  );
+  const { showToast, showUndoToast } = useToast();
 
   // Library access for the + import — granular (photo+video) like the camera/mic gate,
   // but requested just-in-time on tap (§2.3). Granting up front also lets the picker's
@@ -224,11 +241,14 @@ export function useRecorder(initialDraftId?: string) {
   const everHadSegments = useRef(false);
   useEffect(() => {
     draftIdRef.current = draftId;
+    if (draftId) return markDraftOpen(draftId);
   }, [draftId]);
+  // Counts clips whose delete is still pending too: leaving with only those left must keep the
+  // draft, since Undo can still bring them back. If the delete commits, it drops the draft then.
   useEffect(() => {
-    segmentCount.current = segments.length;
-    if (segments.length > 0) everHadSegments.current = true;
-  }, [segments]);
+    segmentCount.current = allSegments.length;
+    if (allSegments.length > 0) everHadSegments.current = true;
+  }, [allSegments]);
   useEffect(
     () => () => {
       // Backstop for a recording still live at unmount — the gesture's onFinalize is the
@@ -472,6 +492,8 @@ export function useRecorder(initialDraftId?: string) {
         importLog.warn(
           `cancelled after ${formatSeconds(Date.now() - started)}: Pulse left the screen`,
         );
+        // An alert, not a toast: this fires while Pulse is in the background, and a toast would
+        // time out before the person is back to read it.
         Alert.alert(
           'Import cancelled',
           'Pulse left the screen before the video finished converting. Try again and keep Pulse open until it’s done.',
@@ -497,12 +519,13 @@ export function useRecorder(initialDraftId?: string) {
         }
         const why = describeError(e);
         importLog.warn(`failed after ${formatSeconds(Date.now() - started)}: ${why}`);
-        Alert.alert(
-          'Couldn’t import the video',
-          /no video stream|probe/i.test(why)
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t import the video',
+          message: /no video stream|probe/i.test(why)
             ? 'That file isn’t a video Pulse can read.'
             : 'Pulse couldn’t convert it for the timeline.',
-        );
+        });
         return;
       }
       // Finished just as Pulse left: still cancelled, as promised.
@@ -533,7 +556,11 @@ export function useRecorder(initialDraftId?: string) {
       await persistSegment(id, segmentId, originalFilename, durationMs);
     } catch (e) {
       importLog.warn(`failed: ${describeError(e)}`);
-      Alert.alert('Couldn’t import the video', e instanceof Error ? e.message : 'Try again.');
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t import the video',
+        message: userMessage(e, 'Try again.', 'import'),
+      });
     } finally {
       appStateSub?.remove();
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
@@ -614,6 +641,35 @@ export function useRecorder(initialDraftId?: string) {
     });
   }
 
+  // Delete with Undo instead of a confirm: the clip disappears now and is deleted for real when
+  // the toast goes away without Undo (see clip-deletes). Restoring puts it back in its slot.
+  function removeSegment(id: string) {
+    if (!draftId) return;
+    hideClip(id, draftId);
+    const closeToast = showUndoToast({
+      title: 'Clip deleted',
+      onUndo: () => void restoreClip(id),
+      onCommit: () =>
+        void commitClipDelete(id).catch((e: unknown) =>
+          showToast({
+            kind: 'error',
+            title: 'Couldn’t delete the clip',
+            message: userMessage(e, 'Try again.', 'delete clip'),
+          }),
+        ),
+    });
+    setClipToastCloser(id, closeToast);
+  }
+
+  // The bar reorders only the clips it shows. A clip awaiting its delete keeps its slot (and
+  // its `order`): Undo then restores it in place, and the renumbering can't collide with its
+  // slot on the unique (draft, order) index.
+  function reorderVisible(ids: string[]) {
+    let next = 0;
+    const full = allSegments.map((s) => (hiddenClips.has(s.id) ? s.id : ids[next++]));
+    void reorderSegments(next === ids.length ? full : ids);
+  }
+
   function cycleStabilization() {
     setStabilization((prev) => {
       const next = (STABILIZATION_MODES.indexOf(prev) + 1) % STABILIZATION_MODES.length;
@@ -653,8 +709,8 @@ export function useRecorder(initialDraftId?: string) {
     toggleTorch: () => setTorch((prev) => !prev),
     toggleMute: () => setMuted((prev) => !prev),
     cycleStabilization,
-    deleteSegment: (id: string) => void deleteSegment(id),
+    deleteSegment: removeSegment,
     resetSegment: (id: string) => void resetEdit(id),
-    reorderSegments: (ids: string[]) => void reorderSegments(ids),
+    reorderSegments: reorderVisible,
   };
 }
