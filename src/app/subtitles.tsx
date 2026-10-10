@@ -517,7 +517,10 @@ function Editor({
               <Animated.View
                 key={cue.id}
                 layout={rowsReflow ? LIST_REFLOW : undefined}
-                exiting={rowsReflow ? ROW_EXIT : undefined}
+                // Always set: Reanimated reads `exiting` from the props a row last rendered
+                // with, so arming it in the render that removes the row came too late. Rows only
+                // unmount when a caption goes (delete, merge, undo, reset), never while typing.
+                exiting={ROW_EXIT}
                 onLayout={(e: LayoutChangeEvent) =>
                   offsets.current.set(cue.id, e.nativeEvent.layout.y)
                 }>

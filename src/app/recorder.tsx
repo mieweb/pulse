@@ -526,10 +526,10 @@ export default function RecorderScreen() {
           {previewing ? (
             <View style={[styles.timerPill, styles.previewTimerPill, ControlScrim[mode]]}>
               <Text style={styles.timerText} maxFontSizeMultiplier={1.3}>
-                {/* The position floors (a playhead shouldn't read a second ahead); the total
-                    rounds, as clip lengths do everywhere. */}
+                {/* Both floor: a playhead shouldn't read a second ahead, and with the total
+                    rounding up the end read "00:07 / 00:08" on a 7.6 s draft. */}
                 {formatDuration(preview.globalMs, { pad: true, floor: true })} /{' '}
-                {formatDuration(preview.totalMs, { pad: true })}
+                {formatDuration(preview.totalMs, { pad: true, floor: true })}
               </Text>
             </View>
           ) : (
@@ -669,18 +669,19 @@ export default function RecorderScreen() {
             onNext={
               draftId
                 ? () => {
-                    settleEditResets();
-                    void commitDraftDeletes(draftId).then(
-                      () => router.push({ pathname: '/export', params: { draftId } }),
-                      // The clip is back on the bar; stay here rather than export a clip the
-                      // person deleted.
-                      (e: unknown) =>
-                        showToast({
-                          kind: 'error',
-                          title: 'Couldn’t delete the clip',
-                          message: userMessage(e, 'Try again.', 'delete clip'),
-                        }),
-                    );
+                    void settleEditResets()
+                      .then(() => commitDraftDeletes(draftId))
+                      .then(
+                        () => router.push({ pathname: '/export', params: { draftId } }),
+                        // The clip is back on the bar; stay here rather than export a clip the
+                        // person deleted.
+                        (e: unknown) =>
+                          showToast({
+                            kind: 'error',
+                            title: 'Couldn’t delete the clip',
+                            message: userMessage(e, 'Try again.', 'delete clip'),
+                          }),
+                      );
                   }
                 : undefined
             }

@@ -648,9 +648,8 @@ export function useRecorder(initialDraftId?: string) {
   // the toast goes away without Undo (see clip-deletes). Restoring puts it back in its slot.
   function removeSegment(id: string) {
     if (!draftId) return;
-    // Its effective length (an edit can shorten it), as Home's draft total counts it.
     const clip = allSegments.find((s) => s.id === id);
-    hideClip(id, draftId, clip ? (clip.editedDurationMs ?? clip.durationMs) : 0);
+    hideClip(id, draftId);
     const closeToast = showUndoToast({
       title: 'Clip deleted',
       message: clipName(clip),
@@ -678,7 +677,14 @@ export function useRecorder(initialDraftId?: string) {
   // read the row, so each sees the reverted clip without knowing about pending resets. The same
   // holds for legacy clips (a baked file, no settings): the row's file and cover come back as they
   // were, which is safer than rebuilding an edit from settings they don't have.
-  async function revertEdits(id: string) {
+  // Reverts still awaiting their reset, so Next can wait for them (see `settleEditResets`).
+  const revertsInFlight = useRef(new Set<Promise<void>>());
+  function revertEdits(id: string) {
+    const run = revertEditsNow(id).finally(() => revertsInFlight.current.delete(run));
+    revertsInFlight.current.add(run);
+  }
+
+  async function revertEditsNow(id: string) {
     const clip = allSegments.find((s) => s.id === id);
     let cleared: Awaited<ReturnType<typeof resetEdit>>;
     try {
@@ -766,10 +772,15 @@ export function useRecorder(initialDraftId?: string) {
     toggleMute: () => setMuted((prev) => !prev),
     cycleStabilization,
     deleteSegment: removeSegment,
-    resetSegment: (id: string) => void revertEdits(id),
+    resetSegment: (id: string) => revertEdits(id),
     // Before something reads the draft from the db (export): a revert still showing its Undo is
     // made final, so Undo can't put back an edit the export has already been made without.
-    settleEditResets: () => resetToastRef.current?.(),
+    // Export reads the db: let any revert still resetting finish, then close its Undo (the
+    // revert stands), so the export can't use the edit and an Undo can't change it afterwards.
+    settleEditResets: async () => {
+      await Promise.all(revertsInFlight.current);
+      resetToastRef.current?.();
+    },
     reorderSegments: reorderVisible,
   };
 }

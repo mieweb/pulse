@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
 import { Icon } from '@/components/icon';
-import { type ReactNode, useState } from 'react';
+import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,12 +11,12 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { EaseOut, ListReflowMs } from '@/constants/motion';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
-import { deleteDraft, draftListQuery, renameDraft, segmentsForDraft } from '@/db/drafts';
+import { deleteDraft, type DraftListClip, draftListQuery, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
 import { DraftMenu } from '@/features/home/draft-menu';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
-import { useHiddenClips, usePendingClipDeletes } from '@/features/recorder/clip-deletes';
+import { useDraftsWithHiddenClips, useHiddenClips } from '@/features/recorder/clip-deletes';
 import { useToast } from '@/features/toast/toast-provider';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
 import { useNow } from '@/hooks/use-now';
@@ -62,7 +62,8 @@ export default function HomeScreen() {
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set());
   // Clips deleted in the recorder whose Undo is still up: their rows are still in the db, so the
   // query still counts them. Left out here too, so the card matches the recorder it opens.
-  const pendingClipDeletes = usePendingClipDeletes();
+  const hiddenClips = useHiddenClips();
+  const draftsWithHiddenClips = useDraftsWithHiddenClips();
 
   // Multi-select for `.pulse` export. `selectionMode` swaps the header for a selection toolbar
   // and turns each card into a checkbox; `selectedIds` tracks the chosen drafts.
@@ -90,15 +91,26 @@ export default function HomeScreen() {
     }
   }
 
-  // Each draft as it will be once its pending clip deletes land. One whose every clip is pending
-  // is hidden like a deleted draft: committing them drops the draft too (`commitClipDelete`).
+  // Each draft as it will be once its pending clip deletes land: its clips (from the same query)
+  // without the hidden ones, by id, so the count, length and cover match the recorder's strip and
+  // never lag the delete. One left with no clips is hidden like a deleted draft: committing its
+  // deletes drops the draft too (`commitClipDelete`).
   const visibleDrafts = drafts.flatMap((d) => {
     if (deletingIds.has(d.id)) return [];
-    const pending = pendingClipDeletes.get(d.id);
-    if (!pending) return [d];
-    const segmentCount = d.segmentCount - pending.count;
-    if (segmentCount <= 0) return [];
-    return [{ ...d, segmentCount, durationMs: Math.max(0, d.durationMs - pending.durationMs) }];
+    if (!draftsWithHiddenClips.has(d.id)) return [d];
+    const clips = (JSON.parse(d.clipsJson) as DraftListClip[]).filter(
+      (c) => !hiddenClips.has(c.id),
+    );
+    if (clips.length === 0) return [];
+    return [
+      {
+        ...d,
+        segmentCount: clips.length,
+        durationMs: clips.reduce((sum, c) => sum + c.ms, 0),
+        firstSegmentFilename: clips[0].file,
+        firstSegmentThumbnail: clips[0].thumb,
+      },
+    ];
   });
   const allSelected = visibleDrafts.length > 0 && visibleDrafts.every((d) => selectedIds.has(d.id));
 
@@ -325,50 +337,40 @@ export default function HomeScreen() {
             const name = pendingRename?.id === item.id ? pendingRename.name : item.name;
             return (
               <Animated.View exiting={CARD_EXIT}>
-                <CoverWhilePending
-                  draftId={item.id}
-                  pending={pendingClipDeletes.has(item.id)}
-                  filename={item.firstSegmentFilename}
-                  thumbnail={item.firstSegmentThumbnail}>
-                  {(cover) => (
-                    <DraftCard
-                      id={item.id}
-                      uploadStatus={item.uploadStatus}
-                      name={name}
-                      firstSegmentFilename={cover.filename}
-                      firstSegmentThumbnail={cover.thumbnail}
-                      segmentCount={item.segmentCount}
-                      durationMs={item.durationMs}
-                      lastModified={item.lastModified}
-                      now={now}
-                      editing={editingDraftId === item.id}
-                      selectionMode={selectionMode}
-                      selected={selectedIds.has(item.id)}
-                      onPress={() => {
-                        if (selectionMode) toggleSelected(item.id);
-                        // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
-                        else if (item.uploadStatus !== 'uploading')
-                          router.push({ pathname: '/recorder', params: { draftId: item.id } });
-                      }}
-                      onLongPress={
-                        item.uploadStatus === 'uploading'
-                          ? undefined
-                          : () => setEditingDraftId(item.id)
-                      }
-                      menu={(watchLink) => (
-                        <DraftMenu
-                          draftId={item.id}
-                          watchLink={watchLink}
-                          uploading={item.uploadStatus === 'uploading'}
-                          besidePill={item.uploadStatus === 'uploaded'}
-                          onRename={() => setEditingDraftId(item.id)}
-                          onDelete={() => deleteWithUndo(item.id, name)}
-                        />
-                      )}
-                      onSubmitName={(input) => submitRename(item.id, item.name, input)}
+                <DraftCard
+                  id={item.id}
+                  uploadStatus={item.uploadStatus}
+                  name={name}
+                  firstSegmentFilename={item.firstSegmentFilename}
+                  firstSegmentThumbnail={item.firstSegmentThumbnail}
+                  segmentCount={item.segmentCount}
+                  durationMs={item.durationMs}
+                  lastModified={item.lastModified}
+                  now={now}
+                  editing={editingDraftId === item.id}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(item.id)}
+                  onPress={() => {
+                    if (selectionMode) toggleSelected(item.id);
+                    // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
+                    else if (item.uploadStatus !== 'uploading')
+                      router.push({ pathname: '/recorder', params: { draftId: item.id } });
+                  }}
+                  onLongPress={
+                    item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
+                  }
+                  menu={(watchLink) => (
+                    <DraftMenu
+                      draftId={item.id}
+                      watchLink={watchLink}
+                      uploading={item.uploadStatus === 'uploading'}
+                      besidePill={item.uploadStatus === 'uploaded'}
+                      onRename={() => setEditingDraftId(item.id)}
+                      onDelete={() => deleteWithUndo(item.id, name)}
                     />
                   )}
-                </CoverWhilePending>
+                  onSubmitName={(input) => submitRename(item.id, item.name, input)}
+                />
               </Animated.View>
             );
           }}
@@ -426,41 +428,6 @@ export default function HomeScreen() {
       {!selectionMode && <DestinationsFloat />}
     </ThemedView>
   );
-}
-
-type Cover = { filename: string | null; thumbnail: string | null };
-
-/**
- * A draft's cover is its first clip's frame. While a clip of it waits on its Undo (deleted in the
- * recorder, toast still up), that clip may be the first one, so the cover comes from the first
- * clip still shown instead. Only those drafts read their clips here; every other card uses the
- * list query's cover as is.
- */
-function CoverWhilePending({
-  draftId,
-  pending,
-  filename,
-  thumbnail,
-  children,
-}: Cover & { draftId: string; pending: boolean; children: (cover: Cover) => ReactNode }) {
-  if (!pending) return children({ filename, thumbnail });
-  return <PendingCover draftId={draftId}>{children}</PendingCover>;
-}
-
-function PendingCover({
-  draftId,
-  children,
-}: {
-  draftId: string;
-  children: (cover: Cover) => ReactNode;
-}) {
-  const { data: clips } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
-  const hidden = useHiddenClips();
-  const first = clips.find((c) => !hidden.has(c.id));
-  return children({
-    filename: first ? (first.editedFilename ?? first.originalFilename) : null,
-    thumbnail: first?.thumbnail ?? null,
-  });
 }
 
 const styles = StyleSheet.create({

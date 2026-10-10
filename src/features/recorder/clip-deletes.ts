@@ -13,22 +13,16 @@ import { deleteDraft, deleteSegment, segmentsForDraft } from '@/db/drafts';
  * clip hidden too.
  */
 
-type Pending = {
-  draftId: string;
-  committed: boolean;
-  /** The clip's length, so Home can leave it out of the draft's total while it's pending. */
-  durationMs: number;
-  closeToast?: () => void;
-};
-
-/** Per draft, the clips waiting on their Undo: how many, and how long they run together. */
-export type PendingByDraft = ReadonlyMap<string, { count: number; durationMs: number }>;
+type Pending = { draftId: string; committed: boolean; closeToast?: () => void };
 
 const pending = new Map<string, Pending>();
 // Committed ids stay hidden for good: the row is gone a moment later, but the live query only
 // re-runs after the delete lands, and un-hiding before that would flash the clip back.
 let hidden: ReadonlySet<string> = new Set();
-let byDraft: PendingByDraft = new Map();
+// The drafts those hidden clips belong to, kept as long as `hidden` keeps the ids, so Home knows
+// which cards to recount (see `useDraftsWithHiddenClips`).
+const ownerOf = new Map<string, string>();
+let draftsWithHidden: ReadonlySet<string> = new Set();
 const listeners = new Set<() => void>();
 // Recorders mounted per draft. A delete that commits after its recorder closed also drops the
 // draft if that left it empty, which the recorder's own leave-cleanup can no longer do.
@@ -36,15 +30,12 @@ const openDrafts = new Map<string, number>();
 
 function publish(next: Set<string> = new Set(hidden)) {
   hidden = next;
-  // Only deletes still waiting: once one is committed its row leaves the db, and Home's counts
-  // drop on their own.
-  const counts = new Map<string, { count: number; durationMs: number }>();
-  for (const p of pending.values()) {
-    if (p.committed) continue;
-    const c = counts.get(p.draftId) ?? { count: 0, durationMs: 0 };
-    counts.set(p.draftId, { count: c.count + 1, durationMs: c.durationMs + p.durationMs });
+  const drafts = new Set<string>();
+  for (const id of hidden) {
+    const draftId = ownerOf.get(id);
+    if (draftId) drafts.add(draftId);
   }
-  byDraft = counts;
+  draftsWithHidden = drafts;
   for (const listener of listeners) listener();
 }
 
@@ -58,14 +49,19 @@ export function useHiddenClips(): ReadonlySet<string> {
   return useSyncExternalStore(subscribe, () => hidden);
 }
 
-/** Per draft, the clips hidden while their Undo is up (Home subtracts them from its cards). */
-export function usePendingClipDeletes(): PendingByDraft {
-  return useSyncExternalStore(subscribe, () => byDraft);
+/**
+ * The drafts that have a clip in `useHiddenClips`. Home reads each of their clips from its list
+ * query and leaves the hidden ones out of the card (count, length, cover), by id, so it can't
+ * drift from the db the way subtracting counts did.
+ */
+export function useDraftsWithHiddenClips(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribe, () => draftsWithHidden);
 }
 
 /** Hide a clip now; `commitClipDelete` or `restoreClip` settles it. */
-export function hideClip(id: string, draftId: string, durationMs: number) {
-  pending.set(id, { draftId, committed: false, durationMs });
+export function hideClip(id: string, draftId: string) {
+  pending.set(id, { draftId, committed: false });
+  ownerOf.set(id, draftId);
   publish(new Set(hidden).add(id));
 }
 
@@ -99,9 +95,6 @@ export async function commitClipDelete(id: string): Promise<void> {
     throw e;
   }
   pending.delete(id);
-  // The row is gone, so Home's own count already leaves it out: stop subtracting it. (The id
-  // stays in `hidden`, see above.)
-  publish();
   if (openDrafts.has(entry.draftId)) return;
   try {
     const rest = await segmentsForDraft(entry.draftId);
