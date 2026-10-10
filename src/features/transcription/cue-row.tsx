@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { MaxTextScale, Radius, Spacing } from '@/constants/theme';
+import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
 import type { Cue } from './use-subtitle-editor';
@@ -62,6 +63,8 @@ export const CueRow = memo(function CueRow({
   onChangeText: (id: string, text: string) => void;
   onEndTextEdit: () => void;
 }) {
+  // The field remounts, so it re-measures, when the system text size changes (see `useTextSizeKey`).
+  const textSizeKey = useTextSizeKey();
   const chars = cue.text.trim().length;
   const load = cueLoad(cue);
   const active = state !== 'view';
@@ -107,6 +110,7 @@ export const CueRow = memo(function CueRow({
         </ThemedText>
         {state === 'editing' ? (
           <TextInput
+            key={textSizeKey}
             value={cue.text}
             onChangeText={(text) => onChangeText(cue.id, text)}
             onBlur={onEndTextEdit}
