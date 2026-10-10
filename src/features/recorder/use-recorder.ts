@@ -184,6 +184,8 @@ export function useRecorder(initialDraftId?: string) {
 
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
   const { showToast } = useToast();
+  // Clips whose revert is under way (see `revertEdits`).
+  const revertingRef = useRef(new Set<string>());
 
   // Library access for the + import — granular (photo+video) like the camera/mic gate,
   // but requested just-in-time on tap (§2.3). Granting up front also lets the picker's
@@ -645,6 +647,10 @@ export function useRecorder(initialDraftId?: string) {
   // No confirm either: back to the untouched original at once (the edit's files go with it), and
   // a toast says so. The edit is one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
   async function revertEdits(id: string) {
+    // A second tap before the first revert lands (the control goes once the row updates) would
+    // regenerate the same cover and delete the same files again.
+    if (revertingRef.current.has(id)) return;
+    revertingRef.current.add(id);
     const clip = segments.find((s) => s.id === id);
     try {
       await resetEdit(id);
@@ -655,6 +661,8 @@ export function useRecorder(initialDraftId?: string) {
         message: userMessage(e, 'Try again.', 'reset edit'),
       });
       return;
+    } finally {
+      revertingRef.current.delete(id);
     }
     showToast({ kind: 'info', title: 'Edits removed', message: clipName(clip) });
   }

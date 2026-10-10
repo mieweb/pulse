@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -72,6 +72,18 @@ export function OnDeviceAiSheet() {
   // is still saving would start another change and close twice, popping the screen underneath
   // too. Cleared only when a change fails and the sheet stays open.
   const changing = useRef(false);
+  // A change can finish after the sheet was swiped away or closed: its close would then pop the
+  // screen underneath, so it closes only while the sheet is still up.
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+  const closeIfOpen = () => {
+    if (mounted.current) close();
+  };
 
   // Only ever a different model (`choose` closes on the selected one): the selection changed.
   const select = async (id: string) => {
@@ -94,7 +106,7 @@ export function OnDeviceAiSheet() {
     // Free the previous model's contexts + delete other weights now; the new model itself is
     // downloaded lazily at export time (no background loop pulls it here anymore).
     void applyModelSelection(getModel(id));
-    close();
+    closeIfOpen();
   };
 
   const choose = (id: string) => {
@@ -128,7 +140,9 @@ export function OnDeviceAiSheet() {
   );
 
   // The selection is cleared first, so captions stop using the model; if it can't be, nothing
-  // changed, the sheet stays open and the toast says so. Then its weights go from disk at once.
+  // changed, the sheet stays open and the toast says so. Then its weights go from disk, and only
+  // once they're gone does the sheet close and say so. If they can't be freed, the model is
+  // selected again, so Remove is still there to try once more.
   const removeModel = async (id: string) => {
     if (changing.current) return;
     changing.current = true;
@@ -143,14 +157,19 @@ export function OnDeviceAiSheet() {
       });
       return;
     }
-    void applyModelSelection(null).catch((e: unknown) =>
+    try {
+      await applyModelSelection(null);
+    } catch (e) {
+      await setSelectedModel(id).catch(() => {});
+      changing.current = false;
       showToast({
         kind: 'error',
         title: 'Couldn’t free the model’s space',
         message: userMessage(e, 'Try removing it again.', 'free model'),
-      }),
-    );
-    close();
+      });
+      return;
+    }
+    closeIfOpen();
     showToast({ kind: 'info', title: 'Model removed', message: getModel(id)?.label });
   };
 
