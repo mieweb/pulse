@@ -146,6 +146,21 @@ export const Radius = {
   card: 18,
 } as const;
 
+/**
+ * Press and state opacities, one set for the whole app. Rows inside a card swap their fill on
+ * press instead (`backgroundSelected`), and never dim the whole row. Never put these on an
+ * ancestor of a GlassView / GlassPill: iOS draws glass flat under a partly transparent parent, so
+ * dim the glyph inside the glass instead.
+ */
+export const Opacity = {
+  /** A filled control or a card-surface control while pressed. */
+  pressed: 0.85,
+  /** A bare glyph or text button while pressed. */
+  pressedGlyph: 0.6,
+  /** Disabled (never used for busy: a busy control shows its spinner at full strength). */
+  disabled: 0.35,
+} as const;
+
 /** The height of a primary or paired button row. */
 export const ButtonHeight = 52;
 

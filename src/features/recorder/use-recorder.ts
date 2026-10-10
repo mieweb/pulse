@@ -645,7 +645,9 @@ export function useRecorder(initialDraftId?: string) {
   // the toast goes away without Undo (see clip-deletes). Restoring puts it back in its slot.
   function removeSegment(id: string) {
     if (!draftId) return;
-    hideClip(id, draftId);
+    // Its effective length (an edit can shorten it), as Home's draft total counts it.
+    const clip = allSegments.find((s) => s.id === id);
+    hideClip(id, draftId, clip ? (clip.editedDurationMs ?? clip.durationMs) : 0);
     const closeToast = showUndoToast({
       title: 'Clip deleted',
       onUndo: () => void restoreClip(id),

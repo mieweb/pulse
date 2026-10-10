@@ -1,4 +1,4 @@
-import { Easing } from 'react-native-reanimated';
+import { cubicBezier, Easing } from 'react-native-reanimated';
 
 /**
  * Motion shared across the app, so the same kind of movement feels the same everywhere.
@@ -8,6 +8,8 @@ import { Easing } from 'react-native-reanimated';
  *   case the release velocity carries into the spring.
  */
 export const EaseOut = Easing.bezier(0.23, 1, 0.32, 1);
+/** `EaseOut` for Reanimated CSS transitions (`transitionTimingFunction`). */
+export const EaseOutCss = cubicBezier(0.23, 1, 0.32, 1);
 
 /** Lists closing or opening a gap (a deleted row, an undone delete). */
 export const ListReflowMs = 250;
