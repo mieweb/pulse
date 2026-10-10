@@ -71,9 +71,8 @@ export function useRecorderGestures({
   onHoldEndRef.current = onHoldEnd;
   onFocusRef.current = onFocus;
 
-  // Haptics fire before the recorder acts: iOS mutes them once the mic is recording, so a start
-  // haptic after capture begins would never be felt. (A stop tap's haptic lands while the mic is
-  // still live — iOS may swallow that one.)
+  // Haptics fire before the recorder acts: they're muted while a clip records (recorder.tsx), so
+  // a start haptic after capture began would never be felt, and a stop tap gives none.
   const fireToggle = useCallback(() => {
     haptics.tap();
     onToggleRef.current();

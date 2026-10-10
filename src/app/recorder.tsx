@@ -40,6 +40,7 @@ import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
 import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDurationPadded } from '@/utils/format';
+import { muteHaptics } from '@/utils/haptics';
 import { userMessage } from '@/utils/user-message';
 import { closeToHome } from '@/utils/navigation';
 import { clipRender } from '@/utils/segment-window';
@@ -358,6 +359,13 @@ export default function RecorderScreen() {
       maxZoom: device ? Math.min(device.maxZoom, MAX_ZOOM_FACTOR) : 1,
     });
 
+  // The camera allows haptics (see <Camera>), so mute them while a clip records: the mic would
+  // pick one up. Start's haptic fires before capture begins, so it still lands.
+  useEffect(() => {
+    muteHaptics(isRecording);
+    return () => muteHaptics(false);
+  }, [isRecording]);
+
   // Zoom factors aren't portable across a flip, so reset to neutral 1x. (A lens chip sets its
   // own factor; flipping mid-recording already stops the recording natively.)
   useEffect(() => {
@@ -420,6 +428,10 @@ export default function RecorderScreen() {
           // follows the (locked) UI orientation, so sideways recordings stay portrait: the
           // sensor frame is unchanged, only the rotation tag stops following the gyro.
           orientationSource="interface"
+          // iOS mutes every haptic while a capture session runs unless this is on, which left the
+          // recorder's haptics (record start, hold, lens, clips and the trash) silent. None fire
+          // while a clip records, though (the mic would pick them up): see `muteHaptics` below.
+          allowHapticsAndSystemSoundsPlayback
           // Zoom/torch are gated until the session has started — but only on Android: CameraX
           // rejects control calls on an inactive camera (OperationCanceledException), so applying
           // these props on mount — before `onStarted` — throws unhandled rejections there.
@@ -445,7 +457,14 @@ export default function RecorderScreen() {
           // device support so it never throws; tap-to-focus stays snappy via `responsiveness`.
           enableSmoothAutoFocus={device?.supportsSmoothAutoFocus ?? false}
           onConfigured={onSessionConfigured}
-          onStarted={onCameraReady}
+          onStarted={() => {
+            onCameraReady();
+            // The capture session reconfigures the app's audio session as it starts, after the
+            // focus effect's acquire, which drops the "allow haptics" setting (iOS honours it only
+            // on activation): the recorder was silent until the first recording re-acquired.
+            // Re-acquiring here, the same call every record tap makes, applies it from the start.
+            if (!muted && !callActive && !previewing) void acquireFocus();
+          }}
           onError={onCameraError}
         />
       )}

@@ -172,6 +172,15 @@ public class CallDetectorModule: Module {
       self.endTask(rawId)
     }
 
+    // iOS mutes every haptic while the audio session can record (the recorder holds it in
+    // playAndRecord with the camera's mic attached) unless this is on, and it only takes effect
+    // when set BEFORE the session is activated — so JS calls it right before activating
+    // (useAudioFocus), rather than relying on VisionCamera's own setting, which lands whenever the
+    // camera configures. A failure leaves haptics muted, nothing worse.
+    Function("allowHapticsWhileRecording") { (allow: Bool) in
+      try? AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(allow)
+    }
+
     OnStartObserving {
       self.stateLock.lock()
       self.observing = true

@@ -11,6 +11,7 @@ class CallDetectorModule extends NativeModule<CallDetectorModuleEvents> {
     return -1;
   }
   endBackgroundTask(_taskId: number): void {}
+  allowHapticsWhileRecording(_allow: boolean): void {}
 }
 
 // Registered under 'CallDetector' to match Name("CallDetector") on native and the
