@@ -5,15 +5,7 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
 import { type ReactNode, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Linking,
-  Platform,
-  Pressable,
-  StyleSheet,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
@@ -251,28 +243,18 @@ function Section({
   );
 }
 
-/** Above this text size a row stacks its value under its label, as iOS Settings does. */
-const STACK_FONT_SCALE = 1.35;
-
 function Row({ label, value, last = false }: { label: string; value: string; last?: boolean }) {
   const theme = useTheme();
-  // Side by side, a long value ("iPhone 17 Pro Max · iOS 26.5.1") at a large text size squeezed
-  // the label until it broke mid-word ("Devic / e"); stacked, both get the full width.
-  const stacked = useWindowDimensions().fontScale > STACK_FONT_SCALE;
   return (
     <View
       style={[
         styles.row,
-        stacked && styles.rowStacked,
         !last && { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth },
       ]}
       accessible
       accessibilityLabel={`${label}: ${value}`}>
       <ThemedText style={styles.rowLabel}>{label}</ThemedText>
-      <ThemedText
-        themeColor="textSecondary"
-        style={[styles.rowValue, stacked && styles.rowValueStacked]}
-        selectable>
+      <ThemedText themeColor="textSecondary" style={styles.rowValue} selectable>
         {value}
       </ThemedText>
     </View>
@@ -311,11 +293,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: 12,
   },
-  rowStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: Spacing.half },
-  // The label keeps its words whole; the value is the one that wraps.
+  // The label keeps its words whole ("Devic / e" at a large text size); the value wraps.
   rowLabel: { flexShrink: 0 },
   rowValue: { flexShrink: 1, textAlign: 'right' },
-  rowValueStacked: { textAlign: 'left' },
   status: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, flexShrink: 1 },
   note: { paddingHorizontal: Spacing.three, paddingTop: 12 },
   // A full-width row inside a card: it swaps its fill on press, as in-card rows do (the card's

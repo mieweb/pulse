@@ -1,6 +1,6 @@
 import { StyleSheet, Text, type TextProps } from 'react-native';
 
-import { ThemeColor } from '@/constants/theme';
+import { MaxTextScale, ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -37,10 +37,23 @@ export type ThemedTextProps = TextProps & {
   themeColor?: ThemeColor;
 };
 
-export function ThemedText({ style, type = 'default', themeColor, ...rest }: ThemedTextProps) {
+export function ThemedText({
+  style,
+  type = 'default',
+  themeColor,
+  maxFontSizeMultiplier = MaxTextScale,
+  ...rest
+}: ThemedTextProps) {
   const theme = useTheme();
 
-  return <Text style={[{ color: theme[themeColor ?? 'text'] }, styles[type], style]} {...rest} />;
+  return (
+    <Text
+      style={[{ color: theme[themeColor ?? 'text'] }, styles[type], style]}
+      // Grows with the system text size up to the app's ceiling (see `MaxTextScale`).
+      maxFontSizeMultiplier={Math.min(maxFontSizeMultiplier ?? MaxTextScale, MaxTextScale)}
+      {...rest}
+    />
+  );
 }
 
 const styles = StyleSheet.create({

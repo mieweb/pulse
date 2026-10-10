@@ -161,6 +161,15 @@ export const Opacity = {
   disabled: 0.35,
 } as const;
 
+/**
+ * How far text grows with the system text size: up to iOS's largest standard size (xxxLarge,
+ * 1.35×). The accessibility sizes beyond it (up to 3.57× in React Native) don't grow the text
+ * further, and neither does Android's font scale past it, so every screen's layout holds at any
+ * setting without per-screen large-text layouts. `ThemedText` applies it to all text; a caller
+ * may only cap lower (text over a thumbnail or the camera).
+ */
+export const MaxTextScale = 1.35;
+
 /** The height of a primary or paired button row. */
 export const ButtonHeight = 52;
 
