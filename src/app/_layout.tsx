@@ -94,6 +94,14 @@ function ThemedNavigation() {
                 ),
               })}
             />
+            <Stack.Screen
+              name="pair"
+              options={{
+                presentation: 'formSheet',
+                sheetAllowedDetents: 'fitToContents',
+                sheetGrabberVisible: true,
+              }}
+            />
             <Stack.Screen name="onboarding" options={{ ...fullScreen, gestureEnabled: false }} />
           </Stack>
         </UploadDeepLinkProvider>

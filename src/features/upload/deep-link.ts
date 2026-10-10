@@ -1,4 +1,4 @@
-// Bump when the pulsecam:// link shape changes incompatibly — a client that
+// Bump when the pairing link shape changes incompatibly — a client that
 // doesn't recognize `v` refuses the link outright instead of misparsing it.
 const SUPPORTED_LINK_VERSION = '1';
 
@@ -42,20 +42,43 @@ function isPrivateDevOrigin(url: URL): boolean {
   );
 }
 
-/**
- * Parse and validate a `pulsecam://` upload pairing link. Rejects anything
- * the app can't safely act on — an unrecognized version, a malformed
- * artifactId, or a server origin that isn't HTTPS (except the explicit
- * localhost/private-IP dev allowance) — rather than guessing.
- */
-export function parseUploadDeepLink(url: string): DeepLinkResult {
-  if (!url.startsWith('pulsecam://')) return { ok: false, reason: 'invalid-link' };
+/** Path of the https pairing link on the link host (#252). */
+export const PAIRING_LINK_PATH = '/pulse/open';
 
-  // Parsed by hand (not via expo-linking) so this stays a dependency-free pure
-  // function — `pulsecam://` is a custom scheme, but everything after `?` is
-  // an ordinary query string `URLSearchParams` handles regardless of scheme.
-  const queryIndex = url.indexOf('?');
-  const params = new URLSearchParams(queryIndex >= 0 ? url.slice(queryIndex + 1) : '');
+/**
+ * The parameter string of a pairing link, or `null` when `url` isn't one. Two forms carry the
+ * same parameters:
+ * - `pulsecam://?<params>`: everything after `?`.
+ * - `https://<linkHost>/pulse/open#<params>`: the Universal Link / App Link form (#252). The
+ *   parameters ride in the fragment, so the link host never receives the token.
+ *
+ * Parsed by hand (not via expo-linking or `URL`) so this stays a dependency-free pure function —
+ * React Native's `URL` cuts `hash` at the first `/`, which an unencoded `server=https://…` has.
+ */
+export function pairingLinkParams(url: string, linkHost?: string | null): string | null {
+  if (url.startsWith('pulsecam://')) {
+    const queryIndex = url.indexOf('?');
+    return queryIndex >= 0 ? url.slice(queryIndex + 1) : '';
+  }
+  if (!linkHost) return null;
+  const match = /^https:\/\/([^/?#]+)(\/[^?#]*)?(?:\?[^#]*)?(?:#(.*))?$/i.exec(url);
+  if (!match || match[1].toLowerCase() !== linkHost.toLowerCase()) return null;
+  if ((match[2] ?? '').replace(/\/$/, '') !== PAIRING_LINK_PATH) return null;
+  return match[3] ?? '';
+}
+
+/**
+ * Parse and validate an upload pairing link, in either form `pairingLinkParams` takes. Rejects
+ * anything the app can't safely act on — an unrecognized version, a malformed artifactId, or a
+ * server origin that isn't HTTPS (except the explicit localhost/private-IP dev allowance) —
+ * rather than guessing.
+ */
+export function parseUploadDeepLink(url: string, linkHost?: string | null): DeepLinkResult {
+  const query = pairingLinkParams(url, linkHost);
+  if (query === null) return { ok: false, reason: 'invalid-link' };
+
+  // An ordinary query string `URLSearchParams` handles regardless of the link's form.
+  const params = new URLSearchParams(query);
   const param = (key: string): string | null => params.get(key);
 
   if (param('v') !== SUPPORTED_LINK_VERSION) {
