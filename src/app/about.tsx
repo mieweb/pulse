@@ -373,7 +373,10 @@ function TrustedServers({ servers }: { servers: string[] }) {
       </Pressable>
       {open &&
         (servers.length > MAX_UNSCROLLED_SERVERS ? (
-          <ScrollView style={styles.serverList}>{rows}</ScrollView>
+          // Inside the sheet's scroll view at large text: Android scrolls it only when nested.
+          <ScrollView nestedScrollEnabled style={styles.serverList}>
+            {rows}
+          </ScrollView>
         ) : (
           rows
         ))}

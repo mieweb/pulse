@@ -160,7 +160,7 @@
 
     <p class="privacy">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-      <span>Your link’s details stay on this device. This page never sends them to a server.</span>
+      <span id="privacy-text">Your link’s details stay on this device. This website never receives them.</span>
     </p>
   </main>
 
@@ -205,6 +205,8 @@
         $('badges-label').hidden = $('badges').hidden = true;
         $('title').textContent = 'Get Pulse to continue';
         $('lead').textContent = 'You’ll record a video in Pulse and upload it to this server.';
+        // The link rides to Play as the install referrer, so it doesn't stay on this device.
+        $('privacy-text').textContent = 'This website never receives your link’s details. Google Play passes them to Pulse when it installs.';
         // Reaching this page means Pulse isn't installed (or Android didn't open it), so go
         // straight to Play — once per visit: coming back to this tab must not bounce again.
         if (!(history.state && history.state.sentToStore)) {

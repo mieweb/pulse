@@ -98,7 +98,7 @@ function ThemedNavigation() {
               name="pair"
               options={{
                 presentation: 'formSheet',
-                sheetAllowedDetents: 'fitToContents',
+                ...tallSheetOptions(),
                 sheetGrabberVisible: true,
               }}
             />

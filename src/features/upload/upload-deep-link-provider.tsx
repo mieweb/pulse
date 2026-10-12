@@ -1,4 +1,4 @@
-import { useLinkingURL } from 'expo-linking';
+import { getInitialURL, useLinkingURL } from 'expo-linking';
 import { router, useRootNavigationState } from 'expo-router';
 import {
   createContext,
@@ -203,9 +203,13 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   }, [url, confirmLink]);
 
   // First launch after a store install: the pairing link the `/pulse/open` page handed over.
-  const launchedWithLink = useRef(!!url);
+  // Skipped when this launch came from a pairing link, which already carries the pairing. Asks
+  // for the launch URL itself: `useLinkingURL` resolves it asynchronously, so its first render
+  // can be null on a cold start from a link.
   useEffect(() => {
-    void checkDeferredPairing(launchedWithLink.current)
+    void getInitialURL()
+      .catch(() => null)
+      .then((initial) => checkDeferredPairing(!!initial && !!pairingLinkParams(initial, LINK_HOST)))
       .then((found) => {
         if (found?.kind === 'link') confirmLink(found.url);
         if (found?.kind === 'pasteboard') setRequest({ kind: 'paste' });
