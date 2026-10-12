@@ -31,9 +31,11 @@ import {
   getRecorderPrefs,
   setSetting,
 } from '@/db/settings';
+import { useToast } from '@/features/toast/toast-provider';
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
 import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
 import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
+import { userMessage } from '@/utils/user-message';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
@@ -180,6 +182,9 @@ export function useRecorder(initialDraftId?: string) {
   }, [videoOutput, cameraReady, isRecording, connectionEpoch]);
 
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
+  const { showToast } = useToast();
+  // Clips whose revert is under way (see `revertEdits`).
+  const revertingRef = useRef(new Set<string>());
 
   // Library access for the + import — granular (photo+video) like the camera/mic gate,
   // but requested just-in-time on tap (§2.3). Granting up front also lets the picker's
@@ -472,6 +477,8 @@ export function useRecorder(initialDraftId?: string) {
         importLog.warn(
           `cancelled after ${formatSeconds(Date.now() - started)}: Pulse left the screen`,
         );
+        // An alert, not a toast: this fires while Pulse is in the background, and a toast would
+        // time out before the person is back to read it.
         Alert.alert(
           'Import cancelled',
           'Pulse left the screen before the video finished converting. Try again and keep Pulse open until it’s done.',
@@ -497,12 +504,13 @@ export function useRecorder(initialDraftId?: string) {
         }
         const why = describeError(e);
         importLog.warn(`failed after ${formatSeconds(Date.now() - started)}: ${why}`);
-        Alert.alert(
-          'Couldn’t import the video',
-          /no video stream|probe/i.test(why)
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t import the video',
+          message: /no video stream|probe/i.test(why)
             ? 'That file isn’t a video Pulse can read.'
             : 'Pulse couldn’t convert it for the timeline.',
-        );
+        });
         return;
       }
       // Finished just as Pulse left: still cancelled, as promised.
@@ -533,7 +541,11 @@ export function useRecorder(initialDraftId?: string) {
       await persistSegment(id, segmentId, originalFilename, durationMs);
     } catch (e) {
       importLog.warn(`failed: ${describeError(e)}`);
-      Alert.alert('Couldn’t import the video', e instanceof Error ? e.message : 'Try again.');
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t import the video',
+        message: userMessage(e, 'Try again.', 'import'),
+      });
     } finally {
       appStateSub?.remove();
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
@@ -614,6 +626,40 @@ export function useRecorder(initialDraftId?: string) {
     });
   }
 
+  // No confirm: the clip goes at once, from any of the recorder's three trashes (the preview's
+  // 🗑, drag-to-trash, the editor's).
+  async function removeSegment(id: string) {
+    try {
+      await deleteSegment(id);
+    } catch (e) {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t delete the clip',
+        message: userMessage(e, 'Try again.', 'delete clip'),
+      });
+    }
+  }
+
+  // No confirm either: back to the untouched original at once (the edit's files go with it). The
+  // edit is one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
+  async function revertEdits(id: string) {
+    // A second tap before the first revert lands (the control goes once the row updates) would
+    // regenerate the same cover and delete the same files again.
+    if (revertingRef.current.has(id)) return;
+    revertingRef.current.add(id);
+    try {
+      await resetEdit(id);
+    } catch (e) {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t remove the edits',
+        message: userMessage(e, 'Try again.', 'reset edit'),
+      });
+    } finally {
+      revertingRef.current.delete(id);
+    }
+  }
+
   function cycleStabilization() {
     setStabilization((prev) => {
       const next = (STABILIZATION_MODES.indexOf(prev) + 1) % STABILIZATION_MODES.length;
@@ -653,8 +699,8 @@ export function useRecorder(initialDraftId?: string) {
     toggleTorch: () => setTorch((prev) => !prev),
     toggleMute: () => setMuted((prev) => !prev),
     cycleStabilization,
-    deleteSegment: (id: string) => void deleteSegment(id),
-    resetSegment: (id: string) => void resetEdit(id),
+    deleteSegment: (id: string) => void removeSegment(id),
+    resetSegment: (id: string) => void revertEdits(id),
     reorderSegments: (ids: string[]) => void reorderSegments(ids),
   };
 }

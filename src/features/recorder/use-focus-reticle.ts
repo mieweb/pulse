@@ -1,15 +1,19 @@
-// Imperatively drives shared values for the tap-to-focus reticle animation — the same
-// React-Compiler situation the gesture hooks disable this rule for.
-/* eslint-disable react-hooks/immutability */
 import type { RefObject } from 'react';
 import { useCallback } from 'react';
 import {
+  ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
 import type { CameraRef } from 'react-native-vision-camera';
+
+import { EaseOut } from '@/constants/motion';
+
+// The fade runs under Reduce Motion too: a fade isn't motion, and the system default would
+// finish the whole sequence at once, so the reticle would never show.
+const FADE = { easing: EaseOut, reduceMotion: ReduceMotion.Never };
 
 /** Side length of the square focus reticle. */
 export const RETICLE_SIZE = 52;
@@ -40,16 +44,20 @@ export function useFocusReticle({
   const onFocus = useCallback(
     (px: number, py: number) => {
       if (!supportsFocus) return;
-      x.value = px;
-      y.value = py;
-      scale.value = withSequence(
-        withTiming(1.25, { duration: 0 }),
-        withTiming(1, { duration: 220 }),
+      x.set(px);
+      y.set(py);
+      scale.set(
+        withSequence(
+          withTiming(1.25, { duration: 0 }),
+          withTiming(1, { duration: 220, easing: EaseOut }),
+        ),
       );
-      opacity.value = withSequence(
-        withTiming(1, { duration: 120 }),
-        withTiming(1, { duration: 550 }),
-        withTiming(0, { duration: 300 }),
+      opacity.set(
+        withSequence(
+          withTiming(1, { duration: 120, ...FADE }),
+          withTiming(1, { duration: 550, ...FADE }),
+          withTiming(0, { duration: 300, ...FADE }),
+        ),
       );
       void cameraRef.current
         ?.focusTo({ x: px, y: py }, { responsiveness: isRecording ? 'steady' : 'snappy' })
@@ -59,11 +67,11 @@ export function useFocusReticle({
   );
 
   const reticleStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
+    opacity: opacity.get(),
     transform: [
-      { translateX: x.value - RETICLE_SIZE / 2 },
-      { translateY: y.value - RETICLE_SIZE / 2 },
-      { scale: scale.value },
+      { translateX: x.get() - RETICLE_SIZE / 2 },
+      { translateY: y.get() - RETICLE_SIZE / 2 },
+      { scale: scale.get() },
     ],
   }));
 

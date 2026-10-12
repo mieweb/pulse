@@ -2,7 +2,9 @@ import { protocolRangeLabel } from '@/features/upload/client-identity';
 
 import { type BuildInfo, commitLabel, utcLabel, versionLabel } from './build-info';
 
-/** One paired server's compatibility with this app, from a live `/capabilities` check. */
+/**
+ * One paired server's compatibility with this app, from a live `/capabilities` check.
+ */
 export type ServerCompat = { server: string; host: string } & (
   | { status: 'checking' }
   | {

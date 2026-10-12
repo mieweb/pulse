@@ -4,14 +4,31 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  BackHandler,
+  Pressable,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { shareAsync } from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PrimaryButton } from '@/components/primary-button';
+import { SectionHeader } from '@/components/section-header';
+import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { CloseButton } from '@/features/recorder/close-button';
-import { ControlScrim, Spacing } from '@/constants/theme';
+import {
+  ButtonHeight,
+  CardShadow,
+  ControlScrim,
+  Opacity,
+  Radius,
+  Spacing,
+} from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { segmentsForDraft } from '@/db/drafts';
 import { useExport } from '@/features/export/use-export';
@@ -22,8 +39,8 @@ import {
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToDocuments } from '@/features/export/use-save-to-documents';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
+import { useToast } from '@/features/toast/toast-provider';
 import { CaptionOverlay } from '@/features/transcription/caption-overlay';
-import { ModelSwitcherModal } from '@/features/transcription/model-switcher-modal';
 import type { TranscriptLine } from '@/features/transcription/whisper';
 import { DestinationSelector } from '@/features/upload/destination-selector';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
@@ -36,6 +53,7 @@ import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
 import { closeToHome } from '@/utils/navigation';
 import { effMs } from '@/utils/segment-window';
+import { userMessage } from '@/utils/user-message';
 
 export default function ExportScreen() {
   const insets = useSafeAreaInsets();
@@ -67,18 +85,14 @@ export default function ExportScreen() {
 
   // Whether the share sheet is being presented, so we can disable the button and show a spinner.
   const [busy, setBusy] = useState(false);
-  // The On-device AI sheet, opened from the caption CTA when no model is selected yet.
-  const [modelSheetVisible, setModelSheetVisible] = useState(false);
+
   const photos = useSaveToPhotos();
   const docs = useSaveToDocuments();
+  const { showToast } = useToast();
   const theme = useTheme();
-  // Hairline ring for element-filled surfaces — the fill alone barely separates from the
-  // flat background in either mode.
-  const elementSurface = {
-    backgroundColor: theme.backgroundElement,
-    borderColor: theme.border,
-    borderWidth: StyleSheet.hairlineWidth,
-  } as const;
+  // Secondary buttons and the uploading bar: cards on the grouped background, lifted by a
+  // shadow (no outline), like the app's other cards.
+  const elementSurface = { backgroundColor: theme.card, ...CardShadow } as const;
 
   // Open the merged-video caption editor (only meaningful once the merge is done).
   const openCaptionEditor = () => {
@@ -89,6 +103,7 @@ export default function ExportScreen() {
   // Uploading needs the video, so the Upload button waits for the merge. It only shows a spinner
   // while the merge runs — a failed merge has its own Retry above, so the button just stays disabled.
   const uploadReady = state.status === 'done';
+  // Host plus path, so two servers on one host ("…/team-a", "…/team-b") don't read the same.
   const selectedHost = upload.selectedDestination ? hostOf(upload.selectedDestination.server) : '';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
@@ -127,7 +142,11 @@ export default function ExportScreen() {
     try {
       await shareAsync(toFileUri(state.outputPath), { mimeType: 'video/mp4' });
     } catch (e) {
-      Alert.alert('Couldn’t share the video', e instanceof Error ? e.message : 'Try again.');
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t share the video',
+        message: userMessage(e, 'Try again.', 'share'),
+      });
     } finally {
       setBusy(false);
     }
@@ -143,34 +162,22 @@ export default function ExportScreen() {
         selectedId={upload.selectedId}
         onSelect={upload.setSelectedId}
       />
-      <Pressable
+      {/* The section is already titled Upload: the icon and the destination say the rest.
+          Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
+      <PrimaryButton
+        label={state.status === 'merging' ? 'Preparing video…' : selectedHost || 'Upload'}
+        icon="icloud.and.arrow.up"
+        busy={state.status === 'merging'}
+        truncateMiddle={state.status !== 'merging'}
         onPress={() => void upload.claim(upload.selectedId)}
         disabled={!upload.selectedId || !uploadReady}
-        accessibilityRole="button"
         accessibilityLabel={selectedHost ? `Upload to ${selectedHost}` : 'Upload'}
-        style={({ pressed }) => [
-          styles.button,
-          { backgroundColor: theme.accent },
-          (!upload.selectedId || !uploadReady) && styles.disabled,
-          pressed && styles.pressed,
-        ]}>
-        {state.status === 'merging' ? (
-          <>
-            <ActivityIndicator color={theme.onAccent} />
-            <ThemedText style={{ color: theme.onAccent }}>Preparing video…</ThemedText>
-          </>
-        ) : (
-          <>
-            <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.onAccent} />
-            <ThemedText style={{ color: theme.onAccent }}>Upload to {selectedHost}</ThemedText>
-          </>
-        )}
-      </Pressable>
+      />
     </>
   );
 
   return (
-    <ThemedView style={styles.fill}>
+    <ThemedView type="groupedBackground" style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
         <CloseButton onPress={close} />
         {state.status === 'done' && !uploading && (
@@ -178,7 +185,7 @@ export default function ExportScreen() {
             status={transcription.state.status}
             hasCaptions={captionLines.length > 0}
             onEditCaptions={openCaptionEditor}
-            onAddCaptions={() => setModelSheetVisible(true)}
+            onAddCaptions={() => router.push('/on-device-ai')}
           />
         )}
       </View>
@@ -188,13 +195,14 @@ export default function ExportScreen() {
       <View style={[styles.center, { paddingBottom: insets.bottom + Spacing.three }]}>
         {state.status === 'merging' && (
           <>
+            {/* The ring stands in for StateMessage's icon: it's the progress itself. */}
             <MergeProgressRing progress={state.progress} />
-            <ThemedText type="subtitle" style={styles.title}>
-              Merging…
-            </ThemedText>
-            <ThemedText themeColor="textSecondary">
-              Stitching {formatClipCount(clips.length)} into one video.
-            </ThemedText>
+            <View style={styles.stateWrap}>
+              <StateMessage
+                title="Merging…"
+                message={`Stitching ${formatClipCount(clips.length)} into one video.`}
+              />
+            </View>
           </>
         )}
 
@@ -217,18 +225,24 @@ export default function ExportScreen() {
                 accessibilityState={{ disabled: busy, busy }}
                 // 34pt pill + 5 each side = a 44pt tap target.
                 hitSlop={5}
+                // No disabled dimming while busy: the spinner stays at full strength, like
+                // Photos and Files beside it.
                 style={({ pressed }) => [
                   styles.smallButton,
                   elementSurface,
-                  busy && styles.disabled,
                   pressed && styles.pressed,
                 ]}>
                 {busy ? (
                   <ActivityIndicator size="small" color={theme.text} />
                 ) : (
                   <>
-                    <Icon name="square.and.arrow.up" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Share</ThemedText>
+                    <Icon
+                      name="square.and.arrow.up"
+                      size={14}
+                      tintColor={theme.text}
+                      scalesWithText
+                    />
+                    <ThemedText type="subheadline">Share</ThemedText>
                   </>
                 )}
               </Pressable>
@@ -259,13 +273,18 @@ export default function ExportScreen() {
                   <ActivityIndicator size="small" color={theme.text} />
                 ) : photos.status === 'saved' ? (
                   <>
-                    <Icon name="checkmark" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Saved</ThemedText>
+                    <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
+                    <ThemedText type="subheadline">Saved</ThemedText>
                   </>
                 ) : (
                   <>
-                    <Icon name="square.and.arrow.down" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Photos</ThemedText>
+                    <Icon
+                      name="square.and.arrow.down"
+                      size={14}
+                      tintColor={theme.text}
+                      scalesWithText
+                    />
+                    <ThemedText type="subheadline">Photos</ThemedText>
                   </>
                 )}
               </Pressable>
@@ -296,13 +315,13 @@ export default function ExportScreen() {
                   <ActivityIndicator size="small" color={theme.text} />
                 ) : docs.status === 'saved' ? (
                   <>
-                    <Icon name="checkmark" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Saved</ThemedText>
+                    <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
+                    <ThemedText type="subheadline">Saved</ThemedText>
                   </>
                 ) : (
                   <>
-                    <Icon name="folder" size={14} tintColor={theme.text} />
-                    <ThemedText type="small">Files</ThemedText>
+                    <Icon name="folder" size={14} tintColor={theme.text} scalesWithText />
+                    <ThemedText type="subheadline">Files</ThemedText>
                   </>
                 )}
               </Pressable>
@@ -311,30 +330,16 @@ export default function ExportScreen() {
         )}
 
         {state.status === 'error' && (
-          <>
-            <Icon name="exclamationmark.triangle.fill" size={64} tintColor={theme.accent} />
-            <ThemedText type="subtitle" style={styles.title}>
-              Export failed
-            </ThemedText>
-            <ThemedText themeColor="textSecondary" style={styles.errorMessage}>
-              {state.message}
-            </ThemedText>
-
-            <View style={styles.actions}>
-              <Pressable
-                onPress={run}
-                accessibilityRole="button"
-                accessibilityLabel="Try again"
-                style={({ pressed }) => [
-                  styles.button,
-                  { backgroundColor: theme.accent },
-                  pressed && styles.pressed,
-                ]}>
-                <Icon name="arrow.clockwise" size={18} tintColor={theme.onAccent} />
-                <ThemedText style={{ color: theme.onAccent }}>Try again</ThemedText>
-              </Pressable>
-            </View>
-          </>
+          <View style={styles.stateWrap}>
+            <StateMessage
+              icon="exclamationmark.triangle.fill"
+              tone="accent"
+              title="Export failed"
+              message={state.message}
+              messageLines={4}>
+              <PrimaryButton label="Try again" icon="arrow.clockwise" onPress={run} />
+            </StateMessage>
+          </View>
         )}
 
         {/* The UPLOAD section. The merge always runs (above) and the Upload button waits on
@@ -345,20 +350,19 @@ export default function ExportScreen() {
             buttons). */}
         {(upload.destinations.length > 0 || uState.status === 'uploading' || finished) && (
           <View style={styles.uploadSection}>
-            <ThemedText
-              type="caption1"
-              themeColor="textSecondary"
-              style={styles.uploadSectionLabel}>
-              UPLOAD
-            </ThemedText>
+            <SectionHeader title="Upload" />
 
             {uState.status === 'uploading' ? (
-              <View style={[styles.button, elementSurface]}>
+              <View style={[styles.uploadingBar, elementSurface]}>
                 <ActivityIndicator color={theme.text} />
                 {/* Phase-aware label — names the step in flight (preparing, captions,
                     manifest, thumbnail, video) instead of sitting at a
-                    generic "Uploading… 0%" through all the pre-video work. */}
-                <ThemedText>{uploadPhaseLabel(uState)}</ThemedText>
+                    generic "Uploading… 0%" through all the pre-video work. It fills the row
+                    (one line, tabular digits), so the spinner stays left and the ✕ stays put
+                    as the percentage ticks. */}
+                <ThemedText numberOfLines={1} style={styles.uploadingLabel}>
+                  {uploadPhaseLabel(uState)}
+                </ThemedText>
                 <Pressable
                   onPress={() => void upload.cancel()}
                   // 16pt glyph + 14 each side = a 44pt tap target.
@@ -374,34 +378,21 @@ export default function ExportScreen() {
               // preview doesn't shrink when the upload finishes. The "link copied" toast
               // covers what the old note under these buttons said.
               <View style={styles.finishedRow}>
-                <Pressable
+                <PrimaryButton
+                  label="Watch"
+                  icon="play.fill"
                   onPress={() => void watchUpload(finished.link.url)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Watch"
-                  style={({ pressed }) => [
-                    styles.button,
-                    styles.rowButton,
-                    { backgroundColor: theme.accent },
-                    pressed && styles.pressed,
-                  ]}>
-                  <Icon name="play.fill" size={18} tintColor={theme.onAccent} />
-                  <ThemedText style={{ color: theme.onAccent }}>Watch</ThemedText>
-                </Pressable>
+                  style={styles.rowButton}
+                />
                 {/* Only a link that's safe to share — never one carrying the upload token. */}
                 {finished.link.shareable && (
-                  <Pressable
+                  <PrimaryButton
+                    variant="card"
+                    label="Share link"
+                    icon="square.and.arrow.up"
                     onPress={() => void shareUploadLink(finished.link.url).catch(() => {})}
-                    accessibilityRole="button"
-                    accessibilityLabel="Share link"
-                    style={({ pressed }) => [
-                      styles.button,
-                      styles.rowButton,
-                      elementSurface,
-                      pressed && styles.pressed,
-                    ]}>
-                    <Icon name="square.and.arrow.up" size={18} tintColor={theme.text} />
-                    <ThemedText>Share link</ThemedText>
-                  </Pressable>
+                    style={styles.rowButton}
+                  />
                 )}
               </View>
             ) : (
@@ -410,8 +401,6 @@ export default function ExportScreen() {
           </View>
         )}
       </View>
-
-      <ModelSwitcherModal visible={modelSheetVisible} onClose={() => setModelSheetVisible(false)} />
     </ThemedView>
   );
 }
@@ -446,8 +435,13 @@ function MergedPreview({
   // constraint on the aspect-derived axis clamps it without re-shrinking the defined one,
   // which is exactly the off-ratio card #196 flags — so measure and do the math.
   const [frame, setFrame] = useState<{ width: number; height: number } | null>(null);
-  // The meta pill sits in flow above the card, so its row comes out of the height budget.
-  const cardWidth = frame ? Math.min(frame.width, ((frame.height - META_ROW) * 9) / 16) : 0;
+  // The meta pill sits in flow above the card, so its row comes out of the height budget. Its
+  // text grows with the text size (up to META_MAX_SCALE), so the row is worked out from the
+  // scale rather than reserved at the largest size, which would leave a gap at the usual one.
+  const { fontScale } = useWindowDimensions();
+  const metaRow =
+    META_LINE_HEIGHT * Math.min(fontScale, META_MAX_SCALE) + META_PILL_PAD_V * 2 + META_GAP;
+  const cardWidth = frame ? Math.min(frame.width, ((frame.height - metaRow) * 9) / 16) : 0;
   const cardHeight = (cardWidth * 16) / 9;
 
   return (
@@ -458,7 +452,9 @@ function MergedPreview({
       }>
       {frame != null && (
         <View style={[styles.metaPill, ControlScrim[mode]]}>
-          <ThemedText style={styles.metaText}>{meta}</ThemedText>
+          <ThemedText maxFontSizeMultiplier={META_MAX_SCALE} style={styles.metaText}>
+            {meta}
+          </ThemedText>
         </View>
       )}
       {frame != null && (
@@ -472,6 +468,9 @@ function MergedPreview({
               nativeControls
               fullscreenOptions={{ enable: false }}
               allowsPictureInPicture={false}
+              // Android: the default SurfaceView ignores the card's clipping, so the video would
+              // draw square corners over the rounded card. A TextureView clips like any view.
+              surfaceType="textureView"
             />
             <View style={styles.captionLayer} pointerEvents="none">
               <CaptionOverlay lines={lines} positionMs={positionMs} />
@@ -524,10 +523,13 @@ function CaptionsButton({
   );
 }
 
-/** Meta pill height + its gap to the video — reserved out of the preview frame's height.
- * 28 = the recorder timer pill's 4pt padding around its 16pt text. */
-const META_PILL_HEIGHT = 28;
-const META_ROW = META_PILL_HEIGHT + Spacing.one + Spacing.one;
+/** The meta pill: the recorder timer pill's 4pt padding around its 16pt text (28pt at the
+ * default text size), and its gap to the video — reserved out of the preview frame's height.
+ * Text over video stops growing at 1.3×, so the pill can't crowd the preview out. */
+const META_LINE_HEIGHT = 20;
+const META_PILL_PAD_V = 4;
+const META_GAP = Spacing.one + Spacing.one;
+const META_MAX_SCALE = 1.3;
 
 /** Room for expo-video's native control bar (AVPlayerViewController / Media3) at the bottom. */
 const NATIVE_CONTROLS_INSET = 64;
@@ -550,23 +552,25 @@ const styles = StyleSheet.create({
   },
   previewCard: {
     // Sized inline by MergedPreview to the largest 9:16 rect fitting previewFrame — exact
-    // ratio, so the contained video fills the card with no pillarboxing.
+    // ratio, so the contained video fills the card with no pillarboxing. Same corners as the
+    // captions editor's preview of this video.
     overflow: 'hidden',
     backgroundColor: '#000',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderRadius: Radius.row,
+    borderCurve: 'continuous',
   },
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
+    // The same 16pt gutter as the header, so the ✕ and the content share an edge.
+    paddingHorizontal: Spacing.three,
     // paddingBottom is inline — it tracks the safe-area inset.
   },
-  title: { marginTop: Spacing.two },
-  errorMessage: { textAlign: 'center' },
-  actions: { alignSelf: 'stretch', gap: Spacing.two, marginTop: Spacing.five },
+  // Full width, so StateMessage's actions (Try again) span the column instead of hugging the
+  // text.
+  stateWrap: { alignSelf: 'stretch' },
   actionsRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -577,16 +581,18 @@ const styles = StyleSheet.create({
   // Same chrome as the recorder's preview timer pill (recorder.tsx timerPill/previewTimerPill):
   // mode-aware scrim + hairline edge, matching the ✕ and captions buttons above it.
   metaPill: {
-    height: META_PILL_HEIGHT,
+    minHeight: META_LINE_HEIGHT + META_PILL_PAD_V * 2,
     justifyContent: 'center',
     paddingHorizontal: Spacing.two,
+    paddingVertical: META_PILL_PAD_V,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: Spacing.one + Spacing.one,
+    marginBottom: META_GAP,
   },
   metaText: {
     color: '#fff',
     fontSize: 16,
+    lineHeight: META_LINE_HEIGHT,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
@@ -607,23 +613,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.one,
-    height: 34,
+    // A floor, so a large text size grows the pill instead of clipping its label.
+    minHeight: 34,
     paddingHorizontal: Spacing.three,
     borderRadius: 17,
   },
   uploadSection: { alignSelf: 'stretch', gap: Spacing.two, marginTop: Spacing.two },
-  uploadSectionLabel: { letterSpacing: 0.5 },
-  button: {
+  // The in-flight upload, in the Upload button's place: the same 52pt card, so nothing moves.
+  uploadingBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: Spacing.two,
-    height: 52,
-    borderRadius: 14,
+    minHeight: ButtonHeight,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radius.button,
+    borderCurve: 'continuous',
   },
-  pressed: { opacity: 0.85 },
-  pressedIcon: { opacity: 0.6 },
-  disabled: { opacity: 0.35 },
+  uploadingLabel: { flex: 1, fontVariant: ['tabular-nums'] },
+  pressed: { opacity: Opacity.pressed },
+  pressedIcon: { opacity: Opacity.pressedGlyph },
   finishedRow: { flexDirection: 'row', gap: Spacing.two },
   rowButton: { flex: 1 },
 });

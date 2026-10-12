@@ -49,6 +49,14 @@ export const Colors = {
     accent: SystemColors.red.light, // #FF383C
     warning: SystemColors.orange.light, // #FF8D28 — soft/at-risk states
     onAccent: '#ffffff',
+    // Grouped screens (home, export, captions) and their cards, iOS's grouped style: white cards
+    // with CardShadow on a light grey, the same as on the sheets (where white reads as a raised
+    // card both on the grey glass and on the solid white it turns into at full height).
+    groupedBackground: '#F2F2F7', // systemGroupedBackground
+    card: '#ffffff',
+    // A control sitting on a card (a card's link pill): white with its own shadow in light.
+    cardRaised: '#ffffff',
+    cardRaisedPressed: '#E5E5EA', // System Gray 5
   },
   dark: {
     text: '#ffffff', // Label / Primary
@@ -63,6 +71,12 @@ export const Colors = {
     accent: SystemColors.red.dark, // #FF4245
     warning: SystemColors.orange.dark, // #FF9230 — soft/at-risk states
     onAccent: '#ffffff',
+    // Dark has no shadows to lean on: the cards are the elevated fill on black, and a control on
+    // a card steps up one more gray.
+    groupedBackground: '#000000',
+    card: '#2C2C2E',
+    cardRaised: '#3A3A3C',
+    cardRaisedPressed: '#48484A', // System Gray 3
   },
 } as const;
 
@@ -99,6 +113,65 @@ export const Fonts = Platform.select({
     mono: 'var(--font-mono)',
   },
 });
+
+/**
+ * The lift for cards, rows on sheets, and controls that sit on them: a soft shadow, not a border
+ * (borders stay for selection rings, and for chrome over video, where a shadow vanishes).
+ */
+export const CardShadow = {
+  shadowColor: '#000',
+  shadowOpacity: 0.08,
+  shadowRadius: 8,
+  shadowOffset: { width: 0, height: 2 },
+  elevation: 2,
+} as const;
+
+/**
+ * The lift for things that float above the screen's content (the home + button, the destinations
+ * pill, the toast, the Android ⋯ menu): one step above `CardShadow`. In dark mode, where a shadow
+ * doesn't show on black, a floating surface also uses `cardRaised` so it separates from the cards.
+ */
+export const FloatShadow = {
+  shadowColor: '#000',
+  shadowOpacity: 0.18,
+  shadowRadius: 12,
+  shadowOffset: { width: 0, height: 4 },
+  elevation: 6,
+} as const;
+
+/** Corner radii: rows and small chips, buttons, cards and sheets' rows. */
+export const Radius = {
+  row: 12,
+  button: 14,
+  card: 18,
+} as const;
+
+/**
+ * Press and state opacities, one set for the whole app. Rows inside a card swap their fill on
+ * press instead (`backgroundSelected`), and never dim the whole row. Never put these on an
+ * ancestor of a GlassView / GlassPill: iOS draws glass flat under a partly transparent parent, so
+ * dim the glyph inside the glass instead.
+ */
+export const Opacity = {
+  /** A filled control or a card-surface control while pressed. */
+  pressed: 0.85,
+  /** A bare glyph or text button while pressed. */
+  pressedGlyph: 0.6,
+  /** Disabled (never used for busy: a busy control shows its spinner at full strength). */
+  disabled: 0.35,
+} as const;
+
+/**
+ * How far text grows with the system text size: through iOS's standard sizes and the first
+ * accessibility size (AX1, which React Native reports as 1.786×), and no further. The larger
+ * accessibility sizes (up to 3.57×) and Android's font scale past it don't grow the text more, so
+ * layouts hold. `ThemedText` applies it to all text; a caller may only cap lower (floating
+ * surfaces, text over a thumbnail, video or the camera).
+ */
+export const MaxTextScale = 1.79;
+
+/** The height of a primary or paired button row. */
+export const ButtonHeight = 52;
 
 export const Spacing = {
   half: 2,

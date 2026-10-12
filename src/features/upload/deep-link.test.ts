@@ -44,11 +44,14 @@ describe('parseUploadDeepLink', () => {
   });
 
   it('rejects a missing or malformed artifactId', () => {
+    expect(parseUploadDeepLink('pulsecam://?v=1&server=https%3A%2F%2Fvault.example.org')).toEqual({
+      ok: false,
+      reason: 'invalid-link',
+    });
     expect(
-      parseUploadDeepLink('pulsecam://?v=1&server=https%3A%2F%2Fvault.example.org'),
-    ).toEqual({ ok: false, reason: 'invalid-link' });
-    expect(
-      parseUploadDeepLink('pulsecam://?v=1&artifactId=not-a-uuid&server=https%3A%2F%2Fvault.example.org'),
+      parseUploadDeepLink(
+        'pulsecam://?v=1&artifactId=not-a-uuid&server=https%3A%2F%2Fvault.example.org',
+      ),
     ).toEqual({ ok: false, reason: 'invalid-link' });
   });
 

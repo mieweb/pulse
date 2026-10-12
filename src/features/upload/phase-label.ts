@@ -18,7 +18,8 @@ export function uploadPhaseLabel(state: UploadingState): string {
     case 'thumbnail':
       return 'Uploading thumbnail…';
     case 'video': {
-      const percent = Math.round(Math.min(1, Math.max(0, state.progress)) * 100);
+      // Floored: rounding showed "100%" for the last half-percent, while the upload still ran.
+      const percent = Math.floor(Math.min(1, Math.max(0, state.progress)) * 100);
       return `Uploading video… ${percent}%`;
     }
   }

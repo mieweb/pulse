@@ -1,6 +1,8 @@
 import { setAudioModeAsync, setIsAudioActiveAsync } from 'expo-audio';
 import { useCallback, useRef } from 'react';
 
+import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
+
 /**
  * Audio focus for recording: while the recorder is on screen with the mic live, claim
  * exclusive audio focus so other apps (Spotify / YouTube / podcasts) PAUSE instead of mixing
@@ -44,6 +46,10 @@ export function useAudioFocus() {
         interruptionMode: 'doNotMix',
       });
       if (!heldRef.current) return; // release() won while we awaited — don't re-seize focus
+      // Before activating: iOS only honours it on activation, and without it every haptic in the
+      // recorder is muted while the camera's mic is attached (haptics are muted again while a
+      // clip records, in JS: see muteHaptics).
+      CallDetector.allowHapticsWhileRecording(true);
       await setIsAudioActiveAsync(true);
     } catch {
       // session unavailable — recording continues, audio just mixes

@@ -1,6 +1,7 @@
 import { type RefObject, useCallback, useMemo, useState } from 'react';
 
 import type { Segment } from '@/db/schema';
+import { getDestinationToken } from '@/db/secure-token';
 
 import { isTokenExpired } from './capability-token';
 import { useDestinations } from './use-destinations';
@@ -57,11 +58,15 @@ export function useUpload(
         ? (destinations.find((d) => d.id === destinationId) ?? null)
         : null;
       const merged = mergedRef.current;
-      if (!option || !merged || isTokenExpired(option.token, Date.now())) return;
+      if (!option || !merged) return;
+      // The stored token, not the list's copy: a re-pair may have refreshed it a moment ago, before
+      // this screen's reload (`reloadDestinationTokens`) landed. The copy only if it can't be read.
+      const token = await getDestinationToken(option.id).catch(() => option.token);
+      if (isTokenExpired(token, Date.now())) return;
       await uploads.claim({
         draftId,
         destinationId: option.id,
-        destination: { server: option.server, token: option.token, artifactId: option.artifactId },
+        destination: { server: option.server, token, artifactId: option.artifactId },
         segments,
         merged,
       });
