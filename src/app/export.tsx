@@ -3,7 +3,7 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -29,6 +29,9 @@ import {
   Radius,
   Spacing,
 } from '@/constants/theme';
+import { TipAnchor } from '@/features/tips/tip-anchor';
+import { TipLayer } from '@/features/tips/tip-callout';
+import { useTip } from '@/features/tips/use-tip';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { segmentsForDraft } from '@/db/drafts';
 import { useExport } from '@/features/export/use-export';
@@ -176,6 +179,13 @@ export default function ExportScreen() {
     </>
   );
 
+  // The first finished export without a captions model points out Add captions, once.
+  const captionsTip = useTip(
+    'captions',
+    state.status === 'done' && !uploading && transcription.state.status === 'no-model',
+    { delayMs: 800 },
+  );
+
   return (
     <ThemedView type="groupedBackground" style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
@@ -184,8 +194,24 @@ export default function ExportScreen() {
           <CaptionsButton
             status={transcription.state.status}
             hasCaptions={captionLines.length > 0}
-            onEditCaptions={openCaptionEditor}
-            onAddCaptions={() => router.push('/on-device-ai')}
+            // Either press means the button's been found: the tip is done, even before it showed.
+            onEditCaptions={() => {
+              captionsTip.retire();
+              openCaptionEditor();
+            }}
+            onAddCaptions={() => {
+              captionsTip.retire();
+              router.push('/on-device-ai');
+            }}
+            tip={
+              captionsTip.mounted && (
+                <TipAnchor
+                  id="captions"
+                  shown={captionsTip.shown}
+                  onDismiss={captionsTip.dismiss}
+                />
+              )
+            }
           />
         )}
       </View>
@@ -401,6 +427,8 @@ export default function ExportScreen() {
           </View>
         )}
       </View>
+      {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
+      <TipLayer />
     </ThemedView>
   );
 }
@@ -493,11 +521,14 @@ function CaptionsButton({
   hasCaptions,
   onEditCaptions,
   onAddCaptions,
+  tip,
 }: {
   status: MergedTranscriptionState['status'];
   hasCaptions: boolean;
   onEditCaptions: () => void;
   onAddCaptions: () => void;
+  /** The captions tip's anchor, laid over the button. */
+  tip?: ReactNode;
 }) {
   const mode = useThemeMode();
   const surface = [styles.captionSurface, ControlScrim[mode]];
@@ -518,6 +549,7 @@ function CaptionsButton({
       accessibilityLabel={status === 'ready' && hasCaptions ? 'Edit captions' : 'Add captions'}>
       <View style={surface}>
         <Icon name="captions.bubble" size={20} weight="semibold" tintColor="#fff" />
+        {tip}
       </View>
     </Pressable>
   );
