@@ -119,7 +119,9 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   }, []);
 
   const addToPool = useCallback(
-    (link: UploadDeepLink, trusted = false) => {
+    // `trusted`: paired without the sheet. `trustNotSaved`: "Don't ask again" was ticked but
+    // didn't save.
+    (link: UploadDeepLink, trusted = false, trustNotSaved = false) => {
       const host = hostOf(link.server);
       checkCapabilities(link.server)
         .then((capResult) => {
@@ -146,7 +148,9 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
               title: `Connected to ${shortHost(host)}`,
               message: trusted
                 ? 'You chose not to be asked for this server. Pick it when you upload.'
-                : 'Pick it when you upload.',
+                : trustNotSaved
+                  ? 'Pick it when you upload. Pulse couldn’t save “Don’t ask again”, so its next link asks first.'
+                  : 'Pick it when you upload.',
             });
           });
         })
@@ -224,8 +228,13 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
         const link = request?.kind === 'confirm' ? request.link : null;
         closeSheet();
         if (!link) return;
-        if (trust) void trustServer(link.server).catch(() => {});
-        addToPool(link);
+        if (!trust) return addToPool(link);
+        // Pairs either way; a failed save is said in the "Connected" toast, which would cover a
+        // toast of its own.
+        void trustServer(link.server).then(
+          () => addToPool(link),
+          () => addToPool(link, false, true),
+        );
       },
       pairPasted: (text) => {
         closeSheet();

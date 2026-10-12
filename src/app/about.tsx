@@ -386,6 +386,15 @@ function TrustedServers({ servers }: { servers: string[] }) {
 
 function TrustedServerRow({ server }: { server: string }) {
   const theme = useTheme();
+  const { showToast } = useToast();
+  const remove = () =>
+    untrustServer(server).catch((e: unknown) =>
+      showToast({
+        kind: 'error',
+        title: `Couldn’t remove ${server}`,
+        message: userMessage(e, 'Try again.', 'trusted servers'),
+      }),
+    );
   return (
     <View
       style={[
@@ -400,7 +409,7 @@ function TrustedServerRow({ server }: { server: string }) {
       </ThemedText>
       {/* No confirm: forgetting one only means its next link asks again. */}
       <Pressable
-        onPress={() => void untrustServer(server)}
+        onPress={() => void remove()}
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={`Stop trusting ${server}`}
