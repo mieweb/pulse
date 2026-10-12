@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   interpolateColor,
@@ -23,6 +23,7 @@ import { GlassPill } from '@/components/glass-pill';
 import { EaseOut } from '@/constants/motion';
 import { Accent, ControlScrim, Opacity, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
+import { TipClip } from '@/features/tips/tip-callout';
 import { useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatDuration } from '@/utils/format';
@@ -76,6 +77,8 @@ type Props = {
   onDragActiveChange?: (active: boolean) => void;
   onNext?: () => void;
   cursor?: Cursor;
+  /** Laid over the first clip (it scrolls with it), taking no touches: the clips tip's anchor. */
+  firstClipOverlay?: ReactNode;
 };
 
 export function SegmentBar(props: Props) {
@@ -93,6 +96,7 @@ function Bar({
   onDragActiveChange,
   onNext,
   cursor,
+  firstClipOverlay,
 }: Props) {
   const mode = useThemeMode();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
@@ -277,7 +281,8 @@ function Bar({
           </View>
         )}
 
-        <View
+        {/* Also bounds the clips tip: its callout shows only while the first clip is in here. */}
+        <TipClip
           style={styles.viewport}
           onLayout={(e) => {
             viewportW.set(e.nativeEvent.layout.width);
@@ -324,6 +329,7 @@ function Bar({
                   segment={item}
                   active={cursor?.activeId === item.id}
                   onSelect={() => onSelect(item.id)}
+                  overlay={item.id === segments[0]?.id ? firstClipOverlay : undefined}
                 />
               )}
             />
@@ -340,7 +346,7 @@ function Bar({
               suspendAutoScroll={dragScroll}
             />
           )}
-        </View>
+        </TipClip>
 
         {/* Hidden while reordering — its slot (button + gap) is handed to the flex:1 viewport for
           more room; restored on drag end. */}
@@ -362,10 +368,12 @@ function SegmentThumb({
   segment,
   active,
   onSelect,
+  overlay,
 }: {
   segment: Segment;
   active: boolean;
   onSelect: () => void;
+  overlay?: ReactNode;
 }) {
   // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original) for legacy rows.
   const thumbnail = useThumbnail(
@@ -429,6 +437,8 @@ function SegmentThumb({
           </Text>
         </View>
       </View>
+
+      {overlay}
     </View>
   );
 }
