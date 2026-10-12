@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from 'react';
@@ -91,6 +92,8 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
     requestRef.current = request;
   }, [request]);
   const sheetOpen = useRef(false);
+  // Bumped when the sheet goes away while a newer request waits, so the effect below shows it.
+  const [sheetGone, bumpSheetGone] = useReducer((n: number) => n + 1, 0);
   const navigationReady = !!useRootNavigationState()?.key;
 
   // At launch, fail the uploads a killed app never finished (see `prepareLaunch`); on every
@@ -105,12 +108,13 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   }, [showToast]);
 
   // Show the sheet for a request once the navigator can take a push (a cold-start link arrives
-  // before it's mounted). A second link while it's open replaces what the open sheet shows.
+  // before it's mounted). A second link while it's open replaces what the open sheet shows; one
+  // that arrives as the sheet is swiped away opens it again (`closed`).
   useEffect(() => {
     if (!request || sheetOpen.current || !navigationReady) return;
     sheetOpen.current = true;
     router.push('/pair');
-  }, [request, navigationReady]);
+  }, [request, navigationReady, sheetGone]);
 
   const closeSheet = useCallback(() => {
     if (sheetOpen.current && router.canGoBack()) router.back();
@@ -253,10 +257,14 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
         closeSheet();
       },
       closed: (shown) => {
-        // Only the request that sheet was showing: one that replaced it meanwhile stays.
-        if (requestRef.current !== shown) return;
-        handledUrl.current = null;
+        // The route is gone either way.
         sheetOpen.current = false;
+        // A request that replaced the one it was showing stays, and gets the sheet again.
+        if (requestRef.current !== shown) {
+          bumpSheetGone();
+          return;
+        }
+        handledUrl.current = null;
         setRequest(null);
       },
     }),
