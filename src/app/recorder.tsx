@@ -419,7 +419,8 @@ export default function RecorderScreen() {
       if (touched !== prev) scheduleOnRN(setShutterTouched, touched);
     },
   );
-  const shutterIdle = focused && cameraReady && !previewing && !isRecording && !shutterTouched;
+  const shutterIdle =
+    focused && appActive && cameraReady && !previewing && !isRecording && !shutterTouched;
   const recordTip = useTip('record', shutterIdle && segments.length === 0, {
     delayMs: 1000,
     learned: isRecording,

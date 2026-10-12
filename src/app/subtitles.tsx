@@ -307,8 +307,12 @@ function Editor({
 
   // The row callbacks keep one identity across renders, so the memoized rows that aren't
   // playing skip the 10×/s playback re-renders.
+  // The editor's tip teaches selecting a caption: doing it, not Add caption's jump to typing,
+  // retires it.
+  const [selectedACaption, setSelectedACaption] = useState(false);
   const selectCue = useCallback(
     (cue: Cue) => {
+      setSelectedACaption(true);
       setEditingId(null);
       setSelectedId(cue.id);
       player.pause();
@@ -376,15 +380,13 @@ function Editor({
 
   // Once, while browsing a list with captions: how to select a caption and edit its words. Only
   // while the first caption, which it points at, is in view and still: paused (playback scrolls the
-  // list to the playing caption), the list at the top and not being dragged. Playing or scrolling
-  // once it's up ends it; before it shows, they only put it off.
+  // list to the playing caption), the list at the top and not being dragged. Playing, scrolling or
+  // adding a caption once it's up ends it; before it shows, they only put it off. Selecting a
+  // caption retires it either way.
   const editTip = useTip(
     'captionEdit',
     mode === 'browse' && !isPlaying && listAtTop && !listDragging && editor.cues.length > 0,
-    {
-      delayMs: 800,
-      learned: mode !== 'browse',
-    },
+    { delayMs: 800, learned: selectedACaption },
   );
 
   return (

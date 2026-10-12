@@ -73,7 +73,7 @@ export function useTip(
     // Unmounting the anchor with the popover still up would cut its exit short.
     unmountTimer.current = setTimeout(() => setUnseen(false), wasShown ? EXIT_MS : 0);
     void loadSeen().then((ids) => ids.add(id));
-    markTipSeen(id).catch((e: unknown) => console.warn('[tips] failed to save a shown tip', e));
+    markTipSeen(id).catch((e: unknown) => console.warn('[tips] failed to save a retired tip', e));
   }, [id]);
 
   /** Closes the tip if it's showing (and so retires it); does nothing before it shows. */

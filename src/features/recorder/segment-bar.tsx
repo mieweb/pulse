@@ -23,6 +23,7 @@ import { GlassPill } from '@/components/glass-pill';
 import { EaseOut } from '@/constants/motion';
 import { Accent, ControlScrim, Opacity, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
+import { TipClip } from '@/features/tips/tip-callout';
 import { useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatDuration } from '@/utils/format';
@@ -280,7 +281,8 @@ function Bar({
           </View>
         )}
 
-        <View
+        {/* Also bounds the clips tip: its callout shows only while the first clip is in here. */}
+        <TipClip
           style={styles.viewport}
           onLayout={(e) => {
             viewportW.set(e.nativeEvent.layout.width);
@@ -344,7 +346,7 @@ function Bar({
               suspendAutoScroll={dragScroll}
             />
           )}
-        </View>
+        </TipClip>
 
         {/* Hidden while reordering — its slot (button + gap) is handed to the flex:1 viewport for
           more room; restored on drag end. */}

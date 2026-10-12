@@ -1,7 +1,23 @@
 import { useIsFocused } from 'expo-router';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { AccessibilityInfo, type LayoutRectangle, Pressable, StyleSheet, View } from 'react-native';
+import {
+  createContext,
+  type RefObject,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import {
+  AccessibilityInfo,
+  type LayoutRectangle,
+  Pressable,
+  StyleSheet,
+  View,
+  type ViewProps,
+} from 'react-native';
 import Animated, { withTiming } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
@@ -21,7 +37,13 @@ import { TIPS, type TipId } from './tips';
  * enough.
  */
 
-type Callout = { id: TipId; rect: LayoutRectangle; onDismiss: () => void };
+/** `clip`: the window area the control can be seen in, when a scroll view clips it. */
+type Callout = {
+  id: TipId;
+  rect: LayoutRectangle;
+  clip: LayoutRectangle | null;
+  onDismiss: () => void;
+};
 
 let current: Callout | null = null;
 const listeners = new Set<() => void>();
@@ -37,6 +59,30 @@ function subscribe(listener: () => void) {
 /** How often a shown callout re-measures its control, so it follows a list that scrolls. */
 const REMEASURE_MS = 250;
 
+const ClipContext = createContext<RefObject<View | null> | null>(null);
+
+/**
+ * A view that clips the controls inside it (a scroll view's viewport): a callout for one of them
+ * only shows while the control is inside this view's bounds, not just on screen.
+ */
+export function TipClip({ children, ...props }: ViewProps) {
+  const ref = useRef<View>(null);
+  return (
+    <ClipContext.Provider value={ref}>
+      <View ref={ref} collapsable={false} {...props}>
+        {children}
+      </View>
+    </ClipContext.Provider>
+  );
+}
+
+function measure(view: View | null | undefined): Promise<LayoutRectangle | null> {
+  return new Promise((resolve) => {
+    if (!view) return resolve(null);
+    view.measureInWindow((x, y, width, height) => resolve({ x, y, width, height }));
+  });
+}
+
 /**
  * Laid over a control (fills its wrapper, takes no touches): while `shown`, it reports where the
  * control is on screen so the screen's `TipLayer` can point the callout at it.
@@ -51,28 +97,29 @@ export function CalloutAnchor({
   onDismiss: () => void;
 }) {
   const ref = useRef<View>(null);
+  const clipRef = useContext(ClipContext);
 
   useEffect(() => {
     if (!shown) return;
     let last = '';
     // A measurement still in flight when the tip closes must not bring the callout back.
     let alive = true;
-    const measure = () =>
-      ref.current?.measureInWindow((x, y, width, height) => {
-        if (!alive) return;
-        const key = `${x},${y},${width},${height}`;
-        if (key === last || width === 0) return;
+    const update = () =>
+      void Promise.all([measure(ref.current), measure(clipRef?.current)]).then(([rect, clip]) => {
+        if (!alive || !rect || rect.width === 0) return;
+        const key = JSON.stringify([rect, clip]);
+        if (key === last) return;
         last = key;
-        setCallout({ id, rect: { x, y, width, height }, onDismiss });
+        setCallout({ id, rect, clip, onDismiss });
       });
-    measure();
-    const timer = setInterval(measure, REMEASURE_MS);
+    update();
+    const timer = setInterval(update, REMEASURE_MS);
     return () => {
       alive = false;
       clearInterval(timer);
       if (current?.id === id) setCallout(null);
     };
-  }, [id, shown, onDismiss]);
+  }, [id, shown, onDismiss, clipRef]);
 
   return (
     <View ref={ref} style={StyleSheet.absoluteFill} pointerEvents="none" collapsable={false} />
@@ -140,10 +187,25 @@ export function TipLayer() {
   );
 }
 
+/** Whether a point (window coordinates) is inside a rectangle. */
+function contains(r: LayoutRectangle, x: number, y: number) {
+  return x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
+}
+
 function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRectangle }) {
   const theme = useTheme();
   const mode = useThemeMode();
+  const insets = useSafeAreaInsets();
   const tip = TIPS[callout.id];
+
+  // The arrow points at the control's centre, so the callout shows only while that centre can be
+  // seen: on screen, and inside the scroll view that clips the control, if any. Scrolled away
+  // (up, down or sideways), there's no callout pointing at nothing; it comes back with the control.
+  const centerWinX = callout.rect.x + callout.rect.width / 2;
+  const centerWinY = callout.rect.y + callout.rect.height / 2;
+  const offScreen =
+    !contains(frame, centerWinX, centerWinY) ||
+    (callout.clip != null && !contains(callout.clip, centerWinX, centerWinY));
 
   const rect = {
     x: callout.rect.x - frame.x,
@@ -151,13 +213,6 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
     width: callout.rect.width,
     height: callout.rect.height,
   };
-  // The control is off screen (scrolled away, up or sideways): no callout to point at nothing; it
-  // comes back with the control.
-  const offScreen =
-    rect.y + rect.height <= 0 ||
-    rect.y >= frame.height ||
-    rect.x + rect.width <= 0 ||
-    rect.x >= frame.width;
 
   // VoiceOver / TalkBack read the tip as it appears, as they do a system popover: once, and only
   // when it's actually drawn.
@@ -170,15 +225,19 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
 
   if (offScreen) return null;
   const centerX = rect.x + rect.width / 2;
-  // Above a control in the lower half of the screen, below one in the upper half.
-  const above = rect.y + rect.height / 2 > frame.height / 2;
+  const gap = Spacing.one;
+  // On the side of the control with more room, and no taller than that room: at large text sizes
+  // the text is cut off rather than the callout running off screen with its ✕.
+  const roomAbove = rect.y - insets.top - GUTTER - gap - ARROW / 2;
+  const roomBelow =
+    frame.height - insets.bottom - GUTTER - (rect.y + rect.height) - gap - ARROW / 2;
+  const above = roomAbove > roomBelow;
   const width = Math.min(MAX_WIDTH, frame.width - GUTTER * 2);
   const left = Math.min(Math.max(centerX - width / 2, GUTTER), frame.width - GUTTER - width);
   const arrowLeft = Math.min(
     Math.max(centerX - left - ARROW / 2, ARROW_INSET),
     width - ARROW_INSET - ARROW,
   );
-  const gap = Spacing.one;
   // Raised in dark mode, where the shadow doesn't show, as the app's other floating surfaces.
   const fill = mode === 'dark' ? theme.cardRaised : theme.card;
 
@@ -208,7 +267,12 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
         <View pointerEvents="none" style={styles.symbol}>
           <Icon name={tip.symbol} size={24} tintColor={theme.accent} scalesWithText />
         </View>
-        <View pointerEvents="none" style={styles.text}>
+        <View
+          pointerEvents="none"
+          style={[
+            styles.text,
+            { maxHeight: Math.max((above ? roomAbove : roomBelow) - BUBBLE_PAD * 2, CLOSE) },
+          ]}>
           <ThemedText type="headline">{tip.title}</ThemedText>
           <ThemedText type="subheadline" themeColor="textSecondary">
             {tip.message}
@@ -243,7 +307,8 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   symbol: { paddingTop: Spacing.half },
-  text: { flex: 1, gap: Spacing.half },
+  // Clipped, not the bubble, which would lose its shadow on iOS.
+  text: { flex: 1, gap: Spacing.half, overflow: 'hidden' },
   close: {
     position: 'absolute',
     top: 0,
