@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <meta name="color-scheme" content="light dark">
+  <title>Open in Pulse</title>
+  <link rel="icon" href="assets/icon.png">
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --card: #ffffff;
+      --border: rgba(0, 0, 0, 0.08);
+      --text: #1d1d1f;
+      --dim: #6e6e73;
+      --accent: #ff383c;
+      --accent-text: #ffffff;
+      --step: #f0f0f3;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000000;
+        --card: #1c1c1e;
+        --border: rgba(255, 255, 255, 0.1);
+        --text: #f5f5f7;
+        --dim: #98989d;
+        --accent: #ff4245;
+        --step: #2c2c2e;
+        --shadow: none;
+      }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px calc(32px + env(safe-area-inset-bottom));
+      -webkit-font-smoothing: antialiased;
+    }
+    main { width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+    main.wide { max-width: 640px; }
+
+    .icon { width: 72px; height: 72px; border-radius: 16px; box-shadow: var(--shadow); }
+    h1 { font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; margin-top: 20px; }
+    .lead { color: var(--dim); font-size: 17px; line-height: 1.45; margin-top: 8px; max-width: 34ch; }
+
+    .server {
+      display: inline-flex; align-items: center; gap: 8px; margin-top: 16px;
+      padding: 7px 14px; border-radius: 999px; background: var(--card); border: 1px solid var(--border);
+      font-size: 14px; font-weight: 600; max-width: 100%;
+    }
+    .server svg { flex: none; color: var(--accent); }
+    .server span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .server .server-label { color: var(--dim); font-weight: 500; flex: none; }
+
+    .card {
+      width: 100%; margin-top: 28px; padding: 24px; border-radius: 20px;
+      background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow);
+    }
+
+    .button {
+      display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+      padding: 16px 20px; border: 0; border-radius: 14px;
+      background: var(--accent); color: var(--accent-text);
+      font: inherit; font-size: 17px; font-weight: 600; text-decoration: none; cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .button:active { opacity: 0.85; }
+    .secondary { display: inline-block; margin-top: 18px; color: var(--accent); font-size: 16px; font-weight: 600; text-decoration: none; }
+
+    .steps { list-style: none; text-align: left; display: flex; flex-direction: column; gap: 14px; }
+    .card .steps { margin-top: 22px; }
+    .steps li { display: flex; gap: 12px; align-items: flex-start; font-size: 15px; line-height: 1.4; }
+    .steps .n {
+      flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--step);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; color: var(--dim);
+    }
+    .steps b { font-weight: 600; }
+    .copy-failed { margin-top: 14px; font-size: 14px; line-height: 1.4; text-align: left; }
+    .steps .sub { display: block; color: var(--dim); font-size: 14px; margin-top: 1px; }
+
+    .badges { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+    .badges a { display: block; border-radius: 8px; line-height: 0; }
+    .badges img { height: 44px; width: auto; display: block; }
+    .badges-label { margin-top: 28px; color: var(--dim); font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+
+    /* Desktop: QR beside the steps */
+    .scan { display: flex; gap: 28px; align-items: center; text-align: left; }
+    .qr { flex: none; width: 196px; height: 196px; padding: 12px; border-radius: 14px; background: #fff; border: 1px solid rgba(0, 0, 0, 0.08); }
+    .qr svg, .qr img { display: block; width: 100%; height: 100%; }
+    .scan .steps { margin-top: 0; }
+    @media (max-width: 560px) {
+      .scan { flex-direction: column; text-align: center; }
+    }
+
+    .privacy { margin-top: 28px; color: var(--dim); font-size: 13px; line-height: 1.45; max-width: 40ch; display: flex; gap: 6px; align-items: flex-start; text-align: left; }
+    .privacy svg { flex: none; margin-top: 2px; }
+
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main id="main">
+    <img class="icon" src="assets/icon.png" alt="">
+    <h1 id="title">Open in Pulse</h1>
+    <p class="lead" id="lead">Pulse records short videos and uploads them where they’re needed.</p>
+    <div class="server" id="server" hidden>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 16l-4-4-4 4M12 12v9"/><path d="M20.4 18.4A5 5 0 0 0 18 9h-1.3A8 8 0 1 0 3 16.3"/></svg>
+      <span class="server-label">Uploads to</span>
+      <span id="server-host"></span>
+    </div>
+
+    <!-- iOS: one tap, because Safari only lets a page copy the link during a tap. -->
+    <section class="card" id="ios" hidden>
+      <button class="button" id="get-pulse" type="button">Get Pulse on the App Store</button>
+      <p class="copy-failed" id="copy-failed" hidden>Pulse couldn’t copy your link. Install Pulse, then come back to this page and tap “Already have Pulse? Open it”.</p>
+      <ol class="steps" id="ios-steps">
+        <li><span class="n">1</span><span><b>Tap the button above.</b><span class="sub">Pulse copies your link, then opens the App Store.</span></span></li>
+        <li><span class="n">2</span><span><b>Install Pulse.</b><span class="sub">It’s free.</span></span></li>
+        <li><span class="n">3</span><span><b>Open Pulse and tap Paste.</b><span class="sub">It connects using the link you copied.</span></span></li>
+      </ol>
+    </section>
+
+    <!-- Android: we send the person to Play automatically; the button is the fallback. -->
+    <section class="card" id="android" hidden>
+      <a class="button" id="play-button" href="#">Get Pulse on Google Play</a>
+      <ol class="steps">
+        <li><span class="n">1</span><span><b>Install Pulse from Google Play.</b><span class="sub">It’s free. Google Play should open by itself.</span></span></li>
+        <li><span class="n">2</span><span><b>Open Pulse.</b><span class="sub">It connects automatically, nothing to copy.</span></span></li>
+      </ol>
+    </section>
+
+    <a class="secondary" id="open-app" href="#" hidden>Already have Pulse? Open it</a>
+
+    <!-- Desktop: hand the link to the phone. -->
+    <section class="card" id="desktop" hidden>
+      <div class="scan">
+        <div class="qr" id="qr" aria-label="QR code for this link"></div>
+        <ol class="steps">
+          <li><span class="n">1</span><span><b>Scan with your phone’s camera.</b><span class="sub">iPhone or Android.</span></span></li>
+          <li><span class="n">2</span><span><b>Pulse opens.</b><span class="sub">No Pulse yet? Your phone goes to the store first.</span></span></li>
+          <li><span class="n">3</span><span><b>Confirm to connect.</b><span class="sub" id="desktop-confirm">Then record and upload.</span></span></li>
+        </ol>
+      </div>
+    </section>
+
+    <p class="badges-label" id="badges-label">Get the app</p>
+    <div class="badges" id="badges">
+      <a id="badge-ios" href="https://apps.apple.com/app/id6748621024"><img src="assets/badge-app-store.svg" alt="Download on the App Store"></a>
+      <a id="badge-android" href="https://play.google.com/store/apps/details?id=com.mieweb.pulse"><img src="assets/badge-google-play.png" alt="Get it on Google Play"></a>
+    </div>
+
+    <p class="privacy">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <span id="privacy-text">Your link’s details stay on this device. This website never receives them.</span>
+    </p>
+  </main>
+
+  <script>
+    (function () {
+      var PACKAGE = 'com.mieweb.pulse';
+      var APP_STORE = 'https://apps.apple.com/app/id6748621024';
+
+      // Everything after '#' — browsers never send it to GitHub.
+      var fragment = location.hash.replace(/^#/, '');
+      var params = new URLSearchParams(fragment);
+      var hasPairing = !!(params.get('artifactId') && params.get('server'));
+
+      var appLink = 'pulsecam://?' + fragment;
+      var referrer = hasPairing ? '&referrer=' + encodeURIComponent(fragment) : '';
+      var playApp = 'market://details?id=' + PACKAGE + referrer;
+
+      var ua = navigator.userAgent;
+      var isIOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+      var isAndroid = /Android/.test(ua);
+
+      var $ = function (id) { return document.getElementById(id); };
+      var serverHost = '';
+      try { serverHost = new URL(params.get('server')).host; } catch (e) {}
+
+      if (hasPairing && serverHost) {
+        $('server').hidden = false;
+        $('server-host').textContent = serverHost;
+        $('desktop-confirm').textContent = 'Pulse asks before connecting to ' + serverHost + '.';
+      }
+
+      if (!hasPairing) {
+        $('title').textContent = fragment ? 'This link is incomplete' : 'Get Pulse';
+        $('lead').textContent = fragment
+          ? 'It’s missing its connection details. Ask for a new link, or get the app below.'
+          : 'Pulse records short videos and uploads them where they’re needed.';
+      } else if (isAndroid) {
+        $('android').hidden = false;
+        $('open-app').hidden = false;
+        $('open-app').href = appLink;
+        $('play-button').href = playApp;
+        $('badges-label').hidden = $('badges').hidden = true;
+        $('title').textContent = 'Get Pulse to continue';
+        $('lead').textContent = 'You’ll record a video in Pulse and upload it to this server.';
+        // The link rides to Play as the install referrer, so it doesn't stay on this device.
+        $('privacy-text').textContent = 'This website never receives your link’s details. Google Play passes them to Pulse when it installs.';
+        // Reaching this page means Pulse isn't installed (or Android didn't open it), so go
+        // straight to Play — once per visit: coming back to this tab must not bounce again.
+        if (!(history.state && history.state.sentToStore)) {
+          history.replaceState({ sentToStore: true }, '');
+          location.href = playApp;
+        }
+      } else if (isIOS) {
+        $('ios').hidden = false;
+        $('open-app').hidden = false;
+        $('open-app').href = appLink;
+        $('badges-label').hidden = $('badges').hidden = true;
+        $('title').textContent = 'Get Pulse to continue';
+        $('lead').textContent = 'You’ll record a video in Pulse and upload it to this server.';
+        var copyFailed = false;
+        $('get-pulse').addEventListener('click', function () {
+          var go = function () { location.href = APP_STORE; };
+          // Without the copy the pairing doesn't survive the install, so stay and say how to
+          // finish it (this tab, "Open it"); the next tap goes to the store.
+          var fail = function () {
+            copyFailed = true;
+            $('copy-failed').hidden = false;
+            $('get-pulse').textContent = 'Open the App Store';
+          };
+          if (copyFailed) return go();
+          if (!navigator.clipboard || !navigator.clipboard.writeText) return fail();
+          // The copied link is what carries the pairing through the install: on first
+          // launch Pulse offers Apple's paste button to finish pairing.
+          navigator.clipboard.writeText(location.href).then(go, fail);
+        });
+      } else {
+        $('main').classList.add('wide');
+        $('desktop').hidden = false;
+        $('title').textContent = 'Open this on your phone';
+        $('lead').textContent = 'Pulse is a phone app. Scan the code to record a video and upload it to this server.';
+        var script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js';
+        script.integrity = 'sha512-ZDSPMa/JM1D+7kdg2x3BsruQ6T/JpJo3jWDWkCZsP+5yVyp1KfESqLI+7RqB5k24F7p2cV7i2YHh/890y6P6Sw==';
+        script.crossOrigin = 'anonymous';
+        script.onload = function () {
+          var qr = qrcode(0, 'M');
+          qr.addData(location.href);
+          qr.make();
+          $('qr').innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+        };
+        document.head.appendChild(script);
+      }
+    })();
+  </script>
+</body>
+</html>
