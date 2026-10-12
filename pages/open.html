@@ -86,6 +86,7 @@
       font-size: 13px; font-weight: 700; color: var(--dim);
     }
     .steps b { font-weight: 600; }
+    .copy-failed { margin-top: 14px; font-size: 14px; line-height: 1.4; text-align: left; }
     .steps .sub { display: block; color: var(--dim); font-size: 14px; margin-top: 1px; }
 
     .badges { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
@@ -122,6 +123,7 @@
     <!-- iOS: one tap, because Safari only lets a page copy the link during a tap. -->
     <section class="card" id="ios" hidden>
       <button class="button" id="get-pulse" type="button">Get Pulse on the App Store</button>
+      <p class="copy-failed" id="copy-failed" hidden>Pulse couldn’t copy your link. Install Pulse, then come back to this page and tap “Already have Pulse? Open it”.</p>
       <ol class="steps" id="ios-steps">
         <li><span class="n">1</span><span><b>Tap the button above.</b><span class="sub">Pulse copies your link, then opens the App Store.</span></span></li>
         <li><span class="n">2</span><span><b>Install Pulse.</b><span class="sub">It’s free.</span></span></li>
@@ -220,12 +222,21 @@
         $('badges-label').hidden = $('badges').hidden = true;
         $('title').textContent = 'Get Pulse to continue';
         $('lead').textContent = 'You’ll record a video in Pulse and upload it to this server.';
+        var copyFailed = false;
         $('get-pulse').addEventListener('click', function () {
           var go = function () { location.href = APP_STORE; };
-          if (!navigator.clipboard) return go();
+          // Without the copy the pairing doesn't survive the install, so stay and say how to
+          // finish it (this tab, "Open it"); the next tap goes to the store.
+          var fail = function () {
+            copyFailed = true;
+            $('copy-failed').hidden = false;
+            $('get-pulse').textContent = 'Open the App Store';
+          };
+          if (copyFailed) return go();
+          if (!navigator.clipboard || !navigator.clipboard.writeText) return fail();
           // The copied link is what carries the pairing through the install: on first
           // launch Pulse offers Apple's paste button to finish pairing.
-          navigator.clipboard.writeText(location.href).then(go, go);
+          navigator.clipboard.writeText(location.href).then(go, fail);
         });
       } else {
         $('main').classList.add('wide');
