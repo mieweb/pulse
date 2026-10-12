@@ -30,10 +30,11 @@ function git(args: string): string | null {
 /**
  * Host of the https pairing links (#252): `https://<host>/pulse/open#…` opens Pulse when it's
  * installed (a Universal Link / App Link) and the store when it isn't. The host serves the iOS and
- * Android association files at its root. `PULSE_LINK_HOST` points a local build at a test host; set
- * it for both the native build and Metro, since the app reads it back from `extra.linkHost`.
+ * Android association files at its root (the mieweb/mieweb.github.io repo). Android lists only the
+ * Play app-signing and upload keys, so a debug build's links verify only after
+ * `adb shell pm set-app-links-user-selection --user cur --package com.mieweb.pulse true mieweb.github.io`.
  */
-const LINK_HOST = process.env.PULSE_LINK_HOST || 'mieweb.github.io';
+const LINK_HOST = 'mieweb.github.io';
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const ci = !!process.env.GITHUB_SHA;
