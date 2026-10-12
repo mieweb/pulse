@@ -18,6 +18,7 @@ import { parseTranscriptLines } from '@/features/transcription/whisper';
 import { copyToClipboard } from '@/utils/clipboard';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { hostOf } from '@/utils/format';
+import { userMessage } from '@/utils/user-message';
 import { generateThumbnailFile } from '@/utils/video';
 
 import { buildBeatManifest } from './beat-manifest';
@@ -275,7 +276,11 @@ class BackgroundUploadManager {
     if (err instanceof TusUploadError && err.statusCode === 426) {
       return STOPPED_MESSAGE['version-too-old'];
     }
-    const reason = err instanceof Error && err.message ? err.message : 'Unknown error';
+    // Only a short, plain reason reaches the toast: a server's body or a native error (an NSURL
+    // domain string, a Java stack) means nothing there, so it's dropped, and the toast keeps just
+    // the instruction. `fail` logs the full error, with the step, for Debug logs.
+    const reason = userMessage(err, '', 'upload');
+    if (!reason) return `Upload failed — ${NEW_LINK}`;
     const live = this.live.get(draftId);
     const detail = live?.status === 'uploading' ? `${PHASE_NAME[live.phase]}: ${reason}` : reason;
     return `Upload failed — ${NEW_LINK} (${detail})`;

@@ -468,10 +468,9 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
           const rawOffset = headerValue(result.headers, 'upload-offset');
           const responseOffset = parseOffset(rawOffset, totalBytes);
           if (responseOffset === null || responseOffset <= offset) {
-            throw new TusUploadError(
-              'Server acknowledged a chunk without a usable Upload-Offset',
-              { retryable: true },
-            );
+            throw new TusUploadError('Server acknowledged a chunk without a usable Upload-Offset', {
+              retryable: true,
+            });
           }
           offset = responseOffset;
           opts.onProgress?.({ bytesSent: offset, totalBytes });

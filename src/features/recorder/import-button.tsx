@@ -1,5 +1,9 @@
 import { Icon } from '@/components/icon';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
+import Animated from 'react-native-reanimated';
+
+import { Opacity } from '@/constants/theme';
+import { CONTROLS_FADE } from './record-button';
 
 /** The "+" import control next to the record button — opens the system video picker to add
  *  an existing device clip as a segment. Shows a spinner while a picked clip is being
@@ -13,24 +17,26 @@ export function ImportButton({
   disabled: boolean;
   busy?: boolean;
 }) {
+  // Busy isn't disabled: it can't be pressed again, but the spinner stays at full strength so it
+  // reads as working, not unavailable. The disabled dim fades with the record controls (it comes
+  // on as a recording starts); the press dim answers the finger at once.
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled || busy}
-      hitSlop={6}
-      accessibilityRole="button"
-      accessibilityLabel="Import video"
-      accessibilityState={{ busy }}
-      style={({ pressed }) => [
-        styles.button,
-        { opacity: disabled || busy ? 0.35 : pressed ? 0.7 : 1 },
-      ]}>
-      {busy ? (
-        <ActivityIndicator size="small" color="#000" />
-      ) : (
-        <Icon name="plus" size={24} weight="medium" tintColor="#000" />
-      )}
-    </Pressable>
+    <Animated.View style={[CONTROLS_FADE, { opacity: disabled ? Opacity.disabled : 1 }]}>
+      <Pressable
+        onPress={onPress}
+        disabled={disabled || busy}
+        hitSlop={6}
+        accessibilityRole="button"
+        accessibilityLabel="Import video"
+        accessibilityState={{ busy, disabled: disabled || busy }}
+        style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
+        {busy ? (
+          <ActivityIndicator size="small" color="#000" />
+        ) : (
+          <Icon name="plus" size={24} weight="medium" tintColor="#000" />
+        )}
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -43,4 +49,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  pressed: { opacity: Opacity.pressed },
 });

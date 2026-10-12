@@ -2,7 +2,9 @@ import { protocolRangeLabel } from '@/features/upload/client-identity';
 
 import { type BuildInfo, commitLabel, utcLabel, versionLabel } from './build-info';
 
-/** One paired server's compatibility with this app, from a live `/capabilities` check. */
+/**
+ * One paired server's compatibility with this app, from a live `/capabilities` check.
+ */
 export type ServerCompat = { server: string; host: string } & (
   | { status: 'checking' }
   | {
@@ -42,11 +44,14 @@ export function formatDetails({
   device,
   protocol,
   servers,
+  trusted,
 }: {
   build: BuildInfo;
   device: DeviceInfo;
   protocol: { min: number; max: number };
   servers: ServerCompat[];
+  /** Hosts that pair without asking ("Don't ask again"); left out of the report when omitted. */
+  trusted?: string[];
 }): string {
   const lines = [
     `Pulse ${versionLabel(build)}`,
@@ -59,6 +64,12 @@ export function formatDetails({
     `Upload protocol: v${protocolRangeLabel(protocol)}`,
     servers.length === 0 ? 'Paired servers: none' : 'Paired servers:',
     ...servers.map((s) => `  ${s.host} — ${compatLabel(s)}`),
+    ...(trusted
+      ? [
+          trusted.length === 0 ? 'Trusted servers: none' : 'Trusted servers:',
+          ...trusted.map((host) => `  ${host}`),
+        ]
+      : []),
   ];
   return lines.join('\n');
 }

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, like } from 'drizzle-orm';
 import { Platform } from 'react-native';
 
 // Type-only import — erased at runtime, so this does NOT create a circular dependency
@@ -65,6 +65,26 @@ export async function markOnboardingComplete(): Promise<void> {
 /** Clear the onboarding flag — the flow will show again on next launch (dev/testing). */
 export async function resetOnboarding(): Promise<void> {
   await db.delete(settings).where(eq(settings.key, ONBOARDING_COMPLETE_KEY));
+}
+
+/**
+ * A tip's row: present once the tip is retired, so it never shows again: shown and then closed (or
+ * its moment passed while it was up), or its action done before it showed (`useTip`).
+ */
+const TIP_KEY_PREFIX = 'tip.';
+
+/** The ids of every retired tip. */
+export async function seenTips(): Promise<Set<string>> {
+  const rows = await db
+    .select({ key: settings.key })
+    .from(settings)
+    .where(like(settings.key, `${TIP_KEY_PREFIX}%`));
+  return new Set(rows.map((r) => r.key.slice(TIP_KEY_PREFIX.length)));
+}
+
+/** Record that a tip is retired (shown and closed, or its action done): it won't show again. */
+export async function markTipSeen(id: string): Promise<void> {
+  await setSetting(TIP_KEY_PREFIX + id, 'seen');
 }
 
 /** One-shot read of a single settings value (`null` if unset). */

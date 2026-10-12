@@ -1,14 +1,13 @@
-// The cursor drives Reanimated shared values from gesture callbacks, a frame loop, and
-// follow-playback effects — imperative mutation by design, which the React-Compiler
-// immutability/refs rules flag. Disabled for this file — the playhead controller.
-/* eslint-disable react-hooks/immutability, react-hooks/refs */
+// The gesture and frame loop reach the latest scrub callbacks through refs written during
+// render — the pattern the React-Compiler refs rule flags. Disabled for this file.
+/* eslint-disable react-hooks/refs */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   cancelAnimation,
   Easing,
-  runOnJS,
+  ReduceMotion,
   scrollTo,
   useAnimatedReaction,
   useAnimatedStyle,
@@ -19,6 +18,7 @@ import Animated, {
   type FrameInfo,
   type SharedValue,
 } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import type { Segment } from '@/db/schema';
 import { segmentOffsets } from '@/utils/segment-window';
@@ -91,10 +91,12 @@ export function PlayheadCursor({
   const offsets = useMemo(() => segmentOffsets(segments), [segments]);
 
   const cursorX = useSharedValue(msToPx(cursor.globalMs, segments, offsets));
-  const draggingRef = useRef(false);
 
   // Scrub state, all driven from the pan + frame loop below.
   const scrubbing = useSharedValue(false); // a finger drag is in progress (vs. playback follow)
+  // The finger is on the knob — the frame loop scrolls and seeks only then. `scrubbing` outlives
+  // it until JS has taken the final seek, so playback-follow can't glide back to a stale position.
+  const fingerDown = useSharedValue(false);
   const fingerTransX = useSharedValue(0); // the pan's translationX, fed to the frame loop
   const baseKnobScreen = useSharedValue(0); // knob centre screen-x captured at drag start
   const sinceSeek = useSharedValue(0); // accumulated frame time for the throttled seek
@@ -102,7 +104,7 @@ export function PlayheadCursor({
   // clip count changes so the frame loop can clamp without reading the segments array on the UI thread.
   const maxContentX = useSharedValue(0);
   useEffect(() => {
-    maxContentX.value = Math.max(0, (segments.length - 1) * STEP + THUMB_WIDTH);
+    maxContentX.set(Math.max(0, (segments.length - 1) * STEP + THUMB_WIDTH));
   }, [segments.length, maxContentX]);
 
   // PLAYBACK follow: when the playhead's content-x nears either viewport edge, nudge the bar's scroll
@@ -111,14 +113,14 @@ export function PlayheadCursor({
   // reorder OR a finger-scrub is active (those own the scroll then), and is idle while cursorX is
   // steady — so a manual scroll on a paused bar is preserved.
   useAnimatedReaction(
-    () => cursorX.value,
+    () => cursorX.get(),
     (x) => {
-      if (suspendAutoScroll.value || scrubbing.value) return;
-      const viewportWidth = viewportW.value;
+      if (suspendAutoScroll.get() || scrubbing.get()) return;
+      const viewportWidth = viewportW.get();
       if (viewportWidth <= 0) return;
-      const maxScroll = Math.max(0, contentW.value - viewportWidth);
+      const maxScroll = Math.max(0, contentW.get() - viewportWidth);
       const knobX = x + SCRUB_INSET; // content-x of the knob/line (matches the translate inset)
-      const currentOffset = scrollOffset.value;
+      const currentOffset = scrollOffset.get();
       let target = currentOffset;
       if (knobX < currentOffset + EDGE_MARGIN) target = knobX - EDGE_MARGIN;
       else if (knobX > currentOffset + viewportWidth - EDGE_MARGIN)
@@ -129,19 +131,29 @@ export function PlayheadCursor({
   );
 
   // Follow playback (smoothed to the ~4Hz timeUpdate cadence) unless the user is dragging.
+  // `scrubbing` is set on the UI thread at touch-down; reading it here is synchronous, so a
+  // playback render landing mid-drag can't start a follow animation under the finger.
+  // Never reduced: it's a position indicator, and under Reduce Motion the default would turn
+  // the glide into 4 Hz jumps.
   useEffect(() => {
-    if (draggingRef.current) return;
-    cursorX.value = withTiming(msToPx(cursor.globalMs, segments, offsets), {
-      duration: 250,
-      easing: Easing.linear,
-    });
-  }, [cursor.globalMs, segments, offsets, cursorX]);
+    if (scrubbing.get()) return;
+    cursorX.set(
+      withTiming(msToPx(cursor.globalMs, segments, offsets), {
+        duration: 250,
+        easing: Easing.linear,
+        reduceMotion: ReduceMotion.Never,
+      }),
+    );
+  }, [cursor.globalMs, segments, offsets, cursorX, scrubbing]);
 
-  // seekToGlobalMs changes identity mid-scrub (it sets selectedId), so the frame loop must NOT
-  // capture it — it calls through this per-render ref. pxToMs / segments / offsets stay on JS.
-  // flushSeek is stable so the frame callback can be memoized (below), registering only once.
+  // seekToGlobalMs and the scrubbing callback change identity mid-scrub (seeking sets
+  // selectedId), so neither the frame loop nor the pan may capture them — both call through
+  // these per-render refs, and the stable wrappers below keep the frame callback registered once
+  // and the pan built once. pxToMs / segments / offsets stay on JS.
   const scrubSeekRef = useRef<(contentX: number) => void>(() => {});
   scrubSeekRef.current = (contentX) => cursor.onScrub(pxToMs(contentX, segments, offsets));
+  const onScrubbingChangeRef = useRef(cursor.onScrubbingChange);
+  onScrubbingChangeRef.current = cursor.onScrubbingChange;
   const flushSeek = useCallback((contentX: number) => scrubSeekRef.current(contentX), []);
 
   // SCRUB follow: while a drag is active, this runs every frame. The knob's screen-x is finger-driven
@@ -153,11 +165,11 @@ export function PlayheadCursor({
   const onScrubFrame = useCallback(
     (frame: FrameInfo) => {
       'worklet';
-      if (!scrubbing.value) return;
-      const vw = viewportW.value;
+      if (!fingerDown.get()) return;
+      const vw = viewportW.get();
       if (vw <= 0) return;
       const dt = (frame.timeSincePreviousFrame ?? 16) / 1000;
-      const raw = baseKnobScreen.value + fingerTransX.value;
+      const raw = baseKnobScreen.get() + fingerTransX.get();
       // Edge-zone auto-scroll trigger uses the wider KNOB_PAD band (clamping the finger to the
       // zone's outer edge also caps the scroll velocity at MAX).
       const knob = Math.min(Math.max(raw, KNOB_PAD), vw - KNOB_PAD);
@@ -165,9 +177,10 @@ export function PlayheadCursor({
       if (knob < KNOB_PAD + EDGE_ZONE) v = -MAX_SCROLL_SPEED * (1 - (knob - KNOB_PAD) / EDGE_ZONE);
       else if (knob > vw - KNOB_PAD - EDGE_ZONE)
         v = MAX_SCROLL_SPEED * (1 - (vw - KNOB_PAD - knob) / EDGE_ZONE);
-      const maxScroll = Math.max(0, contentW.value - vw);
-      const nextOffset = Math.min(Math.max(scrollOffset.value + v * dt, 0), maxScroll);
-      if (nextOffset !== scrollOffset.value) scrollTo(scrollRef, nextOffset, 0, false);
+      const maxScroll = Math.max(0, contentW.get() - vw);
+      const offset = scrollOffset.get();
+      const nextOffset = Math.min(Math.max(offset + v * dt, 0), maxScroll);
+      if (nextOffset !== offset) scrollTo(scrollRef, nextOffset, 0, false);
       // Seek position uses a tighter KNOB/2 clamp — just enough to keep the knob fully on-screen
       // (SCRUB_INSET = KNOB/2). With the wider KNOB_PAD the playhead stopped (KNOB_PAD - SCRUB_INSET)
       // px short of each end, so it never reached globalMs 0 / totalMs and the preview started a
@@ -176,18 +189,20 @@ export function PlayheadCursor({
       // content-x (the playhead/seek position) = knob screen-x − inset + offset.
       const contentX = Math.min(
         Math.max(knobSeek - SCRUB_INSET + nextOffset, 0),
-        maxContentX.value,
+        maxContentX.get(),
       );
-      cursorX.value = contentX; // drives the knob render (cursorX − scrollOffset)
-      sinceSeek.value += dt;
-      if (sinceSeek.value >= SCRUB_INTERVAL_MS / 1000) {
-        sinceSeek.value = 0;
-        runOnJS(flushSeek)(contentX);
+      cursorX.set(contentX); // drives the knob render (cursorX − scrollOffset)
+      const since = sinceSeek.get() + dt;
+      if (since >= SCRUB_INTERVAL_MS / 1000) {
+        sinceSeek.set(0);
+        scheduleOnRN(flushSeek, contentX);
+      } else {
+        sinceSeek.set(since);
       }
     },
     [
       flushSeek,
-      scrubbing,
+      fingerDown,
       viewportW,
       contentW,
       scrollOffset,
@@ -199,52 +214,62 @@ export function PlayheadCursor({
       cursorX,
     ],
   );
-  const autoScroll = useFrameCallback(onScrubFrame, false);
+  // Always running while the playhead is on screen (the preview): an idle frame returns on its
+  // first line (`fingerDown`), and a scrub starts the moment the finger lands. Switching it on
+  // from JS (setActive is JS-only) waited for a JS thread that may be busy seeking.
+  useFrameCallback(onScrubFrame, true);
 
-  // The pan is memoized so GestureDetector doesn't push a new native config on every 4Hz playhead
-  // render — including mid-drag on the very gesture being processed. It only records finger state and
-  // toggles the frame loop (which owns cursorX + the scroll during a scrub); the final settle seek is
-  // flushed here so the end point is exact even if it lands between throttled frames.
-  const { onScrub, onScrubbingChange } = cursor;
+  // Scrub start / end on JS: the preview's badge suppression. The end runs after the final seek
+  // (queued first), so the follow resumes from the settled position; a re-grab that landed in
+  // between owns the scrub instead.
+  const beginScrub = useCallback(() => {
+    onScrubbingChangeRef.current?.(true);
+  }, []);
+  const endScrub = useCallback(() => {
+    if (fingerDown.get()) return;
+    scrubbing.set(false);
+    onScrubbingChangeRef.current?.(false);
+  }, [fingerDown, scrubbing]);
+
+  // The pan runs on the UI thread and is built once (its deps are stable shared values and
+  // callbacks), so a finger move never waits on a JS thread busy seeking, and GestureDetector
+  // never gets a new config mid-drag. It only records finger state and toggles the frame loop
+  // (which owns cursorX + the scroll during a scrub); the final settle seek is flushed here so
+  // the end point is exact even if it lands between throttled frames.
   const pan = useMemo(
     () =>
       Gesture.Pan()
-        .runOnJS(true)
         // Gesture-level hitSlop — the RN prop on the child View isn't honored consistently
         // by gesture-handler across platforms. Kept narrow so thumb taps beside the line land.
         .hitSlop({ left: 4, right: 4 })
         .onBegin(() => {
-          onScrubbingChange?.(true);
-          draggingRef.current = true;
           cancelAnimation(cursorX);
-          baseKnobScreen.value = cursorX.value - scrollOffset.value + SCRUB_INSET;
-          fingerTransX.value = 0;
-          sinceSeek.value = 0;
-          scrubbing.value = true;
-          autoScroll.setActive(true);
+          baseKnobScreen.set(cursorX.get() - scrollOffset.get() + SCRUB_INSET);
+          fingerTransX.set(0);
+          sinceSeek.set(0);
+          fingerDown.set(true);
+          scrubbing.set(true);
+          scheduleOnRN(beginScrub);
         })
         .onUpdate((e) => {
-          fingerTransX.value = e.translationX;
+          fingerTransX.set(e.translationX);
         })
         .onEnd(() => {
-          onScrub(pxToMs(cursorX.value, segments, offsets));
+          scheduleOnRN(flushSeek, cursorX.get());
         })
         .onFinalize(() => {
-          scrubbing.value = false;
-          autoScroll.setActive(false);
-          draggingRef.current = false;
-          onScrubbingChange?.(false);
+          fingerDown.set(false);
+          scheduleOnRN(endScrub);
         }),
     [
-      segments,
-      offsets,
-      onScrub,
-      onScrubbingChange,
+      beginScrub,
+      endScrub,
+      flushSeek,
       cursorX,
       scrollOffset,
-      autoScroll,
       baseKnobScreen,
       fingerTransX,
+      fingerDown,
       scrubbing,
       sinceSeek,
     ],
@@ -253,7 +278,7 @@ export function PlayheadCursor({
   const style = useAnimatedStyle(() => ({
     // + SCRUB_INSET matches the track's left inset so the line stays on the thumb edges; − KNOB/2
     // centers the knob on the line.
-    transform: [{ translateX: cursorX.value - scrollOffset.value - KNOB / 2 + SCRUB_INSET }],
+    transform: [{ translateX: cursorX.get() - scrollOffset.get() - KNOB / 2 + SCRUB_INSET }],
   }));
 
   return (
