@@ -39,7 +39,7 @@ import {
 } from '@/features/upload/trusted-servers';
 import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/client-identity';
 import { useTheme } from '@/hooks/use-theme';
-import { formatCount, hostOf } from '@/utils/format';
+import { formatCount } from '@/utils/format';
 import { formatDateTime } from '@/utils/relative-date';
 import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
@@ -96,7 +96,7 @@ export default function AboutScreen() {
       device,
       protocol: APP_PROTOCOL,
       servers,
-      trusted: trusted.map((server) => hostOf(server)),
+      trusted,
     });
 
   const copyDetails = () => {
@@ -396,14 +396,14 @@ function TrustedServerRow({ server }: { server: string }) {
       <Icon name="checkmark.circle.fill" size={15} tintColor={theme.textSecondary} scalesWithText />
       {/* Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
       <ThemedText style={styles.serverHost} numberOfLines={1} ellipsizeMode="middle">
-        {hostOf(server)}
+        {server}
       </ThemedText>
       {/* No confirm: forgetting one only means its next link asks again. */}
       <Pressable
         onPress={() => void untrustServer(server)}
         hitSlop={8}
         accessibilityRole="button"
-        accessibilityLabel={`Stop trusting ${hostOf(server)}`}
+        accessibilityLabel={`Stop trusting ${server}`}
         style={({ pressed }) => pressed && styles.pressedIcon}>
         <Icon name="trash" size={18} tintColor={theme.accent} />
       </Pressable>
