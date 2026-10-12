@@ -86,11 +86,14 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   const url = useLinkingURL();
   const handledUrl = useRef<string | null>(null);
   const { showToast } = useToast();
-  const [request, setRequest] = useState<PairingRequest | null>(null);
-  const requestRef = useRef(request);
-  useEffect(() => {
-    requestRef.current = request;
-  }, [request]);
+  const [request, setRequestState] = useState<PairingRequest | null>(null);
+  // The current request for `closed`, which can run before this render's effects would update a
+  // mirror: kept in step at every set instead.
+  const requestRef = useRef<PairingRequest | null>(null);
+  const setRequest = useCallback((next: PairingRequest | null) => {
+    requestRef.current = next;
+    setRequestState(next);
+  }, []);
   const sheetOpen = useRef(false);
   // Bumped when the sheet goes away while a newer request waits, so the effect below shows it.
   const [sheetGone, bumpSheetGone] = useReducer((n: number) => n + 1, 0);
@@ -120,7 +123,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
     if (sheetOpen.current && router.canGoBack()) router.back();
     sheetOpen.current = false;
     setRequest(null);
-  }, []);
+  }, [setRequest]);
 
   const addToPool = useCallback(
     // `trusted`: paired without the sheet. `trustNotSaved`: "Don't ask again" was ticked but
@@ -195,7 +198,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
           else setRequest({ kind: 'confirm', link, host: hostOf(link.server) });
         });
     },
-    [addToPool, showToast],
+    [addToPool, setRequest, showToast],
   );
 
   useEffect(() => {
@@ -223,7 +226,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
         if (found?.kind === 'pasteboard') setRequest({ kind: 'paste' });
       })
       .catch(() => {});
-  }, [confirmLink]);
+  }, [confirmLink, setRequest]);
 
   const sheet = useMemo<PairingSheet>(
     () => ({
@@ -268,7 +271,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
         setRequest(null);
       },
     }),
-    [request, closeSheet, addToPool, showToast],
+    [request, closeSheet, addToPool, setRequest, showToast],
   );
 
   return <PairingSheetContext.Provider value={sheet}>{children}</PairingSheetContext.Provider>;

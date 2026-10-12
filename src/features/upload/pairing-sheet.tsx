@@ -1,4 +1,5 @@
 import { ClipboardPasteButton } from 'expo-clipboard';
+import { type NativeStackNavigationProp, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,8 +43,20 @@ export function PairingSheet() {
   const shown = useRef(request);
   const onClosed = useRef(closed);
   const answered = useRef(false);
+  // From the moment the sheet starts to close, `shown` stays the request it was closed on: one
+  // that arrives during the closing animation isn't the one dismissed, so the provider opens the
+  // sheet again for it. A swipe that's let go of reopens (`closing: false`) and tracks again.
+  const closing = useRef(false);
+  const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
+  useEffect(
+    () =>
+      navigation.addListener('transitionStart', (e) => {
+        closing.current = e.data.closing;
+      }),
+    [navigation],
+  );
   useEffect(() => {
-    if (request) shown.current = request;
+    if (request && !closing.current) shown.current = request;
     onClosed.current = closed;
   }, [request, closed]);
   useEffect(
