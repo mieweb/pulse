@@ -30,7 +30,10 @@ export type ClipRender = {
 };
 
 /** The rendering-relevant part of an `editState` — everything but undo/redo history. */
-type ParsedEdit = Omit<ClipRender, 'file' | 'inMs' | 'outMs'> & { startMs: number; endMs: number };
+export type ParsedEdit = Omit<ClipRender, 'file' | 'inMs' | 'outMs'> & {
+  startMs: number;
+  endMs: number;
+};
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 

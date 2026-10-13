@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -9,7 +9,7 @@ import {
   editedThumbRelPath,
   thumbRelPath,
 } from '@/utils/file-store';
-import { editTimelineMs, parseEdit } from '@/utils/segment-window';
+import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
@@ -224,6 +224,25 @@ export async function deleteSegment(segmentId: string): Promise<void> {
  * — a legacy baked file included, dropped once the row no longer points at it.
  */
 export async function setEditState(segmentId: string, editState: string): Promise<void> {
+  await saveEdit(segmentId, editState);
+}
+
+/** `setEditState` for a typed edit, stored in its canonical form (which `parseEdit` reads). */
+export async function setClipEdit(segmentId: string, edit: ParsedEdit): Promise<void> {
+  const editState = canonicalEdit(JSON.stringify(edit));
+  if (!editState) throw new Error('Unusable clip edit');
+  await saveEdit(segmentId, editState);
+}
+
+// Edit covers are revision-stamped with `Date.now()`, kept strictly increasing so two edits saved
+// in the same millisecond never render into (or delete) the same file.
+let lastCoverRev = 0;
+function coverRev(): number {
+  lastCoverRev = Math.max(Date.now(), lastCoverRev + 1);
+  return lastCoverRev;
+}
+
+async function saveEdit(segmentId: string, editState: string): Promise<void> {
   const edit = parseEdit(editState);
   const durationMs = editTimelineMs(editState);
   if (!edit || durationMs == null) throw new Error('The editor returned an unusable edit');
@@ -236,21 +255,40 @@ export async function setEditState(segmentId: string, editState: string): Promis
     .update(segments)
     .set({ editState, editedDurationMs: durationMs, editedFilename: null })
     .where(eq(segments.id, segmentId));
-  if (seg.editedFilename) deleteSegmentFile(seg.editedFilename);
-  const coverRel = editCoverRelPath(seg.draftId, segmentId, Date.now());
+  await afterCommit('save edit', () => touchDraft(seg.draftId));
+  await afterCommit('save edit', async () => {
+    if (seg.editedFilename) deleteSegmentFile(seg.editedFilename);
+  });
+  const coverRel = editCoverRelPath(seg.draftId, segmentId, coverRev());
   const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(coverRel), {
     editState,
     startMs: edit.startMs,
   });
   if (ok) {
-    await db.update(segments).set({ thumbnail: coverRel }).where(eq(segments.id, segmentId));
-    // Drop the replaced cover only now that the row points away from it, so a failure above never
-    // leaves the segment referencing a deleted file; the pristine thumb stays on disk for a reset.
-    if (seg.thumbnail && seg.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
-      deleteSegmentFile(seg.thumbnail);
-    }
+    // Latest wins: covers can land out of order, so this one goes in only while the row still
+    // holds the edit it shows (a newer edit renders its own). The cover it replaces is read here
+    // too, not from `seg`, so a cover that landed meanwhile isn't orphaned.
+    const current = db.transaction((tx) => {
+      const row = tx
+        .select({ thumbnail: segments.thumbnail })
+        .from(segments)
+        .where(and(eq(segments.id, segmentId), eq(segments.editState, editState)))
+        .get();
+      if (row) {
+        tx.update(segments).set({ thumbnail: coverRel }).where(eq(segments.id, segmentId)).run();
+      }
+      return row;
+    });
+    await afterCommit('save edit', async () => {
+      if (!current) {
+        deleteSegmentFile(coverRel);
+      } else if (current.thumbnail && current.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
+        // Drop the replaced cover only now that the row points away from it, so a failure above
+        // never leaves the segment referencing a deleted file; the pristine thumb stays for a reset.
+        deleteSegmentFile(current.thumbnail);
+      }
+    });
   }
-  await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
 }
 
 /**
@@ -261,28 +299,40 @@ export async function resetEdit(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
   await beginClipMutation(seg.draftId);
-  // Revert the cover to the pristine original's thumbnail.
-  const thumbRel = thumbRelPath(seg.draftId, segmentId);
-  const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(thumbRel));
+  // As in `saveEdit`: the edit is cleared first, then the cover follows under the same
+  // latest-wins rule, so an edit made while the pristine thumb renders is never overwritten.
   await db
     .update(segments)
-    .set({
-      editedFilename: null,
-      editedDurationMs: null,
-      editState: null,
-      thumbnail: ok ? thumbRel : null,
-    })
+    .set({ editedFilename: null, editedDurationMs: null, editState: null })
     .where(eq(segments.id, segmentId));
   await afterCommit('revert edits', () => touchDraft(seg.draftId));
+  // Revert the cover to the pristine original's thumbnail, only while the clip is still unedited
+  // (a newer edit renders its own cover, and the pristine thumb stays on disk for a later reset).
+  const thumbRel = thumbRelPath(seg.draftId, segmentId);
+  const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(thumbRel));
+  const current = db.transaction((tx) => {
+    const row = tx
+      .select({ thumbnail: segments.thumbnail })
+      .from(segments)
+      .where(and(eq(segments.id, segmentId), isNull(segments.editState)))
+      .get();
+    if (row) {
+      tx.update(segments)
+        .set({ thumbnail: ok ? thumbRel : null })
+        .where(eq(segments.id, segmentId))
+        .run();
+    }
+    return row;
+  });
   await afterCommit('revert edits', async () => {
     // Drop the now-orphaned edited file and thumb only after the row no longer references them.
     if (seg.editedFilename) {
       deleteSegmentFile(seg.editedFilename);
       deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
     }
-    // The prior cover may be from an older revision than `editedFilename` (kept as a fallback
-    // after a failed re-edit thumb generation) — drop it too, but never the fresh `thumbRel`.
-    if (seg.thumbnail && seg.thumbnail !== thumbRel) deleteSegmentFile(seg.thumbnail);
+    // The prior cover, read as it was replaced (it may be from an older revision than
+    // `editedFilename`, or an edit's cover that landed meanwhile) — never the fresh `thumbRel`.
+    if (current?.thumbnail && current.thumbnail !== thumbRel) deleteSegmentFile(current.thumbnail);
   });
 }
 
