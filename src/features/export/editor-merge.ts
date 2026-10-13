@@ -1,9 +1,10 @@
-import { merge, type MergeClip } from '@mieweb/pulse-editor';
+import { merge, type MergeClip, type MergeOptions } from '@mieweb/pulse-editor';
 
 import type { Segment } from '@/db/schema';
 import { getRecorderFormat } from '@/features/recorder/recorder-format';
 import type { MergedOutput } from '@/features/upload/types';
 import { absolutize } from '@/utils/file-store';
+import type { RecorderFormat } from '@/utils/import-normalization';
 import { clipRender } from '@/utils/segment-window';
 
 import { REELS_TARGET } from './merge-signature';
@@ -31,25 +32,29 @@ export function toMergeClip(s: Segment): MergeClip {
   };
 }
 
+/**
+ * The export's merge settings: the reels canvas, in the recorder's audio layout. A preview of the
+ * draft takes the same object, since it decides which clips the merge copies and which it renders.
+ */
+export function mergeOptions(recorder: RecorderFormat): MergeOptions {
+  return {
+    width: REELS_TARGET.targetWidth,
+    height: REELS_TARGET.targetHeight,
+    fps: REELS_TARGET.targetFps,
+    bitrate: EXPORT_BITRATE,
+    audio: { sampleRate: recorder.audioSampleRate, channels: recorder.audioChannels },
+  };
+}
+
 /** Merge a draft's clips with pulse-editor onto the reels canvas, in the recorder's audio layout. */
 export async function mergeWithEditor(
   segments: Segment[],
   signal: AbortSignal,
   onProgress: (progress: number) => void,
 ): Promise<MergedOutput> {
-  const recorder = await getRecorderFormat();
+  const options = mergeOptions(await getRecorderFormat());
   const started = Date.now();
-  const result = await merge(
-    segments.map(toMergeClip),
-    {
-      width: REELS_TARGET.targetWidth,
-      height: REELS_TARGET.targetHeight,
-      fps: REELS_TARGET.targetFps,
-      bitrate: EXPORT_BITRATE,
-      audio: { sampleRate: recorder.audioSampleRate, channels: recorder.audioChannels },
-    },
-    { onProgress, signal },
-  );
+  const result = await merge(segments.map(toMergeClip), options, { onProgress, signal });
   console.info(
     `[export] merged ${segments.length} clips with pulse-editor in ${Date.now() - started} ms ` +
       `(${result.encoded ? 'encoded' : 'joined without re-encoding'}, ` +
