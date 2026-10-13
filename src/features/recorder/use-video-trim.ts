@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { Alert } from 'react-native';
 import VideoTrim, { showEditor, type Spec } from 'react-native-video-trim';
 
-import { deleteSegment, setEditState } from '@/db/drafts';
+import { setEditState } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
 import { Accent } from '@/constants/theme';
+import { useToast } from '@/features/toast/toast-provider';
 import { absolutize } from '@/utils/file-store';
+import { userMessage } from '@/utils/user-message';
 
 import {
   editStateSpeed,
@@ -23,16 +24,22 @@ const Native = VideoTrim as Spec;
  * `editState` applied (settings and undo/redo history), so it reopens where the user left off.
  * Save encodes nothing (`renderOnSave: false`): the editor closes at once and hands back the new
  * `editState`, stored via `setEditState` — the preview applies it live and the export's merge
- * renders it, once. The editor's trash button deletes the clip.
+ * renders it, once. The editor's trash button hands the clip to `onDelete`, the recorder's own
+ * delete, so it behaves exactly like the preview's 🗑 and drag-to-trash.
  */
-export function useVideoTrim(draftId: string | null) {
+export function useVideoTrim(draftId: string | null, onDelete: (segmentId: string) => void) {
   // The editor is fire-and-forget (showEditor) and its events carry no correlation id, so we
   // stash which segment/draft the current session belongs to and read it back in the events.
   const pendingSegmentId = useRef<string | null>(null);
   const draftIdRef = useRef(draftId);
+  // The listeners below are attached once; they reach the recorder's current delete through this.
+  const onDeleteRef = useRef(onDelete);
   useEffect(() => {
     draftIdRef.current = draftId;
-  }, [draftId]);
+    onDeleteRef.current = onDelete;
+  }, [draftId, onDelete]);
+
+  const { showToast } = useToast();
 
   // Recent custom speeds, offered in the editor's speed menu next time (#222).
   const customSpeeds = useRef<readonly number[]>([]);
@@ -52,8 +59,11 @@ export function useVideoTrim(draftId: string | null) {
           try {
             await setEditState(segmentId, editState);
           } catch (e) {
-            console.warn('[trim] failed to save edit', e);
-            Alert.alert('Couldn’t save the edit', 'Try again.');
+            showToast({
+              kind: 'error',
+              title: 'Couldn’t save the edit',
+              message: userMessage(e, 'Try again.', 'trim'),
+            });
             return;
           }
           const speeds = withCustomSpeed(customSpeeds.current, editStateSpeed(editState));
@@ -63,27 +73,27 @@ export function useVideoTrim(draftId: string | null) {
           }
         })();
       }),
-      // The editor confirmed the delete itself and has closed.
+      // The trash was tapped and the editor has closed. No confirm on either side: the recorder
+      // deletes it at once, like every other delete.
       Native.onDelete(() => {
         const segmentId = pendingSegmentId.current;
         pendingSegmentId.current = null;
-        if (!segmentId) return;
-        deleteSegment(segmentId).catch((e) => {
-          console.warn('[trim] failed to delete clip', e);
-          Alert.alert('Couldn’t delete the clip', 'Try again.');
-        });
+        if (segmentId) onDeleteRef.current(segmentId);
       }),
       Native.onCancel(() => {
         pendingSegmentId.current = null;
       }),
       Native.onError(({ message }) => {
         pendingSegmentId.current = null;
-        console.warn('[trim] editor error', message);
-        Alert.alert('Couldn’t edit the clip', message || 'The editor reported an error.');
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t edit the clip',
+          message: userMessage(message, 'The editor reported an error.', 'trim'),
+        });
       }),
     ];
     return () => subs.forEach((s) => s.remove());
-  }, []);
+  }, [showToast]);
 
   const openTrim = (segment: Segment) => {
     if (!draftIdRef.current) return;
@@ -100,13 +110,9 @@ export function useVideoTrim(draftId: string | null) {
       // enableEditTools defaults true (crop/rotate/flip/mute/speed exposed).
       editState: segment.editState ?? undefined,
       speedOptions: speedMenu(customSpeeds.current),
-      // Deleting is the one irreversible action here, so it keeps its confirm (same copy as the
-      // preview's 🗑).
+      // Deletes at once, like the preview's 🗑 and drag-to-trash (see onDelete).
       enableDeleteButton: true,
-      deleteDialogTitle: 'Delete clip?',
-      deleteDialogMessage: 'This clip will be removed from the draft.',
-      deleteDialogCancelText: 'Cancel',
-      deleteDialogConfirmText: 'Delete',
+      enableDeleteDialog: false,
     });
   };
 

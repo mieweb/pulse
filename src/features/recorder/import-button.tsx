@@ -1,6 +1,10 @@
 import { Icon } from '@/components/icon';
 import { ProgressRing } from '@/components/progress-ring';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
+import Animated from 'react-native-reanimated';
+
+import { Opacity } from '@/constants/theme';
+import { CONTROLS_FADE } from './record-button';
 
 /** The "+" import control next to the record button — opens the system video picker to add
  *  an existing device clip as a segment. While a picked clip is being normalized/copied into
@@ -17,30 +21,31 @@ export function ImportButton({
   progress?: number | null;
 }) {
   const ring = busy ? progress : null;
+  // Busy isn't disabled: it can't be pressed again, but the spinner (or the ring) stays at full
+  // strength so it reads as working, not unavailable. The disabled dim fades with the record
+  // controls (it comes on as a recording starts); the press dim answers the finger at once.
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled || busy}
-      hitSlop={6}
-      accessibilityRole="button"
-      accessibilityLabel="Import video"
-      accessibilityState={{ busy }}
-      accessibilityValue={
-        ring != null ? { min: 0, max: 100, now: Math.round(ring * 100) } : undefined
-      }
-      style={({ pressed }) => [
-        styles.button,
-        // The ring stays at full strength so its progress reads; the spinner dims as before.
-        { opacity: disabled || (busy && ring == null) ? 0.35 : pressed ? 0.7 : 1 },
-      ]}>
-      {ring != null ? (
-        <ProgressRing progress={ring} color="#000" trackColor="rgba(0,0,0,0.15)" />
-      ) : busy ? (
-        <ActivityIndicator size="small" color="#000" />
-      ) : (
-        <Icon name="plus" size={24} weight="medium" tintColor="#000" />
-      )}
-    </Pressable>
+    <Animated.View style={[CONTROLS_FADE, { opacity: disabled ? Opacity.disabled : 1 }]}>
+      <Pressable
+        onPress={onPress}
+        disabled={disabled || busy}
+        hitSlop={6}
+        accessibilityRole="button"
+        accessibilityLabel="Import video"
+        accessibilityState={{ busy, disabled: disabled || busy }}
+        accessibilityValue={
+          ring != null ? { min: 0, max: 100, now: Math.round(ring * 100) } : undefined
+        }
+        style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
+        {ring != null ? (
+          <ProgressRing progress={ring} color="#000" trackColor="rgba(0,0,0,0.15)" />
+        ) : busy ? (
+          <ActivityIndicator size="small" color="#000" />
+        ) : (
+          <Icon name="plus" size={24} weight="medium" tintColor="#000" />
+        )}
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -53,4 +58,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  pressed: { opacity: Opacity.pressed },
 });

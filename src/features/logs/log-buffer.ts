@@ -10,12 +10,12 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
 /**
  * Blank out capability tokens — they're live upload credentials, and logs get shared. Covers a
- * `token=` query param (URLs, `pulsecam://` pairing links), a `Bearer` header, and a `"token"`
- * JSON field.
+ * `token=` param (URLs, pairing links in either form, the https one's in its fragment), a
+ * `Bearer` header, and a `"token"` JSON field.
  */
 export function redact(text: string): string {
   return text
-    .replace(/([?&]token=)[^&\s"'<>]+/gi, '$1[redacted]')
+    .replace(/([?&#]token=)[^&\s"'<>]+/gi, '$1[redacted]')
     .replace(/(Bearer\s+)[^\s"',]+/gi, '$1[redacted]')
     .replace(/("token"\s*:\s*)"[^"]*"/gi, '$1"[redacted]"');
 }

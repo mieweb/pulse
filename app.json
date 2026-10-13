@@ -3,7 +3,7 @@
     "name": "Pulse",
     "slug": "pulse-camera",
     "owner": "mieweb",
-    "version": "2.2.1",
+    "version": "2.2.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pulsecam",
@@ -33,10 +33,14 @@
         "android.permission.RECORD_AUDIO"
       ],
       "blockedPermissions": [
-        "android.permission.SYSTEM_ALERT_WINDOW"
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
       ],
       "package": "com.mieweb.pulse",
-      "versionCode": 20210
+      "versionCode": 20240
     },
     "web": {
       "output": "static",
@@ -65,10 +69,7 @@
         {
           "photosPermission": "Allow Pulse to access your photos to import videos into your drafts.",
           "savePhotosPermission": "Allow Pulse to save exported videos to your photo library.",
-          "granularPermissions": [
-            "photo",
-            "video"
-          ]
+          "granularPermissions": []
         }
       ],
       [

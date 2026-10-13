@@ -1,6 +1,7 @@
-import { Platform, StyleSheet, Text, type TextProps } from 'react-native';
+import { StyleSheet, Text, type TextProps } from 'react-native';
 
-import { Fonts, SystemColors, ThemeColor } from '@/constants/theme';
+import { MaxTextScale, ThemeColor } from '@/constants/theme';
+import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -23,6 +24,7 @@ export type ThemedTextProps = TextProps & {
     | 'body'
     | 'callout'
     | 'subheadline'
+    | 'subheadlineEmphasized'
     | 'footnote'
     | 'caption1'
     | 'caption2'
@@ -32,16 +34,30 @@ export type ThemedTextProps = TextProps & {
     | 'subtitle'
     | 'small'
     | 'smallBold'
-    | 'link'
-    | 'linkPrimary'
-    | 'code';
+    | 'link';
   themeColor?: ThemeColor;
 };
 
-export function ThemedText({ style, type = 'default', themeColor, ...rest }: ThemedTextProps) {
+export function ThemedText({
+  style,
+  type = 'default',
+  themeColor,
+  maxFontSizeMultiplier = MaxTextScale,
+  ...rest
+}: ThemedTextProps) {
   const theme = useTheme();
+  // Re-measured when the system text size changes (see `useTextSizeKey`).
+  const sizeKey = useTextSizeKey();
 
-  return <Text style={[{ color: theme[themeColor ?? 'text'] }, styles[type], style]} {...rest} />;
+  return (
+    <Text
+      key={sizeKey}
+      style={[{ color: theme[themeColor ?? 'text'] }, styles[type], style]}
+      // Grows with the system text size up to the app's ceiling (see `MaxTextScale`).
+      maxFontSizeMultiplier={Math.min(maxFontSizeMultiplier ?? MaxTextScale, MaxTextScale)}
+      {...rest}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
@@ -54,6 +70,8 @@ const styles = StyleSheet.create({
   body: { fontSize: 17, lineHeight: 22, fontWeight: 400 },
   callout: { fontSize: 16, lineHeight: 21, fontWeight: 400 },
   subheadline: { fontSize: 15, lineHeight: 20, fontWeight: 400 },
+  // Subheadline, semibold: small text actions ("Remove all", "Copy details") and labels.
+  subheadlineEmphasized: { fontSize: 15, lineHeight: 20, fontWeight: 600 },
   footnote: { fontSize: 13, lineHeight: 18, fontWeight: 400 },
   caption1: { fontSize: 12, lineHeight: 16, fontWeight: 400 },
   caption2: { fontSize: 11, lineHeight: 13, fontWeight: 400 },
@@ -63,13 +81,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 34, lineHeight: 41, fontWeight: 700 }, // → Large Title
   subtitle: { fontSize: 28, lineHeight: 34, fontWeight: 600 }, // → Title 1 (emphasized)
   small: { fontSize: 15, lineHeight: 20, fontWeight: 400 }, // → Subheadline
-  smallBold: { fontSize: 15, lineHeight: 20, fontWeight: 600 }, // → Subheadline (emphasized)
+  smallBold: { fontSize: 15, lineHeight: 20, fontWeight: 600 }, // → subheadlineEmphasized
   link: { fontSize: 15, lineHeight: 20, fontWeight: 400 }, // → Subheadline
-  linkPrimary: { fontSize: 15, lineHeight: 20, fontWeight: 400, color: SystemColors.blue.light }, // iOS system blue
-  code: {
-    fontFamily: Fonts.mono,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: Platform.select({ android: 700 }) ?? 400,
-  },
 });

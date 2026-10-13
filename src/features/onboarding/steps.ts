@@ -1,95 +1,31 @@
-import type { SymbolViewProps } from 'expo-symbols';
-import type { ImageSourcePropType } from 'react-native';
+import type { IconName } from '@/components/icon';
 
-/** A feature line. `icon` is the SAME SF Symbol the app uses for that action, so the
- *  tour teaches the real glyph; omit it for conceptual lines (falls back to a dot). */
-export type Bullet = {
-  icon?: SymbolViewProps['name'];
-  /** Render the red record-button glyph (takes precedence over `icon`) for the shutter line. */
-  record?: boolean;
+/** One row of the welcome screen: what Pulse does, in a glyph, a few words and a line. */
+export type WelcomeFeature = {
+  icon: IconName;
+  title: string;
   text: string;
 };
 
-/** A single onboarding page: a hero (logo image or SF Symbol) plus a bulleted feature list. */
-export type OnboardingStep = {
-  key: string;
-  /** SF Symbol hero (via expo-symbols). Ignored when `image` is set. */
-  symbol?: SymbolViewProps['name'];
-  /** Image hero (e.g. the Pulse logo) — takes precedence over `symbol`. */
-  image?: ImageSourcePropType;
-  title: string;
-  bullets: readonly Bullet[];
-};
-
 /**
- * The first-run tour. Three swipes that name every working feature next to the actual
- * in-app icon that triggers it, so a new user learns the glyphs as they learn the app.
+ * The welcome screen's rows, in the shape of Apple's own "Welcome to …" screens: what the app is
+ * for, not how each button works. The controls are taught by one-time tips beside them, the
+ * first time each is useful (features/tips).
  */
-export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
+export const WELCOME_FEATURES: readonly WelcomeFeature[] = [
   {
-    key: 'welcome',
-    image: require('../../../assets/images/pulse-logo-master-2048.png'),
-    title: 'Welcome to Pulse',
-    bullets: [
-      { text: 'Everything runs on your device — your recordings are never uploaded.' },
-      { text: 'No account, no sign-in — get started in seconds.' },
-      { text: 'Swipe through to learn what every button does.' },
-    ],
+    icon: 'video.fill',
+    title: 'Record in clips',
+    text: 'Tap or hold the shutter. Every take adds a clip you can trim, reorder or remove.',
   },
   {
-    key: 'record',
-    symbol: 'video.fill',
-    title: 'Record & arrange',
-    bullets: [
-      {
-        record: true,
-        text: 'Hold the shutter to record a clip; lift to pause, hold again to add the next one.',
-      },
-      {
-        icon: 'play.fill',
-        text: 'Tap a clip in the segment bar to open its preview — it starts playing right away.',
-      },
-      {
-        icon: 'scissors',
-        text: 'Tap the scissors in a clip’s preview to trim its start and end.',
-      },
-      {
-        icon: 'line.3.horizontal',
-        text: 'Press and hold a clip, then drag to reorder your timeline.',
-      },
-      { icon: 'trash', text: 'Drag a clip onto the trash to delete it from the segment bar.' },
-      {
-        icon: 'arrow.triangle.2.circlepath.camera',
-        text: 'Flip cameras, switch lenses, pinch to zoom, fire the torch, steady your shot with stabilization, or mute audio.',
-      },
-    ],
+    icon: 'captions.bubble.fill',
+    title: 'Captions on your phone',
+    text: 'Pulse writes captions on this device, so your video doesn’t go anywhere to get them.',
   },
   {
-    key: 'finish',
-    symbol: 'captions.bubble.fill',
-    title: 'Caption, polish & share',
-    bullets: [
-      {
-        icon: 'sparkles',
-        text: 'Every clip is captioned automatically — tap Model to choose a transcription model, from Base to multilingual Large Turbo.',
-      },
-      {
-        icon: 'captions.bubble',
-        text: 'Open the caption editor to split, merge, edit, or delete individual cues.',
-      },
-      {
-        icon: 'arrow.uturn.backward',
-        text: 'Nudge any cue ±100 ms with the playhead, or reset it back to auto.',
-      },
-      { icon: 'arrow.right', text: 'Export merges all your clips into one seamless video.' },
-      {
-        icon: 'square.and.arrow.up',
-        text: 'Share via the system sheet, or save to Photos or Files.',
-      },
-      {
-        icon: 'square.and.arrow.down',
-        text: 'Rename, delete, and reopen drafts at home, or move them between devices as .pulse files.',
-      },
-    ],
+    icon: 'square.and.arrow.up',
+    title: 'Share it your way',
+    text: 'Save to Photos or Files, share it anywhere, or upload to a server you’ve paired.',
   },
 ];

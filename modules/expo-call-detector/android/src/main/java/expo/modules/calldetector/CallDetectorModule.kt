@@ -79,6 +79,8 @@ class CallDetectorModule : Module() {
     // recorder stops the capture session on background. Sentinel contract per the JS declaration.
     Function("beginBackgroundTask") { -1 }
     Function("endBackgroundTask") { _: Int -> }
+    // iOS-only: Android plays haptics while recording without asking.
+    Function("allowHapticsWhileRecording") { _: Boolean -> }
 
     OnStartObserving {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

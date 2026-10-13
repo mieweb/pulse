@@ -2,23 +2,26 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ActionMenu, type Anchor, type MenuAction } from '@/components/action-menu';
+import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { EaseOut, ListReflowMs } from '@/constants/motion';
+import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { deleteDraft, draftListQuery, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
+import { DraftMenu } from '@/features/home/draft-menu';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
+import { useToast } from '@/features/toast/toast-provider';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
-import { watchUpload } from '@/features/upload/link-actions';
-import { uploads } from '@/features/upload/upload-manager';
-import { useWatchLink } from '@/features/upload/use-uploads';
 import { useNow } from '@/hooks/use-now';
 import { useTheme, useThemeToggle } from '@/hooks/use-theme';
+import { formatCount } from '@/utils/format';
+import { userMessage } from '@/utils/user-message';
 
 // Dev-only seeding controls, behind a `__DEV__`-guarded require so the component and `@/dev/seed`
 // (with its perf fixtures) are dead-code-eliminated from the production bundle, not just hidden.
@@ -27,10 +30,16 @@ const DevSeedRow = __DEV__
     (require('@/dev/dev-seed-row') as typeof import('@/dev/dev-seed-row')).DevSeedRow
   : null;
 
-type DraftRef = { id: string; name: string | null; anchor: Anchor };
-
 /** How often the cards' date labels ("Just now", "Today, 2:30 PM", …) re-evaluate. */
 const DATE_LABEL_REFRESH_MS = 60_000;
+
+// A deleted card closes its gap with the cards below gliding, instead of every one of them jumping
+// a row.
+const LIST_REFLOW = LinearTransition.duration(ListReflowMs).easing(EaseOut);
+// Only an exit, no `entering`: the list mounts cells as they scroll into view, and those would
+// fade in while scrolling. Opacity only, so it stays under Reduce Motion (`Never`): gentler than
+// the card vanishing, and nothing moves.
+const CARD_EXIT = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 export default function HomeScreen() {
   // First-run gate: pushes the onboarding tour over home when not yet completed.
@@ -44,7 +53,6 @@ export default function HomeScreen() {
   const now = useNow(DATE_LABEL_REFRESH_MS);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   // The draft whose action menu (rename, delete, …) is open; null when closed.
-  const [actionsDraft, setActionsDraft] = useState<DraftRef | null>(null);
   // Name shown ahead of the DB write; dropped once the live query reflects it.
   const [pendingRename, setPendingRename] = useState<{ id: string; name: string | null } | null>(
     null,
@@ -57,6 +65,7 @@ export default function HomeScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const { busy, state: transferState, shareDrafts, importDrafts } = useDraftTransfer();
+  const { showToast } = useToast();
 
   // Appearance preference (system-follow / pinned light / pinned dark), persisted so it
   // survives restarts (see `useTheme`).
@@ -94,6 +103,9 @@ export default function HomeScreen() {
     });
   };
 
+  const exporting = transferState === 'exporting';
+  const shareDisabled = selectedIds.size === 0 || (busy && !exporting);
+
   const toggleSelectAll = () =>
     setSelectedIds(allSelected ? new Set() : new Set(visibleDrafts.map((d) => d.id)));
 
@@ -102,101 +114,39 @@ export default function HomeScreen() {
     const name = input || null;
     if (name === currentName) return;
     setPendingRename({ id: draftId, name });
-    renameDraft(draftId, name).catch(() => {
+    renameDraft(draftId, name).catch((e) => {
       setPendingRename(null);
-      Alert.alert('Couldn’t rename the draft', 'Try again.');
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t rename the draft',
+        message: userMessage(e, 'Try again.', 'rename'),
+      });
     });
   };
 
-  const confirmDelete = (draft: DraftRef) => {
-    Alert.alert(
-      'Delete draft?',
-      `“${draft.name || 'Untitled'}” and its clips will be permanently deleted.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            setDeletingIds((prev) => new Set(prev).add(draft.id));
-            // Delete isn't offered while uploading (see `menuActions`) and `deleteDraft` refuses
-            // an uploading draft, so there's no live run to stop first.
-            deleteDraft(draft.id).catch(() => {
-              setDeletingIds((prev) => {
-                const next = new Set(prev);
-                next.delete(draft.id);
-                return next;
-              });
-              Alert.alert('Couldn’t delete the draft', 'Try again.');
-            });
-          },
-        },
-      ],
-    );
+  // No confirm dialog: the card goes at once.
+  const removeDraft = (draftId: string) => {
+    setDeletingIds((prev) => new Set(prev).add(draftId));
+    // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft` refuses an
+    // uploading draft, so there's no live run to stop first.
+    deleteDraft(draftId).catch((e: unknown) => {
+      // The card comes back, so it never vanishes without its delete having happened.
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(draftId);
+        return next;
+      });
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t delete the draft',
+        message: userMessage(e, 'Try again.', 'delete'),
+      });
+    });
   };
 
   // Built per-render from the open draft; new actions are added here.
-  const actionsDraftStatus = actionsDraft
-    ? drafts.find((d) => d.id === actionsDraft.id)?.uploadStatus
-    : null;
-  // An uploaded draft whose card offers Share (a link safe to share) also gets Watch here; one
-  // carrying the upload token is Watch on the card already. Only while the link still opens.
-  const watchLink = useWatchLink(actionsDraft?.id ?? null);
-  const watchAction: MenuAction[] = watchLink?.shareable
-    ? [
-        {
-          key: 'watch',
-          label: 'Watch',
-          icon: 'play.fill',
-          onPress: () => {
-            setActionsDraft(null);
-            void watchUpload(watchLink.url);
-          },
-        },
-      ]
-    : [];
-  // An uploading draft is LOCKED (see `assertNotUploading`): Cancel is its only action.
-  const menuActions: MenuAction[] = !actionsDraft
-    ? []
-    : actionsDraftStatus === 'uploading'
-      ? [
-          {
-            key: 'cancel-upload',
-            label: 'Cancel upload',
-            icon: 'xmark',
-            onPress: () => {
-              const draftId = actionsDraft.id;
-              setActionsDraft(null);
-              void uploads.cancel(draftId);
-            },
-          },
-        ]
-      : [
-          ...watchAction,
-          {
-            key: 'rename',
-            label: 'Rename',
-            icon: 'pencil',
-            onPress: () => {
-              setEditingDraftId(actionsDraft.id);
-              setActionsDraft(null);
-            },
-          },
-          {
-            key: 'delete',
-            label: 'Delete',
-            icon: 'trash',
-            destructive: true,
-            onPress: () => {
-              const draft = actionsDraft;
-              setActionsDraft(null);
-              confirmDelete(draft);
-            },
-          },
-        ];
-
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView type="groupedBackground" style={styles.container}>
       {selectionMode ? (
         <View style={[styles.header, { paddingTop: insets.top + Spacing.three }]}>
           <Pressable
@@ -206,8 +156,10 @@ export default function HomeScreen() {
             style={({ pressed }) => [styles.selectionAction, pressed && styles.pressedText]}>
             <ThemedText themeColor="accent">Cancel</ThemedText>
           </Pressable>
-          <ThemedText type="smallBold">
-            {selectedIds.size === 0 ? 'Select drafts' : `${selectedIds.size} selected`}
+          <ThemedText type="subheadlineEmphasized">
+            {selectedIds.size === 0
+              ? 'Select drafts'
+              : formatCount(selectedIds.size, 'selected', 'selected')}
           </ThemedText>
           <Pressable
             onPress={toggleSelectAll}
@@ -235,7 +187,7 @@ export default function HomeScreen() {
               accessibilityState={{ disabled: busy, busy: transferState === 'importing' }}
               style={({ pressed }) => [
                 styles.headerButton,
-                pressed && { backgroundColor: theme.backgroundElement },
+                pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
               {transferState === 'importing' ? (
                 <ActivityIndicator size="small" color={theme.textSecondary} />
@@ -247,7 +199,7 @@ export default function HomeScreen() {
                 />
               )}
               <ThemedText
-                type="smallBold"
+                type="caption2"
                 themeColor={busy ? 'textSecondary' : 'text'}
                 style={styles.headerButtonLabel}>
                 Import
@@ -266,10 +218,10 @@ export default function HomeScreen() {
               style={({ pressed }) => [
                 styles.headerButton,
                 visibleDrafts.length === 0 && styles.disabled,
-                pressed && { backgroundColor: theme.backgroundElement },
+                pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
               <Icon name="square.and.arrow.up" size={20} tintColor={theme.text} />
-              <ThemedText type="smallBold" style={styles.headerButtonLabel}>
+              <ThemedText type="caption2" style={styles.headerButtonLabel}>
                 Export
               </ThemedText>
             </Pressable>
@@ -284,7 +236,7 @@ export default function HomeScreen() {
               }}
               style={({ pressed }) => [
                 styles.headerButton,
-                pressed && { backgroundColor: theme.backgroundElement },
+                pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
               <Icon
                 name={
@@ -297,7 +249,7 @@ export default function HomeScreen() {
                 size={20}
                 tintColor={theme.text}
               />
-              <ThemedText type="smallBold" style={styles.headerButtonLabel}>
+              <ThemedText type="caption2" style={styles.headerButtonLabel}>
                 {themePref === 'system' ? 'Auto' : themeMode === 'dark' ? 'Dark' : 'Light'}
               </ThemedText>
             </Pressable>
@@ -309,10 +261,10 @@ export default function HomeScreen() {
               accessibilityHint="Shows the version, build details and debug logs"
               style={({ pressed }) => [
                 styles.headerButton,
-                pressed && { backgroundColor: theme.backgroundElement },
+                pressed && { backgroundColor: theme.backgroundSelected },
               ]}>
               <Icon name="info.circle" size={20} tintColor={theme.text} />
-              <ThemedText type="smallBold" style={styles.headerButtonLabel}>
+              <ThemedText type="caption2" style={styles.headerButtonLabel}>
                 About
               </ThemedText>
             </Pressable>
@@ -329,74 +281,84 @@ export default function HomeScreen() {
 
       {visibleDrafts.length === 0 ? (
         <View style={styles.empty}>
-          <Icon name="video.badge.plus" size={52} tintColor={theme.textSecondary} />
-          <ThemedText type="title3" style={styles.emptyTitle}>
-            No drafts yet
-          </ThemedText>
-          <ThemedText themeColor="textSecondary" style={styles.emptyHint}>
-            Tap + to record your first video.
-          </ThemedText>
+          <StateMessage
+            icon="video.badge.plus"
+            title="No drafts yet"
+            message="Tap + to record your first video."
+          />
         </View>
       ) : (
-        <FlatList
+        <Animated.FlatList
           data={visibleDrafts}
           keyExtractor={(item) => item.id}
+          itemLayoutAnimation={LIST_REFLOW}
           contentContainerStyle={[
             styles.list,
             { paddingBottom: insets.bottom + Spacing.six + Spacing.four },
           ]}
-          renderItem={({ item }) => (
-            <DraftCard
-              id={item.id}
-              uploadStatus={item.uploadStatus}
-              name={pendingRename?.id === item.id ? pendingRename.name : item.name}
-              firstSegmentFilename={item.firstSegmentFilename}
-              firstSegmentThumbnail={item.firstSegmentThumbnail}
-              segmentCount={item.segmentCount}
-              durationMs={item.durationMs}
-              lastModified={item.lastModified}
-              now={now}
-              editing={editingDraftId === item.id}
-              selectionMode={selectionMode}
-              selected={selectedIds.has(item.id)}
-              onPress={() => {
-                if (selectionMode) toggleSelected(item.id);
-                // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
-                else if (item.uploadStatus !== 'uploading')
-                  router.push({ pathname: '/recorder', params: { draftId: item.id } });
-              }}
-              onLongPress={
-                item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
-              }
-              onMore={(anchor) => setActionsDraft({ id: item.id, name: item.name, anchor })}
-              onSubmitName={(input) => submitRename(item.id, item.name, input)}
-            />
-          )}
+          renderItem={({ item }) => {
+            const name = pendingRename?.id === item.id ? pendingRename.name : item.name;
+            return (
+              <Animated.View exiting={CARD_EXIT}>
+                <DraftCard
+                  id={item.id}
+                  uploadStatus={item.uploadStatus}
+                  name={name}
+                  firstSegmentFilename={item.firstSegmentFilename}
+                  firstSegmentThumbnail={item.firstSegmentThumbnail}
+                  segmentCount={item.segmentCount}
+                  durationMs={item.durationMs}
+                  lastModified={item.lastModified}
+                  now={now}
+                  editing={editingDraftId === item.id}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(item.id)}
+                  onPress={() => {
+                    if (selectionMode) toggleSelected(item.id);
+                    // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
+                    else if (item.uploadStatus !== 'uploading')
+                      router.push({ pathname: '/recorder', params: { draftId: item.id } });
+                  }}
+                  onLongPress={
+                    item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
+                  }
+                  menu={(watchLink) => (
+                    <DraftMenu
+                      draftId={item.id}
+                      watchLink={watchLink}
+                      uploading={item.uploadStatus === 'uploading'}
+                      besidePill={item.uploadStatus === 'uploaded'}
+                      onRename={() => setEditingDraftId(item.id)}
+                      onDelete={() => removeDraft(item.id)}
+                    />
+                  )}
+                  onSubmitName={(input) => submitRename(item.id, item.name, input)}
+                />
+              </Animated.View>
+            );
+          }}
         />
       )}
-
-      <ActionMenu
-        visible={actionsDraft !== null}
-        anchor={actionsDraft?.anchor ?? null}
-        actions={menuActions}
-        onClose={() => setActionsDraft(null)}
-      />
 
       {selectionMode ? (
         <Pressable
           onPress={() => shareDrafts([...selectedIds])}
+          // Busy isn't disabled: while it exports it ignores taps but stays at full strength
+          // with its spinner. Dimmed only when there's nothing to share, or an import (no
+          // spinner here) holds the transfer.
           disabled={selectedIds.size === 0 || busy}
           accessibilityRole="button"
           accessibilityLabel="Share selected drafts"
+          accessibilityState={{ disabled: shareDisabled, busy: exporting }}
           style={({ pressed }) => [
             styles.fab,
             {
               backgroundColor: theme.accent,
               bottom: insets.bottom + Spacing.four,
-              opacity: selectedIds.size === 0 || busy ? 0.35 : pressed ? 0.85 : 1,
+              opacity: shareDisabled ? Opacity.disabled : pressed ? Opacity.pressed : 1,
             },
           ]}>
-          {transferState === 'exporting' ? (
+          {exporting ? (
             <ActivityIndicator color={theme.onAccent} />
           ) : (
             <Icon
@@ -417,7 +379,7 @@ export default function HomeScreen() {
             {
               backgroundColor: theme.accent,
               bottom: insets.bottom + Spacing.four,
-              opacity: pressed ? 0.85 : 1,
+              opacity: pressed ? Opacity.pressed : 1,
             },
           ]}>
           <Icon name="plus" size={28} weight="semibold" tintColor={theme.onAccent} />
@@ -439,7 +401,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
+    // The cards' 16 pt gutter. The buttons carry their own inner padding, so their pressed fill
+    // lines up with the cards' edge and the glyphs sit a little inside it.
+    paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
   },
   // No title — the actions alone, trailing-aligned. (Selection mode keeps space-between.)
@@ -447,8 +411,8 @@ const styles = StyleSheet.create({
   // Same 44pt row as the normal header's buttons (`headerButton.minHeight`), so entering or
   // leaving export selection doesn't change the header's height and shift the drafts.
   selectionAction: { minHeight: 44, justifyContent: 'center' },
-  pressedText: { opacity: 0.6 },
-  disabled: { opacity: 0.35 },
+  pressedText: { opacity: Opacity.pressedGlyph },
+  disabled: { opacity: Opacity.disabled },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   // Shared header action: icon stacked above its label, with a ≥44×44pt touch target (HIG).
   headerButton: {
@@ -458,33 +422,22 @@ const styles = StyleSheet.create({
     gap: Spacing.half,
     minHeight: 44,
     minWidth: 44,
-    borderRadius: 12,
+    borderRadius: Radius.row,
+    borderCurve: 'continuous',
     paddingHorizontal: Spacing.two,
   },
-  headerButtonLabel: { fontSize: 11, lineHeight: 13 },
+  // Size/leading come from the `caption2` type; semibold, as the labels under the header icons.
+  headerButtonLabel: { fontWeight: '600' },
   devRowWrap: {
     alignItems: 'flex-end',
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
   },
   list: {
     paddingHorizontal: Spacing.three,
     gap: Spacing.two,
   },
-  empty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.five,
-  },
-  // Size/leading come from the `title3` type; keep it semibold for the empty-state heading.
-  emptyTitle: {
-    fontWeight: '600',
-  },
-  emptyHint: {
-    textAlign: 'center',
-  },
+  empty: { flex: 1, justifyContent: 'center' },
   fab: {
     position: 'absolute',
     right: Spacing.four,
@@ -493,10 +446,6 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
+    ...FloatShadow,
   },
 });

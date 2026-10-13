@@ -1,18 +1,15 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
 import { useState } from 'react';
-import { Alert } from 'react-native';
 
 import { useToast } from '@/features/toast/toast-provider';
+import { formatCount } from '@/utils/format';
+import { userMessage } from '@/utils/user-message';
 
 import { exportDrafts } from './pack';
 import { importPulseFile, skippedSummary } from './unpack';
 
 type TransferState = 'idle' | 'exporting' | 'importing';
-
-function message(e: unknown): string {
-  return e instanceof Error ? e.message : 'Something went wrong.';
-}
 
 /**
  * Drives `.pulse` export (multi-select → share sheet) and import (document picker → disk + DB).
@@ -38,7 +35,11 @@ export function useDraftTransfer() {
         dialogTitle: draftIds.length === 1 ? 'Share draft' : 'Share drafts',
       });
     } catch (e) {
-      Alert.alert('Couldn’t export drafts', message(e));
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t export drafts',
+        message: userMessage(e, 'Try again.', 'export'),
+      });
     } finally {
       setState('idle');
     }
@@ -58,13 +59,20 @@ export function useDraftTransfer() {
     setState('importing');
     try {
       const { draftIds, skipped } = await importPulseFile(asset.uri);
-      const imported = `${draftIds.length} draft${draftIds.length === 1 ? '' : 's'} imported`;
+      const imported = `${formatCount(draftIds.length, 'draft', 'drafts')} imported`;
       // Clips the phone couldn't take are left out, not fatal: say so, without a dialog.
-      if (skipped.length > 0) showToast(`${imported} · ${skippedSummary(skipped)}`, 'error');
-      else showToast(imported);
+      if (skipped.length > 0) {
+        showToast({ kind: 'warning', title: imported, message: skippedSummary(skipped) });
+      } else {
+        showToast(imported);
+      }
       return draftIds;
     } catch (e) {
-      Alert.alert('Couldn’t import drafts', message(e));
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t import drafts',
+        message: userMessage(e, 'Try again.', 'import'),
+      });
       return [];
     } finally {
       setState('idle');

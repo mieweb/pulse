@@ -14,7 +14,7 @@ function importFailureKind(why: string): ImportFailure {
   return 'conversion';
 }
 
-/** What the import alert says for a conform rejection. */
+/** What the import error toast says for a conform rejection. */
 export function importFailureCopy(why: string): string {
   switch (importFailureKind(why)) {
     case 'unreadable':

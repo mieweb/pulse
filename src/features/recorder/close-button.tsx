@@ -2,7 +2,7 @@ import { Icon } from '@/components/icon';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { GlassPill } from '@/components/glass-pill';
-import { ControlScrim } from '@/constants/theme';
+import { ControlScrim, Opacity } from '@/constants/theme';
 import { useThemeMode } from '@/hooks/use-theme';
 import { closeToHome } from '@/utils/navigation';
 
@@ -26,19 +26,25 @@ export function CloseButton({
   label?: string;
 }) {
   const mode = useThemeMode();
-  const inner = <Icon name="xmark" size={22} weight="semibold" tintColor="#fff" />;
+  const icon = <Icon name="xmark" size={22} weight="semibold" tintColor="#fff" />;
   return (
     <Pressable
       onPress={onPress ?? closeToHome}
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={({ pressed }) => [style, pressed && styles.pressed]}>
-      {overVideo ? (
-        <GlassPill style={styles.button}>{inner}</GlassPill>
-      ) : (
-        <View style={[styles.button, styles.scrim, ControlScrim[mode]]}>{inner}</View>
-      )}
+      // The glass pill dims only its glyph: a partly transparent ancestor makes iOS draw the
+      // glass flat (and it can stay that way). The scrim has no glass, so the whole button dims.
+      style={({ pressed }) => [style, pressed && !overVideo && styles.pressed]}>
+      {({ pressed }) =>
+        overVideo ? (
+          <GlassPill style={styles.button}>
+            <View style={pressed && styles.pressed}>{icon}</View>
+          </GlassPill>
+        ) : (
+          <View style={[styles.button, styles.scrim, ControlScrim[mode]]}>{icon}</View>
+        )
+      }
     </Pressable>
   );
 }
@@ -52,5 +58,5 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   scrim: { borderWidth: StyleSheet.hairlineWidth },
-  pressed: { opacity: 0.85 },
+  pressed: { opacity: Opacity.pressed },
 });

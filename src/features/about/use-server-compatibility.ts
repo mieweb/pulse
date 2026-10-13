@@ -8,15 +8,16 @@ import type { ServerCompat } from './details';
 
 /**
  * Each paired server's compatibility with this app, checked live against its `/capabilities`
- * (the same check pairing runs) when the About page opens. One entry per server, even if it's
- * paired more than once.
+ * (the same check pairing runs) when the destinations sheet or the About page opens, and again
+ * when the set of paired servers changes. One entry per server, even if it's paired more than
+ * once.
  */
 export function useServerCompatibility(): ServerCompat[] {
   const { destinations } = useDestinations();
-  const servers = useMemo(
-    () => [...new Set(destinations.map((d) => d.server))].sort(),
-    [destinations],
-  );
+  // Keyed by the set of servers, not the list: `useDestinations` rebuilds its array on every
+  // expiry tick, and depending on that would re-fetch every server's capabilities each tick.
+  const serverKey = [...new Set(destinations.map((d) => d.server))].sort().join('\n');
+  const servers = useMemo(() => (serverKey ? serverKey.split('\n') : []), [serverKey]);
   const [results, setResults] = useState<Record<string, ServerCompat>>({});
 
   useEffect(() => {

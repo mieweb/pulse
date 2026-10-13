@@ -87,3 +87,13 @@ export function formatRelativeDate(ms: number, now: number): string {
     timeZone,
   ).format(date);
 }
+
+/**
+ * Epoch ms → a full date and time ("Oct 9, 2026, 7:25 PM") in the device's time zone, for labels
+ * that name an exact moment (About's build time). Same time-zone handling as above.
+ */
+export function formatDateTime(ms: number): string {
+  return formatter({ dateStyle: 'medium', timeStyle: 'short' }, deviceTimeZone()).format(
+    new Date(ms),
+  );
+}
