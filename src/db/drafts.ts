@@ -91,29 +91,35 @@ export async function addSegment(draftId: string, segment: NewSegment): Promise<
   // comes from the draft's monotonic `lastClipNumber` counter (bump + read back atomically;
   // never decremented, so deletes/renames can't cause reuse), and `order` is the next free
   // slot (max + 1, race-safe and hole-tolerant after deletes — the unique (draftId, order)
-  // index backstops any regression).
-  await db.transaction(async (tx) => {
-    const [counter] = await tx
+  // index backstops any regression). drizzle's expo-sqlite transactions are synchronous (they
+  // commit when the callback returns), so the callback awaits nothing and runs each statement
+  // with the sync `.all()` / `.get()` / `.run()`.
+  db.transaction((tx) => {
+    const [counter] = tx
       .update(drafts)
       .set({ lastClipNumber: sql`${drafts.lastClipNumber} + 1`, lastModified: now })
       .where(eq(drafts.id, draftId))
-      .returning({ clipNumber: drafts.lastClipNumber });
+      .returning({ clipNumber: drafts.lastClipNumber })
+      .all();
     if (!counter) throw new Error(`addSegment: draft ${draftId} not found`);
 
-    const [{ maxOrder }] = await tx
+    const [{ maxOrder }] = tx
       .select({ maxOrder: sql<number | null>`max(${segments.order})` })
       .from(segments)
-      .where(eq(segments.draftId, draftId));
+      .where(eq(segments.draftId, draftId))
+      .all();
 
-    await tx.insert(segments).values({
-      id: segment.id,
-      draftId,
-      order: (maxOrder ?? -1) + 1,
-      label: String(counter.clipNumber),
-      originalFilename: segment.originalFilename,
-      durationMs: segment.durationMs,
-      thumbnail: segment.thumbnail ?? null,
-    });
+    tx.insert(segments)
+      .values({
+        id: segment.id,
+        draftId,
+        order: (maxOrder ?? -1) + 1,
+        label: String(counter.clipNumber),
+        originalFilename: segment.originalFilename,
+        durationMs: segment.durationMs,
+        thumbnail: segment.thumbnail ?? null,
+      })
+      .run();
   });
 }
 
@@ -341,22 +347,22 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
   if (orderedIds.length === 0) return;
   const [target] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
   if (target) await beginClipMutation(target.draftId);
-  await db.transaction(async (tx) => {
+  db.transaction((tx) => {
     // Two passes: SQLite checks UNIQUE per statement, so renumbering in place would collide
     // with rows still holding their old slot. Park all rows on distinct negatives first,
     // then assign final slots via one CASE update.
-    await tx
-      .update(segments)
+    tx.update(segments)
       .set({ order: sql`-${segments.order} - 1` })
-      .where(inArray(segments.id, orderedIds));
+      .where(inArray(segments.id, orderedIds))
+      .run();
     const finalOrder = sql`case ${sql.join(
       orderedIds.map((id, i) => sql`when ${segments.id} = ${id} then ${i}`),
       sql` `,
     )} else ${segments.order} end`;
-    await tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, orderedIds));
-    const [first] = await tx.select().from(segments).where(eq(segments.id, orderedIds[0]));
+    tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, orderedIds)).run();
+    const first = tx.select().from(segments).where(eq(segments.id, orderedIds[0])).get();
     if (first) {
-      await tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId));
+      tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId)).run();
     }
   });
 }
@@ -479,8 +485,8 @@ export async function insertImportedDraft(
   draft: typeof drafts.$inferInsert,
   segmentRows: (typeof segments.$inferInsert)[],
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    await tx.insert(drafts).values(draft);
-    if (segmentRows.length > 0) await tx.insert(segments).values(segmentRows);
+  db.transaction((tx) => {
+    tx.insert(drafts).values(draft).run();
+    if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
   });
 }
