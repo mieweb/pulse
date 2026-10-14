@@ -2,6 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Icon, type IconName } from '@/components/icon';
 import { Accent } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 import { speedLabel } from './timeline-geometry';
 
@@ -20,7 +21,8 @@ type Tool = {
 };
 
 function ToolButton({ tool }: { tool: Tool }) {
-  const color = tool.destructive ? Accent : '#fff';
+  const theme = useTheme();
+  const color = tool.destructive ? Accent : theme.text;
   return (
     <Pressable
       onPress={tool.onPress}
@@ -35,7 +37,7 @@ function ToolButton({ tool }: { tool: Tool }) {
       ]}>
       <View style={styles.glyph}>
         {tool.text ? (
-          <Text style={styles.glyphText}>{tool.text}</Text>
+          <Text style={[styles.glyphText, { color }]}>{tool.text}</Text>
         ) : (
           tool.icon && <Icon name={tool.icon} size={20} weight="medium" tintColor={color} />
         )}
@@ -118,6 +120,7 @@ export function SpeedRow({
   onPick: (speed: number) => void;
   onDone: () => void;
 }) {
+  const theme = useTheme();
   return (
     <View style={styles.row}>
       <Pressable
@@ -125,8 +128,8 @@ export function SpeedRow({
         accessibilityRole="button"
         accessibilityLabel="Done"
         hitSlop={6}
-        style={styles.done}>
-        <Icon name="checkmark" size={18} weight="semibold" tintColor="#fff" />
+        style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
+        <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.text} />
       </Pressable>
       <ScrollView
         horizontal
@@ -140,8 +143,10 @@ export function SpeedRow({
               onPress={() => onPick(s)}
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
-              style={[styles.chip, on && styles.chipOn]}>
-              <Text style={[styles.chipText, on && styles.chipTextOn]}>{speedLabel(s)}</Text>
+              style={[styles.chip, { backgroundColor: on ? theme.text : theme.backgroundElement }]}>
+              <Text style={[styles.chipText, { color: on ? theme.background : theme.text }]}>
+                {speedLabel(s)}
+              </Text>
             </Pressable>
           );
         })}
@@ -164,13 +169,12 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.35 },
   pressed: { opacity: 0.6 },
   glyph: { height: 24, justifyContent: 'center', alignItems: 'center' },
-  glyphText: { color: '#fff', fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  glyphText: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
   label: { fontSize: 11, fontWeight: '500' },
   done: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#2C2C2E',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
@@ -181,11 +185,8 @@ const styles = StyleSheet.create({
     minWidth: 52,
     paddingHorizontal: 12,
     borderRadius: 17,
-    backgroundColor: '#2C2C2E',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chipOn: { backgroundColor: '#fff' },
-  chipText: { color: '#fff', fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  chipTextOn: { color: '#000' },
+  chipText: { fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
 });

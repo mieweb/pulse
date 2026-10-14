@@ -14,6 +14,7 @@ import { scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
 
 import { Icon } from '@/components/icon';
 import { Accent } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
 import { haptics } from '@/utils/haptics';
 
@@ -72,8 +73,14 @@ type ThumbProps = {
 
 /** One clip as a thumbnail, in the recorder's look: number pill on top, length at the bottom. */
 const Thumb = memo(function Thumb({ clip, index, cover, selected, onTap, handoff }: ThumbProps) {
+  const theme = useTheme();
   return (
-    <View style={[styles.thumb, selected && styles.selected]}>
+    <View
+      style={[
+        styles.thumb,
+        { backgroundColor: theme.backgroundElement },
+        selected && styles.selected,
+      ]}>
       {handoff && <HandoffDriver handoff={handoff} width={THUMB_WIDTH} height={THUMB_HEIGHT} />}
       <Sortable.Touchable
         onTap={onTap}
@@ -82,7 +89,7 @@ const Thumb = memo(function Thumb({ clip, index, cover, selected, onTap, handoff
         {cover ? (
           <Image source={cover} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} />
         ) : (
-          <Icon name="video.fill" size={18} tintColor="rgba(255,255,255,0.8)" />
+          <Icon name="video.fill" size={18} tintColor={theme.textSecondary} />
         )}
         <View style={styles.glyphs} pointerEvents="none">
           <EditCues edit={clip.edit} layout="stack" showMute part="glyphs" />
@@ -136,6 +143,7 @@ type Props = {
  * (react-native-sortables, as the recorder's clip bar; it scrolls the row near the edges).
  */
 export function ClipRow(props: Props) {
+  const theme = useTheme();
   const { clips, covers, layout, selected, values, handoff } = props;
   const { timeMs, totalMs, mode, playing } = values;
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
@@ -350,7 +358,12 @@ export function ClipRow(props: Props) {
           )}
         />
       </Animated.ScrollView>
-      {!handoff && <View pointerEvents="none" style={[styles.playhead, { left: width / 2 - 2 }]} />}
+      {!handoff && (
+        <View
+          pointerEvents="none"
+          style={[styles.playhead, { left: width / 2 - 2, backgroundColor: theme.text }]}
+        />
+      )}
     </View>
   );
 }
@@ -365,7 +378,6 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
     borderWidth: 2,
     borderColor: 'transparent',
-    backgroundColor: '#2C2C2E',
   },
   selected: { borderColor: Accent },
   playhead: {
@@ -374,7 +386,6 @@ const styles = StyleSheet.create({
     bottom: 2,
     width: 4,
     borderRadius: 2,
-    backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOpacity: 0.25,
     shadowRadius: 2,

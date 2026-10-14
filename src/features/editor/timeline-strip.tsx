@@ -11,10 +11,11 @@ import Animated, {
 import { scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
 
 import { Icon } from '@/components/icon';
-import { Accent } from '@/constants/theme';
+import { Accent, SystemColors } from '@/constants/theme';
+import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { haptics } from '@/utils/haptics';
 
-import { ClipTile, TILE_GAP, TILE_HEIGHT, TILE_RADIUS } from './clip-tile';
+import { ClipTile, TILE_GAP, TILE_HEIGHT, TILE_RADIUS, type TilePalette } from './clip-tile';
 import { Phase, type Handoff } from './drag-handoff';
 import {
   clamp,
@@ -35,6 +36,17 @@ const GRIP_SLOP = 10;
 /** A selected clip counts as on screen while at least this much of it shows. */
 const VISIBLE_DP = 12;
 const FRAME_BAR = 3;
+
+/** Each clip's [left, width] in dp, flattened (the tiles' layout). */
+function slotsOf(layout: TimelineLayout): number[] {
+  const g: number[] = [];
+  const n = layout.starts.length;
+  for (let i = 0; i < n; i++) {
+    const end = i + 1 < n ? layout.starts[i + 1] : layout.totalMs;
+    g.push(layout.starts[i] * DP_PER_MS, (end - layout.starts[i]) * DP_PER_MS);
+  }
+  return g;
+}
 
 /** The selected clip, as its trim handles need it. All times in ms. */
 export type TrimInfo = {
@@ -103,6 +115,21 @@ export function TimelineStrip(props: Props) {
   const atLimit = useSharedValue(false);
   const frameLeft = useSharedValue(0);
   const frameWidth = useSharedValue(0);
+  // Every clip's [left, width] (dp) on the UI thread, and which one a trim is resizing: tiles
+  // draw from these, so a trim moves them live and its release lands in one frame.
+  const slots = useSharedValue<number[]>(slotsOf(layout));
+  const sel = useSharedValue(selected);
+  const [motion] = useState(() => ({ slots, sel, side, delta }));
+  const [trimming, setTrimming] = useState(-1);
+  const scheme = useThemeMode();
+  const theme = useTheme();
+  const palette: TilePalette = {
+    tile: SystemColors.gray5[scheme],
+    film: SystemColors.gray4[scheme],
+    wave: SystemColors.gray6[scheme],
+    line: theme.warning,
+    dim: theme.textSecondary,
+  };
   const trimInfo = useSharedValue<TrimInfo | null>(null);
   const starts = useSharedValue<number[]>([]);
   useEffect(() => {
@@ -125,14 +152,26 @@ export function TimelineStrip(props: Props) {
     dragStart: () => latest.current.onDragStart(),
     scrubEnd: (ms: number) => latest.current.onScrubEnd(ms),
     tap: (ms: number) => latest.current.onTap(ms),
-    trimStart: (s: TrimSide) => latest.current.onTrimStart(s),
+    trimStart: (s: TrimSide) => {
+      setTrimming(latest.current.selected);
+      latest.current.onTrimStart(s);
+    },
     trimEnd: (s: TrimSide, ms: number) => {
+      const i = latest.current.selected;
       const next = latest.current.onTrimEnd(s, ms);
       const left = next.leftMs * DP_PER_MS;
       const w = next.lengthMs * DP_PER_MS;
-      // The frame takes its new place and drops the drag in the same UI frame.
+      // The clips' new places (the trimmed one resized, the ones after it moved by the change),
+      // applied with the end of the drag in one UI frame, so nothing snaps back first.
+      const g = slotsOf(latest.current.layout);
+      const shift = w - (g[i * 2 + 1] ?? w);
+      g[i * 2] = left;
+      g[i * 2 + 1] = w;
+      for (let k = i + 1; k < g.length / 2; k++) g[k * 2] += shift;
+      setTrimming(-1);
       scheduleOnUI(() => {
         'worklet';
+        slots.set(g);
         frameLeft.set(left);
         frameWidth.set(w);
         delta.set(0);
@@ -158,13 +197,28 @@ export function TimelineStrip(props: Props) {
       : 0;
   useEffect(() => {
     trimInfo.set(trim);
+    const g = slotsOf(layout);
     scheduleOnUI(() => {
       'worklet';
       if (side.get() !== 0) return;
+      slots.set(g);
+      sel.set(selected);
       frameLeft.set(selLeft);
       frameWidth.set(selWidth);
     });
-  }, [trim, selLeft, selWidth, trimInfo, side, frameLeft, frameWidth]);
+  }, [
+    trim,
+    layout,
+    selected,
+    selLeft,
+    selWidth,
+    trimInfo,
+    side,
+    slots,
+    sel,
+    frameLeft,
+    frameWidth,
+  ]);
 
   const {
     dragStart,
@@ -415,12 +469,16 @@ export function TimelineStrip(props: Props) {
             return (
               <ClipTile
                 key={c.id}
-                left={left}
+                index={i}
                 width={end - left}
                 cover={covers.get(c.id) ?? null}
                 peaks={peaks.get(c.uri)}
                 edit={c.edit}
-                near={end >= nearFrom && left <= nearTo}
+                sourceMs={c.sourceMs}
+                near={i === trimming || (end >= nearFrom && left <= nearTo)}
+                trimming={i === trimming}
+                motion={motion}
+                palette={palette}
               />
             );
           })}
@@ -441,7 +499,10 @@ export function TimelineStrip(props: Props) {
           )}
         </Animated.View>
         {!hidden && (
-          <View pointerEvents="none" style={[styles.playhead, { left: width / 2 - 2 }]} />
+          <View
+            pointerEvents="none"
+            style={[styles.playhead, { left: width / 2 - 2, backgroundColor: theme.text }]}
+          />
         )}
       </View>
     </GestureDetector>
@@ -479,7 +540,6 @@ const styles = StyleSheet.create({
     bottom: 2,
     width: 4,
     borderRadius: 2,
-    backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOpacity: 0.25,
     shadowRadius: 2,

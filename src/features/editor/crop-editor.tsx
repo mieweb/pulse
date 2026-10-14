@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { Accent } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import type { ClipCrop } from '@/utils/segment-window';
 import { haptics } from '@/utils/haptics';
 
@@ -52,6 +53,7 @@ type Props = {
  */
 export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onDone }: Props) {
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
   const [frame, setFrame] = useState<{ uri: string; width: number; height: number } | null>(null);
   const [failed, setFailed] = useState(false);
   const [stage, setStage] = useState({ width: 0, height: 0 });
@@ -97,7 +99,12 @@ export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onD
     placed.current = true;
     img.set(image);
     const c = crop ?? { x: 0, y: 0, w: 1, h: 1 };
-    box.set({ x: image.x + c.x * image.w, y: image.y + c.y * image.h, w: c.w * image.w, h: c.h * image.h });
+    box.set({
+      x: image.x + c.x * image.w,
+      y: image.y + c.y * image.h,
+      w: c.w * image.w,
+      h: c.h * image.h,
+    });
   }, [image, crop, img, box]);
 
   const [gesture] = useState(() => {
@@ -192,7 +199,11 @@ export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onD
         const cx = s.x + s.w / 2;
         const cy = s.y + s.h / 2;
         // Same factor on both sides (the aspect holds), within the frame and the minimum.
-        const k = clamp(e.scale, Math.max(MIN_SIDE / s.w, MIN_SIDE / s.h), Math.min(im.w / s.w, im.h / s.h));
+        const k = clamp(
+          e.scale,
+          Math.max(MIN_SIDE / s.w, MIN_SIDE / s.h),
+          Math.min(im.w / s.w, im.h / s.h),
+        );
         const w = s.w * k;
         const h = s.h * k;
         box.set({
@@ -272,12 +283,16 @@ export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onD
   });
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View
+      style={[
+        styles.root,
+        { paddingTop: insets.top, paddingBottom: insets.bottom, backgroundColor: theme.background },
+      ]}>
       <View style={styles.header}>
         <Pressable onPress={onCancel} hitSlop={8} accessibilityRole="button">
-          <Text style={styles.headerButton}>Cancel</Text>
+          <Text style={[styles.headerButton, { color: theme.text }]}>Cancel</Text>
         </Pressable>
-        <Text style={styles.title}>Crop</Text>
+        <Text style={[styles.title, { color: theme.text }]}>Crop</Text>
         <Pressable onPress={done} hitSlop={8} accessibilityRole="button" disabled={!image}>
           <Text style={[styles.headerButton, styles.headerDone]}>Done</Text>
         </Pressable>
@@ -285,12 +300,20 @@ export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onD
       <GestureDetector gesture={gesture}>
         <View
           style={styles.stage}
-          onLayout={(e) => setStage({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}>
+          onLayout={(e) =>
+            setStage({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })
+          }>
           {image && frame && (
             <>
               <Image
                 source={frame.uri}
-                style={{ position: 'absolute', left: image.x, top: image.y, width: image.w, height: image.h }}
+                style={{
+                  position: 'absolute',
+                  left: image.x,
+                  top: image.y,
+                  width: image.w,
+                  height: image.h,
+                }}
                 contentFit="fill"
                 transition={0}
               />
@@ -311,8 +334,12 @@ export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onD
                 <View style={[styles.bracketV, { top: -BRACKET_THICK, right: -BRACKET_THICK }]} />
                 <View style={[styles.bracketH, { bottom: -BRACKET_THICK, left: -BRACKET_THICK }]} />
                 <View style={[styles.bracketV, { bottom: -BRACKET_THICK, left: -BRACKET_THICK }]} />
-                <View style={[styles.bracketH, { bottom: -BRACKET_THICK, right: -BRACKET_THICK }]} />
-                <View style={[styles.bracketV, { bottom: -BRACKET_THICK, right: -BRACKET_THICK }]} />
+                <View
+                  style={[styles.bracketH, { bottom: -BRACKET_THICK, right: -BRACKET_THICK }]}
+                />
+                <View
+                  style={[styles.bracketV, { bottom: -BRACKET_THICK, right: -BRACKET_THICK }]}
+                />
                 {aspect === 0 && (
                   <>
                     <View style={[styles.edgeH, { top: -BRACKET_THICK }]} />
@@ -325,7 +352,11 @@ export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onD
             </>
           )}
           {!frame && !failed && <ActivityIndicator color="#fff" />}
-          {failed && <Text style={styles.failed}>Couldn’t load this frame.</Text>}
+          {failed && (
+            <Text style={[styles.failed, { color: theme.textSecondary }]}>
+              Couldn’t load this frame.
+            </Text>
+          )}
         </View>
       </GestureDetector>
       <View style={styles.bottom}>
@@ -337,13 +368,18 @@ export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onD
               onPress={() => pickAspect(a.ratio)}
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
-              style={[styles.chip, on && styles.chipOn]}>
-              <Text style={[styles.chipText, on && styles.chipTextOn]}>{a.label}</Text>
+              style={[styles.chip, { backgroundColor: on ? theme.text : theme.backgroundElement }]}>
+              <Text style={[styles.chipText, { color: on ? theme.background : theme.text }]}>
+                {a.label}
+              </Text>
             </Pressable>
           );
         })}
-        <Pressable onPress={reset} accessibilityRole="button" style={styles.chip}>
-          <Text style={styles.chipText}>Reset</Text>
+        <Pressable
+          onPress={reset}
+          accessibilityRole="button"
+          style={[styles.chip, { backgroundColor: theme.backgroundElement }]}>
+          <Text style={[styles.chipText, { color: theme.text }]}>Reset</Text>
         </Pressable>
       </View>
     </View>
@@ -353,7 +389,7 @@ export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onD
 const LINE = 'rgba(255,255,255,0.9)';
 
 const styles = StyleSheet.create({
-  root: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: '#000' },
+  root: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   header: {
     height: 48,
     paddingHorizontal: 16,
@@ -361,16 +397,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  headerButton: { color: '#fff', fontSize: 17 },
+  headerButton: { fontSize: 17 },
   headerDone: { fontWeight: '600', color: Accent },
-  title: { color: '#fff', fontSize: 17, fontWeight: '600' },
+  title: { fontSize: 17, fontWeight: '600' },
   stage: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   dim: { position: 'absolute', backgroundColor: 'rgba(0,0,0,0.55)' },
   box: { position: 'absolute', borderWidth: 1, borderColor: LINE },
-  gridV: { position: 'absolute', top: 0, bottom: 0, width: StyleSheet.hairlineWidth, backgroundColor: LINE },
-  gridH: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth, backgroundColor: LINE },
-  bracketH: { position: 'absolute', width: BRACKET, height: BRACKET_THICK, borderRadius: 2, backgroundColor: '#fff' },
-  bracketV: { position: 'absolute', width: BRACKET_THICK, height: BRACKET, borderRadius: 2, backgroundColor: '#fff' },
+  gridV: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: LINE,
+  },
+  gridH: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: LINE,
+  },
+  bracketH: {
+    position: 'absolute',
+    width: BRACKET,
+    height: BRACKET_THICK,
+    borderRadius: 2,
+    backgroundColor: '#fff',
+  },
+  bracketV: {
+    position: 'absolute',
+    width: BRACKET_THICK,
+    height: BRACKET,
+    borderRadius: 2,
+    backgroundColor: '#fff',
+  },
   edgeH: {
     position: 'absolute',
     alignSelf: 'center',
@@ -390,7 +450,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: '#fff',
   },
-  failed: { color: 'rgba(255,255,255,0.7)' },
+  failed: {},
   bottom: {
     height: 72,
     flexDirection: 'row',
@@ -403,11 +463,8 @@ const styles = StyleSheet.create({
     height: 34,
     paddingHorizontal: 12,
     borderRadius: 17,
-    backgroundColor: '#2C2C2E',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  chipOn: { backgroundColor: '#fff' },
-  chipText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  chipTextOn: { color: '#000' },
+  chipText: { fontSize: 14, fontWeight: '600' },
 });

@@ -36,6 +36,7 @@ import { useEditorHistory } from '@/features/editor/use-editor-history';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
 import { loadCustomSpeeds, speedMenu } from '@/features/recorder/editor-speeds';
+import { useTheme } from '@/hooks/use-theme';
 import { haptics } from '@/utils/haptics';
 import type { ClipCrop, ParsedEdit } from '@/utils/segment-window';
 
@@ -79,6 +80,7 @@ export default function EditorScreen() {
   const params = useLocalSearchParams<{ draftId: string; clipId?: string; view?: string }>();
   const { draftId, clipId } = params;
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
   const draft = useEditorDraft(draftId);
   const { clips, covers, options } = draft;
   const { ctl, values, playing, status } = usePreviewTransport();
@@ -101,6 +103,9 @@ export default function EditorScreen() {
   const [cropping, setCropping] = useState<{ id: string; timeMs: number } | null>(null);
   const [trimmingId, setTrimmingId] = useState<string | null>(null);
   const [customSpeeds, setCustomSpeeds] = useState<readonly number[]>([]);
+  // The preview area, and the picture fitted in it at the canvas's aspect: the player is sized to
+  // the picture, so what's around it is the theme's background (not the player's black bars).
+  const [stage, setStage] = useState({ w: 0, h: 0 });
   useEffect(() => {
     void loadCustomSpeeds().then(setCustomSpeeds);
   }, []);
@@ -319,11 +324,14 @@ export default function EditorScreen() {
 
   const active = sel ?? null;
   const cropClip = cropping ? clips.find((c) => c.id === cropping.id) : null;
+  const aspect = options ? options.width / options.height : 9 / 16;
+  const fitW = Math.min(stage.w, stage.h * aspect);
+  const picture = { width: fitW, height: fitW / aspect };
 
   return (
     // The portal lifts a picked-up clip above everything (preview, controls) while it's dragged.
     <Sortable.PortalProvider>
-      <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={[styles.root, { paddingTop: insets.top, backgroundColor: theme.background }]}>
         {/* Off-clip space, like every black area around the controls: a tap lets a selection go. */}
         <Pressable style={styles.header} onPress={deselect} accessible={false}>
           <HeaderButton icon="xmark" label="Close" onPress={close} />
@@ -344,14 +352,18 @@ export default function EditorScreen() {
         </Pressable>
 
         <Pressable
-          style={styles.preview}
+          style={[styles.preview, { backgroundColor: theme.background }]}
+          onLayout={(e) =>
+            setStage({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
+          }
           // A tap off the clips lets a selection go first; otherwise it plays or pauses.
           onPress={() => (selectedId ? setSelectedId(null) : ctl.toggle())}
           accessibilityRole="button"
           accessibilityLabel={selectedId ? 'Done editing the clip' : playing ? 'Pause' : 'Play'}>
-          {options && previewClips.length > 0 && (
+          {/* Created once the area is measured, at the picture's size. */}
+          {options && previewClips.length > 0 && fitW > 0 && (
             <PulsePreview
-              style={StyleSheet.absoluteFill}
+              style={picture}
               clips={previewClips}
               options={options}
               onTime={ctl.onTime}
@@ -360,10 +372,13 @@ export default function EditorScreen() {
             />
           )}
           <Animated.View
-            style={[StyleSheet.absoluteFill, styles.cover, coverStyle]}
+            // Over the player (absolute, centred like it), not stacked under it.
+            style={[styles.cover, picture, { backgroundColor: theme.background }, coverStyle]}
             pointerEvents="none"
           />
-          {status?.error && <Text style={styles.error}>{status.error}</Text>}
+          {status?.error && (
+            <Text style={[styles.error, { color: theme.textSecondary }]}>{status.error}</Text>
+          )}
         </Pressable>
 
         {/* Off-clip space: a tap here lets a selection go (play and the switcher keep their taps). */}
@@ -372,11 +387,14 @@ export default function EditorScreen() {
             <AnimatedTextInput
               editable={false}
               underlineColorAndroid="transparent"
-              style={[styles.time, styles.timeNow]}
+              style={[styles.time, styles.timeNow, { color: theme.text }]}
               animatedProps={timeProps}
               defaultValue={formatTime(0)}
             />
-            <Text style={styles.time}> / {formatTime(layout.totalMs)}</Text>
+            <Text style={[styles.time, { color: theme.textSecondary }]}>
+              {' '}
+              / {formatTime(layout.totalMs)}
+            </Text>
           </View>
           <Pressable
             onPress={ctl.toggle}
@@ -384,7 +402,7 @@ export default function EditorScreen() {
             accessibilityRole="button"
             accessibilityLabel={playing ? 'Pause' : 'Play'}
             style={styles.play}>
-            <Icon name={playing ? 'pause.fill' : 'play.fill'} size={22} tintColor="#fff" />
+            <Icon name={playing ? 'pause.fill' : 'play.fill'} size={22} tintColor={theme.text} />
           </Pressable>
           <View style={styles.switchSlot}>
             <ViewSwitcher
@@ -472,7 +490,7 @@ export default function EditorScreen() {
           onPress={deselect}
           accessible={false}>
           {!active ? (
-            <Text style={styles.hint}>Tap a clip to edit it</Text>
+            <Text style={[styles.hint, { color: theme.textSecondary }]}>Tap a clip to edit it</Text>
           ) : tools === 'speed' ? (
             <SpeedRow
               speeds={speedMenu(customSpeeds)}
@@ -521,12 +539,15 @@ function ViewSwitcher({
   view: 'clips' | 'timeline';
   onChange: (view: 'clips' | 'timeline') => void;
 }) {
+  const theme = useTheme();
   const options = [
     { key: 'clips', label: 'Clips', icon: 'rectangle.split.3x1' },
     { key: 'timeline', label: 'Timeline', icon: 'waveform' },
   ] as const;
   return (
-    <View style={styles.switcher} accessibilityRole="tablist">
+    <View
+      style={[styles.switcher, { backgroundColor: theme.backgroundElement }]}
+      accessibilityRole="tablist">
       {options.map((o) => {
         const on = view === o.key;
         return (
@@ -540,8 +561,13 @@ function ViewSwitcher({
             accessibilityRole="tab"
             accessibilityState={{ selected: on }}
             accessibilityLabel={`${o.label} view`}
-            style={[styles.switchOption, on && styles.switchOn]}>
-            <Icon name={o.icon} size={16} weight="semibold" tintColor={on ? '#000' : '#fff'} />
+            style={[styles.switchOption, on && { backgroundColor: theme.text }]}>
+            <Icon
+              name={o.icon}
+              size={16}
+              weight="semibold"
+              tintColor={on ? theme.background : theme.text}
+            />
           </Pressable>
         );
       })}
@@ -560,6 +586,7 @@ function HeaderButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -568,13 +595,13 @@ function HeaderButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       style={({ pressed }) => [styles.headerButton, (disabled || pressed) && styles.dim]}>
-      <Icon name={icon} size={18} weight="semibold" tintColor="#fff" />
+      <Icon name={icon} size={18} weight="semibold" tintColor={theme.text} />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000' },
+  root: { flex: 1 },
   header: {
     height: 48,
     paddingHorizontal: 12,
@@ -587,7 +614,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 2,
     borderRadius: 17,
-    backgroundColor: '#1C1C1E',
   },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
   switchOption: {
@@ -597,7 +623,6 @@ const styles = StyleSheet.create({
     height: 30,
     borderRadius: 15,
   },
-  switchOn: { backgroundColor: '#fff' },
   track: { height: STRIP_HEIGHT },
   headerButton: {
     width: 40,
@@ -607,9 +632,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dim: { opacity: 0.35 },
-  preview: { flex: 1, backgroundColor: '#000', justifyContent: 'center' },
-  cover: { backgroundColor: '#000' },
-  error: { color: 'rgba(255,255,255,0.7)', textAlign: 'center', padding: 16 },
+  preview: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  cover: { position: 'absolute' },
+  error: { textAlign: 'center', padding: 16 },
   transport: {
     height: 48,
     flexDirection: 'row',
@@ -618,13 +643,12 @@ const styles = StyleSheet.create({
   },
   times: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   time: {
-    color: 'rgba(255,255,255,0.6)',
     fontSize: 13,
     fontVariant: ['tabular-nums'],
     padding: 0,
     margin: 0,
   },
-  timeNow: { color: '#fff', minWidth: 46 },
+  timeNow: { minWidth: 46 },
   play: {
     width: 44,
     height: 44,
@@ -632,5 +656,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   tools: { minHeight: TOOLBAR_HEIGHT + 8, justifyContent: 'center' },
-  hint: { color: 'rgba(255,255,255,0.5)', fontSize: 14, textAlign: 'center' },
+  hint: { fontSize: 14, textAlign: 'center' },
 });
