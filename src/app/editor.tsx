@@ -191,8 +191,8 @@ export default function EditorScreen() {
     ctl.seekTo(at);
   };
 
-  /** A tap on a clip (either view): select it and put the playhead on its start (so the preview
-   * shows it); a tap on the selected clip lets it go. */
+  /** A tap on a clip (either view) selects it, the playhead and playback left as they are; a tap
+   * on the selected clip lets it go. */
   const tapClip = (i: number) => {
     const c = clips[i];
     if (!c) {
@@ -205,8 +205,6 @@ export default function EditorScreen() {
       return;
     }
     setSelectedId(c.id);
-    ctl.pause();
-    ctl.seekTo(layout.starts[i] ?? 0);
   };
 
   const slotOf = (i: number) => {
