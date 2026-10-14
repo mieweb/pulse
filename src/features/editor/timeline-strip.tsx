@@ -17,10 +17,8 @@ import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { haptics } from '@/utils/haptics';
 
 import { ClipTile, TILE_GAP, TILE_HEIGHT, TILE_RADIUS, type TilePalette } from './clip-tile';
-import { Phase, type Handoff } from './drag-handoff';
 import {
   clamp,
-  clipIndexAt,
   DP_PER_MS,
   MIN_CLIP_SOURCE_MS,
   snapToFrame,
@@ -32,8 +30,6 @@ import type { Peaks } from './use-waveforms';
 
 export const STRIP_HEIGHT = TILE_HEIGHT + 20;
 const GRIP_WIDTH = 16;
-/** How long a finger rests on a clip before it's picked up to move. */
-export const HOLD_MS = 350;
 /** Extra touch area around each trim grip. */
 const GRIP_SLOP = 10;
 /** A selected clip counts as on screen while at least this much of it shows. */
@@ -75,14 +71,6 @@ type Props = {
   selected: number;
   trim: TrimInfo | null;
   values: PlayheadValues;
-  /** The hold-to-move handoff (the finger, for the Clips row drawn over the strip). */
-  handoff: Handoff;
-  /** True while a hold moves a clip (the row over the strip shows the clips). */
-  hidden: boolean;
-  /** A hold picked clip `index` up, the finger at screen x `fingerX`. */
-  onHold: (index: number, fingerX: number) => void;
-  /** That hold let go. */
-  onHoldEnd: () => void;
   /** The selected clip scrolled out of view (it's let go). */
   onSelectedHidden: () => void;
   /** The scrub started (pause, approximate seeks). */
@@ -103,7 +91,7 @@ type Props = {
  * a frame with trim grips (RNVT's look). Covers and waveforms draw only near the visible part.
  */
 export function TimelineStrip(props: Props) {
-  const { clips, covers, peaks, layout, selected, trim, values, handoff, hidden } = props;
+  const { clips, covers, peaks, layout, selected, trim, values } = props;
   const { timeMs, totalMs, mode, trimTarget, playing } = values;
 
   // The strip spans the screen: start centred before the first layout (no frame off-centre).
@@ -138,12 +126,6 @@ export function TimelineStrip(props: Props) {
   useEffect(() => {
     starts.set(layout.starts);
   }, [layout.starts, starts]);
-  const ids = useSharedValue<string[]>([]);
-  const idKey = clips.map((c) => c.id).join('\n');
-  useEffect(() => {
-    ids.set(idKey ? idKey.split('\n') : []);
-  }, [idKey, ids]);
-  const holding = useSharedValue(false);
   const [width, setWidth] = useState(0);
 
   // The gestures are built once; their JS callbacks reach the current props through this.
@@ -182,11 +164,6 @@ export function TimelineStrip(props: Props) {
       });
     },
     limit: () => haptics.drop(),
-    hold: (i: number, fingerX: number) => {
-      haptics.pickUp();
-      latest.current.onHold(i, fingerX);
-    },
-    holdEnd: () => latest.current.onHoldEnd(),
     hidden: () => latest.current.onSelectedHidden(),
   }));
 
@@ -230,8 +207,6 @@ export function TimelineStrip(props: Props) {
     trimStart,
     trimEnd,
     limit,
-    hold: holdAt,
-    holdEnd,
     hidden: onHidden,
   } = handlers;
 
@@ -290,7 +265,7 @@ export function TimelineStrip(props: Props) {
       })
       .onFinalize((e) => {
         if (!panning.get()) {
-          // The touch stopped a fling and let go without dragging (a tap, or a hold).
+          // The touch stopped a fling and let go without dragging (a tap, or a rest).
           if (stopped.get() && mode.get() === Mode.scrub) {
             mode.set(Mode.idle);
             scheduleOnRN(scrubEnd, timeMs.get());
@@ -365,81 +340,11 @@ export function TimelineStrip(props: Props) {
           scheduleOnRN(trimEnd, s, trimSrc.get());
         });
 
-    // Hold a clip to move it: the editor switches to the Clips view (reordering lives there).
-    // Hold a clip to move it, in the same touch: the clips appear as the Clips row over the strip
-    // and this gesture, which keeps the finger, hands its positions to that row (drag-handoff).
-    /** The hold is over: drop what it carries (or nothing, if the drag hadn't started). Once. */
-    const endHold = () => {
-      'worklet';
-      if (!holding.get()) return;
-      holding.set(false);
-      // Dragging: the row drops it (and reports the order). Not started yet: nothing to drop.
-      handoff.phase.set(handoff.phase.get() === Phase.dragging ? Phase.released : Phase.idle);
-      scheduleOnRN(holdEnd);
-    };
-    const hold = Gesture.Pan()
-      .activateAfterLongPress(HOLD_MS)
-      .onTouchesDown((e, manager) => {
-        // A press on the selected clip's trim grips (or during a trim) is a trim, never a hold:
-        // give the touch up at once rather than relying on the grips to block this one (they
-        // didn't when the finger rested on a grip before dragging).
-        const touch = e.allTouches[0];
-        // A touch that stops a fling (the scrub still running) is part of that scrub, never a hold.
-        if (!touch || mode.get() === Mode.trim || mode.get() === Mode.scrub) {
-          manager.fail();
-          return;
-        }
-        if (!trimInfo.get()) return;
-        const x = touch.x - half.get() + timeMs.get() * DP_PER_MS;
-        const start = frameLeft.get();
-        const end = start + frameWidth.get() - TILE_GAP;
-        const reach = GRIP_WIDTH + GRIP_SLOP;
-        if (
-          (x > start - reach && x < start + GRIP_SLOP) ||
-          (x > end - GRIP_SLOP && x < end + reach)
-        ) {
-          manager.fail();
-        }
-      })
-      .onStart((e) => {
-        const ms = timeMs.get() + (e.x - half.get()) / DP_PER_MS;
-        if (ms < 0 || ms > totalMs.get()) return;
-        const i = clipIndexAt(starts.get(), ms);
-        const id = ids.get()[i];
-        if (!id) return;
-        holding.set(true);
-        handoff.key.set(id);
-        handoff.touch.set({ x: e.absoluteX, y: e.absoluteY });
-        handoff.phase.set(Phase.requested);
-        scheduleOnRN(holdAt, i, e.absoluteX);
-      })
-      .onUpdate((e) => {
-        if (holding.get()) handoff.touch.set({ x: e.absoluteX, y: e.absoluteY });
-      })
-      // The finger's moves from the touch itself too: after the handoff to sortables, iOS stops
-      // the gesture's own updates (as it does its end), and the dragged clip lost the finger.
-      .onTouchesMove((e) => {
-        const t = e.allTouches[0];
-        if (holding.get() && t) handoff.touch.set({ x: t.absoluteX, y: t.absoluteY });
-      })
-      // The finger lifting ends the hold: from the touch itself as well as the gesture's end, since
-      // on iOS an activated hold that handed its drag to sortables could miss its end (the clip
-      // then stayed lifted). Whichever comes first ends it, once.
-      .onTouchesUp(() => {
-        endHold();
-      })
-      .onTouchesCancelled(() => {
-        endHold();
-      })
-      .onFinalize(() => {
-        endHold();
-      });
-
     const left = grip(1);
     const right = grip(2);
-    left.blocksExternalGesture(scrub, tap, hold);
-    right.blocksExternalGesture(scrub, tap, hold);
-    return { strip: Gesture.Race(scrub, hold, tap), left, right };
+    left.blocksExternalGesture(scrub, tap);
+    right.blocksExternalGesture(scrub, tap);
+    return { strip: Gesture.Race(scrub, tap), left, right };
   });
 
   // Draw covers and waveforms only within about a screen of the playhead: the page changes
@@ -503,7 +408,6 @@ export function TimelineStrip(props: Props) {
           style={[
             styles.content,
             { width: layout.totalMs * DP_PER_MS },
-            hidden && styles.hidden,
             content,
           ]}>
           {clips.map((c, i) => {
@@ -552,12 +456,10 @@ export function TimelineStrip(props: Props) {
             </Animated.View>
           )}
         </Animated.View>
-        {!hidden && (
-          <View
-            pointerEvents="none"
-            style={[styles.playhead, { left: width / 2 - 2, backgroundColor: theme.text }]}
-          />
-        )}
+        <View
+          pointerEvents="none"
+          style={[styles.playhead, { left: width / 2 - 2, backgroundColor: theme.text }]}
+        />
       </View>
     </GestureDetector>
   );
@@ -566,7 +468,6 @@ export function TimelineStrip(props: Props) {
 const styles = StyleSheet.create({
   strip: { height: STRIP_HEIGHT, justifyContent: 'center', overflow: 'hidden' },
   content: { height: TILE_HEIGHT },
-  hidden: { opacity: 0 },
   frame: {
     position: 'absolute',
     top: -FRAME_BAR,

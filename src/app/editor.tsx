@@ -13,7 +13,6 @@ import { Icon, type IconName } from '@/components/icon';
 import Sortable from 'react-native-sortables';
 
 import { ClipRow } from '@/features/editor/clip-row';
-import { Phase, useHandoff } from '@/features/editor/drag-handoff';
 import { ClipToolbar, SpeedRow, TOOLBAR_HEIGHT } from '@/features/editor/clip-toolbar';
 import { CropEditor } from '@/features/editor/crop-editor';
 import {
@@ -91,18 +90,6 @@ export default function EditorScreen() {
     !!status?.ready,
   );
 
-  // A hold on the timeline moving a clip: the held clip and where the finger was.
-  const handoff = useHandoff();
-  const [holding, setHolding] = useState<{ index: number; fingerX: number } | null>(null);
-  // The reorder overlay closes itself if no drag is running under it (a missed end can't leave the
-  // timeline stuck showing it).
-  useEffect(() => {
-    if (!holding) return;
-    const id = setInterval(() => {
-      if (handoff.phase.get() === Phase.idle) setHolding(null);
-    }, 700);
-    return () => clearInterval(id);
-  }, [holding, handoff]);
   // Clips (thumbnails, for picking and reordering) or Timeline (lengths, scrub, trim): the one
   // last switched to, remembered across sessions (Clips the first time).
   const [view, setView] = useState<EditorView>(
@@ -257,8 +244,6 @@ export default function EditorScreen() {
     : null;
 
   const onTrimStart = () => {
-    // A trim is never part of a hold: drop any reorder overlay left up.
-    setHolding(null);
     if (!sel) return;
     haptics.pickUp();
     setTrimmingId(sel.id);
@@ -417,7 +402,6 @@ export default function EditorScreen() {
             <ViewSwitcher
               view={view}
               onChange={(v) => {
-                setHolding(null);
                 setView(v);
                 void setEditorView(v).catch(() => {});
               }}
@@ -435,20 +419,6 @@ export default function EditorScreen() {
               selected={current}
               trim={trim}
               values={values}
-              handoff={handoff}
-              hidden={!!holding}
-              onHold={(i, fingerX) => {
-                // The clips turn into the Clips row over the strip, the held one under the finger.
-                const c = clips[i];
-                if (!c) return;
-                ctl.pause();
-                setSelectedId(c.id);
-                setHolding({ index: i, fingerX });
-              }}
-              onHoldEnd={() => {
-                // After sortables' drop animation (the order is stored by its onDragEnd).
-                setTimeout(() => setHolding(null), 300);
-              }}
               onDragStart={ctl.beginDrag}
               onScrubEnd={ctl.endScrub}
               onTap={onTap}
@@ -456,24 +426,6 @@ export default function EditorScreen() {
               onTrimStart={onTrimStart}
               onTrimEnd={onTrimEnd}
             />
-            {holding && (
-              <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                <ClipRow
-                  clips={clips}
-                  covers={covers}
-                  layout={layout}
-                  selected={current}
-                  values={values}
-                  handoff={{ state: handoff, index: holding.index }}
-                  onSelect={() => {}}
-                  onSelectedHidden={() => {}}
-                  onDragStart={() => {}}
-                  onScrubEnd={() => {}}
-                  onReorderStart={() => {}}
-                  onReorder={commitOrder}
-                />
-              </View>
-            )}
           </Animated.View>
         ) : (
           <Animated.View style={[styles.track, trackStyle]}>

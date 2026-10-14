@@ -20,7 +20,6 @@ import { haptics } from '@/utils/haptics';
 
 import { TILE_HEIGHT } from './clip-tile';
 import { EditCues } from './edit-cues';
-import { HandoffDriver, type Handoff } from './drag-handoff';
 import { clamp, type TimelineLayout } from './timeline-geometry';
 import type { EditorClip } from './use-editor-draft';
 import { Mode, type PlayheadValues } from './use-preview-transport';
@@ -68,11 +67,10 @@ type ThumbProps = {
   cover: string | null;
   selected: boolean;
   onTap: () => void;
-  handoff?: Handoff;
 };
 
 /** One clip as a thumbnail, in the recorder's look: number pill on top, length at the bottom. */
-const Thumb = memo(function Thumb({ clip, index, cover, selected, onTap, handoff }: ThumbProps) {
+const Thumb = memo(function Thumb({ clip, index, cover, selected, onTap }: ThumbProps) {
   const theme = useTheme();
   return (
     <View
@@ -81,7 +79,6 @@ const Thumb = memo(function Thumb({ clip, index, cover, selected, onTap, handoff
         { backgroundColor: theme.backgroundElement },
         selected && styles.selected,
       ]}>
-      {handoff && <HandoffDriver handoff={handoff} width={THUMB_WIDTH} height={THUMB_HEIGHT} />}
       <Sortable.Touchable
         onTap={onTap}
         style={styles.inner}
@@ -132,9 +129,6 @@ type Props = {
   onSelectedHidden: () => void;
   /** A tap on the row but not on a clip (the gaps, either side). */
   onBlankTap?: () => void;
-  /** Over the timeline during a hold there: the held clip (`index`) starts under the finger and
-   * the timeline's gesture drives its drag. */
-  handoff?: { state: Handoff; index: number };
 };
 
 /**
@@ -144,7 +138,7 @@ type Props = {
  */
 export function ClipRow(props: Props) {
   const theme = useTheme();
-  const { clips, covers, layout, selected, values, handoff } = props;
+  const { clips, covers, layout, selected, values } = props;
   const { timeMs, totalMs, mode, playing } = values;
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const offset = useScrollViewOffset(scrollRef);
@@ -166,21 +160,15 @@ export function ClipRow(props: Props) {
   /** A finger (or its fling) is moving the row: time follows the row, not the other way. */
   const user = useSharedValue(false);
   /** A clip is being moved: the row follows neither (sortables scrolls it). */
-  const moving = useSharedValue(!!handoff);
-  /** During a handoff, where the row starts: the held thumbnail under the finger. */
-  const pinned = useSharedValue(-1);
+  const moving = useSharedValue(false);
 
-  /** The row under the playhead at the current time (or pinned for a handoff). */
+  /** The row under the playhead at the current time. */
   const follow = useCallback(() => {
     'worklet';
-    if (pinned.get() >= 0) {
-      scrollTo(scrollRef, pinned.get(), 0, false);
-      return;
-    }
     if (user.get() || moving.get()) return;
     const g = geom.get();
     scrollTo(scrollRef, offsetOfTime(g.starts, g.total, timeMs.get()), 0, false);
-  }, [user, moving, pinned, geom, scrollRef, timeMs]);
+  }, [user, moving, geom, scrollRef, timeMs]);
 
   useEffect(() => {
     const g = { starts: layout.starts, total: layout.totalMs };
@@ -290,7 +278,7 @@ export function ClipRow(props: Props) {
       onTouchEnd={(e) => {
         const t = touchStart.current;
         touchStart.current = null;
-        if (!t || handoff || !latest.current.onBlankTap) return;
+        if (!t || !latest.current.onBlankTap) return;
         const { pageX, pageY } = e.nativeEvent;
         if (Math.hypot(pageX - t.x, pageY - t.y) > 10 || Date.now() - t.at > 400) return;
         const x = pageX - rowX.current + offset.get() - width / 2;
@@ -303,19 +291,6 @@ export function ClipRow(props: Props) {
         const w = e.nativeEvent.layout.width;
         setWidth(w);
         widthSv.set(w);
-        if (handoff) {
-          // Content x of the held thumbnail's centre = w/2 + index·STEP + THUMB/2: put it under
-          // the finger where it is now (it may have moved since the hold), and say where it went.
-          const centre = handoff.index * STEP + THUMB_WIDTH / 2 + w / 2;
-          const state = handoff.state;
-          scheduleOnUI(() => {
-            'worklet';
-            const at = Math.max(0, centre - state.touch.get().x);
-            pinned.set(at);
-            state.pinX.set(centre - at);
-            follow();
-          });
-        }
       }}>
       <Animated.ScrollView
         ref={scrollRef}
@@ -323,7 +298,6 @@ export function ClipRow(props: Props) {
         showsHorizontalScrollIndicator={false}
         onScroll={onScroll}
         scrollEventThrottle={16}
-        scrollEnabled={!handoff}
         contentContainerStyle={[styles.content, { paddingHorizontal: width / 2 }]}
         onContentSizeChange={() =>
           scheduleOnUI(() => {
@@ -347,8 +321,6 @@ export function ClipRow(props: Props) {
           // Positions animate only while a clip is dragged; the row's first layout (and any other
           // change) puts the thumbnails straight in place.
           itemsLayoutTransitionMode="reorder"
-          // Handed off from the timeline there's nothing to wait for; otherwise sortables' default.
-          dragActivationDelay={handoff ? handoff.state.delay : undefined}
           onDragStart={onDragStartSortable}
           onDragEnd={onDragEndSortable}
           // Also on the drop: the row must never stay frozen if a drag's end goes unreported.
@@ -360,17 +332,14 @@ export function ClipRow(props: Props) {
               cover={covers.get(item.id) ?? null}
               selected={index === selected}
               onTap={() => latest.current.onSelect(item.id)}
-              handoff={handoff?.state}
             />
           )}
         />
       </Animated.ScrollView>
-      {!handoff && (
-        <View
-          pointerEvents="none"
-          style={[styles.playhead, { left: width / 2 - 2, backgroundColor: theme.text }]}
-        />
-      )}
+      <View
+        pointerEvents="none"
+        style={[styles.playhead, { left: width / 2 - 2, backgroundColor: theme.text }]}
+      />
     </View>
   );
 }
