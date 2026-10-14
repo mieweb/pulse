@@ -21,7 +21,6 @@ import { haptics } from '@/utils/haptics';
 import { TILE_HEIGHT } from './clip-tile';
 import { EditCues } from './edit-cues';
 import { HandoffDriver, type Handoff } from './drag-handoff';
-import { HOLD_MS } from './timeline-strip';
 import { clamp, type TimelineLayout } from './timeline-geometry';
 import type { EditorClip } from './use-editor-draft';
 import { Mode, type PlayheadValues } from './use-preview-transport';
@@ -133,9 +132,9 @@ type Props = {
   onSelectedHidden: () => void;
   /** A tap on the row but not on a clip (the gaps, either side). */
   onBlankTap?: () => void;
-  /** Over the timeline during a hold there: the held clip (`index`) starts under the finger
-   * (screen x `fingerX`) and the timeline's gesture drives its drag. */
-  handoff?: { state: Handoff; index: number; fingerX: number };
+  /** Over the timeline during a hold there: the held clip (`index`) starts under the finger and
+   * the timeline's gesture drives its drag. */
+  handoff?: { state: Handoff; index: number };
 };
 
 /**
@@ -305,11 +304,15 @@ export function ClipRow(props: Props) {
         setWidth(w);
         widthSv.set(w);
         if (handoff) {
-          // Content x of the held thumbnail's centre = w/2 + index·STEP + THUMB/2; put it at the finger.
-          const at = Math.max(0, handoff.index * STEP + THUMB_WIDTH / 2 + w / 2 - handoff.fingerX);
+          // Content x of the held thumbnail's centre = w/2 + index·STEP + THUMB/2: put it under
+          // the finger where it is now (it may have moved since the hold), and say where it went.
+          const centre = handoff.index * STEP + THUMB_WIDTH / 2 + w / 2;
+          const state = handoff.state;
           scheduleOnUI(() => {
             'worklet';
+            const at = Math.max(0, centre - state.touch.get().x);
             pinned.set(at);
+            state.pinX.set(centre - at);
             follow();
           });
         }
@@ -344,9 +347,8 @@ export function ClipRow(props: Props) {
           // Positions animate only while a clip is dragged; the row's first layout (and any other
           // change) puts the thumbnails straight in place.
           itemsLayoutTransitionMode="reorder"
-          // A pick-up waits iOS's long-press time (sortables' 200 ms default caught scrubs that
-          // started with a short rest); handed off from the timeline, there's nothing to wait for.
-          dragActivationDelay={handoff ? handoff.state.delay : HOLD_MS}
+          // Handed off from the timeline there's nothing to wait for; otherwise sortables' default.
+          dragActivationDelay={handoff ? handoff.state.delay : undefined}
           onDragStart={onDragStartSortable}
           onDragEnd={onDragEndSortable}
           // Also on the drop: the row must never stay frozen if a drag's end goes unreported.

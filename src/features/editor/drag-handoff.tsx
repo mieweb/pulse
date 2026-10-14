@@ -22,6 +22,8 @@ export type Handoff = {
   phase: SharedValue<number>;
   /** Sortables' hold-to-drag delay for the handed-off row: none, the hold already happened. */
   delay: SharedValue<number>;
+  /** The screen x the held thumbnail's centre was placed at (under the finger, when it could be). */
+  pinX: SharedValue<number>;
 };
 
 export function useHandoff(): Handoff {
@@ -30,6 +32,7 @@ export function useHandoff(): Handoff {
     touch: useSharedValue({ x: 0, y: 0 }),
     phase: useSharedValue<number>(Phase.idle),
     delay: useSharedValue(0),
+    pinX: useSharedValue(0),
   };
 }
 
@@ -81,9 +84,18 @@ function Driver({ handoff, width, height }: { handoff: Handoff; width: number; h
         }) as unknown as Parameters<typeof handleTouchesMove>[0];
       if (phase === Phase.requested && ready) {
         origin.set(touch);
+        // Where the finger is on the thumbnail: its centre was placed at pinX, and the finger may
+        // have moved since (a quick swipe before the row was up). Sortables then knows where the
+        // finger really is, for the reorder and for scrolling near the edges.
         const start = {
           allTouches: [
-            { id: 0, x: width / 2, y: height / 2, absoluteX: touch.x, absoluteY: touch.y },
+            {
+              id: 0,
+              x: width / 2 + (touch.x - handoff.pinX.get()),
+              y: height / 2,
+              absoluteX: touch.x,
+              absoluteY: touch.y,
+            },
           ],
         } as unknown as Parameters<typeof handleTouchStart>[0];
         handoff.phase.set(Phase.dragging);

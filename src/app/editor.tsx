@@ -464,7 +464,7 @@ export default function EditorScreen() {
                   layout={layout}
                   selected={current}
                   values={values}
-                  handoff={{ state: handoff, ...holding }}
+                  handoff={{ state: handoff, index: holding.index }}
                   onSelect={() => {}}
                   onSelectedHidden={() => {}}
                   onDragStart={() => {}}

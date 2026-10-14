@@ -33,7 +33,7 @@ import type { Peaks } from './use-waveforms';
 export const STRIP_HEIGHT = TILE_HEIGHT + 20;
 const GRIP_WIDTH = 16;
 /** How long a finger rests on a clip before it's picked up to move. */
-export const HOLD_MS = 500;
+export const HOLD_MS = 350;
 /** Extra touch area around each trim grip. */
 const GRIP_SLOP = 10;
 /** A selected clip counts as on screen while at least this much of it shows. */
@@ -378,7 +378,6 @@ export function TimelineStrip(props: Props) {
       scheduleOnRN(holdEnd);
     };
     const hold = Gesture.Pan()
-      // iOS's long-press time: a scrub that starts with a short rest isn't a hold.
       .activateAfterLongPress(HOLD_MS)
       .onTouchesDown((e, manager) => {
         // A press on the selected clip's trim grips (or during a trim) is a trim, never a hold:
