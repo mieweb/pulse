@@ -486,7 +486,11 @@ export default function EditorScreen() {
         )}
 
         <Pressable
-          style={[styles.tools, { paddingBottom: insets.bottom + 4 }]}
+          // One height whether it holds the tools or the hint, so selecting never moves the layout.
+          style={[
+            styles.tools,
+            { height: TOOLBAR_HEIGHT + 8 + insets.bottom + 4, paddingBottom: insets.bottom + 4 },
+          ]}
           onPress={deselect}
           accessible={false}>
           {!active ? (
@@ -655,6 +659,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tools: { minHeight: TOOLBAR_HEIGHT + 8, justifyContent: 'center' },
+  tools: { justifyContent: 'center' },
   hint: { fontSize: 14, textAlign: 'center' },
 });
