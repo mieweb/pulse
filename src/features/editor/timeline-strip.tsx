@@ -368,6 +368,15 @@ export function TimelineStrip(props: Props) {
     // Hold a clip to move it: the editor switches to the Clips view (reordering lives there).
     // Hold a clip to move it, in the same touch: the clips appear as the Clips row over the strip
     // and this gesture, which keeps the finger, hands its positions to that row (drag-handoff).
+    /** The hold is over: drop what it carries (or nothing, if the drag hadn't started). Once. */
+    const endHold = () => {
+      'worklet';
+      if (!holding.get()) return;
+      holding.set(false);
+      // Dragging: the row drops it (and reports the order). Not started yet: nothing to drop.
+      handoff.phase.set(handoff.phase.get() === Phase.dragging ? Phase.released : Phase.idle);
+      scheduleOnRN(holdEnd);
+    };
     const hold = Gesture.Pan()
       // iOS's long-press time: a scrub that starts with a short rest isn't a hold.
       .activateAfterLongPress(HOLD_MS)
@@ -408,12 +417,17 @@ export function TimelineStrip(props: Props) {
       .onUpdate((e) => {
         if (holding.get()) handoff.touch.set({ x: e.absoluteX, y: e.absoluteY });
       })
+      // The finger lifting ends the hold: from the touch itself as well as the gesture's end, since
+      // on iOS an activated hold that handed its drag to sortables could miss its end (the clip
+      // then stayed lifted). Whichever comes first ends it, once.
+      .onTouchesUp(() => {
+        endHold();
+      })
+      .onTouchesCancelled(() => {
+        endHold();
+      })
       .onFinalize(() => {
-        if (!holding.get()) return;
-        holding.set(false);
-        // Dragging: the row drops it (and reports the order). Not started yet: nothing to drop.
-        handoff.phase.set(handoff.phase.get() === Phase.dragging ? Phase.released : Phase.idle);
-        scheduleOnRN(holdEnd);
+        endHold();
       });
 
     const left = grip(1);
