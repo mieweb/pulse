@@ -146,6 +146,19 @@ export default function RecorderScreen() {
     }, []),
   );
 
+  // The clip bar's clips, held while another screen (the editor) covers the recorder: sortables
+  // lays its grid out from measurements, and a reorder applied while the recorder's views were off
+  // screen left a thumbnail hidden or clips stuck lifted with the trash up. Back on screen, clips
+  // changed meanwhile rebuild the bar (a new key) rather than animate into place.
+  const [bar, setBar] = useState({ segments, key: 0, stale: false });
+  if (bar.segments !== segments) {
+    if (focused) {
+      setBar({ segments, key: bar.stale ? bar.key + 1 : bar.key, stale: false });
+      // A drag the old bar never ended can't keep the record button hidden.
+      if (bar.stale) setDragging(false);
+    } else if (!bar.stale) setBar({ ...bar, stale: true });
+  }
+
   // Audio focus: while the recorder is on screen capturing with a live mic, pause other apps'
   // audio (Spotify / podcasts) rather than mixing it in; restore on leave or mute. Gated on the
   // mic being live — a muted clip has no audio track, so there's nothing to seize focus for.
@@ -690,7 +703,8 @@ export default function RecorderScreen() {
           )}
 
           <SegmentBar
-            segments={segments}
+            key={bar.key}
+            segments={bar.segments}
             firstClipOverlay={
               clipsTip.mounted && (
                 <TipAnchor id="clips" shown={clipsTip.shown} onDismiss={clipsTip.dismiss} />
