@@ -134,7 +134,7 @@ type Props = {
 /**
  * The Clips view: thumbnails under the same fixed centre playhead as the timeline. Playback
  * scrolls the row; a swipe or a fling scrubs. Tap a thumbnail to select it; hold one to move it
- * (react-native-sortables, as the recorder's clip bar; it scrolls the row near the edges).
+ * (react-native-sortables; it scrolls the row near the edges).
  */
 export function ClipRow(props: Props) {
   const theme = useTheme();
@@ -313,8 +313,8 @@ export function ClipRow(props: Props) {
           keyExtractor={(c) => c.id}
           scrollableRef={scrollRef}
           autoScrollDirection="horizontal"
-          // As the recorder's bar: the dragged clip trades places with the one it's dropped on.
-          strategy="swap"
+          // The dragged clip slides into the gap and the clips it passes shift over by one.
+          strategy="insert"
           // In place at once (opening the editor, switching views, a hold on the timeline): no
           // entering animation. Deletes still fade out.
           itemEntering={null}
