@@ -417,6 +417,12 @@ export function TimelineStrip(props: Props) {
       .onUpdate((e) => {
         if (holding.get()) handoff.touch.set({ x: e.absoluteX, y: e.absoluteY });
       })
+      // The finger's moves from the touch itself too: after the handoff to sortables, iOS stops
+      // the gesture's own updates (as it does its end), and the dragged clip lost the finger.
+      .onTouchesMove((e) => {
+        const t = e.allTouches[0];
+        if (holding.get() && t) handoff.touch.set({ x: t.absoluteX, y: t.absoluteY });
+      })
       // The finger lifting ends the hold: from the touch itself as well as the gesture's end, since
       // on iOS an activated hold that handed its drag to sortables could miss its end (the clip
       // then stayed lifted). Whichever comes first ends it, once.
