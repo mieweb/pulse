@@ -5,6 +5,7 @@ import Animated, {
   cancelAnimation,
   useAnimatedReaction,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
   withDecay,
 } from 'react-native-reanimated';
@@ -435,6 +436,26 @@ export function TimelineStrip(props: Props) {
   const content = useAnimatedStyle(() => ({
     transform: [{ translateX: half.get() - timeMs.get() * DP_PER_MS }],
   }));
+  // Each grip's chevron says which way its edge can go: inward while the edge is at the source's
+  // own start or end (nothing hidden beyond it), outward once it's trimmed (footage to bring
+  // back). Follows the drag live.
+  const leftTrimmed = useDerivedValue(() => {
+    const info = trimInfo.get();
+    if (!info) return false;
+    const start = side.get() === 1 ? trimSrc.get() : info.startMs;
+    return start > info.frameMs / 2;
+  });
+  const rightTrimmed = useDerivedValue(() => {
+    const info = trimInfo.get();
+    if (!info) return false;
+    const end = side.get() === 2 ? trimSrc.get() : info.endMs;
+    return end < info.sourceMs - info.frameMs / 2;
+  });
+  const leftOut = useAnimatedStyle(() => ({ opacity: leftTrimmed.get() ? 1 : 0 }));
+  const leftIn = useAnimatedStyle(() => ({ opacity: leftTrimmed.get() ? 0 : 1 }));
+  const rightOut = useAnimatedStyle(() => ({ opacity: rightTrimmed.get() ? 1 : 0 }));
+  const rightIn = useAnimatedStyle(() => ({ opacity: rightTrimmed.get() ? 0 : 1 }));
+
   const frame = useAnimatedStyle(() => {
     const s = side.get();
     const d = delta.get();
@@ -486,13 +507,23 @@ export function TimelineStrip(props: Props) {
             <Animated.View style={[styles.frame, frame]} pointerEvents="box-none">
               <GestureDetector gesture={gestures.left}>
                 <View style={[styles.grip, styles.gripLeft]}>
-                  <Icon name="chevron.compact.left" size={14} weight="bold" tintColor="#fff" />
+                  <Animated.View style={[styles.chevron, leftOut]}>
+                    <Icon name="chevron.compact.left" size={14} weight="bold" tintColor="#fff" />
+                  </Animated.View>
+                  <Animated.View style={[styles.chevron, leftIn]}>
+                    <Icon name="chevron.compact.right" size={14} weight="bold" tintColor="#fff" />
+                  </Animated.View>
                 </View>
               </GestureDetector>
               <View style={styles.frameMiddle} pointerEvents="none" />
               <GestureDetector gesture={gestures.right}>
                 <View style={[styles.grip, styles.gripRight]}>
-                  <Icon name="chevron.compact.right" size={14} weight="bold" tintColor="#fff" />
+                  <Animated.View style={[styles.chevron, rightOut]}>
+                    <Icon name="chevron.compact.right" size={14} weight="bold" tintColor="#fff" />
+                  </Animated.View>
+                  <Animated.View style={[styles.chevron, rightIn]}>
+                    <Icon name="chevron.compact.left" size={14} weight="bold" tintColor="#fff" />
+                  </Animated.View>
                 </View>
               </GestureDetector>
             </Animated.View>
@@ -533,6 +564,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   gripLeft: { borderTopLeftRadius: TILE_RADIUS, borderBottomLeftRadius: TILE_RADIUS },
+  chevron: { position: 'absolute' },
   gripRight: { borderTopRightRadius: TILE_RADIUS, borderBottomRightRadius: TILE_RADIUS },
   playhead: {
     position: 'absolute',
