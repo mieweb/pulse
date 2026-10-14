@@ -13,7 +13,7 @@ import { Icon, type IconName } from '@/components/icon';
 import Sortable from 'react-native-sortables';
 
 import { ClipRow } from '@/features/editor/clip-row';
-import { useHandoff } from '@/features/editor/drag-handoff';
+import { Phase, useHandoff } from '@/features/editor/drag-handoff';
 import { ClipToolbar, SpeedRow, TOOLBAR_HEIGHT } from '@/features/editor/clip-toolbar';
 import { CropEditor } from '@/features/editor/crop-editor';
 import {
@@ -94,6 +94,15 @@ export default function EditorScreen() {
   // A hold on the timeline moving a clip: the held clip and where the finger was.
   const handoff = useHandoff();
   const [holding, setHolding] = useState<{ index: number; fingerX: number } | null>(null);
+  // The reorder overlay closes itself if no drag is running under it (a missed end can't leave the
+  // timeline stuck showing it).
+  useEffect(() => {
+    if (!holding) return;
+    const id = setInterval(() => {
+      if (handoff.phase.get() === Phase.idle) setHolding(null);
+    }, 700);
+    return () => clearInterval(id);
+  }, [holding, handoff]);
   // Clips (thumbnails, for picking and reordering) or Timeline (lengths, scrub, trim): the one
   // last switched to, remembered across sessions (Clips the first time).
   const [view, setView] = useState<EditorView>(

@@ -21,6 +21,7 @@ import { haptics } from '@/utils/haptics';
 import { TILE_HEIGHT } from './clip-tile';
 import { EditCues } from './edit-cues';
 import { HandoffDriver, type Handoff } from './drag-handoff';
+import { HOLD_MS } from './timeline-strip';
 import { clamp, type TimelineLayout } from './timeline-geometry';
 import type { EditorClip } from './use-editor-draft';
 import { Mode, type PlayheadValues } from './use-preview-transport';
@@ -343,9 +344,13 @@ export function ClipRow(props: Props) {
           // Positions animate only while a clip is dragged; the row's first layout (and any other
           // change) puts the thumbnails straight in place.
           itemsLayoutTransitionMode="reorder"
-          dragActivationDelay={handoff ? handoff.state.delay : undefined}
+          // A pick-up waits iOS's long-press time (sortables' 200 ms default caught scrubs that
+          // started with a short rest); handed off from the timeline, there's nothing to wait for.
+          dragActivationDelay={handoff ? handoff.state.delay : HOLD_MS}
           onDragStart={onDragStartSortable}
           onDragEnd={onDragEndSortable}
+          // Also on the drop: the row must never stay frozen if a drag's end goes unreported.
+          onActiveItemDropped={() => moving.set(false)}
           renderItem={({ item, index }) => (
             <Thumb
               clip={item}

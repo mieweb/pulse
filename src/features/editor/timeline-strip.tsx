@@ -32,6 +32,8 @@ import type { Peaks } from './use-waveforms';
 
 export const STRIP_HEIGHT = TILE_HEIGHT + 20;
 const GRIP_WIDTH = 16;
+/** How long a finger rests on a clip before it's picked up to move. */
+export const HOLD_MS = 500;
 /** Extra touch area around each trim grip. */
 const GRIP_SLOP = 10;
 /** A selected clip counts as on screen while at least this much of it shows. */
@@ -367,13 +369,15 @@ export function TimelineStrip(props: Props) {
     // Hold a clip to move it, in the same touch: the clips appear as the Clips row over the strip
     // and this gesture, which keeps the finger, hands its positions to that row (drag-handoff).
     const hold = Gesture.Pan()
-      .activateAfterLongPress(350)
+      // iOS's long-press time: a scrub that starts with a short rest isn't a hold.
+      .activateAfterLongPress(HOLD_MS)
       .onTouchesDown((e, manager) => {
         // A press on the selected clip's trim grips (or during a trim) is a trim, never a hold:
         // give the touch up at once rather than relying on the grips to block this one (they
         // didn't when the finger rested on a grip before dragging).
         const touch = e.allTouches[0];
-        if (!touch || mode.get() === Mode.trim) {
+        // A touch that stops a fling (the scrub still running) is part of that scrub, never a hold.
+        if (!touch || mode.get() === Mode.trim || mode.get() === Mode.scrub) {
           manager.fail();
           return;
         }
