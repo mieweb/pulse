@@ -61,6 +61,8 @@ export function usePreviewTransport() {
       afterBuild: null as number | null,
       /** Where the editor opened (a clip's start): the preview's first seek goes there. */
       placeMs: null as number | null,
+      /** Play once the preview is up (and at the opening place). */
+      autoplay: false,
 
       setPlayingState: (p: boolean) => {
         if (p === c.playing) return;
@@ -111,13 +113,21 @@ export function usePreviewTransport() {
         }
         if (st.ready && !st.error && c.placeMs != null && c.ref) {
           const ms = c.placeMs;
-          c.ref
+          const ref = c.ref;
+          ref
             .seek(ms)
             .catch(() => {})
             .finally(() => {
               c.placeMs = null;
               covered.set(0);
+              if (c.autoplay) {
+                c.autoplay = false;
+                ref.play();
+              }
             });
+        } else if (st.ready && !st.error && c.autoplay && c.placeMs == null && c.ref) {
+          c.autoplay = false;
+          c.ref.play();
         }
         if (st.ready && !st.error && c.afterBuild != null) {
           const ms = c.afterBuild;
@@ -142,9 +152,10 @@ export function usePreviewTransport() {
       toggle: () => (c.playing ? c.pause() : c.play()),
       /** Move the playhead and the preview to `ms` (a tap, a selection). */
       /** Open at `ms` (before the preview is up): the playhead starts there, and so does the
-       * preview, without showing its first frame. */
-      place: (ms: number) => {
+       * preview, without showing its first frame; `autoplay` plays on from there once it's up. */
+      place: (ms: number, autoplay = false) => {
         c.lastMs = ms;
+        c.autoplay = autoplay;
         timeMs.set(ms);
         if (ms <= 0) return;
         c.placeMs = ms;

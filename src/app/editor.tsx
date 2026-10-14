@@ -123,7 +123,8 @@ export default function EditorScreen() {
   // Selection: a tapped clip (its tools open, the playhead goes to its start), kept while the
   // playhead plays or is scrubbed, for as long as the clip is on screen in either view; once it
   // scrolls out of view it's let go, so the clip being edited is always the one in red.
-  const [selectedId, setSelectedId] = useState<string | null>(clipId ?? null);
+  // Nothing selected on open (a clip tapped in the recorder opens playing from it, see below).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const found = selectedId ? clips.findIndex((c) => c.id === selectedId) : -1;
   // A deleted clip can't stay selected (render-phase reset).
   if (selectedId && draft.loaded && clips.length && found < 0) setSelectedId(null);
@@ -161,7 +162,8 @@ export default function EditorScreen() {
     if (placedOnce.current || clips.length === 0) return;
     placedOnce.current = true;
     const i = clips.findIndex((c) => c.id === clipId);
-    ctl.place(i > 0 ? (layout.starts[i] ?? 0) : 0);
+    // Opened from a clip in the recorder: play the draft on from that clip's start.
+    ctl.place(i > 0 ? (layout.starts[i] ?? 0) : 0, !!clipId);
     placed.set(1);
   }, [clips, clipId, ctl, layout.starts, placed]);
   const trackStyle = useAnimatedStyle(() => ({ opacity: placed.get() }));
