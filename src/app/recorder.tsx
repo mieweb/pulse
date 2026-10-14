@@ -188,6 +188,12 @@ export default function RecorderScreen() {
     setWasPreviewing(previewing);
     if (!previewing && !muted && !callActive) setAudioHandoff(true);
   }
+  // Back from a screen that played video (the editor sets a playback session): the same handoff.
+  const [wasFocused, setWasFocused] = useState(focused);
+  if (wasFocused !== focused) {
+    setWasFocused(focused);
+    if (focused && !muted && !callActive) setAudioHandoff(true);
+  }
   useEffect(() => {
     if (!audioHandoff) return;
     let stale = false;
@@ -694,9 +700,15 @@ export default function RecorderScreen() {
             // Drag-to-trash deletes at once, same as the preview's 🗑.
             onDelete={deleteSegment}
             onDragActiveChange={setDragging}
+            // A tapped clip opens the editor on it (in the view last used there).
             onSelect={(id) => {
               if (previewing) preview.selectSegment(id);
-              else if (!isRecording) setPreviewId(id);
+              else if (!isRecording && draftId) {
+                router.push({
+                  pathname: '/editor',
+                  params: { draftId, clipId: id },
+                });
+              }
             }}
             cursor={
               previewing
