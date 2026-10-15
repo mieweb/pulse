@@ -88,7 +88,7 @@ type Props = {
  * The timeline: clips laid out at a fixed scale under a fixed centre playhead. One animated
  * transform moves the whole strip (time lives in `values.timeMs` on the UI thread); a pan scrubs
  * it and flings on release, a tap selects the clip under the finger, and the selected clip gets
- * a frame with trim grips (RNVT's look). Covers and waveforms draw only near the visible part.
+ * a frame with trim grips. Covers and waveforms draw only near the visible part.
  */
 export function TimelineStrip(props: Props) {
   const { clips, covers, peaks, layout, selected, trim, values } = props;
@@ -200,15 +200,7 @@ export function TimelineStrip(props: Props) {
     frameWidth,
   ]);
 
-  const {
-    dragStart,
-    scrubEnd,
-    tap: tapAt,
-    trimStart,
-    trimEnd,
-    limit,
-    hidden: onHidden,
-  } = handlers;
+  const { dragStart, scrubEnd, tap: tapAt, trimStart, trimEnd, limit, hidden: onHidden } = handlers;
 
   // The selected clip scrolled out of view: let it go (the clip being edited is always on screen).
   useAnimatedReaction(
@@ -404,12 +396,7 @@ export function TimelineStrip(props: Props) {
           setWidth(w);
           half.set(w / 2);
         }}>
-        <Animated.View
-          style={[
-            styles.content,
-            { width: layout.totalMs * DP_PER_MS },
-            content,
-          ]}>
+        <Animated.View style={[styles.content, { width: layout.totalMs * DP_PER_MS }, content]}>
           {clips.map((c, i) => {
             const left = (layout.starts[i] ?? 0) * DP_PER_MS;
             const end =

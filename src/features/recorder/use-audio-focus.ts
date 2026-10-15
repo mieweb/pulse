@@ -25,9 +25,9 @@ import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorMo
  *
  * `acquire` always re-applies the session config, even when focus is already held: expo-video's
  * VideoManager forces the shared AVAudioSession to `.playback` (a category with NO mic input)
- * whenever one of its players changes state — e.g. the in-recorder preview. If acquire
+ * whenever one of its players changes state — e.g. the Export screen's. If acquire
  * short-circuited on "already held", nothing would ever restore `.playAndRecord`, and every
- * clip recorded after a preview would silently capture an audio track of digital silence.
+ * clip recorded after playback would silently capture an audio track of digital silence.
  *
  * Because of that, an `acquire` can overlap a `release` (e.g. the effect releases on blur while
  * a pre-record `acquire` is mid-await) — so both re-check `heldRef` after each await and bail

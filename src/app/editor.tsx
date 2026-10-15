@@ -34,7 +34,7 @@ import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-dr
 import { useEditorHistory } from '@/features/editor/use-editor-history';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
-import { loadCustomSpeeds, speedMenu } from '@/features/recorder/editor-speeds';
+import { loadCustomSpeeds, speedMenu } from '@/features/editor/editor-speeds';
 import { useTheme } from '@/hooks/use-theme';
 import { haptics } from '@/utils/haptics';
 import type { ClipCrop, ParsedEdit } from '@/utils/segment-window';
@@ -268,7 +268,7 @@ export default function EditorScreen() {
     }
     const lengthMs = (next.endMs - next.startMs) / next.speed;
     const start = trim.slotStartMs;
-    // As RNVT: the playhead goes to the new start, or to the last frame before the new end.
+    // The playhead goes to the new start, or to the last frame before the new end.
     ctl.endTrim(side === 1 ? start : Math.max(start, start + lengthMs - trim.frameMs / next.speed));
     return { leftMs: start, lengthMs };
   };

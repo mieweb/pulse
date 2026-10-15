@@ -24,12 +24,13 @@ const DATA_MIGRATIONS: readonly DataMigration[] = [
 
 const centered = { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 } as const;
 
-/** Prefix of every file react-native-video-trim wrote (its editor, trims, merges, frames). */
+/** Prefix of every file react-native-video-trim, the editor older versions used, wrote (its
+ * editor, trims, merges, frames). */
 const RNVT_FILE_PREFIX = 'trimmedVideo';
 
 /**
- * Delete the files react-native-video-trim left at the top of the documents and caches folders,
- * the two places it wrote to (as its own `cleanFiles` did). Returns how many were removed.
+ * Delete the files react-native-video-trim left at the top of the documents and caches folders
+ * in older versions, the two places it wrote to. Returns how many were removed.
  */
 function sweepRnvtOutputs(): number {
   let removed = 0;
@@ -60,9 +61,8 @@ export function MigrationGate({ children }: { children: React.ReactNode }) {
     void runDataMigrations(DATA_MIGRATIONS).finally(() => setDataDone(true));
   }, [success]);
 
-  // Sweep RNVT's leftover files once on launch — exports live in `drafts/{id}/export.mp4`, the
-  // editor no longer writes files (edits are settings) and pulse-editor writes to its own cache
-  // folder, so nothing RNVT-named is live at startup. Reclaims what older versions left behind.
+  // Sweep the files react-native-video-trim left in older versions once on launch: nothing of
+  // this version writes RNVT-named files, so none is live at startup.
   const swept = useRef(false);
   useEffect(() => {
     if (!success || swept.current) return;

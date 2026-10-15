@@ -141,7 +141,7 @@ export function usePreviewTransport() {
       play: () => {
         const ref = c.ref;
         if (!ref) return;
-        // At the end, play from the start (RNVT does the same).
+        // At the end, play from the start.
         if (c.lastMs >= c.totalMs - 50) {
           timeMs.set(0);
           c.seek(0);

@@ -47,8 +47,8 @@ type Props = {
 
 /**
  * Crop mode, over the editor: the clip's frame with its rotate and flip (not its crop), and a
- * crop box to drag by a corner, an edge or the middle, or to pinch. RNVT's overlay (border,
- * thirds, L-shaped corner brackets, edge bars, 60 pt minimum), plus aspect presets and a dim
+ * crop box to drag by a corner, an edge or the middle, or to pinch: a border, thirds,
+ * L-shaped corner brackets, edge bars and a 60 pt minimum, plus aspect presets and a dim
  * outside the box. The crop is normalized to the displayed frame; Done stores it.
  */
 export function CropEditor({ uri, rotation, flipped, timeMs, crop, onCancel, onDone }: Props) {

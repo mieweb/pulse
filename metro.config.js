@@ -13,10 +13,6 @@ const modulesDir = path.resolve(__dirname, 'modules');
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const SEP = '[\\\\/]';
 const localModules = {
-  'react-native-video-trim': path.resolve(
-    __dirname,
-    'modules/react-native-video-trim/src/index.tsx',
-  ),
   '@mieweb/pulse-editor': path.resolve(__dirname, 'modules/pulse-editor/src/index.tsx'),
 };
 config.resolver.blockList = [

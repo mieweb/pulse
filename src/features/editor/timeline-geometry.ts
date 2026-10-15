@@ -4,9 +4,9 @@ import type { ParsedEdit } from '@/utils/segment-window';
 
 /** Strip scale: dp per timeline ms (48 dp per second; a 12 s clip is a 576 dp tile). */
 export const DP_PER_MS = 0.048;
-/** Shortest clip a trim can make, in source ms (RNVT's minimum). */
+/** Shortest clip a trim can make, in source ms. */
 export const MIN_CLIP_SOURCE_MS = 1000;
-/** A crop this close to the whole frame is stored as no crop (RNVT's rule). */
+/** A crop this close to the whole frame is stored as no crop. */
 const FULL_FRAME_SLACK = 0.01;
 
 export const clamp = (v: number, lo: number, hi: number) => {
@@ -60,7 +60,8 @@ export function timelineLayout(
     at += len;
   }
   const e = engine?.clipStartsMs;
-  if (!engine || !e || e.length !== lengthsMs.length || e.length === 0) return { starts, totalMs: at };
+  if (!engine || !e || e.length !== lengthsMs.length || e.length === 0)
+    return { starts, totalMs: at };
   for (let i = 0; i < e.length; i++) {
     const len = (i + 1 < e.length ? e[i + 1] : engine.durationMs) - e[i];
     if (Math.abs(len - lengthsMs[i]) > 60) return { starts, totalMs: at };
@@ -70,16 +71,20 @@ export function timelineLayout(
 
 // --- Edits (the clip's settings, as `setClipEdit` stores them) --------------------------------
 
-/** One quarter turn counter-clockwise, as RNVT's rotate (it counts down while flipped, so it
- * still turns the same way on screen). A crop is relative to the rotated frame, so it resets. */
+/** One quarter turn counter-clockwise (it counts down while flipped, so it still turns the
+ * same way on screen). A crop is relative to the rotated frame, so it resets. */
 export const rotated = (e: ParsedEdit): ParsedEdit => ({
   ...e,
   rotation: (e.rotation + (e.flipped ? 3 : 1)) % 4,
   crop: null,
 });
 
-/** Mirrored horizontally; the crop resets, as in RNVT. */
-export const flippedEdit = (e: ParsedEdit): ParsedEdit => ({ ...e, flipped: !e.flipped, crop: null });
+/** Mirrored horizontally; the crop resets. */
+export const flippedEdit = (e: ParsedEdit): ParsedEdit => ({
+  ...e,
+  flipped: !e.flipped,
+  crop: null,
+});
 
 /** A crop rect normalized to the displayed frame, or null when it's (nearly) the whole frame. */
 export function normalizedCrop(c: { x: number; y: number; w: number; h: number }) {

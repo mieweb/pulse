@@ -21,7 +21,6 @@ import {
   deleteDraft,
   deleteSegment,
   reorderSegments,
-  resetEdit,
   segmentsForDraft,
 } from '@/db/drafts';
 import {
@@ -200,8 +199,6 @@ export function useRecorder(initialDraftId?: string) {
 
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
   const { showToast } = useToast();
-  // Clips whose revert is under way (see `revertEdits`).
-  const revertingRef = useRef(new Set<string>());
 
   // Library access for the + import — granular (photo+video) like the camera/mic gate,
   // but requested just-in-time on tap (§2.3). Granting up front also lets the picker's
@@ -691,8 +688,7 @@ export function useRecorder(initialDraftId?: string) {
     });
   }
 
-  // No confirm: the clip goes at once, from any of the recorder's three trashes (the preview's
-  // 🗑, drag-to-trash, the editor's).
+  // No confirm: the clip goes at once (drag-to-trash in the clip bar).
   async function removeSegment(id: string) {
     try {
       await deleteSegment(id);
@@ -702,26 +698,6 @@ export function useRecorder(initialDraftId?: string) {
         title: 'Couldn’t delete the clip',
         message: userMessage(e, 'Try again.', 'delete clip'),
       });
-    }
-  }
-
-  // No confirm either: back to the untouched original at once (the edit's files go with it). The
-  // edit is one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
-  async function revertEdits(id: string) {
-    // A second tap before the first revert lands (the control goes once the row updates) would
-    // regenerate the same cover and delete the same files again.
-    if (revertingRef.current.has(id)) return;
-    revertingRef.current.add(id);
-    try {
-      await resetEdit(id);
-    } catch (e) {
-      showToast({
-        kind: 'error',
-        title: 'Couldn’t remove the edits',
-        message: userMessage(e, 'Try again.', 'reset edit'),
-      });
-    } finally {
-      revertingRef.current.delete(id);
     }
   }
 
@@ -766,7 +742,6 @@ export function useRecorder(initialDraftId?: string) {
     toggleMute: () => setMuted((prev) => !prev),
     cycleStabilization,
     deleteSegment: (id: string) => void removeSegment(id),
-    resetSegment: (id: string) => void revertEdits(id),
     reorderSegments: (ids: string[]) => void reorderSegments(ids),
   };
 }

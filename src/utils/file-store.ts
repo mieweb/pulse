@@ -18,7 +18,8 @@ export function segmentRelPath(draftId: string, segmentId: string): string {
 }
 
 /**
- * The edited (RNVT output) file's relative path — coexists with the pristine original. Each
+ * A baked edit's relative path (older versions re-encoded edits) — coexists with the pristine
+ * original. Each
  * edit gets a fresh revision stamp so the path (and thus every path-derived cache key: the
  * segment signature, the expo-video source URI, the expo-image cover URI) changes whenever the
  * content changes. Reusing one fixed path would leave those caches serving the previous edit.
@@ -133,8 +134,8 @@ export function exportFileExists(draftId: string): boolean {
 }
 
 /**
- * Move a finished merge output (RNVT's cache) into place as the draft's persisted export,
- * replacing any previous one; returns its absolute URI. The merge itself wrote elsewhere, so
+ * Move a finished merge output (in the merge's cache folder) into place as the draft's
+ * persisted export, replacing any previous one; returns its absolute URI. The merge itself wrote elsewhere, so
  * the only window where `export.mp4` is missing is between the delete and the move.
  */
 export async function persistExportFile(draftId: string, mergeOutputPath: string): Promise<string> {

@@ -64,7 +64,7 @@ type Props = {
   onDelete: () => void;
 };
 
-/** The clip tools, in RNVT's order (flip, rotate, crop, mute, speed), then reset and delete. */
+/** The clip tools: flip, rotate, crop, mute, speed, then reset and delete. */
 export function ClipToolbar(p: Props) {
   const tools: Tool[] = [
     { key: 'flip', label: 'Flip', icon: FLIP_ICON, onPress: p.onFlip, disabled: !p.editable },

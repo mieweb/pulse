@@ -10,7 +10,6 @@
       // `main` fallback; this points TS at the published declarations.
       "whisper.rn": ["./node_modules/whisper.rn/lib/typescript/index"],
       // Local native module (git submodule, autolinked from modules/ — see metro.config.js).
-      "react-native-video-trim": ["./modules/react-native-video-trim/src/index.tsx"],
       "@mieweb/pulse-editor": ["./modules/pulse-editor/src/index.tsx"]
     }
   },

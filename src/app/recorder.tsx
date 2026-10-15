@@ -16,7 +16,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { ThemedView } from '@/components/themed-view';
 import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
-import { ControlScrim, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { CloseButton } from '@/features/recorder/close-button';
 import { ImportButton } from '@/features/recorder/import-button';
@@ -26,26 +26,21 @@ import {
   LensSelector,
 } from '@/features/recorder/lens-selector';
 import { PermissionGate } from '@/features/recorder/permission-gate';
-import { PreviewModal } from '@/features/recorder/preview-modal';
 import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
-import { usePreview } from '@/features/recorder/use-preview';
 import { useRecorder } from '@/features/recorder/use-recorder';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
-import { useVideoTrim } from '@/features/recorder/use-video-trim';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
-import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
-import { haptics, muteHaptics } from '@/utils/haptics';
+import { muteHaptics } from '@/utils/haptics';
 import { closeToHome } from '@/utils/navigation';
-import { clipRender } from '@/utils/segment-window';
 
 // Ask for the full multi-camera device on the back so 0.5x / 1x / Tele are all reachable via
 // zoom; the front falls back to its single wide lens automatically.
@@ -56,17 +51,15 @@ const MAX_ZOOM_FACTOR = 16;
 // A second -11800 landing this soon after a recovery bounce means the rebuilt session hit the
 // same wall (an undetected call still owns the mic) — stop bouncing and drop the mic instead.
 const SESSION_ERROR_ESCALATION_MS = 3000;
-// One beat for expo-video's post-unload audio-session writes (async, on its own queue) to flush
-// before the recording config is restored — restoring first would let a late `.playback` write
-// clobber it right back.
-const PREVIEW_CLOSE_SETTLE_MS = 50;
+// One beat for a video player's post-unload audio-session writes (async, on its own queue) to
+// flush before the recording config is restored — restoring first would let a late `.playback`
+// write clobber it right back.
+const AUDIO_HANDOFF_SETTLE_MS = 50;
 
 export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
   const textSizeKey = useTextSizeKey();
-  const theme = useTheme();
-  const mode = useThemeMode();
   const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
   const permissions = useRecorderPermissions();
   const {
@@ -99,44 +92,18 @@ export default function RecorderScreen() {
     toggleMute,
     cycleStabilization,
     deleteSegment,
-    resetSegment,
     reorderSegments,
   } = useRecorder(draftIdParam);
 
-  // Preview mode: a tapped segment opens the in-recorder preview over the camera area;
-  // `null` means record mode. The camera stays mounted but its session pauses.
-  const [previewId, setPreviewId] = useState<string | null>(null);
-  // Derived as a render-phase adjustment so NO deletion path (✕ taps racing the live
-  // query, clear-draft) can strand an open preview with zero segments.
-  if (previewId != null && segments.length === 0) setPreviewId(null);
-  const preview = usePreview(segments, previewId);
-  // The active clip's geometry edit, which the preview applies as view transforms.
-  const activeRender = preview.active ? clipRender(preview.active) : null;
-  const previewEdit = activeRender && {
-    file: activeRender.file,
-    rotation: activeRender.rotation,
-    flipped: activeRender.flipped,
-    crop: activeRender.crop,
-  };
-  const previewing = previewId != null;
-  // True while a finger is dragging the playhead — the preview suppresses its play badge
-  // then. Derived reset (not effect) so a preview closed mid-drag can't strand it true.
-  const [scrubbing, setScrubbing] = useState(false);
-  if (!previewing && scrubbing) setScrubbing(false);
-
   // Top running timer: always the live draft total — saved clips plus wall-clock while
-  // recording. During preview the playhead position is shown inside the preview card instead.
+  // recording.
   const totalMs = useRecordingTimer(segments, recordStartedAt);
-
-  // Trimming = RNVT's full-screen editor, launched from the ✂ button in the preview modal. Its
-  // trash deletes through the same immediate delete as the preview's 🗑.
-  const { openTrim } = useVideoTrim(draftId, deleteSegment);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
   const [dragging, setDragging] = useState(false);
 
-  // While the Export screen is presented over this one, the recorder is unfocused — drop the
+  // While the editor or Export is presented over this one, the recorder is unfocused — drop the
   // camera session so it isn't capturing (and burning power) behind the modal. Restored on return.
   const [focused, setFocused] = useState(true);
   useFocusEffect(
@@ -164,44 +131,28 @@ export default function RecorderScreen() {
   // mic being live — a muted clip has no audio track, so there's nothing to seize focus for.
   // Also released while a call is active: we must yield the audio session to telephony, not fight
   // it for focus. Tied to screen focus (not per segment) to avoid toggling the session mid-draft.
-  // `previewing` is a dep so CLOSING the preview re-runs acquire: expo-video's preview player
-  // flips the shared AVAudioSession to `.playback` (no mic input) when it plays, which would
-  // otherwise leave every post-preview clip recording silence — acquire restores `.playAndRecord`.
   // Destructured because useAudioFocus() returns a fresh object each render — depending on
   // the stable acquire/release callbacks (not the object) keeps the effect from re-running
   // (and re-applying the session config) on every render.
   const { acquire: acquireFocus, release: releaseFocus } = useAudioFocus();
   useEffect(() => {
     const shouldHold = focused && appActive && !muted && !callActive && prefsReady;
-    if (previewing) {
-      // Preview owns the session config (expo-video forces `.playback`) — skip acquire so we
-      // don't fight it; re-acquire runs on close. Still release, though: yielding focus on
-      // blur/mute/a call becoming active must keep working even with a preview open.
-      if (!shouldHold) void releaseFocus();
-      return;
-    }
     if (shouldHold) void acquireFocus();
     else void releaseFocus();
-  }, [focused, appActive, muted, callActive, prefsReady, previewing, acquireFocus, releaseFocus]);
+  }, [focused, appActive, muted, callActive, prefsReady, acquireFocus, releaseFocus]);
   useEffect(() => () => void releaseFocus(), [releaseFocus]);
 
-  // Preview-close handoff: closing the preview hands the shared audio session back to the
-  // recorder, and the camera restart re-attaches the mic input (enableAudio keeps it on the
-  // main capture session). If the restart wins the race against the session-config restore —
-  // expo-video's post-unload writes and the acquire above are both async — the mic I/O unit
-  // starts under the preview's playback-only category and AVFoundation kills the session with
-  // -11800 (underlying -10868, kAudioUnitErr_FormatNotSupported). Sequence instead of race:
-  // hold the camera off (cameraActive below) for one settle beat + an acquire, then restart.
-  // Detected as a render-phase transition so the same commit that clears `previewing` already
-  // holds the camera off. Muted / in-call closes skip the hold — they restart video-only, and
-  // a category can't break a session with no mic input.
+  // Audio handoff: back from a screen that played video (the editor sets a playback session),
+  // the shared audio session returns to the recorder, and the camera restart re-attaches the mic
+  // input (enableAudio keeps it on the main capture session). If the restart wins the race
+  // against the session-config restore — the player's post-unload writes and the acquire above
+  // are both async — the mic I/O unit starts under a playback-only category and AVFoundation
+  // kills the session with -11800 (underlying -10868, kAudioUnitErr_FormatNotSupported).
+  // Sequence instead of race: hold the camera off (cameraActive below) for one settle beat + an
+  // acquire, then restart. Detected as a render-phase transition so the same commit that
+  // regains focus already holds the camera off. Muted / in-call returns skip the hold — they
+  // restart video-only, and a category can't break a session with no mic input.
   const [audioHandoff, setAudioHandoff] = useState(false);
-  const [wasPreviewing, setWasPreviewing] = useState(previewing);
-  if (wasPreviewing !== previewing) {
-    setWasPreviewing(previewing);
-    if (!previewing && !muted && !callActive) setAudioHandoff(true);
-  }
-  // Back from a screen that played video (the editor sets a playback session): the same handoff.
   const [wasFocused, setWasFocused] = useState(focused);
   if (wasFocused !== focused) {
     setWasFocused(focused);
@@ -215,7 +166,7 @@ export default function RecorderScreen() {
       void acquireFocus().then(() => {
         if (!stale) setAudioHandoff(false);
       });
-    }, PREVIEW_CLOSE_SETTLE_MS);
+    }, AUDIO_HANDOFF_SETTLE_MS);
     return () => {
       stale = true;
       clearTimeout(timer);
@@ -233,7 +184,7 @@ export default function RecorderScreen() {
   //    output video-only); recording with it would just re-throw.
   //  - plain -11800 (e.g. underlying -10868, kAudioUnitErr_FormatNotSupported): the session
   //    (re)started while the shared AVAudioSession sat in a playback-only category — the
-  //    preview-close handoff race (see the preview handoff above). Transient: re-assert the
+  //    audio handoff race (see the handoff above). Transient: re-assert the
   //    recording config and bounce; latching the mic here is issue #124's false "On call" state,
   //    which silently records every later clip without audio. If the bounce lands on the same
   //    wall (a second -11800 inside the escalation window — an undetected call), stop bouncing
@@ -385,7 +336,7 @@ export default function RecorderScreen() {
     onHoldStart,
     onHoldEnd,
     onFocus,
-    enabled: cameraReady && !previewing && !dragging,
+    enabled: cameraReady && !dragging,
     neutralZoom,
     minZoom: device?.minZoom ?? 1,
     maxZoom: device ? Math.min(device.maxZoom, MAX_ZOOM_FACTOR) : 1,
@@ -439,15 +390,14 @@ export default function RecorderScreen() {
       if (touched !== prev) scheduleOnRN(setShutterTouched, touched);
     },
   );
-  const shutterIdle =
-    focused && appActive && cameraReady && !previewing && !isRecording && !shutterTouched;
+  const shutterIdle = focused && appActive && cameraReady && !isRecording && !shutterTouched;
   const recordTip = useTip('record', shutterIdle && segments.length === 0, {
     delayMs: 1000,
     learned: isRecording,
   });
   const clipsTip = useTip('clips', shutterIdle && !dragging && segments.length > 0, {
     delayMs: 2000,
-    learned: previewing || dragging,
+    learned: dragging,
   });
   const closeTips = () => {
     recordTip.dismiss();
@@ -462,17 +412,16 @@ export default function RecorderScreen() {
   // Hold the camera until persisted prefs load, so the first frame uses the saved facing.
   if (!prefsReady) return <ThemedView style={styles.fill} />;
 
-  // The camera is live only when recording is possible: not during preview, not while Export
-  // covers this screen, and not while backgrounded — VisionCamera's `isActive` pauses the session
-  // in place on both platforms. Background is included (not just preview/blur) because iOS would
+  // The camera is live only when recording is possible: not while the editor or Export covers
+  // this screen, and not while backgrounded — VisionCamera's `isActive` pauses the session in
+  // place on both platforms. Background is included (not just blur) because iOS would
   // otherwise auto-resume the session on foreground with the mic still attached, straight into a
   // call that started in the background (the -11800 freeze below); waiting for `appActive` lets
   // call detection re-poll first. `|| isRecording` keeps the session up while a clip finalizes in
   // background, so the segment saves before we tear it down. `!recovering` drops it for one bounce
   // after a mic-priority error so it rebuilds cleanly, and `!audioHandoff` holds the restart after
-  // a preview closes until the recording session config is back (see the handoff above).
-  const cameraActive =
-    !previewing && !audioHandoff && focused && (appActive || isRecording) && !recovering;
+  // the editor closes until the recording session config is back (see the handoff above).
+  const cameraActive = !audioHandoff && focused && (appActive || isRecording) && !recovering;
 
   // Close: finalize any in-flight clip (saving it into the draft) before navigating home, so the
   // segment isn't lost when the camera unmounts.
@@ -480,10 +429,10 @@ export default function RecorderScreen() {
 
   return (
     <View style={styles.fill} onStartShouldSetResponderCapture={closeTips}>
-      {/* Light over the live camera whatever the theme; the preview's backdrop follows the theme,
-          so the bar does too. Only while this screen is focused: the last StatusBar mounted wins,
-          and the recorder stays mounted under Export, which should get the root's again. */}
-      {focused && <StatusBar style={previewing ? (mode === 'dark' ? 'light' : 'dark') : 'light'} />}
+      {/* Light over the live camera whatever the theme. Only while this screen is focused: the
+          last StatusBar mounted wins, and the recorder stays mounted under the editor and Export,
+          which should get the root's again. */}
+      {focused && <StatusBar style="light" />}
       {device && (
         <Camera
           ref={cameraRef}
@@ -515,7 +464,7 @@ export default function RecorderScreen() {
           // unit") on Android, while iOS silently ignores it.
           torchMode={
             (Platform.OS === 'ios' || cameraReady) && device.hasTorch
-              ? torch && !previewing
+              ? torch
                 ? 'on'
                 : 'off'
               : undefined
@@ -532,7 +481,7 @@ export default function RecorderScreen() {
             // focus effect's acquire, which drops the "allow haptics" setting (iOS honours it only
             // on activation): the recorder was silent until the first recording re-acquired.
             // Re-acquiring here, the same call every record tap makes, applies it from the start.
-            if (!muted && !callActive && !previewing) void acquireFocus();
+            if (!muted && !callActive) void acquireFocus();
           }}
           onError={onCameraError}
         />
@@ -548,159 +497,82 @@ export default function RecorderScreen() {
       {/* Focus reticle — driven imperatively by onFocus; pointer-transparent. */}
       <Animated.View pointerEvents="none" style={[styles.reticle, reticleStyle]} />
 
-      {/* The paused camera keeps its last frame on screen (VisionCamera pauses in place) —
-          cover it with the THEMED background while previewing so the stale frame can't show
-          around the video and the preview follows light/dark mode. */}
-      {previewing && (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.background }]} />
-      )}
-
       <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="box-none">
         <View
           style={[
             styles.topBar,
             { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
           ]}>
-          {/* One ✕ per mode: in record mode it exits the recorder; while previewing it closes
-              the preview (the modal has no ✕ of its own, so the corner never doubles up).
-              Glass only over the live camera — the preview's themed backdrop gets the scrim
-              variant (dark-pinned glass goes invisible on a light background). */}
-          <CloseButton
-            onPress={previewing ? () => setPreviewId(null) : handleClose}
-            overVideo={!previewing}
-            label={previewing ? 'Close preview' : 'Close recorder'}
-          />
-          {/* Record mode shows the running total (glass, over live camera); previewing shows
-              the draft-global position / total on the mode-aware scrim — same chrome as the
-              ✕ beside it, since glass has nothing to refract on the themed backdrop. */}
-          {previewing ? (
-            <View style={[styles.timerPill, styles.previewTimerPill, ControlScrim[mode]]}>
-              <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
-                {/* Both floor: a playhead shouldn't read a second ahead, and with the total
-                    rounding up the end read "00:07 / 00:08" on a 7.6 s draft. */}
-                {formatDuration(preview.globalMs, { pad: true, floor: true })} /{' '}
-                {/* A draft under a second still reads 00:01, as on Home and the clip strip. */}
-                {formatDuration(preview.totalMs > 0 ? Math.max(1000, preview.totalMs) : 0, {
-                  pad: true,
-                  floor: true,
-                })}
-              </Text>
-            </View>
-          ) : (
-            <GlassPill style={styles.timerPill}>
-              <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
-                {/* Floored like a playhead while recording, so it doesn't tick to the next
+          <CloseButton onPress={handleClose} overVideo label="Close recorder" />
+          {/* The running total, on glass over the live camera. */}
+          <GlassPill style={styles.timerPill}>
+            <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
+              {/* Floored like a playhead while recording, so it doesn't tick to the next
                     second half a second early; at rest it rounds, like the draft's total on Home. */}
-                {formatDuration(totalMs, { pad: true, floor: recordStartedAt != null })}
-              </Text>
-            </GlassPill>
-          )}
+              {formatDuration(totalMs, { pad: true, floor: recordStartedAt != null })}
+            </Text>
+          </GlassPill>
           {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
           <View style={styles.topBarSpacer} />
         </View>
 
-        {/* Hidden entirely while previewing — every control is inert then, and a rail of
-            greyed-out buttons over the preview just reads as clutter. */}
-        {!previewing && (
-          <CameraControls
-            facing={facing}
-            torch={torch}
-            stabilization={stabilization}
-            muted={muted}
-            callActive={callActive}
-            // Lock every camera control while a clip is recording — flip / torch / stabilization /
-            // mute can't change mid-clip (audio state is fixed at record start, and the others would
-            // disrupt or stop capture). Mirrors the lens selector, which is already locked here.
-            disabled={isRecording}
-            onFlip={flipCamera}
-            onToggleTorch={toggleTorch}
-            onCycleStabilization={cycleStabilization}
-            onToggleMute={toggleMute}
-          />
-        )}
-
-        {previewing && preview.active != null && (
-          <View style={styles.previewArea} pointerEvents="box-none">
-            <PreviewModal
-              player={preview.player}
-              isPlaying={preview.isPlaying}
-              scrubbing={scrubbing}
-              onTogglePlay={preview.togglePlay}
-              onTrim={() => {
-                const seg = preview.active;
-                if (!seg) return;
-                // Stay in the preview on this clip after the editor closes — edits are
-                // usually done together, so this saves a tap. Pause the underlying player
-                // while the editor is open; on save, usePreview re-applies the clip's new
-                // settings (its load effect keys on the clip's render key).
-                preview.pause();
-                openTrim(seg);
-              }}
-              // Deletes at once, like drag-to-trash (see useRecorder), and with the same haptic as a
-              // drop on the trash.
-              onDelete={() => {
-                if (!preview.activeId) return;
-                haptics.drop();
-                deleteSegment(preview.activeId);
-              }}
-              // Only for an edited clip: back to the untouched original. No confirm — the edits
-              // are one ✂ away, and reverting before ➡️ reuses the saved merge (#212).
-              onReset={
-                preview.active?.editState || preview.active?.editedFilename
-                  ? () => preview.activeId && resetSegment(preview.activeId)
-                  : undefined
-              }
-              edit={previewEdit}
-            />
-          </View>
-        )}
+        <CameraControls
+          facing={facing}
+          torch={torch}
+          stabilization={stabilization}
+          muted={muted}
+          callActive={callActive}
+          // Lock every camera control while a clip is recording — flip / torch / stabilization /
+          // mute can't change mid-clip (audio state is fixed at record start, and the others would
+          // disrupt or stop capture). Mirrors the lens selector, which is already locked here.
+          disabled={isRecording}
+          onFlip={flipCamera}
+          onToggleTorch={toggleTorch}
+          onCycleStabilization={cycleStabilization}
+          onToggleMute={toggleMute}
+        />
 
         <View
           style={[styles.bottom, { paddingBottom: insets.bottom + Spacing.three }]}
           pointerEvents="box-none">
-          {/* Record button is hidden entirely while previewing — the preview surface owns the
-              screen then. During a drag the record controls go (opacity 0, layout kept) so the
-              floating trash above the bar has clear space and nothing shifts. The lens pill
-              steps out and back rather than fading with the others: it's glass, and a partly
-              transparent ancestor makes iOS draw glass flat, sometimes for good. */}
-          {!previewing && (
-            <View style={{ transform: [{ scale: dragging ? 0 : 1 }] }}>
-              <LensSelector
-                presets={lensPresets}
-                selected={activeLens}
-                onSelect={(preset) => setZoomTo(preset.zoom)}
-                disabled={isRecording || dragging}
-              />
-            </View>
-          )}
+          {/* During a drag the record controls go (opacity 0, layout kept) so the floating trash
+              above the bar has clear space and nothing shifts. The lens pill steps out and back
+              rather than fading with the others: it's glass, and a partly transparent ancestor
+              makes iOS draw glass flat, sometimes for good. */}
+          <View style={{ transform: [{ scale: dragging ? 0 : 1 }] }}>
+            <LensSelector
+              presets={lensPresets}
+              selected={activeLens}
+              onSelect={(preset) => setZoomTo(preset.zoom)}
+              disabled={isRecording || dragging}
+            />
+          </View>
 
-          {!previewing && (
-            <View style={styles.buttonRow}>
-              <RecordButton
-                gesture={buttonGesture}
-                holdActive={holdActive}
-                pressed={pressed}
-                isRecording={isRecording}
-                cameraReady={cameraReady}
-                dragging={dragging}
+          <View style={styles.buttonRow}>
+            <RecordButton
+              gesture={buttonGesture}
+              holdActive={holdActive}
+              pressed={pressed}
+              isRecording={isRecording}
+              cameraReady={cameraReady}
+              dragging={dragging}
+            />
+            {recordTip.mounted && (
+              <View style={styles.recordTip} pointerEvents="none">
+                <TipAnchor id="record" shown={recordTip.shown} onDismiss={recordTip.dismiss} />
+              </View>
+            )}
+            {/* Faded out with the record button during a drag so the trash has clear space. */}
+            <Animated.View
+              style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
+              <ImportButton
+                onPress={importClip}
+                disabled={isRecording || dragging}
+                busy={isImporting}
+                progress={importProgress}
               />
-              {recordTip.mounted && (
-                <View style={styles.recordTip} pointerEvents="none">
-                  <TipAnchor id="record" shown={recordTip.shown} onDismiss={recordTip.dismiss} />
-                </View>
-              )}
-              {/* Faded out with the record button during a drag so the trash has clear space. */}
-              <Animated.View
-                style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
-                <ImportButton
-                  onPress={importClip}
-                  disabled={isRecording || dragging}
-                  busy={isImporting}
-                  progress={importProgress}
-                />
-              </Animated.View>
-            </View>
-          )}
+            </Animated.View>
+          </View>
 
           <SegmentBar
             key={bar.key}
@@ -711,29 +583,18 @@ export default function RecorderScreen() {
               )
             }
             onReorder={reorderSegments}
-            // Drag-to-trash deletes at once, same as the preview's 🗑.
+            // Drag-to-trash deletes at once.
             onDelete={deleteSegment}
             onDragActiveChange={setDragging}
             // A tapped clip opens the editor on it (in the view last used there).
             onSelect={(id) => {
-              if (previewing) preview.selectSegment(id);
-              else if (!isRecording && draftId) {
+              if (!isRecording && draftId) {
                 router.push({
                   pathname: '/editor',
                   params: { draftId, clipId: id },
                 });
               }
             }}
-            cursor={
-              previewing
-                ? {
-                    activeId: preview.activeId,
-                    globalMs: preview.globalMs,
-                    onScrub: preview.seekToGlobalMs,
-                    onScrubbingChange: setScrubbing,
-                  }
-                : undefined
-            }
             onNext={
               draftId ? () => router.push({ pathname: '/export', params: { draftId } }) : undefined
             }
@@ -780,12 +641,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
   },
-  // Scrim variant for preview mode — hairline edge shows in dark mode (light stays transparent).
-  previewTimerPill: { borderWidth: StyleSheet.hairlineWidth },
   topBarSpacer: { width: 40 },
-  // The preview stage stretches to fill the space between the top bar and the segment bar,
-  // so the video can size itself to whatever screen it's on.
-  previewArea: { flex: 1, alignSelf: 'stretch' },
   bottom: { alignItems: 'center', gap: Spacing.three },
   // Full-width row; the record button is centered by the row itself, so its position can't
   // be disturbed by the + control.

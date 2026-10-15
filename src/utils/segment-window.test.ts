@@ -24,7 +24,7 @@ const seg = (over: Partial<Segment>): Segment =>
     ...over,
   }) as Segment;
 
-// An RNVT editState (undo/redo included, as the editor saves it).
+// An editState as older versions saved it (undo/redo included).
 const edit = (over: Record<string, unknown> = {}) =>
   JSON.stringify({
     v: 1,

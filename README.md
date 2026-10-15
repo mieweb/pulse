@@ -62,7 +62,7 @@ flowchart TB
 ## Highlights
 
 - 🎬 **Segmented recording** — build a walkthrough from multiple clips, reorder them, re-record the ones you fumbled
-- ✂️ **Non-compounding edits** — trims re-encode from the pristine original every time, so re-editing never stacks generation loss
+- ✂️ **Non-compounding edits** — trims, crops, rotations and speed are stored as settings over the pristine original and rendered once at export, so re-editing never stacks generation loss
 - 🗣️ **On-device captions** — Whisper (whisper.cpp) transcription with word-level timing, no audio ever leaves the phone
 - 📡 **Resumable uploads** — TUS v1 protocol; a two-minute capture survives signal drops, app kills, and relaunches
 - 🔐 **Self-hosted by design** — pair with your server via QR / deep link; capability tokens live in the device keychain
