@@ -3,7 +3,7 @@ import type { Segment } from '@/db/schema';
 import type { MergedOutput } from '@/features/upload/types';
 import { absolutize, exportFileExists, exportRelPath, persistExportFile } from '@/utils/file-store';
 
-import { currentExportDuration, mergedSignature } from './merge-signature';
+import { currentExportDuration, exportSignature, type ExportAudio } from './merge-signature';
 
 /**
  * The draft's persisted export, if it is a valid export of exactly `segments` (file on disk AND
@@ -12,12 +12,14 @@ import { currentExportDuration, mergedSignature } from './merge-signature';
 export async function loadMergedExport(
   draftId: string,
   segments: Segment[],
+  audio: ExportAudio,
 ): Promise<MergedOutput | null> {
   const record = await getMergedExport(draftId);
   if (!record) return null;
   const durationMs = currentExportDuration(
     { fileExists: exportFileExists(draftId), ...record },
     segments,
+    audio,
   );
   return durationMs == null ? null : { path: absolutize(exportRelPath(draftId)), durationMs };
 }
@@ -37,11 +39,12 @@ let persistQueue: Promise<unknown> = Promise.resolve();
 export async function resolveMergedExport(
   draftId: string,
   segments: Segment[],
+  audio: ExportAudio,
   mergeClips: () => Promise<MergedOutput>,
 ): Promise<MergedOutput> {
-  const persisted = await loadMergedExport(draftId, segments);
+  const persisted = await loadMergedExport(draftId, segments, audio);
   if (persisted) return persisted;
-  const signature = mergedSignature(segments);
+  const signature = exportSignature(segments, audio);
   const merged = await mergeClips();
   return {
     path: await persistMergedExport(draftId, signature, merged),

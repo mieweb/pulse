@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 
 import type { Segment } from '@/db/schema';
+import { getRecorderFormat } from '@/features/recorder/recorder-format';
 import { describeError } from '@/features/upload/upload-log';
 
-import { mergeWithEditor } from './editor-merge';
+import { exportAudio, mergeWithEditor } from './editor-merge';
 import { mergedSignature } from './merge-signature';
 import { resolveMergedExport } from './merged-export';
 
@@ -66,10 +67,16 @@ export function useExport(draftId: string, segments: Segment[]) {
       // flips back to the loader without a cascading-render warning.
       if (current) setState({ status: 'merging', progress: 0 });
       try {
-        const { path, durationMs } = await resolveMergedExport(draftId, segments, () =>
-          mergeWithEditor(segments, abort.signal, (progress) => {
-            if (current) setState({ status: 'merging', progress });
-          }),
+        // The recorder's audio layout, read once for the saved export's key and the merge.
+        const recorder = await getRecorderFormat();
+        const { path, durationMs } = await resolveMergedExport(
+          draftId,
+          segments,
+          exportAudio(recorder),
+          () =>
+            mergeWithEditor(segments, recorder, abort.signal, (progress) => {
+              if (current) setState({ status: 'merging', progress });
+            }),
         );
         if (current) setState({ status: 'done', outputPath: path, durationMs });
       } catch (e) {

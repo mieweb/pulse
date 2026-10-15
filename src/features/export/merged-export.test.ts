@@ -31,7 +31,7 @@ jest.mock('@/utils/file-store', () => ({
 }));
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
-import { mergedSignature } from './merge-signature';
+import { exportSignature, mergedSignature } from './merge-signature';
 import { resolveMergedExport } from './merged-export';
 /* eslint-enable import/first */
 
@@ -45,6 +45,7 @@ const seg = (id: string, over: Partial<Segment> = {}): Segment =>
     ...over,
   }) as Segment;
 const clips = [seg('a'), seg('b')];
+const AUDIO = { sampleRate: 48000, channels: 1 };
 
 const mergeTo = (path: string, durationMs = 2000) => jest.fn(async () => ({ path, durationMs }));
 
@@ -56,19 +57,19 @@ beforeEach(() => {
 describe('resolveMergedExport', () => {
   it('merges once and persists the result when nothing is stored', async () => {
     const merge = mergeTo('/cache/m1.mp4');
-    await expect(resolveMergedExport('d1', clips, merge)).resolves.toEqual({
+    await expect(resolveMergedExport('d1', clips, AUDIO, merge)).resolves.toEqual({
       path: EXPORT,
       durationMs: 2000,
     });
     expect(merge).toHaveBeenCalledTimes(1);
     expect(mockFile.from).toBe('/cache/m1.mp4');
-    expect(mockRow).toMatchObject({ signature: mergedSignature(clips), durationMs: 2000 });
+    expect(mockRow).toMatchObject({ signature: exportSignature(clips, AUDIO), durationMs: 2000 });
   });
 
   it('reuses the stored export for unchanged clips — no merge', async () => {
-    await resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'));
+    await resolveMergedExport('d1', clips, AUDIO, mergeTo('/cache/m1.mp4'));
     const merge = mergeTo('/cache/m2.mp4');
-    await expect(resolveMergedExport('d1', [seg('a'), seg('b')], merge)).resolves.toEqual({
+    await expect(resolveMergedExport('d1', [seg('a'), seg('b')], AUDIO, merge)).resolves.toEqual({
       path: EXPORT,
       durationMs: 2000,
     });
@@ -76,13 +77,13 @@ describe('resolveMergedExport', () => {
   });
 
   it('merges exactly once again after the clips change', async () => {
-    await resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'));
+    await resolveMergedExport('d1', clips, AUDIO, mergeTo('/cache/m1.mp4'));
     const trimmed = [seg('a', { editedFilename: 'a.edited.1.mp4' }), seg('b')];
     const merge = mergeTo('/cache/m2.mp4', 1500);
-    await resolveMergedExport('d1', trimmed, merge);
-    await resolveMergedExport('d1', trimmed, merge);
+    await resolveMergedExport('d1', trimmed, AUDIO, merge);
+    await resolveMergedExport('d1', trimmed, AUDIO, merge);
     expect(merge).toHaveBeenCalledTimes(1);
-    expect(mockRow).toMatchObject({ signature: mergedSignature(trimmed), durationMs: 1500 });
+    expect(mockRow).toMatchObject({ signature: exportSignature(trimmed, AUDIO), durationMs: 1500 });
   });
 
   // Undoing edits restores the exact effective files, so the saved video is reused.
@@ -91,11 +92,11 @@ describe('resolveMergedExport', () => {
     ['resetting a trim', [seg('a', { editedFilename: 'a.edited.1.mp4' }), seg('b')]],
     ['deleting an added clip', [seg('a'), seg('b'), seg('c')]],
   ])('reuses the export after %s', async (_label, edited) => {
-    await resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'));
+    await resolveMergedExport('d1', clips, AUDIO, mergeTo('/cache/m1.mp4'));
     // The edited arrangement is never exported (the user goes straight back), then undone.
     expect(mergedSignature(edited)).not.toBe(mergedSignature(clips));
     const merge = mergeTo('/cache/m2.mp4');
-    await expect(resolveMergedExport('d1', [seg('a'), seg('b')], merge)).resolves.toEqual({
+    await expect(resolveMergedExport('d1', [seg('a'), seg('b')], AUDIO, merge)).resolves.toEqual({
       path: EXPORT,
       durationMs: 2000,
     });
@@ -103,24 +104,26 @@ describe('resolveMergedExport', () => {
   });
 
   it('only remembers the last merge — an exported edit replaces it', async () => {
-    await resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'));
-    await resolveMergedExport('d1', [seg('b'), seg('a')], mergeTo('/cache/m2.mp4'));
+    await resolveMergedExport('d1', clips, AUDIO, mergeTo('/cache/m1.mp4'));
+    await resolveMergedExport('d1', [seg('b'), seg('a')], AUDIO, mergeTo('/cache/m2.mp4'));
     const merge = mergeTo('/cache/m3.mp4');
-    await resolveMergedExport('d1', clips, merge);
+    await resolveMergedExport('d1', clips, AUDIO, merge);
     expect(merge).toHaveBeenCalledTimes(1);
   });
 
   it('re-merges when the stored file is gone', async () => {
-    await resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'));
+    await resolveMergedExport('d1', clips, AUDIO, mergeTo('/cache/m1.mp4'));
     mockFile.exists = false;
     const merge = mergeTo('/cache/m2.mp4');
-    await resolveMergedExport('d1', clips, merge);
+    await resolveMergedExport('d1', clips, AUDIO, merge);
     expect(merge).toHaveBeenCalledTimes(1);
   });
 
   it('never replaces the export while the draft is uploading', async () => {
     mockRow.uploadStatus = 'uploading';
-    await expect(resolveMergedExport('d1', clips, mergeTo('/cache/m1.mp4'))).resolves.toEqual({
+    await expect(
+      resolveMergedExport('d1', clips, AUDIO, mergeTo('/cache/m1.mp4')),
+    ).resolves.toEqual({
       path: '/cache/m1.mp4',
       durationMs: 2000,
     });

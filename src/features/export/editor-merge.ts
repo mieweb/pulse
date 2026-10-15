@@ -1,13 +1,12 @@
 import { merge, type MergeClip, type MergeOptions } from '@mieweb/pulse-editor';
 
 import type { Segment } from '@/db/schema';
-import { getRecorderFormat } from '@/features/recorder/recorder-format';
 import type { MergedOutput } from '@/features/upload/types';
 import { absolutize } from '@/utils/file-store';
 import type { RecorderFormat } from '@/utils/import-normalization';
 import { clipRender } from '@/utils/segment-window';
 
-import { REELS_TARGET } from './merge-signature';
+import { REELS_TARGET, type ExportAudio } from './merge-signature';
 
 /** Export video bitrate: the target the recorder is set to. Recordings land a little above it
  * (#241), within the merge's allowance, so a recorded draft joins without re-encoding. */
@@ -42,17 +41,24 @@ export function mergeOptions(recorder: RecorderFormat): MergeOptions {
     height: REELS_TARGET.targetHeight,
     fps: REELS_TARGET.targetFps,
     bitrate: EXPORT_BITRATE,
-    audio: { sampleRate: recorder.audioSampleRate, channels: recorder.audioChannels },
+    audio: exportAudio(recorder),
   };
 }
+
+/** The export's audio layout: the recorder's. */
+export const exportAudio = (recorder: RecorderFormat): ExportAudio => ({
+  sampleRate: recorder.audioSampleRate,
+  channels: recorder.audioChannels,
+});
 
 /** Merge a draft's clips with pulse-editor onto the reels canvas, in the recorder's audio layout. */
 export async function mergeWithEditor(
   segments: Segment[],
+  recorder: RecorderFormat,
   signal: AbortSignal,
   onProgress: (progress: number) => void,
 ): Promise<MergedOutput> {
-  const options = mergeOptions(await getRecorderFormat());
+  const options = mergeOptions(recorder);
   const started = Date.now();
   const result = await merge(segments.map(toMergeClip), options, { onProgress, signal });
   console.info(

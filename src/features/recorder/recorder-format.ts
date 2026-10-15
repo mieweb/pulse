@@ -77,14 +77,29 @@ export function recorderFormatFromProbe(
 }
 
 /** The current import target: the learned recorder format, else the platform default. */
-export async function getRecorderFormat(): Promise<RecorderFormat> {
+async function storedFormat(): Promise<RecorderFormat> {
   return parseRecorderFormat(await getSetting(RECORDER_FORMAT_KEY)) ?? DEFAULT_RECORDER_FORMAT;
 }
 
+/** Learning from recordings still running: a read waits for them (an export started right after
+ * a device's first recording would otherwise take the default layout). */
+let learning: Promise<void> = Promise.resolve();
+
+export async function getRecorderFormat(): Promise<RecorderFormat> {
+  await learning;
+  return storedFormat();
+}
+
 /** Re-learn the format from a just-finished recording. Best-effort: never throws. */
-export async function learnRecorderFormat(uri: string): Promise<void> {
+export function learnRecorderFormat(uri: string): Promise<void> {
+  const run = learning.then(() => learn(uri));
+  learning = run;
+  return run;
+}
+
+async function learn(uri: string): Promise<void> {
   try {
-    const current = await getRecorderFormat();
+    const current = await storedFormat();
     const probed = await probe(uri);
     // What the recorder actually wrote: its bitrate lands above the 5 Mbps it asks for (#241).
     const v = probed.video;

@@ -2,7 +2,12 @@ import { describe, expect, it } from '@jest/globals';
 
 import type { Segment } from '@/db/schema';
 
-import { currentExportDuration, MERGE_VERSION, mergedSignature } from './merge-signature';
+import {
+  currentExportDuration,
+  exportSignature,
+  MERGE_VERSION,
+  mergedSignature,
+} from './merge-signature';
 
 const seg = (id: string, over: Partial<Segment> = {}): Segment =>
   ({
@@ -44,24 +49,28 @@ describe('mergedSignature', () => {
 });
 
 describe('currentExportDuration', () => {
-  const stored = { fileExists: true, signature: mergedSignature(clips), durationMs: 2000 };
+  const AUDIO = { sampleRate: 48000, channels: 1 };
+  const stored = { fileExists: true, signature: exportSignature(clips, AUDIO), durationMs: 2000 };
 
   it('reuses the export when the file exists and the signature matches', () => {
-    expect(currentExportDuration(stored, clips)).toBe(2000);
+    expect(currentExportDuration(stored, clips, AUDIO)).toBe(2000);
   });
 
   it('re-merges when the clips changed since the export', () => {
-    expect(currentExportDuration(stored, [b, a])).toBeNull();
+    expect(currentExportDuration(stored, [b, a], AUDIO)).toBeNull();
   });
 
   it('re-merges an export encoded under an older MERGE_VERSION', () => {
-    const old = { ...stored, signature: mergedSignature(clips, MERGE_VERSION - 1) };
-    expect(currentExportDuration(old, clips)).toBeNull();
+    const old = {
+      ...stored,
+      signature: `${mergedSignature(clips, MERGE_VERSION - 1)}|audio 48000x1`,
+    };
+    expect(currentExportDuration(old, clips, AUDIO)).toBeNull();
   });
 
   it('re-merges when the file is gone or nothing is recorded', () => {
-    expect(currentExportDuration({ ...stored, fileExists: false }, clips)).toBeNull();
-    expect(currentExportDuration({ ...stored, signature: null }, clips)).toBeNull();
-    expect(currentExportDuration({ ...stored, durationMs: null }, clips)).toBeNull();
+    expect(currentExportDuration({ ...stored, fileExists: false }, clips, AUDIO)).toBeNull();
+    expect(currentExportDuration({ ...stored, signature: null }, clips, AUDIO)).toBeNull();
+    expect(currentExportDuration({ ...stored, durationMs: null }, clips, AUDIO)).toBeNull();
   });
 });

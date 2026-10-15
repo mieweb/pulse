@@ -28,6 +28,17 @@ export const MERGE_VERSION = 2;
 export const mergedSignature = (segments: Segment[], version: number = MERGE_VERSION): string =>
   `${version}|${segmentSignature(segments)}`;
 
+/** The audio layout an export is merged in: the recorder's on this device (see `mergeOptions`). */
+export type ExportAudio = { sampleRate: number; channels: number };
+
+/**
+ * A persisted export's key: its clips' signature and the audio layout it was merged in. The
+ * layout is learned from recordings (recorder-format.ts), so it can change after an export was
+ * saved (a device's first recording); a different one merges again.
+ */
+export const exportSignature = (segments: Segment[], audio: ExportAudio): string =>
+  `${mergedSignature(segments)}|audio ${audio.sampleRate}x${audio.channels}`;
+
 /** What's on record for a draft's persisted export (the `drafts` row + whether the file exists). */
 export type PersistedExport = {
   fileExists: boolean;
@@ -36,15 +47,16 @@ export type PersistedExport = {
 };
 
 /**
- * The persisted export's duration if it is a valid export of exactly `segments` — the file is
- * on disk AND its recorded signature matches the current clips — else `null` (merge again).
+ * The persisted export's duration if it is a valid export of exactly `segments` in `audio` — the
+ * file is on disk AND its recorded signature matches — else `null` (merge again).
  * This is the only freshness check: clip edits don't touch the export, so this is what decides
  * reuse vs re-merge when the export screen opens.
  */
 export function currentExportDuration(
   persisted: PersistedExport,
   segments: Segment[],
+  audio: ExportAudio,
 ): number | null {
   if (!persisted.fileExists || persisted.durationMs == null) return null;
-  return persisted.signature === mergedSignature(segments) ? persisted.durationMs : null;
+  return persisted.signature === exportSignature(segments, audio) ? persisted.durationMs : null;
 }
