@@ -19,11 +19,7 @@ function pictureMs(p: ProbeResult): number {
   return p.video && p.video.durationMs > 0 ? p.video.durationMs : p.durationMs;
 }
 
-/**
- * Check a conform output against its source. Pure — the app's contract gate and the import
- * e2e test (import-pipeline.e2e.test.ts) both use it, so the test enforces exactly what the
- * app does.
- */
+/** Check a conform output against its source. Pure; the app's contract gate runs it. */
 export function checkConform(
   source: ProbeResult,
   output: ProbeResult,

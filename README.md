@@ -210,17 +210,13 @@ Unit tests are co-located with the code and scoped to pure logic — cue reflow,
 npm test
 ```
 
-Two heavier suites are opt-in and skip themselves in a plain `npm test`:
+A heavier suite is opt-in and skips itself in a plain `npm test`:
 
 ```bash
 # Cross-repo integration: the app's real pairing + upload code against a real PulseVault
 # server built from the submodule (set PV_CORE=<path to core.js> to test another build)
 (cd pulsevault-mieweb && npm ci && npm run build)
 PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
-
-# Import → normalize → merge pipeline on the assets/dev/import corpus
-# (needs ffmpeg + ffprobe on PATH and the LFS fixtures pulled)
-PULSE_E2E=1 npx jest import-pipeline
 ```
 
 ## License
