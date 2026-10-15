@@ -19,7 +19,8 @@ export type ExportState =
  * across deletes and reorders, and zero-length clips are left out of the merge.
  */
 function exportFailureCopy(why: string, segments: Segment[]): string {
-  const position = Number(/\bClip (\d+) \(/.exec(why)?.[1]);
+  // "Clip 3 (<file>): …", or iOS's "Clip 3 rendered in the wrong format."
+  const position = Number(/\bClip (\d+)\b/.exec(why)?.[1]);
   const seg = Number.isInteger(position) ? segments[position - 1] : undefined;
   if (seg) {
     const clip = seg.label ? `clip ${seg.label}` : 'one of the clips';

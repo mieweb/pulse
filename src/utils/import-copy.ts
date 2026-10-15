@@ -3,14 +3,14 @@
  * `conformToContract` threw. The native reasons are stable wording (pulse-editor's
  * Conform.swift / Conform.kt): a file with no readable picture, sound this phone can't decode
  * (rejected rather than imported silent), a damaged file whose frames the decoder dropped
- * (Android). Anything else is a conversion failure worth retrying.
+ * (Android: "couldn't decode all of the video"; iOS: "Only … of the … video could be decoded"). Anything else is a conversion failure worth retrying.
  */
 type ImportFailure = 'unreadable' | 'sound' | 'damaged' | 'conversion';
 
 function importFailureKind(why: string): ImportFailure {
   if (/no video stream|no media tracks|probe/i.test(why)) return 'unreadable';
   if (/sound can.t be read/i.test(why)) return 'sound';
-  if (/couldn.t decode all of the video/i.test(why)) return 'damaged';
+  if (/couldn.t decode all of the video|video could be decoded/i.test(why)) return 'damaged';
   return 'conversion';
 }
 

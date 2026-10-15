@@ -44,7 +44,7 @@ const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
 /** Back to the recorder (or Home, when the editor was opened by a link). */
 const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
 
-/** Each file's frame rate (for frame-snapped trims), probed once per file. 30 until known. */
+/** Each file's frame rate (for frame-snapped trims), probed once per file (30 if the probe fails). */
 const frameRates = new Map<string, number>();
 function useFrameRates(uris: readonly string[]) {
   const [, setKnown] = useState(0);
@@ -67,7 +67,8 @@ function useFrameRates(uris: readonly string[]) {
       live = false;
     };
   }, [key]);
-  return (uri: string) => frameRates.get(uri) ?? 30;
+  // Unknown until the probe answers (no trim before then: it would snap to a guessed rate).
+  return (uri: string) => frameRates.get(uri) ?? null;
 }
 
 /**
@@ -232,16 +233,18 @@ export default function EditorScreen() {
   };
 
   const sel = current >= 0 ? clips[current] : null;
-  const trim: TrimInfo | null = sel?.editable
-    ? {
-        startMs: sel.edit.startMs,
-        endMs: sel.edit.endMs,
-        sourceMs: sel.sourceMs,
-        speed: sel.edit.speed,
-        slotStartMs: slotOf(current).start,
-        frameMs: 1000 / fpsOf(sel.uri),
-      }
-    : null;
+  const selFps = sel ? fpsOf(sel.uri) : null;
+  const trim: TrimInfo | null =
+    sel?.editable && selFps
+      ? {
+          startMs: sel.edit.startMs,
+          endMs: sel.edit.endMs,
+          sourceMs: sel.sourceMs,
+          speed: sel.edit.speed,
+          slotStartMs: slotOf(current).start,
+          frameMs: 1000 / selFps,
+        }
+      : null;
 
   const onTrimStart = () => {
     if (!sel) return;
