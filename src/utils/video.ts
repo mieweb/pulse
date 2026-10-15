@@ -83,13 +83,17 @@ export async function generateThumbnail(uri: string): Promise<VideoThumbnail | u
 }
 
 /**
- * Native clip duration in ms via pulse-editor's `probe` — no player to spin up. 0 on an
- * invalid/unreadable file (the clip is then skipped on playback and merge).
+ * A clip's length in ms via pulse-editor's `probe` (no player to spin up): its picture's, since
+ * the file's own length is its longest track's and sound can outlast the last frame. The file's
+ * length stands in when the video track reports none. 0 for a file with no picture or one that
+ * can't be read (the clip is then skipped on playback and merge).
  */
 export async function getDurationMs(uri: string): Promise<number> {
   try {
-    const { durationMs } = await probe(uri);
-    return durationMs > 0 ? durationMs : 0;
+    const { durationMs, video } = await probe(uri);
+    if (!video) return 0;
+    const ms = video.durationMs > 0 ? video.durationMs : durationMs;
+    return ms > 0 ? ms : 0;
   } catch (e) {
     console.warn('[video] duration failed for', uri, e);
     return 0;
