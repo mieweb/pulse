@@ -316,11 +316,9 @@ function Bar({
               keyExtractor={(s) => s.id}
               scrollableRef={scrollRef}
               autoScrollDirection="horizontal"
-              // 'swap' keeps the row still during a drag — only the hovered thumb trades
-              // places with the dragged one. The default 'insert' reflowed every neighbor
-              // to open a gap, which made long bars feel like they scattered on pickup.
-              // Note the semantics: dropping 1 on 5 exchanges them (2–4 stay put).
-              strategy="swap"
+              // Insert, as the editor's Clips view: the dragged clip slides into the gap and the
+              // clips it passes shift over by one (dropping 1 on 5 gives 2 3 4 5 1).
+              strategy="insert"
               onDragStart={onDragStart}
               onDragMove={onDragMove}
               onDragEnd={onDragEnd}
