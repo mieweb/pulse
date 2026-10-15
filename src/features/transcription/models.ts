@@ -1,7 +1,8 @@
 // Catalog of on-device speech models the user can choose between, picked for how the app
-// transcribes (each clip on its own, see clip-queue.ts) on the speech bench (.devrun/whisper):
-// Parakeet TDT for its word timing, a small English Whisper, and a multilingual Whisper for the
-// languages Parakeet doesn't cover. `approxBytes` is only for an initial progress estimate / a
+// transcribes (each clip on its own, see clip-queue.ts) on the speech benches (.devrun/whisper):
+// Parakeet TDT for English (the most accurate there, with the best word timing), and a
+// multilingual Whisper for every other language — Parakeet v3 as whisper.cpp runs it gives English
+// only (a Spanish clip came back translated into English). `approxBytes` is only for an initial progress estimate / a
 // completeness floor — the real content length comes from the download task.
 const WHISPER_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/';
 const PARAKEET_URL = 'https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main/';
@@ -37,17 +38,7 @@ export const MODELS: WhisperModel[] = [
     name: 'parakeet-tdt-0.6b-v3 · q4_0',
     filename: 'ggml-parakeet-tdt-0.6b-v3-q4_0.bin',
     approxBytes: 339 * 1024 * 1024,
-    note: 'Best timing · English and 24 European languages',
-    lang: 'auto',
-  },
-  {
-    id: 'base.en',
-    engine: 'whisper',
-    label: 'Base (English)',
-    name: 'base.en · q5_1',
-    filename: 'ggml-base.en-q5_1.bin',
-    approxBytes: 57 * 1024 * 1024,
-    note: 'Smallest · English only',
+    note: 'Most accurate · English only',
     lang: 'en',
   },
   {
@@ -111,8 +102,10 @@ export const getModel = (id: string | null | undefined): WhisperModel | null =>
  * (`resolveSelectedModel`); the replacement's weights are then downloaded lazily at export time.
  */
 export const RETIRED_MODELS: Record<string, string | null> = {
-  'tiny.en': 'base.en',
-  // Per clip (the speech bench), Parakeet matches small.en's accuracy with far better timing.
+  // English: Parakeet, which on the speech bench (per clip) was at least as accurate as these
+  // English Whispers, with far better word timing.
+  'tiny.en': 'parakeet-tdt-0.6b-v3-q4_0',
+  'base.en': 'parakeet-tdt-0.6b-v3-q4_0',
   'small.en-q5_1': 'parakeet-tdt-0.6b-v3-q4_0',
   // Chosen for any language: the multilingual model that stays.
   'large-v3-turbo-q5_0': 'small-q5_1',

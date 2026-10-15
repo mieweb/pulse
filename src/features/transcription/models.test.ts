@@ -13,26 +13,26 @@ import {
 
 describe('model catalog', () => {
   it('resolves a known id and rejects unknown / nullish ids', () => {
-    expect(getModel('base.en')?.id).toBe('base.en');
+    expect(getModel('small-q5_1')?.id).toBe('small-q5_1');
     expect(getModel('nope')).toBeNull();
     expect(getModel(null)).toBeNull();
     expect(getModel(undefined)).toBeNull();
   });
 
   it('builds the Hugging Face GGML url from the filename', () => {
-    const m = getModel('base.en')!;
+    const m = getModel('small-q5_1')!;
     expect(modelUrl(m)).toBe(
-      'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin',
+      'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin',
     );
   });
 
   it('pins English-only models to "en" and the multilingual model to "auto"', () => {
     // Regression: the multilingual model must NOT be silently forced to English.
     for (const m of MODELS) {
-      const expected = m.id.includes('.en') ? 'en' : 'auto';
+      const expected = m.engine === 'parakeet' || m.id.includes('.en') ? 'en' : 'auto';
       expect(m.lang).toBe(expected);
     }
-    expect(getModel('parakeet-tdt-0.6b-v3-q4_0')!.lang).toBe('auto');
+    expect(getModel('parakeet-tdt-0.6b-v3-q4_0')!.lang).toBe('en');
     // The small multilingual model is the affordable non-English option — it must detect language.
     expect(getModel('small-q5_1')!.lang).toBe('auto');
   });
@@ -52,14 +52,14 @@ describe('model catalog', () => {
   });
 
   it('migrates a retired id to its replacement and clears unknown ids', () => {
-    expect(migrateStaleModelId('tiny.en')?.id).toBe('base.en');
+    expect(migrateStaleModelId('tiny.en')?.id).toBe('parakeet-tdt-0.6b-v3-q4_0');
     expect(migrateStaleModelId('some-corrupt-value')).toBeNull();
   });
 });
 
 describe('modelCaveat', () => {
   const large = getModel('parakeet-tdt-0.6b-v3-q4_0')!;
-  const small = getModel('base.en')!;
+  const small = getModel('small-q5_1')!;
   const GB = 1024 * 1024 * 1024;
 
   it('never flags small models, on any device', () => {
