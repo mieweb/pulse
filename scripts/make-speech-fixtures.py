@@ -3,8 +3,9 @@
 
 Source: NASA's "#AskNASA: How Can I Be An Astronaut?" (YouTube -XQ_CuIwDlc, NASA's channel: US
 government work, public domain), with its human English captions. Downloads it with yt-dlp, then
-cuts ten clips in the recorder's format (portrait 1080x1920 H.264 30 fps, AAC 48 kHz mono), one
-answer per clip, each cut snapped to the quietest 10 ms within +-0.4 s of a gap in the captions.
+cuts ten clips in the recorder's format, one answer per clip: H.264 30 fps coded 1920x1080 with
+square pixels and a 90-degree display rotation (portrait on screen, as the phone records it, so a
+draft of them joins without re-encoding, alone or with recordings), AAC 48 kHz mono; each cut snapped to the quietest 10 ms within +-0.4 s of a gap in the captions.
 Writes cuts.json (each clip's window in the source) and the captions (asknasa.en.json3).
 
   python3 scripts/make-speech-fixtures.py            # needs yt-dlp and ffmpeg on PATH
@@ -54,13 +55,20 @@ def main():
     for i, (a, b) in enumerate(CLEAN, 1):
         a, b = snap(env, hop, a), snap(env, hop, b)
         name = f'{i:02d}.mp4'
-        # Centre crop to 9:16, scaled to the recorder's portrait 1080x1920.
+        coded = os.path.join(src_dir, f'coded-{name}')
+        # Centre crop to 9:16 (an even 608 px, square pixels), the recorder's portrait 1080x1920 on
+        # screen, coded on its side (1920x1080) as the phone codes it...
         subprocess.run([
             'ffmpeg', '-v', 'error', '-y', '-ss', f'{a:.3f}', '-to', f'{b:.3f}', '-i', SRC,
-            '-vf', 'crop=ih*9/16:ih,scale=1080:1920,fps=30', '-c:v', 'libx264', '-profile:v', 'high',
-            '-pix_fmt', 'yuv420p', '-b:v', '1000k', '-maxrate', '1500k', '-bufsize', '3000k',
-            '-c:a', 'aac', '-ar', '48000', '-ac', '1', '-b:a', '96k', '-movflags', '+faststart',
-            os.path.join(OUT, name)], check=True)
+            '-vf', 'crop=608:ih,scale=1080:1920,setsar=1,fps=30,transpose=1', '-c:v', 'libx264',
+            '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-b:v', '1000k', '-maxrate', '1500k',
+            '-bufsize', '3000k', '-c:a', 'aac', '-ar', '48000', '-ac', '1', '-b:a', '96k', coded],
+            check=True)
+        # ...and turned upright by its display matrix (rotation 90, as the recorder writes).
+        subprocess.run([
+            'ffmpeg', '-v', 'error', '-y', '-display_rotation:v:0', '90', '-i', coded, '-c', 'copy',
+            '-movflags', '+faststart', os.path.join(OUT, name)], check=True)
+        os.remove(coded)
         cuts.append({'file': name, 'srcStart': a, 'srcEnd': b})
         print(f'{name} {a:7.3f}-{b:7.3f} ({b - a:5.2f} s)')
     with open(os.path.join(OUT, 'cuts.json'), 'w') as f:
