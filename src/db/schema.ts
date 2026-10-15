@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
@@ -113,6 +113,29 @@ export const draftTranscripts = sqliteTable('draft_transcripts', {
   createdAt: integer('created_at').notNull().default(now),
 });
 
+/**
+ * A clip's own transcript, per model: the words of the file the clip plays from (`file`, the
+ * original for edits stored as settings), timed in THAT file (centiseconds), so trims, speed,
+ * mutes and reorders never make it stale — the draft's captions are composed from these through
+ * the clips' edits (compose.ts). Made once per clip by the background queue (clip-queue.ts).
+ * `words` is JSON `Array<{ text, t0, t1 }>` (whole words), `[]` for a clip with no speech, null
+ * after a failure. A row whose `file` isn't the clip's current file is stale.
+ */
+export const clipTranscripts = sqliteTable(
+  'clip_transcripts',
+  {
+    segmentId: text('segment_id')
+      .notNull()
+      .references(() => segments.id, { onDelete: 'cascade' }),
+    model: text('model').notNull(),
+    file: text('file').notNull(),
+    status: text('status', { enum: ['done', 'error'] }).notNull(),
+    words: text('words'),
+    createdAt: integer('created_at').notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.segmentId, t.model] })],
+);
+
 /** App-wide key/value settings (e.g. the selected transcription model). */
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -138,4 +161,5 @@ export const uploadDestinations = sqliteTable('upload_destinations', {
 export type Draft = typeof drafts.$inferSelect;
 export type Segment = typeof segments.$inferSelect;
 export type DraftTranscript = typeof draftTranscripts.$inferSelect;
+export type ClipTranscript = typeof clipTranscripts.$inferSelect;
 export type UploadDestination = typeof uploadDestinations.$inferSelect;

@@ -23,6 +23,7 @@ import {
   type ParsedEdit,
 } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
+import { useClipTranscription } from '@/features/transcription/use-clip-transcription';
 
 /** A clip as the editor shows and edits it. */
 export type EditorClip = {
@@ -101,6 +102,8 @@ function toEditorClip(s: Segment): EditorClip {
  */
 export function useEditorDraft(draftId: string) {
   const { data: rows, updatedAt } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
+  // Clips without a transcript yet are transcribed in the background while the editor is open.
+  useClipTranscription(rows, true);
   const { showToast } = useToast();
   const [pending, setPending] = useState<ReadonlyMap<string, EditValue>>(new Map());
 

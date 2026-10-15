@@ -35,6 +35,8 @@ import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-ret
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
 import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
+import { setClipQueuePaused } from '@/features/transcription/clip-queue';
+import { useClipTranscription } from '@/features/transcription/use-clip-transcription';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
@@ -125,6 +127,14 @@ export default function RecorderScreen() {
       if (bar.stale) setDragging(false);
     } else if (!bar.stale) setBar({ ...bar, stale: true });
   }
+
+  // Captions: each clip is transcribed in the background between takes (never while recording:
+  // the model would compete with the capture, so the queue pauses and resumes after the take).
+  useClipTranscription(segments, focused && !isRecording);
+  useEffect(() => {
+    setClipQueuePaused(isRecording);
+  }, [isRecording]);
+  useEffect(() => () => setClipQueuePaused(false), []);
 
   // Audio focus: while the recorder is on screen capturing with a live mic, pause other apps'
   // audio (Spotify / podcasts) rather than mixing it in; restore on leave or mute. Gated on the

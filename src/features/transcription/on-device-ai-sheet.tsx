@@ -66,7 +66,7 @@ export function OnDeviceAiSheet() {
   // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
   const [scrolls] = useState(() => !tallSheetFits());
   // A large model not on disk yet: the sheet asks first, in place of the list. Choosing it doesn't
-  // download it here; captions download it when they next run (`useMergedTranscription`).
+  // download it here; captions download it when they next run (`useDraftCaptions`).
   const [confirming, setConfirming] = useState<WhisperModel | null>(null);
   // A switch or removal under way. Each ends by closing the sheet, so a second tap while the first
   // is still saving would start another change and close twice, popping the screen underneath

@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 
-import type { TranscriptLine, TranscriptResult } from '@/features/transcription/whisper';
+import type { TranscriptLine } from '@/features/transcription/whisper';
 import { db } from './client';
 import { draftTranscripts } from './schema';
 
@@ -36,61 +36,33 @@ export async function getDraftTranscriptRow(draftId: string) {
 }
 
 /**
- * Mark a draft's merged transcript in-progress for a given segment-set signature + model (insert or
- * replace). A new signature means the merged timeline moved, so any prior auto lines AND hand-edit
- * are stale — cleared here.
+ * Store the draft's composed captions (compose.ts) for its current clips (`signature`) and model.
+ * A new signature means the clips or their edits changed, so a hand-edit made against the old
+ * timeline is stale and cleared; the same signature keeps it (only the auto lines are replaced,
+ * e.g. after a model switch).
  */
-export async function markTranscribing(
+export async function saveComposedTranscript(
   draftId: string,
   signature: string,
   model: string,
+  lines: TranscriptLine[],
+  durationMs: number,
 ): Promise<void> {
+  const json = JSON.stringify(lines);
   await db
     .insert(draftTranscripts)
-    .values({ draftId, signature, model, status: 'processing' })
+    .values({ draftId, signature, model, status: 'done', lines: json, durationMs })
     .onConflictDoUpdate({
       target: draftTranscripts.draftId,
       set: {
         signature,
         model,
-        status: 'processing',
-        lines: null,
-        editedLines: null,
-        durationMs: null,
+        status: 'done',
+        lines: json,
+        durationMs,
+        editedLines: sql`CASE WHEN ${draftTranscripts.signature} = ${signature} THEN ${draftTranscripts.editedLines} ELSE NULL END`,
       },
     });
-}
-
-/** Persist a completed merged transcription result. */
-export async function saveTranscript(
-  draftId: string,
-  signature: string,
-  model: string,
-  result: TranscriptResult,
-  durationMs: number,
-): Promise<void> {
-  await db
-    .update(draftTranscripts)
-    .set({
-      signature,
-      model,
-      status: 'done',
-      lines: JSON.stringify(result.lines),
-      durationMs,
-    })
-    .where(eq(draftTranscripts.draftId, draftId));
-}
-
-/** Mark a draft's merged transcription as failed for a given signature + model. */
-export async function markTranscriptError(
-  draftId: string,
-  signature: string,
-  model: string,
-): Promise<void> {
-  await db
-    .update(draftTranscripts)
-    .set({ signature, model, status: 'error', lines: null })
-    .where(eq(draftTranscripts.draftId, draftId));
 }
 
 /**

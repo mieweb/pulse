@@ -1,11 +1,15 @@
-// Catalog of on-device Whisper models the user can choose between. All are hosted on the
-// whisper.cpp GGML repo. `approxBytes` is only for an initial progress estimate / a completeness
-// floor — the real content length comes from the download task. English-only models (`.en`) are
-// smaller/faster; large-v3-turbo is multilingual.
-const BASE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/';
+// Catalog of on-device speech models the user can choose between, picked for how the app
+// transcribes (each clip on its own, see clip-queue.ts) on the speech bench (.devrun/whisper):
+// Parakeet TDT for its word timing, a small English Whisper, and a multilingual Whisper for the
+// languages Parakeet doesn't cover. `approxBytes` is only for an initial progress estimate / a
+// completeness floor — the real content length comes from the download task.
+const WHISPER_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/';
+const PARAKEET_URL = 'https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main/';
 
 export type WhisperModel = {
   id: string;
+  /** Which whisper.rn engine runs it: Whisper, or NVIDIA Parakeet TDT. */
+  engine: 'whisper' | 'parakeet';
   label: string;
   /**
    * The underlying Whisper checkpoint name (e.g. `base.en`, `large-v3-turbo`), shown muted in the
@@ -19,50 +23,41 @@ export type WhisperModel = {
   note: string;
   /**
    * Decode language passed to Whisper. The `.en` models are English-only, so we pin `'en'`;
-   * the multilingual model uses `'auto'` so it actually detects the spoken language instead of
-   * being silently forced to English.
+   * the multilingual models use `'auto'` so they actually detect the spoken language instead of
+   * being silently forced to English (Parakeet always detects it).
    */
   lang: 'en' | 'auto';
 };
 
 export const MODELS: WhisperModel[] = [
   {
+    id: 'parakeet-tdt-0.6b-v3-q4_0',
+    engine: 'parakeet',
+    label: 'Parakeet',
+    name: 'parakeet-tdt-0.6b-v3 · q4_0',
+    filename: 'ggml-parakeet-tdt-0.6b-v3-q4_0.bin',
+    approxBytes: 339 * 1024 * 1024,
+    note: 'Best timing · English and 24 European languages',
+    lang: 'auto',
+  },
+  {
     id: 'base.en',
+    engine: 'whisper',
     label: 'Base (English)',
     name: 'base.en · q5_1',
     filename: 'ggml-base.en-q5_1.bin',
     approxBytes: 57 * 1024 * 1024,
-    note: 'Balanced · English only',
-    lang: 'en',
-  },
-  {
-    id: 'small.en-q5_1',
-    label: 'Small (English)',
-    name: 'small.en · q5_1',
-    filename: 'ggml-small.en-q5_1.bin',
-    approxBytes: 190 * 1024 * 1024,
-    note: 'Most accurate · English only',
+    note: 'Smallest · English only',
     lang: 'en',
   },
   {
     id: 'small-q5_1',
+    engine: 'whisper',
     label: 'Small (Multilingual)',
     name: 'small · q5_1',
     filename: 'ggml-small-q5_1.bin',
     approxBytes: 181 * 1024 * 1024,
-    note: 'Any language · balanced',
-    lang: 'auto',
-  },
-  {
-    id: 'large-v3-turbo-q5_0',
-    label: 'Large Turbo',
-    name: 'large-v3-turbo · q5_0',
-    filename: 'ggml-large-v3-turbo-q5_0.bin',
-    approxBytes: 574 * 1024 * 1024,
-    // Platform/device caveats are NOT baked in here — the picker appends `modelCaveat(...)`
-    // (pure, fed by the expo-device profile at the UI layer) so this module stays free of
-    // react-native imports for the pure-Node jest suite.
-    note: 'Any language · best quality',
+    note: 'Any language',
     lang: 'auto',
   },
 ];
@@ -71,9 +66,9 @@ export const MODELS: WhisperModel[] = [
 export const LARGE_MODEL_BYTES = 300 * 1024 * 1024;
 
 /**
- * Device RAM floor for the large model. Its q5_0 weights are ~574 MB and whisper.cpp's runtime
- * working set is a multiple of that — on phones under this floor (budget Androids, older
- * iPhones) inference is memory-starved: heavy swapping at best, an OOM kill at worst.
+ * Device RAM floor for the large models (`LARGE_MODEL_BYTES` and up): the runtime working set is a
+ * multiple of the weights — on phones under this floor (budget Androids, older iPhones) inference
+ * is memory-starved: heavy swapping at best, an OOM kill at worst.
  */
 export const LARGE_MODEL_MIN_MEMORY_BYTES = 4 * 1024 * 1024 * 1024;
 
@@ -94,8 +89,8 @@ export type DeviceProfile = {
  * the model runs well on this device. Two independent signals, worst first:
  *  - low RAM (`LARGE_MODEL_MIN_MEMORY_BYTES`): the large model's working set doesn't fit —
  *    warn regardless of platform.
- *  - Android: whisper.rn has no GPU backend there (CPU-only inference, no Metal), so the
- *    large model is markedly slower than on iOS even with plenty of RAM.
+ *  - Android: whisper.rn has no GPU backend there (CPU-only inference, no Metal), so a large
+ *    model is slower than on iOS even with plenty of RAM (not yet measured for Parakeet).
  */
 export function modelCaveat(model: WhisperModel, profile: DeviceProfile): string | null {
   if (model.approxBytes < LARGE_MODEL_BYTES) return null;
@@ -117,6 +112,10 @@ export const getModel = (id: string | null | undefined): WhisperModel | null =>
  */
 export const RETIRED_MODELS: Record<string, string | null> = {
   'tiny.en': 'base.en',
+  // Per clip (the speech bench), Parakeet matches small.en's accuracy with far better timing.
+  'small.en-q5_1': 'parakeet-tdt-0.6b-v3-q4_0',
+  // Chosen for any language: the multilingual model that stays.
+  'large-v3-turbo-q5_0': 'small-q5_1',
 };
 
 /**
@@ -134,4 +133,5 @@ export const migrateStaleModelId = (id: string): WhisperModel | null =>
 export const resolveSelectedModel = (id: string | null | undefined): WhisperModel | null =>
   getModel(id) ?? (id ? migrateStaleModelId(id) : null);
 
-export const modelUrl = (m: WhisperModel): string => BASE_URL + m.filename;
+export const modelUrl = (m: WhisperModel): string =>
+  (m.engine === 'parakeet' ? PARAKEET_URL : WHISPER_URL) + m.filename;

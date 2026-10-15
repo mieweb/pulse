@@ -32,14 +32,14 @@ describe('model catalog', () => {
       const expected = m.id.includes('.en') ? 'en' : 'auto';
       expect(m.lang).toBe(expected);
     }
-    expect(getModel('large-v3-turbo-q5_0')!.lang).toBe('auto');
+    expect(getModel('parakeet-tdt-0.6b-v3-q4_0')!.lang).toBe('auto');
     // The small multilingual model is the affordable non-English option — it must detect language.
     expect(getModel('small-q5_1')!.lang).toBe('auto');
   });
 
   it('only the large model crosses the confirm-before-download threshold', () => {
     const large = MODELS.filter((m) => m.approxBytes >= LARGE_MODEL_BYTES);
-    expect(large.map((m) => m.id)).toEqual(['large-v3-turbo-q5_0']);
+    expect(large.map((m) => m.id)).toEqual(['parakeet-tdt-0.6b-v3-q4_0']);
   });
 
   it('every retired id is actually gone and maps to a model still in the catalog', () => {
@@ -58,7 +58,7 @@ describe('model catalog', () => {
 });
 
 describe('modelCaveat', () => {
-  const large = getModel('large-v3-turbo-q5_0')!;
+  const large = getModel('parakeet-tdt-0.6b-v3-q4_0')!;
   const small = getModel('base.en')!;
   const GB = 1024 * 1024 * 1024;
 

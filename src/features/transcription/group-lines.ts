@@ -28,7 +28,7 @@ function flush(words: TranscriptWord[]): TranscriptLine {
  * piece starts with a space. A piece without one continues the word before it. On the speech
  * bench (.devrun/whisper) taking pieces as words was most of the transcripts' errors.
  */
-function wholeWords(segments: TranscriptWord[]): TranscriptWord[] {
+export function wholeWords(segments: TranscriptWord[]): TranscriptWord[] {
   const out: TranscriptWord[] = [];
   for (const seg of segments) {
     const text = seg.text.trim();
@@ -52,11 +52,16 @@ function wholeWords(segments: TranscriptWord[]): TranscriptWord[] {
  * space); `t0`/`t1` stay in centiseconds.
  */
 export function groupWordsIntoLines(segments: TranscriptWord[]): TranscriptLine[] {
+  return linesFromWords(wholeWords(segments));
+}
+
+/** Caption-sized lines from whole words (trimmed, centiseconds), as `groupWordsIntoLines`. */
+export function linesFromWords(words: TranscriptWord[]): TranscriptLine[] {
   const lines: TranscriptLine[] = [];
   let current: TranscriptWord[] = [];
   let chars = 0;
 
-  for (const word of wholeWords(segments)) {
+  for (const word of words) {
     const text = word.text;
 
     const wouldChars = chars + (current.length ? 1 : 0) + text.length;
