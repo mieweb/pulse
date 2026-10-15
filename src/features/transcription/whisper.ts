@@ -126,15 +126,23 @@ export async function transcribeVideo(
   options?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
 ): Promise<TranscriptResult> {
   const { onProgress, signal } = options ?? {};
+  // Cancelled during a step before inference (leaving the screen while the audio is read, the
+  // speech check runs or the model loads): stop there, so no inference starts for nobody.
+  const stopIfCancelled = () => {
+    if (signal?.aborted) throw new Error('Transcription cancelled');
+  };
   const { data: pcm } = await extractAudio(videoUri);
+  stopIfCancelled();
   // No audio track: nothing to caption.
   if (pcm.byteLength === 0) return EMPTY_TRANSCRIPT;
   // Pre-gate on voice activity: silent/noise-only clips make Whisper hallucinate (the
   // multilingual model emits Chinese on noise, or canned subtitle credits on silence). Skip
   // Whisper entirely and store an empty transcript so the clip settles instead of re-running.
   if (await isSilent(pcm)) return EMPTY_TRANSCRIPT;
+  stopIfCancelled();
 
   const ctx = await loadContext(model);
+  stopIfCancelled();
   // `tokenTimestamps` is what lets `maxLen` split output by token; with `maxLen: 1` we get one
   // word per segment (with per-word t0/t1), then regroup into caption lines ourselves.
   // `language` honors the model: 'en' for the English-only models, 'auto' for the multilingual one.
@@ -153,9 +161,11 @@ export async function transcribeVideo(
     bestOf: 1,
     onProgress,
   });
-  // Cancellation (export screen left, or the run superseded by a clip change): stop the native
-  // inference so it stops contending with a new recording/transcription AND so a later
-  // `releaseWhisper()` (model switch/delete) can't free the context out from under a live call.
+  // Cancellation once inference runs (export screen left, or the run superseded by a clip change;
+  // the checks above cover the steps before it, with no await between the last one and here):
+  // stop the native inference so it stops contending with a new recording/transcription AND so a
+  // later `releaseWhisper()` (model switch/delete) can't free the context out from under a live
+  // call.
   const onAbort = () => void stop().catch(() => {});
   signal?.addEventListener('abort', onAbort);
   try {
