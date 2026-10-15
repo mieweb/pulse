@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DestructiveAction } from '@/components/destructive-action';
@@ -20,7 +20,14 @@ import { tallSheetFits } from '@/utils/sheet-fit';
 
 import { currentDeviceProfile } from './device-profile';
 import { applyModelSelection, isModelReady } from './model-manager';
-import { getModel, LARGE_MODEL_BYTES, modelCaveat, MODELS, type WhisperModel } from './models';
+import {
+  getModel,
+  LARGE_MODEL_BYTES,
+  modelCaveat,
+  modelsFor,
+  resolveSelectedModel,
+  type WhisperModel,
+} from './models';
 import { useTranscriptionStatus } from './transcription-status';
 
 const sizeMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
@@ -58,7 +65,8 @@ export function OnDeviceAiSheet() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { data } = useLiveQuery(selectedModelQuery, []);
-  const selectedId = data[0]?.value ?? null;
+  // As captions read it: a retired or other-platform choice shows as the model it runs as.
+  const selectedId = resolveSelectedModel(data[0]?.value, Platform.OS)?.id ?? null;
   const status = useTranscriptionStatus();
   const busy = statusLine(status);
   const { showToast } = useToast();
@@ -249,7 +257,7 @@ export function OnDeviceAiSheet() {
           {/* A plain list, not a ScrollView: iOS takes over a form sheet's first scroll view, which
             breaks its layout under `fitToContents`. The catalog is a handful of models. */}
           <View style={styles.list}>
-            {MODELS.map((model) => {
+            {modelsFor(Platform.OS).map((model) => {
               const active = model.id === selectedId;
               // Device-aware caveat (RAM floor / Android CPU-only inference) appended to the
               // model's base note — computed here, not in the catalog, so models.ts stays pure.

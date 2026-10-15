@@ -1,9 +1,12 @@
 // Catalog of on-device speech models the user can choose between, picked for how the app
-// transcribes (each clip on its own, see clip-queue.ts) on the speech benches (.devrun/whisper):
-// Parakeet TDT for English (the most accurate there, with the best word timing), and a
-// multilingual Whisper for every other language — Parakeet v3 as whisper.cpp runs it gives English
-// only (a Spanish clip came back translated into English). `approxBytes` is only for an initial progress estimate / a
-// completeness floor — the real content length comes from the download task.
+// transcribes (each clip on its own, see clip-queue.ts) on the speech benches (.devrun/whisper;
+// docs/captions-engines.md): Parakeet TDT for English (the most accurate there, with the best word
+// timing), and a multilingual Whisper for every other language — Parakeet v3 as whisper.cpp runs
+// it gives English only (a Spanish clip came back translated into English). The multilingual one
+// is per platform: Large Turbo on iOS (the GPU runs it at 5x realtime, and it was the more accurate
+// in Spanish, Mandarin and Arabic), Small on Android (whisper.rn runs on the CPU there).
+// `approxBytes` is only for an initial progress estimate / a completeness floor — the real content
+// length comes from the download task.
 const WHISPER_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/';
 const PARAKEET_URL = 'https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main/';
 
@@ -11,6 +14,8 @@ export type WhisperModel = {
   id: string;
   /** Which whisper.rn engine runs it: Whisper, or NVIDIA Parakeet TDT. */
   engine: 'whisper' | 'parakeet';
+  /** Where it's offered (`Platform.OS`). */
+  platforms: readonly ('ios' | 'android')[];
   label: string;
   /**
    * The underlying Whisper checkpoint name (e.g. `base.en`, `large-v3-turbo`), shown muted in the
@@ -34,6 +39,7 @@ export const MODELS: WhisperModel[] = [
   {
     id: 'parakeet-tdt-0.6b-v3-q4_0',
     engine: 'parakeet',
+    platforms: ['ios', 'android'],
     label: 'Parakeet',
     name: 'parakeet-tdt-0.6b-v3 · q4_0',
     filename: 'ggml-parakeet-tdt-0.6b-v3-q4_0.bin',
@@ -42,8 +48,20 @@ export const MODELS: WhisperModel[] = [
     lang: 'en',
   },
   {
+    id: 'large-v3-turbo-q5_0',
+    engine: 'whisper',
+    platforms: ['ios'],
+    label: 'Large Turbo',
+    name: 'large-v3-turbo · q5_0',
+    filename: 'ggml-large-v3-turbo-q5_0.bin',
+    approxBytes: 574 * 1024 * 1024,
+    note: 'Any language · best quality',
+    lang: 'auto',
+  },
+  {
     id: 'small-q5_1',
     engine: 'whisper',
+    platforms: ['android'],
     label: 'Small (Multilingual)',
     name: 'small · q5_1',
     filename: 'ggml-small-q5_1.bin',
@@ -107,8 +125,6 @@ export const RETIRED_MODELS: Record<string, string | null> = {
   'tiny.en': 'parakeet-tdt-0.6b-v3-q4_0',
   'base.en': 'parakeet-tdt-0.6b-v3-q4_0',
   'small.en-q5_1': 'parakeet-tdt-0.6b-v3-q4_0',
-  // Chosen for any language: the multilingual model that stays.
-  'large-v3-turbo-q5_0': 'small-q5_1',
 };
 
 /**
@@ -123,8 +139,27 @@ export const migrateStaleModelId = (id: string): WhisperModel | null =>
  * `getModel` — everywhere the *stored* selection is read, so a user whose selected model was
  * renamed/retired keeps a working selection instead of silently falling back to "no model".
  */
-export const resolveSelectedModel = (id: string | null | undefined): WhisperModel | null =>
-  getModel(id) ?? (id ? migrateStaleModelId(id) : null);
+export function resolveSelectedModel(
+  id: string | null | undefined,
+  os: string,
+): WhisperModel | null {
+  const model = getModel(id) ?? (id ? migrateStaleModelId(id) : null);
+  if (!model || offeredOn(model, os)) return model;
+  // Chosen on the other platform (a restored backup, a draft moved over): its counterpart here.
+  return getModel(OTHER_PLATFORM[model.id]);
+}
+
+/** The models offered on `os` (`Platform.OS`; anything else is treated as iOS). */
+export const modelsFor = (os: string): WhisperModel[] => MODELS.filter((m) => offeredOn(m, os));
+
+const offeredOn = (m: WhisperModel, os: string) =>
+  m.platforms.includes(os === 'android' ? 'android' : 'ios');
+
+/** A model only one platform offers, mapped to the one the other platform offers instead. */
+const OTHER_PLATFORM: Record<string, string> = {
+  'large-v3-turbo-q5_0': 'small-q5_1',
+  'small-q5_1': 'large-v3-turbo-q5_0',
+};
 
 export const modelUrl = (m: WhisperModel): string =>
   (m.engine === 'parakeet' ? PARAKEET_URL : WHISPER_URL) + m.filename;

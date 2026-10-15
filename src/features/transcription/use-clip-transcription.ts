@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useEffect } from 'react';
+import { Platform } from 'react-native';
 
 import type { Segment } from '@/db/schema';
 import { selectedModelQuery } from '@/db/settings';
@@ -18,7 +19,7 @@ const SETTLE_MS = 2000;
  */
 export function useClipTranscription(segments: Segment[], active: boolean): void {
   const { data: modelRows } = useLiveQuery(selectedModelQuery, []);
-  const model = resolveSelectedModel(modelRows[0]?.value ?? null);
+  const model = resolveSelectedModel(modelRows[0]?.value ?? null, Platform.OS);
   useEffect(() => {
     if (!active || !model || segments.length === 0) return;
     const timer = setTimeout(() => void requestClipTranscripts(segments, model), SETTLE_MS);

@@ -39,7 +39,7 @@ describe('model catalog', () => {
 
   it('only the large model crosses the confirm-before-download threshold', () => {
     const large = MODELS.filter((m) => m.approxBytes >= LARGE_MODEL_BYTES);
-    expect(large.map((m) => m.id)).toEqual(['parakeet-tdt-0.6b-v3-q4_0']);
+    expect(large.map((m) => m.id)).toEqual(['parakeet-tdt-0.6b-v3-q4_0', 'large-v3-turbo-q5_0']);
   });
 
   it('every retired id is actually gone and maps to a model still in the catalog', () => {

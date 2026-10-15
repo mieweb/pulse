@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useEffect, useMemo, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { clipWordsOf, draftClipTranscriptsQuery } from '@/db/clip-transcripts';
 import type { Segment } from '@/db/schema';
@@ -36,7 +37,7 @@ export type DraftCaptions = {
  */
 export function useDraftCaptions(draftId: string, clips: Segment[]): DraftCaptions {
   const { data: modelRows } = useLiveQuery(selectedModelQuery, []);
-  const model = resolveSelectedModel(modelRows[0]?.value ?? null);
+  const model = resolveSelectedModel(modelRows[0]?.value ?? null, Platform.OS);
   const { data: clipRows } = useLiveQuery(draftClipTranscriptsQuery(draftId, model?.id ?? ''), [
     draftId,
     model?.id,
