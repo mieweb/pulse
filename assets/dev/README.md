@@ -102,6 +102,17 @@ paths too. To measure: export on the phone, pull `drafts/<draft id>/export.mp4` 
 nearest flash (first frame brighter than mid-grey; first audio sample above 0.2). In sync is
 within a frame (33 ms); the merge fixes measured ≤ 3 ms on the emulator and macOS.
 
+## Speech clips (`speech/`)
+
+[`speech/`](speech/) holds ten recorder-format clips (portrait 1080×1920 H.264 30 fps, AAC 48 kHz
+mono; 201 s, 26 MB) of clean studio speech: NASA's "#AskNASA: How Can I Be An Astronaut?" (US
+government work, public domain), cut at pauses, one answer per clip. Beside them,
+`asknasa.en.json3` is the video's human English captions on the source's timeline and
+`cuts.json` where each clip starts and ends in the source, so a transcript of the draft can be
+scored against the captions. Seed via **`+ s8`** on Home (`Dev sample 8 (speech)`); regenerate
+with [`scripts/make-speech-fixtures.py`](../../scripts/make-speech-fixtures.py) (needs yt-dlp and
+ffmpeg).
+
 ## Wild-import clips (`import/`)
 
 [`import/`](import/) holds one clip per **hostile real-world import format** — the Photos-library
