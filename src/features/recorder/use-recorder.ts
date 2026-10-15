@@ -33,7 +33,13 @@ import {
 } from '@/db/settings';
 import { useToast } from '@/features/toast/toast-provider';
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
-import { absolutize, copyIntoSegments, persistRecording, thumbRelPath } from '@/utils/file-store';
+import {
+  absolutize,
+  copyIntoSegments,
+  deleteSegmentFile,
+  persistRecording,
+  thumbRelPath,
+} from '@/utils/file-store';
 import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
 import { importFailureCopy } from '@/utils/import-copy';
 import { userMessage } from '@/utils/user-message';
@@ -249,23 +255,28 @@ export function useRecorder(initialDraftId?: string) {
     segmentCount.current = segments.length;
     if (segments.length > 0) everHadSegments.current = true;
   }, [segments]);
+  /** The draft, if it's empty and ours to drop (see above). After unmount `draftIdRef` can lag a
+   * draft an import created, so that one is read from `sessionDraftId`. */
+  const dropEmptyDraft = () => {
+    const id = draftIdRef.current ?? sessionDraftId.current;
+    const safeToDelete = sessionDraftId.current != null || everHadSegments.current;
+    if (id && segmentCount.current === 0 && safeToDelete) void deleteDraft(id);
+  };
   useEffect(() => {
     unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
-      // An import still converting is cancelled: the clip would otherwise land in a draft the
-      // user has left (or fail against one deleted just below).
+      // An import still running is cancelled: the clip would otherwise land in a draft the user
+      // has left. It may be mid-save (creating the draft, copying the file), so it drops an empty
+      // draft itself once it has stopped; deleting it here could race that save.
+      const importing = importAbortRef.current != null;
       importAbortRef.current?.abort();
       // Backstop for a recording still live at unmount — the gesture's onFinalize is the
       // primary stop path. Stopping the recorder finalizes the file (the clip is then dropped
       // by startRecording's cleanup since we've unmounted), avoiding a dangling capture.
       if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
       if (isRecordingRef.current) void recorderRef.current?.stopRecording().catch(() => {});
-      const id = draftIdRef.current;
-      const safeToDelete = sessionDraftId.current != null || everHadSegments.current;
-      if (id && segmentCount.current === 0 && safeToDelete) {
-        void deleteDraft(id);
-      }
+      if (!importing) dropEmptyDraft();
     };
   }, []);
 
@@ -348,9 +359,15 @@ export function useRecorder(initialDraftId?: string) {
     segmentId: string,
     originalFilename: string,
     durationMs: number,
-  ) {
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const thumbRel = thumbRelPath(forDraftId, segmentId);
     const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
+    // An import cancelled while its cover rendered: nothing is added (the caller drops the file).
+    if (signal?.aborted) {
+      if (ok) deleteSegmentFile(thumbRel);
+      return false;
+    }
     await addSegment(forDraftId, {
       id: segmentId,
       originalFilename,
@@ -359,6 +376,7 @@ export function useRecorder(initialDraftId?: string) {
     });
     everHadSegments.current = true;
     segmentCount.current = Math.max(segmentCount.current, 1);
+    return true;
   }
 
   async function startRecording() {
@@ -560,13 +578,28 @@ export function useRecorder(initialDraftId?: string) {
         importLog.info('already in the recorder format — kept as is');
       }
 
+      // Saving: each step checks for a cancel (the recorder closed, Pulse left) and undoes what's
+      // been done, so the clip lands whole in its draft or not at all. An empty draft left behind
+      // is dropped in `finally` once the recorder has closed.
       const id = await ensureDraft();
+      if (abort.signal.aborted) {
+        if (conformed) discard(conformed.path);
+        cancelled();
+        return;
+      }
       const segmentId = `${id}-${Date.now()}`;
       const originalFilename = await copyIntoSegments(conformed?.path ?? picked.uri, id, segmentId);
       // The conform output lives in the OS-purgeable cache dir; drop it once copied.
       if (conformed) discard(conformed.path);
       const durationMs = await getDurationMs(absolutize(originalFilename));
-      await persistSegment(id, segmentId, originalFilename, durationMs);
+      const saved =
+        !abort.signal.aborted &&
+        (await persistSegment(id, segmentId, originalFilename, durationMs, abort.signal));
+      if (!saved) {
+        deleteSegmentFile(originalFilename);
+        cancelled();
+        return;
+      }
     } catch (e) {
       importLog.warn(`failed: ${describeError(e)}`);
       showToast({
@@ -577,6 +610,8 @@ export function useRecorder(initialDraftId?: string) {
     } finally {
       appStateSub?.remove();
       importAbortRef.current = null;
+      // The recorder closed while this ran: the empty-draft cleanup it left to the import.
+      if (unmountedRef.current) dropEmptyDraft();
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
       // for 4K): the clip now lives in the draft (or was rejected), so drop it.
       if (pickedUri) {
