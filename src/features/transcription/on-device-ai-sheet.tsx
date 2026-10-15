@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DestructiveAction } from '@/components/destructive-action';
@@ -31,6 +31,9 @@ import {
 import { useTranscriptionStatus } from './transcription-status';
 
 const sizeMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+
+/** Parakeet's weights are NVIDIA's, licensed CC BY 4.0 (the Whisper models are MIT). */
+const CC_BY_4_URL = 'https://creativecommons.org/licenses/by/4.0/';
 
 /** Matches the active ring, so selecting a row doesn't shift the list. */
 const RING_WIDTH = 1.5;
@@ -301,7 +304,20 @@ export function OnDeviceAiSheet() {
           </View>
 
           <ThemedText type="footnote" themeColor="textSecondary" style={styles.sectionNote}>
-            Transcribed when you export. Only the selected model stays on disk.
+            Each clip is transcribed after you record it. Only the selected model stays on disk.
+          </ThemedText>
+          {/* The credit Parakeet's licence asks for: the work, its author, the licence, and the
+              change made (ggml-org's quantized conversion is what's downloaded). */}
+          <ThemedText type="footnote" themeColor="textSecondary" style={styles.sectionNote}>
+            Parakeet is NVIDIA’s Parakeet TDT 0.6B v3, quantized by ggml-org, under{' '}
+            <ThemedText
+              type="footnote"
+              themeColor="accent"
+              accessibilityRole="link"
+              onPress={() => void Linking.openURL(CC_BY_4_URL)}>
+              CC BY 4.0
+            </ThemedText>
+            . Whisper is OpenAI’s, under the MIT licence.
           </ThemedText>
         </View>
 
