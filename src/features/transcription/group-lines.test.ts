@@ -25,7 +25,7 @@ describe('groupWordsIntoLines', () => {
   });
 
   it('breaks when a line would exceed the character budget', () => {
-    const long = words(...Array.from({ length: 12 }, () => 'wordword')); // 8 chars each
+    const long = words(...Array.from({ length: 12 }, () => ' wordword')); // 8 chars each
     const lines = groupWordsIntoLines(long);
     expect(lines.length).toBeGreaterThan(1);
     for (const l of lines) expect(l.text.length).toBeLessThanOrEqual(42);
