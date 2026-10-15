@@ -10,6 +10,7 @@ import { wholeWords } from './group-lines';
 import { ensureModel, modelFileUri } from './model';
 import type { WhisperModel } from './models';
 import { hasSpeech } from './vad';
+import { whisperJsiReady } from './whisper-jsi';
 
 /**
  * One word of a transcript. `t0`/`t1` are whisper.cpp timestamps in **centiseconds** (1/100s)
@@ -68,6 +69,7 @@ const WORD_PER_SEGMENT = 1;
  * `useGpu` defaults to true in whisper.rn, so the fallback has to turn it off explicitly.
  */
 async function initContext(model: WhisperModel, filePath: string): Promise<Context> {
+  await whisperJsiReady();
   if (model.engine === 'parakeet') {
     try {
       return await initParakeet({ filePath, useGpu: true });
