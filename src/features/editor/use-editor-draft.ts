@@ -46,9 +46,13 @@ export type EditorClip = {
 /** An edit as stored, or null for "no edit" (reset). */
 export type EditValue = string | null;
 
+/** The length of the file the clip plays: a legacy baked edit's own, else the original's. */
+const sourceMsOf = (s: Segment) =>
+  s.editedFilename ? (s.editedDurationMs ?? s.durationMs) : s.durationMs;
+
 const defaults = (s: Segment): ParsedEdit => ({
   startMs: 0,
-  endMs: s.durationMs,
+  endMs: sourceMsOf(s),
   rotation: 0,
   flipped: false,
   crop: null,
@@ -87,7 +91,7 @@ function toEditorClip(s: Segment): EditorClip {
     editKey: legacy ? null : canonicalEdit(s.editState),
     editable: !legacy,
     lengthMs: effMs(s),
-    sourceMs: s.durationMs,
+    sourceMs: sourceMsOf(s),
     uri: merge.uri,
     merge,
   };
