@@ -1,9 +1,9 @@
 import type { Segment } from '@/db/schema';
 
-// Draft-global timeline math for the in-recorder preview, export and upload. A clip's edit is
-// stored as settings (`editState`, RNVT's editor state) and applied at play/export time — the
-// preview plays the ORIGINAL through the edit's window, speed and geometry, and the export's
-// merge renders it once. Three kinds of clip resolve through `clipRender`:
+// Draft-global timeline math for the editor, export and upload. A clip's edit is stored as
+// settings (`editState`) and applied at play/export time — the editor's preview plays the
+// ORIGINAL through the edit's window, speed and geometry, and the export's merge renders it
+// once. Three kinds of clip resolve through `clipRender`:
 //   - unedited: the original, whole;
 //   - edited: the original, with `editState` applied;
 //   - legacy baked (edited before settings were stored): the baked `editedFilename`, whole.
@@ -30,7 +30,10 @@ export type ClipRender = {
 };
 
 /** The rendering-relevant part of an `editState` — everything but undo/redo history. */
-type ParsedEdit = Omit<ClipRender, 'file' | 'inMs' | 'outMs'> & { startMs: number; endMs: number };
+export type ParsedEdit = Omit<ClipRender, 'file' | 'inMs' | 'outMs'> & {
+  startMs: number;
+  endMs: number;
+};
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -48,7 +51,7 @@ const parseCache = new Map<string, ParsedEdit | null>();
 const PARSE_CACHE_LIMIT = 256;
 
 /**
- * The rendering fields of an RNVT `editState`, or null when it's missing or unusable (the clip
+ * The rendering fields of an `editState`, or null when it's missing or unusable (the clip
  * then plays as unedited — the editor treats a bad state the same way).
  */
 export function parseEdit(editState: string | null | undefined): ParsedEdit | null {

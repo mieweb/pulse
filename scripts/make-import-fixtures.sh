@@ -30,7 +30,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/assets/dev/import"
 # Master lives in the repo at fixtures/bbb_master.mov via Git LFS, but is excluded from normal
-# clones (.lfsconfig) since it's 400+ MB. Fetch on demand: git lfs pull --include "fixtures/*.mov"
+# clones (.lfsconfig) since it's 400+ MB. Fetch on demand: git lfs pull --include "fixtures/*.mov" --exclude ""
 SRC="${BBB_MASTER:-$ROOT/fixtures/bbb_master.mov}"
 MASTER_URL="https://download.blender.org/peach/bigbuckbunny_movies/big_buck_bunny_720p_h264.mov"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -42,7 +42,7 @@ rm -f "$OUT"/*.mp4
 is_real_video() { [ -f "$1" ] && [ "$(wc -c <"$1")" -gt 1000000 ]; }
 if ! is_real_video "$SRC"; then
   if [ -f "$SRC" ] && command -v git >/dev/null && git -C "$ROOT" rev-parse >/dev/null 2>&1; then
-    echo ">>> fetching master from Git LFS"; git -C "$ROOT" lfs pull --include "fixtures/*.mov" || true
+    echo ">>> fetching master from Git LFS"; git -C "$ROOT" lfs pull --include "fixtures/*.mov" --exclude "" || true
   fi
   if ! is_real_video "$SRC"; then
     echo ">>> downloading master to $SRC"; mkdir -p "$(dirname "$SRC")"; curl -L --fail -o "$SRC" "$MASTER_URL"

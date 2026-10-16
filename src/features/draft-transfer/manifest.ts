@@ -26,7 +26,7 @@ export type BundleSegment = {
   /** Effective duration of the edited file; null when not edited (mirrors the DB column). */
   editedDurationMs: number | null;
   /**
-   * The clip's edit as settings (RNVT's opaque `editState`), applied to `original` at play and
+   * The clip's edit as settings (`editState`, see `parseEdit`), applied to `original` at play and
    * export time. Absent in bundles from older installs.
    */
   editState?: string | null;

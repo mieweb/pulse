@@ -55,6 +55,8 @@ jobs:
       # prepare-expo-env is macOS-only (it selects Xcode), so set up directly.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true # local native modules under modules/, autolinked from there
 
       - name: Setup JDK
         uses: actions/setup-java@v4

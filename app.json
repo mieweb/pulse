@@ -92,6 +92,7 @@
         "expo-build-properties",
         {
           "android": {
+            "minSdkVersion": 29,
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
             "extraProguardRules": "# whisper.rn — required by its README; JNI callbacks resolve these classes by name,\n# so minified release builds crash transcription without this keep rule.\n-keep class com.rnwhisper.** { *; }"

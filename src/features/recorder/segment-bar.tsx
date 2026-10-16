@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { type ReactNode, useCallback, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   interpolateColor,
   ReduceMotion,
@@ -21,22 +21,19 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import { GlassPill } from '@/components/glass-pill';
 import { EaseOut } from '@/constants/motion';
-import { Accent, ControlScrim, Opacity, Spacing } from '@/constants/theme';
+import { Accent, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
 import { TipClip } from '@/features/tips/tip-callout';
-import { useThemeMode } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatDuration } from '@/utils/format';
 import { haptics } from '@/utils/haptics';
 import { effMs } from '@/utils/segment-window';
-import { PlayheadCursor, type Cursor } from './playhead-cursor';
 import {
   BADGE_SIZE,
+  BAR_LANE,
   POP_LANE,
   RECORD_BAR_GAP,
   RECORD_BUTTON_SIZE,
-  SCRUB_INSET,
-  SCRUB_LANE,
   THUMB_HEIGHT,
   THUMB_WIDTH,
   TRACK_GAP,
@@ -46,7 +43,7 @@ import {
 // smaller than it. Size is independent of RECORD_BUTTON_SIZE; the wrapper offset below keeps
 // it centered on the record button regardless.
 const TRASH_SIZE = 56;
-// Nudge the trash below the record button's exact center so it clears the preview modal.
+// Nudge the trash a little below the record button's exact center.
 const TRASH_DROP_OFFSET = 18;
 // Never skipped for Reduce Motion: what they drive is opacity and colour (the scale that rides
 // along is dropped under Reduce Motion, see trashStyle).
@@ -75,8 +72,6 @@ type Props = {
   /** Fired true when a drag begins, false when it ends — lets the recorder hide its record
    *  button so the floating trash above the bar has clear space. */
   onDragActiveChange?: (active: boolean) => void;
-  onNext?: () => void;
-  cursor?: Cursor;
   /** Laid over the first clip (it scrolls with it), taking no touches: the clips tip's anchor. */
   firstClipOverlay?: ReactNode;
 };
@@ -94,53 +89,32 @@ function Bar({
   onDelete,
   onSelect,
   onDragActiveChange,
-  onNext,
-  cursor,
   firstClipOverlay,
 }: Props) {
-  const mode = useThemeMode();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
-  // Owned here (not in PlayheadCursor) so the offset is already tracked when the cursor
-  // mounts on a bar the user scrolled before opening the preview.
   const scrollOffset = useScrollViewOffset(scrollRef);
-
-  // Live viewport + scroll-content widths, fed to the playhead's edge-band follow math.
+  // The viewport's width, for clamping the scroll restored after a delete.
   const viewportW = useSharedValue(0);
-  const contentW = useSharedValue(0);
-  // True during a reorder drag — tells the playhead to pause its follow so the two scrollers
-  // (this and Sortable's autoScroll) don't fight when reordering while previewing.
-  const dragScroll = useSharedValue(false);
-
-  // React-side mirror of the drag state, used to hide the → (Next) button while reordering so
-  // the flex:1 viewport reclaims its slot (button + gap) for more room. Item slot positions are
-  // index-based (i * STEP), independent of viewport width, so widening mid-drag is reorder-safe.
-  const [dragActive, setDragActive] = useState(false);
 
   // Length-change reactions, mutually exclusive by direction (reorder never changes length):
   // — DECREASE (delete): preserve the user's place. Capture the current offset (the effect
   //   runs before the shrunken content re-lays out and snaps the scroll) and restore it in
   //   onContentSizeChange, clamped to the new content width.
   // — INCREASE (new recording or library import): scroll the new clip into view (#167).
-  //   Record mode only — while previewing, the playhead-follow owns the scroll. Deferred to
-  //   onContentSizeChange so the added thumb has laid out before the scrollToEnd.
+  //   Deferred to onContentSizeChange so the added thumb has laid out before the scrollToEnd.
   const prevCount = useRef(segments.length);
   const restoreOffset = useRef<number | null>(null);
   const stickToEnd = useRef(false);
   useEffect(() => {
-    // Preview opened before a pending scroll-to-newest ran — drop it; playhead-follow owns
-    // the scroll now, and a stale flag would otherwise fire on a LATER content-size change.
-    if (cursor) stickToEnd.current = false;
     if (segments.length < prevCount.current) restoreOffset.current = scrollOffset.get();
-    else if (segments.length > prevCount.current && !cursor) stickToEnd.current = true;
+    else if (segments.length > prevCount.current) stickToEnd.current = true;
     prevCount.current = segments.length;
-  }, [segments.length, scrollOffset, cursor]);
+  }, [segments.length, scrollOffset]);
 
   // Drag-to-trash. The trash floats above the bar, shown only while dragging; dropping a clip
   // on it deletes that clip — otherwise the drag just reorders. Hit-testing runs on the UI
   // thread from the drag's touch position (onDragMove, a worklet) against the trash's measured
   // window rect, and only a crossing in or out does anything: animate the highlight, tap.
-  // Hidden while previewing (see the trash below), so drags there only reorder.
-  const trashShown = !cursor;
   const trashRef = useRef<View>(null);
   const trashRect = useSharedValue<TrashRect | null>(null);
   const draggedKey = useRef<string | null>(null);
@@ -182,21 +156,16 @@ function Bar({
       draggedKey.current = key;
       overTrash.set(false);
       over.set(0);
-      if (trashShown) {
-        vis.set(withTiming(1, TRASH_FADE));
-        measureTrash();
-      }
-      dragScroll.set(true); // pause playhead-follow so it can't fight the grid autoscroll
-      setDragActive(true); // hide → so the viewport gets its space
+      vis.set(withTiming(1, TRASH_FADE));
+      measureTrash();
       latest.current.onDragActiveChange?.(true);
     },
-    [trashShown, measureTrash, overTrash, over, vis, dragScroll],
+    [measureTrash, overTrash, over, vis],
   );
 
   const onDragMove = useCallback(
     ({ touchData }: DragMoveParams) => {
       'worklet';
-      if (!trashShown) return;
       const r = trashRect.get();
       const was = overTrash.get();
       // Leaving is tested against the grown rect (see TRASH_EXIT_MARGIN), entering the resting one.
@@ -213,7 +182,7 @@ function Bar({
       over.set(withTiming(inside ? 1 : 0, TRASH_HOVER));
       if (inside) scheduleOnRN(hoverHaptic);
     },
-    [trashShown, trashRect, overTrash, over],
+    [trashRect, overTrash, over],
   );
 
   const onDragEnd = useCallback(
@@ -233,11 +202,9 @@ function Bar({
       }
       overTrash.set(false);
       draggedKey.current = null;
-      dragScroll.set(false);
-      setDragActive(false); // restore → now the drag is done
       latest.current.onDragActiveChange?.(false);
     },
-    [vis, over, overTrash, dragScroll],
+    [vis, over, overTrash],
   );
 
   return (
@@ -248,38 +215,25 @@ function Bar({
     // as it's dragged up to the trash. Enabled by default.
     <Sortable.PortalProvider>
       <View style={styles.bar}>
-        {/* Glass surface as a passive background LAYER, not a container — the Sortable grid,
-            ScrollView, and playhead keep their exact hierarchy (and gesture/portal behavior)
-            above it. pointerEvents="none" so it can never intercept a touch. Glass only over
-            the live camera; on the preview's themed backdrop it swaps to the same mode-aware
-            scrim as the ✕/✂/🗑 controls, so the whole chrome reads as one family. */}
-        {cursor ? (
-          <View
-            style={[styles.barSurface, styles.barSurfaceScrim, ControlScrim[mode]]}
-            pointerEvents="none"
-          />
-        ) : (
-          <GlassPill style={styles.barSurface} pointerEvents="none" />
-        )}
+        {/* Glass surface as a passive background LAYER, not a container — the Sortable grid and
+            ScrollView keep their exact hierarchy (and gesture/portal behavior) above it.
+            pointerEvents="none" so it can never intercept a touch. */}
+        <GlassPill style={styles.barSurface} pointerEvents="none" />
         {/* Trash drop target — above the bar, fades in during a drag. pointerEvents="none" so it
-            never intercepts touches; it's purely a drop zone hit-tested from the drag position.
-            Hidden while previewing: it would float over the full-bleed video stage, and the
-            preview's own 🗑 covers deletion — drags are reorder-only there. */}
-        {trashShown && (
-          <View style={styles.trashWrap} pointerEvents="none">
-            {/* The measured drop target: never transformed, so its rect is the trash at rest.
+            never intercepts touches; it's purely a drop zone hit-tested from the drag position. */}
+        <View style={styles.trashWrap} pointerEvents="none">
+          {/* The measured drop target: never transformed, so its rect is the trash at rest.
                 Not collapsable, or Android could flatten it away and leave nothing to measure. */}
-            <View
-              ref={trashRef}
-              collapsable={false}
-              onLayout={measureTrash}
-              style={styles.trashTarget}>
-              <Animated.View style={[styles.trash, trashStyle]}>
-                <Icon name="trash.fill" size={22} tintColor="#fff" />
-              </Animated.View>
-            </View>
+          <View
+            ref={trashRef}
+            collapsable={false}
+            onLayout={measureTrash}
+            style={styles.trashTarget}>
+            <Animated.View style={[styles.trash, trashStyle]}>
+              <Icon name="trash.fill" size={22} tintColor="#fff" />
+            </Animated.View>
           </View>
-        )}
+        </View>
 
         {/* Also bounds the clips tip: its callout shows only while the first clip is in here. */}
         <TipClip
@@ -293,7 +247,6 @@ function Bar({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.content}
             onContentSizeChange={(w) => {
-              contentW.set(w);
               // Restore the pre-delete offset now the remaining thumbs have laid out.
               if (restoreOffset.current != null) {
                 const target = Math.min(restoreOffset.current, Math.max(0, w - viewportW.get()));
@@ -301,9 +254,7 @@ function Bar({
                 scrollRef.current?.scrollTo({ x: target, animated: false });
               }
               // Honor a pending scroll-to-newest now that the added thumb has been measured.
-              // Re-checked against cursor: the native event can land before the effect above
-              // has cleared a stale flag on a just-opened preview.
-              if (stickToEnd.current && !cursor) {
+              if (stickToEnd.current) {
                 stickToEnd.current = false;
                 scrollRef.current?.scrollToEnd({ animated: true });
               }
@@ -316,49 +267,22 @@ function Bar({
               keyExtractor={(s) => s.id}
               scrollableRef={scrollRef}
               autoScrollDirection="horizontal"
-              // 'swap' keeps the row still during a drag — only the hovered thumb trades
-              // places with the dragged one. The default 'insert' reflowed every neighbor
-              // to open a gap, which made long bars feel like they scattered on pickup.
-              // Note the semantics: dropping 1 on 5 exchanges them (2–4 stay put).
-              strategy="swap"
+              // Insert, as the editor's Clips view: the dragged clip slides into the gap and the
+              // clips it passes shift over by one (dropping 1 on 5 gives 2 3 4 5 1).
+              strategy="insert"
               onDragStart={onDragStart}
               onDragMove={onDragMove}
               onDragEnd={onDragEnd}
               renderItem={({ item }) => (
                 <SegmentThumb
                   segment={item}
-                  active={cursor?.activeId === item.id}
                   onSelect={() => onSelect(item.id)}
                   overlay={item.id === segments[0]?.id ? firstClipOverlay : undefined}
                 />
               )}
             />
           </Animated.ScrollView>
-
-          {cursor && (
-            <PlayheadCursor
-              cursor={cursor}
-              segments={segments}
-              scrollRef={scrollRef}
-              scrollOffset={scrollOffset}
-              viewportW={viewportW}
-              contentW={contentW}
-              suspendAutoScroll={dragScroll}
-            />
-          )}
         </TipClip>
-
-        {/* Hidden while reordering — its slot (button + gap) is handed to the flex:1 viewport for
-          more room; restored on drag end. */}
-        {onNext && !dragActive && (
-          <Pressable
-            onPress={onNext}
-            accessibilityRole="button"
-            accessibilityLabel="Next"
-            style={({ pressed }) => [styles.next, pressed && styles.nextPressed]}>
-            <Icon name="arrow.right" size={22} weight="semibold" tintColor="#fff" />
-          </Pressable>
-        )}
       </View>
     </Sortable.PortalProvider>
   );
@@ -366,37 +290,33 @@ function Bar({
 
 function SegmentThumb({
   segment,
-  active,
   onSelect,
   overlay,
 }: {
   segment: Segment;
-  active: boolean;
   onSelect: () => void;
   overlay?: ReactNode;
 }) {
-  // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original) for legacy rows.
+  // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original), its edit applied.
   const thumbnail = useThumbnail(
     segment.thumbnail,
     segment.editedFilename ?? segment.originalFilename,
+    segment.editedFilename ? null : segment.editState,
   );
 
-  // Effective (post-trim) clip length, the same number the playhead and export use. A failed
+  // Effective (post-trim) clip length, the same number the editor and export use. A failed
   // native read stores 0ms (the clip is skipped on playback) — show nothing rather than 00:00.
   const durationMs = effMs(segment);
 
   return (
-    // The clip under the playhead is marked by its border turning accent — no scale-up, so
-    // the row stays visually still while the playhead moves across it.
-    <View style={[styles.thumb, active && styles.thumbActive]}>
-      {/* tap = preview · hold anywhere on the thumb = drag to reorder (drop on the trash to
-          delete) — the grid's default long-press activation, so the ENTIRE thumb is tappable
-          (the old pill-handle strip swallowed taps on the thumb's top third). Editing lives in
-          the preview's ✂. Sortable.Touchable cooperates with the grid so a tap can't fire
-          after a drag. */}
+    <View style={styles.thumb}>
+      {/* tap = open in the editor · hold anywhere on the thumb = drag to reorder (drop on the
+          trash to delete) — the grid's default long-press activation, so the ENTIRE thumb is
+          tappable. Sortable.Touchable cooperates with the grid so a tap can't fire after a
+          drag. */}
       <Sortable.Touchable
         onTap={onSelect}
-        accessibilityLabel="Preview clip (hold to reorder)"
+        accessibilityLabel="Edit clip (hold to reorder)"
         style={styles.thumbTouch}>
         {thumbnail ? (
           <Image source={thumbnail} style={styles.thumbImage} contentFit="cover" />
@@ -469,7 +389,6 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
     overflow: 'hidden',
   },
-  barSurfaceScrim: { borderWidth: StyleSheet.hairlineWidth },
   trashWrap: {
     position: 'absolute',
     // Vertically: align the trash's CENTER with the record button's center. The record
@@ -492,17 +411,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // The scrub lanes (the strips above/below the thumbs the playhead's grab tags ride in) are
-  // reserved permanently, not just while previewing — adding them only with the cursor grew
-  // the bar and visibly bumped it upward every time a preview opened. Both lanes live INSIDE
-  // the viewport (not as bar padding) so the playhead — an absolute child of the viewport,
-  // clipped by its overflow — can span them: top tag above the number pills, bottom tag
-  // below the thumbs, symmetric in the bar.
-  viewport: { flex: 1, overflow: 'hidden', paddingTop: SCRUB_LANE, paddingBottom: SCRUB_LANE },
+  // Room above and below the thumbs, symmetric so they sit on the bar's centerline.
+  viewport: { flex: 1, overflow: 'hidden', paddingVertical: BAR_LANE },
   content: {
     alignItems: 'center',
-    paddingLeft: SCRUB_INSET,
-    paddingRight: Spacing.two,
+    paddingHorizontal: Spacing.two,
     // Symmetric top/bottom room inside the scroll frame so the badge pill's protruding half
     // isn't clipped by the ScrollView. Symmetric → thumbs stay vertically centered, keeping
     // the export-button alignment.
@@ -515,19 +428,11 @@ const styles = StyleSheet.create({
     // The same corners as the home screen's draft thumbnails (a thumbnail, not the video).
     borderRadius: THUMB_RADIUS,
     borderCurve: 'continuous',
-    // Border space is reserved (transparent) at all times so going active only changes the
-    // color — adding the border on activation would otherwise shift the inner box (and the
-    // absolutely-positioned grab handle) inward by 2px.
-    borderWidth: 2,
-    borderColor: 'transparent',
   },
   thumbTouch: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  thumbActive: {
-    borderColor: Accent,
   },
   thumbImage: {
     position: 'absolute',
@@ -535,8 +440,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    // Inside the 2 pt selection ring, so its corners follow the ring's inner edge.
-    borderRadius: THUMB_RADIUS - 2,
+    borderRadius: THUMB_RADIUS,
     borderCurve: 'continuous',
   },
   // Full-width wrapper so the badge centers horizontally regardless of its text width.
@@ -591,15 +495,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  next: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: Accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    // The viewport's scrub lanes are symmetric (top + bottom), so the thumbs sit on the
-    // bar's centerline and the button centers naturally — no offset needed.
-  },
-  nextPressed: { opacity: Opacity.pressed },
 });

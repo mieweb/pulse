@@ -306,6 +306,7 @@ export default function HomeScreen() {
                   name={name}
                   firstSegmentFilename={item.firstSegmentFilename}
                   firstSegmentThumbnail={item.firstSegmentThumbnail}
+                  firstSegmentEditState={item.firstSegmentEditState}
                   segmentCount={item.segmentCount}
                   durationMs={item.durationMs}
                   lastModified={item.lastModified}

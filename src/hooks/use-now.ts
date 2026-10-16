@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 
 /**
- * Wall-clock `Date.now()` as reactive state, refreshed every `intervalMs`. Unlike `useTick`
- * (which only forces a re-render), this returns the timestamp itself as a *stable* value for the
- * render — so callers can derive time-based UI (expiry countdowns) and use it in memo/effect
+ * Wall-clock `Date.now()` as reactive state, refreshed every `intervalMs`. It returns the
+ * timestamp itself as a *stable* value for the render — so callers can derive time-based UI (expiry countdowns) and use it in memo/effect
  * dependencies without calling the impure `Date.now()` in render, and without recomputing on
  * every unrelated render. The time moves forward on each interval tick, and at once when the app
  * comes back to the foreground (timers don't run in the background, so it would otherwise read up

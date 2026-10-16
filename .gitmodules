@@ -2,3 +2,6 @@
 	path = pulsevault-mieweb
 	url = https://github.com/mieweb/pulsevault.git
 	branch = main
+[submodule "modules/pulse-editor"]
+	path = modules/pulse-editor
+	url = https://github.com/morepriyam/pulse-editor.git

@@ -1,4 +1,5 @@
 import { Icon } from '@/components/icon';
+import { ProgressRing } from '@/components/progress-ring';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import Animated from 'react-native-reanimated';
 
@@ -6,20 +7,23 @@ import { Opacity } from '@/constants/theme';
 import { CONTROLS_FADE } from './record-button';
 
 /** The "+" import control next to the record button — opens the system video picker to add
- *  an existing device clip as a segment. Shows a spinner while a picked clip is being
- *  normalized/copied into the draft. */
+ *  an existing device clip as a segment. While a picked clip is being normalized/copied into
+ *  the draft it shows a spinner, or a ring once the conversion reports progress (0–1). */
 export function ImportButton({
   onPress,
   disabled,
   busy = false,
+  progress = null,
 }: {
   onPress: () => void;
   disabled: boolean;
   busy?: boolean;
+  progress?: number | null;
 }) {
-  // Busy isn't disabled: it can't be pressed again, but the spinner stays at full strength so it
-  // reads as working, not unavailable. The disabled dim fades with the record controls (it comes
-  // on as a recording starts); the press dim answers the finger at once.
+  const ring = busy ? progress : null;
+  // Busy isn't disabled: it can't be pressed again, but the spinner (or the ring) stays at full
+  // strength so it reads as working, not unavailable. The disabled dim fades with the record
+  // controls (it comes on as a recording starts); the press dim answers the finger at once.
   return (
     <Animated.View style={[CONTROLS_FADE, { opacity: disabled ? Opacity.disabled : 1 }]}>
       <Pressable
@@ -29,8 +33,13 @@ export function ImportButton({
         accessibilityRole="button"
         accessibilityLabel="Import video"
         accessibilityState={{ busy, disabled: disabled || busy }}
+        accessibilityValue={
+          ring != null ? { min: 0, max: 100, now: Math.round(ring * 100) } : undefined
+        }
         style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
-        {busy ? (
+        {ring != null ? (
+          <ProgressRing progress={ring} color="#000" trackColor="rgba(0,0,0,0.15)" />
+        ) : busy ? (
           <ActivityIndicator size="small" color="#000" />
         ) : (
           <Icon name="plus" size={24} weight="medium" tintColor="#000" />

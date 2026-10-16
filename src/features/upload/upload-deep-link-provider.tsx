@@ -207,6 +207,9 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
     handledUrl.current = url;
     // Bare `pulsecam://` (Android's upload notification opens it) only brings the app forward.
     if (params === '') return;
+    // Development only: `pulsecam://bench?...` opens the git-excluded bench screen (.devrun/), a
+    // route rather than a pairing link, which the parser would reject and toast on.
+    if (__DEV__ && url.startsWith('pulsecam://bench')) return;
 
     // `+native-intent` keeps the router on the current screen for both link forms, so the sheet
     // opens over whatever is up (recorder, export, onboarding…) and closing it returns there.

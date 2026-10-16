@@ -1,16 +1,9 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
-import Animated, {
-  Easing,
-  ReduceMotion,
-  useAnimatedProps,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
-import Svg, { Circle } from 'react-native-svg';
 
+import { ProgressRing } from '@/components/progress-ring';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, MaxTextScale, Radius, Spacing } from '@/constants/theme';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
@@ -42,6 +35,8 @@ type Props = {
   firstSegmentFilename?: string | null;
   /** Relative path of the first clip's persisted jpeg thumbnail (preferred cover frame). */
   firstSegmentThumbnail?: string | null;
+  /** The first clip's edit (settings), applied to the runtime fallback. */
+  firstSegmentEditState?: string | null;
   segmentCount: number;
   durationMs: number;
   lastModified: number;
@@ -69,6 +64,7 @@ export function DraftCard({
   name,
   firstSegmentFilename,
   firstSegmentThumbnail,
+  firstSegmentEditState,
   segmentCount,
   durationMs,
   lastModified,
@@ -82,7 +78,11 @@ export function DraftCard({
   onSubmitName,
 }: Props) {
   const theme = useTheme();
-  const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
+  const thumbnail = useThumbnail(
+    firstSegmentThumbnail,
+    firstSegmentFilename,
+    firstSegmentEditState,
+  );
 
   // An upload in progress is a ring on the cover — from the live state, or the persisted status
   // until the launch check settles a draft a killed app left `uploading`. A finished one gets a
@@ -124,7 +124,11 @@ export function DraftCard({
             // The ring alone can't say WHAT is uploading; announce the phase so a
             // backgrounded/resumed run is as legible here as on the export screen.
             accessibilityLabel={live.status === 'uploading' ? uploadPhaseLabel(live) : 'Uploading'}>
-            <UploadRing progress={uploadProgress} />
+            <ProgressRing
+              progress={uploadProgress}
+              color="#fff"
+              trackColor="rgba(255,255,255,0.3)"
+            />
           </View>
         )}
       </View>
@@ -243,62 +247,6 @@ function LinkButton({ link, name }: { link: WatchLink; name: string | null }) {
  */
 function cardDuration(ms: number): number {
   return ms > 0 ? Math.max(ms, 1000) : 0;
-}
-
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-
-const RING = 28;
-const RING_STROKE = 3;
-const RING_R = (RING - RING_STROKE) / 2;
-const RING_C = 2 * Math.PI * RING_R;
-
-/**
- * A small determinate ring shown over a draft's cover while it uploads (white on a dark scrim).
- * Each progress update glides over 250 ms, linear, as the merge ring does: a stream of updates
- * reads as one steady sweep instead of a jump per update. `Never`, because Reanimated's default
- * would make Reduce Motion snap it, and the sweep is the progress itself, not decoration.
- */
-function UploadRing({ progress }: { progress: number }) {
-  const clamped = Math.max(0.03, Math.min(1, progress));
-  // Starts where the upload is, so a card that mounts mid-upload (scrolled in, relaunched) doesn't
-  // sweep up from empty.
-  const value = useSharedValue(clamped);
-  useEffect(() => {
-    value.set(
-      withTiming(clamped, {
-        duration: 250,
-        easing: Easing.linear,
-        reduceMotion: ReduceMotion.Never,
-      }),
-    );
-  }, [clamped, value]);
-  const animatedProps = useAnimatedProps(() => ({
-    strokeDashoffset: RING_C * (1 - value.get()),
-  }));
-  return (
-    <Svg width={RING} height={RING}>
-      <Circle
-        cx={RING / 2}
-        cy={RING / 2}
-        r={RING_R}
-        stroke="rgba(255,255,255,0.3)"
-        strokeWidth={RING_STROKE}
-        fill="none"
-      />
-      <AnimatedCircle
-        cx={RING / 2}
-        cy={RING / 2}
-        r={RING_R}
-        stroke="#fff"
-        strokeWidth={RING_STROKE}
-        strokeLinecap="round"
-        fill="none"
-        strokeDasharray={RING_C}
-        animatedProps={animatedProps}
-        transform={`rotate(-90 ${RING / 2} ${RING / 2})`}
-      />
-    </Svg>
-  );
 }
 
 /** Concentric with the card: its radius less the padding between them. */

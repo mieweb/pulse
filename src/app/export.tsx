@@ -40,7 +40,6 @@ import {
   type MergedTranscriptionState,
 } from '@/features/export/use-merged-transcription';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
-import { useSaveToDocuments } from '@/features/export/use-save-to-documents';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { useToast } from '@/features/toast/toast-provider';
 import { CaptionOverlay } from '@/features/transcription/caption-overlay';
@@ -90,7 +89,6 @@ export default function ExportScreen() {
   const [busy, setBusy] = useState(false);
 
   const photos = useSaveToPhotos();
-  const docs = useSaveToDocuments();
   const { showToast } = useToast();
   const theme = useTheme();
   // Secondary buttons and the uploading bar: cards on the grouped background, lifted by a
@@ -311,43 +309,6 @@ export default function ExportScreen() {
                       scalesWithText
                     />
                     <ThemedText type="subheadline">Photos</ThemedText>
-                  </>
-                )}
-              </Pressable>
-
-              <Pressable
-                onPress={() => void docs.save(toFileUri(state.outputPath))}
-                disabled={docs.status !== 'idle'}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  docs.status === 'saved'
-                    ? 'Saved to Files'
-                    : docs.status === 'saving'
-                      ? 'Saving to Files'
-                      : 'Save to Files'
-                }
-                accessibilityState={{
-                  disabled: docs.status !== 'idle',
-                  busy: docs.status === 'saving',
-                }}
-                // 34pt pill + 5 each side = a 44pt tap target.
-                hitSlop={5}
-                style={({ pressed }) => [
-                  styles.smallButton,
-                  elementSurface,
-                  pressed && styles.pressed,
-                ]}>
-                {docs.status === 'saving' ? (
-                  <ActivityIndicator size="small" color={theme.text} />
-                ) : docs.status === 'saved' ? (
-                  <>
-                    <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
-                    <ThemedText type="subheadline">Saved</ThemedText>
-                  </>
-                ) : (
-                  <>
-                    <Icon name="folder" size={14} tintColor={theme.text} scalesWithText />
-                    <ThemedText type="subheadline">Files</ThemedText>
                   </>
                 )}
               </Pressable>

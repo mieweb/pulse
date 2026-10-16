@@ -104,6 +104,24 @@ export async function setSetting(key: string, value: string): Promise<void> {
     .onConflictDoUpdate({ target: settings.key, set: { value } });
 }
 
+/** The timeline editor's last view: the one it opens in next time. */
+const EDITOR_VIEW_KEY = 'editor.view';
+export type EditorView = 'clips' | 'timeline';
+
+/** Read synchronously, so the editor opens straight in it (no switch on screen). */
+export function getEditorView(): EditorView | null {
+  const row = db
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, EDITOR_VIEW_KEY))
+    .get();
+  return row?.value === 'clips' || row?.value === 'timeline' ? row.value : null;
+}
+
+export async function setEditorView(view: EditorView): Promise<void> {
+  await setSetting(EDITOR_VIEW_KEY, view);
+}
+
 export type RecorderPrefs = {
   facing: CameraFacing;
   stabilization: StabilizationMode;

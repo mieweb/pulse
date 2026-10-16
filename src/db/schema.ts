@@ -38,14 +38,12 @@ export const drafts = sqliteTable('drafts', {
 });
 
 /**
- * A clip on the timeline. The `originalFilename` recording/import is never mutated.
- * Editing goes through react-native-video-trim: the editor (trim + transforms) writes a new
- * re-encoded file, stored as `editedFilename`, and reports the settings that produced it,
- * stored as `editState`. Re-editing always re-opens the pristine original (no compounding
- * loss) with `editState` applied, so the user picks up where they left off; reset = delete
- * the edited file + null the edited columns. The effective file is
- * `editedFilename ?? originalFilename` and the effective duration is
- * `editedDurationMs ?? durationMs`.
+ * A clip on the timeline. The `originalFilename` recording/import is never mutated. An edit
+ * (trim, transforms, mute, speed) is stored as settings in `editState` and applied when the clip
+ * plays and when the export's merge renders it, so re-editing never compounds loss; reset nulls
+ * the edit columns. Older versions baked edits into a re-encoded `editedFilename`, still played
+ * when present. The effective file is `editedFilename ?? originalFilename` and the effective
+ * duration is `editedDurationMs ?? durationMs`.
  */
 export const segments = sqliteTable(
   'segments',
@@ -64,13 +62,13 @@ export const segments = sqliteTable(
     // Pristine source clip (relative path) — never mutated.
     originalFilename: text('original_filename').notNull(),
     durationMs: integer('duration_ms').notNull(),
-    // Re-encoded editor output (relative path) + its duration; null until edited.
+    // A baked edit from an older version (relative path; null for edits stored as settings), and
+    // the clip's edited timeline length (null when unedited).
     editedFilename: text('edited_filename'),
     editedDurationMs: integer('edited_duration_ms'),
-    // The editor settings (trim range, rotation, flip, crop, mute, speed) that produced
-    // `editedFilename`, plus the editor's undo/redo history, as RNVT's opaque `editState` JSON —
-    // handed back to the editor on the next open. Null when unedited, or edited before the
-    // editor reported it.
+    // The edit as settings (trim range, rotation, flip, crop, mute, speed) in the JSON shape
+    // `parseEdit` reads (older versions also kept an undo/redo history in it). Null when
+    // unedited.
     editState: text('edit_state'),
     // First-frame jpeg cover (relative path), written by the recorder/importer/editor.
     // Shown on segment-bar thumbs and draft cards (the draft cover is the first clip's
