@@ -16,7 +16,7 @@ import {
 } from '@/utils/file-store';
 import { importFailureNote } from '@/utils/import-copy';
 import { editTimelineMs, parseEdit } from '@/utils/segment-window';
-import { generateThumbnailFile } from '@/utils/video';
+import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 import { isPulseManifest, MANIFEST_NAME } from './manifest';
 
 /** A clip the bundle carried that was left out of its draft. */
@@ -55,6 +55,26 @@ async function conformInPlace(rel: string): Promise<boolean> {
 /** An editState with its crop removed (everything else — undo/redo included — kept). */
 function withoutCrop(editState: string): string {
   return JSON.stringify({ ...JSON.parse(editState), crop: null });
+}
+
+/**
+ * An editState's trim bounded to the stored original, whose picture can end elsewhere than the
+ * sender's (conforming re-times it): an out-point at the sender's end stays at the end, and a
+ * window left empty is dropped (the whole clip, the rest of the edit kept).
+ */
+function withinSource(editState: string, sentMs: number, durationMs: number): string {
+  const o = JSON.parse(editState);
+  const endMs = o.endMs >= sentMs ? durationMs : Math.min(o.endMs, durationMs);
+  return JSON.stringify(
+    o.startMs < endMs ? { ...o, endMs } : { ...o, startMs: 0, endMs: durationMs },
+  );
+}
+
+/** A stored clip's picture length; throws (a skip) when it has none. */
+async function videoMs(rel: string): Promise<number> {
+  const ms = await getDurationMs(absolutize(rel));
+  if (ms <= 0) throw new Error('no video stream after conforming');
+  return ms;
 }
 const TOO_BIG = 'This .pulse bundle is too large to import.';
 
@@ -115,15 +135,25 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
       const segmentRows = [];
       for (let segIndex = 0; segIndex < draft.segments.length; segIndex++) {
         const seg = draft.segments[segIndex];
-        const origBytes = archive[seg.original];
-        if (!origBytes) {
-          // clip referenced by the manifest is missing from the archive
+        // A file the manifest references that the archive doesn't hold.
+        const missing = (path: string) =>
           skipped.push({
             draftIndex,
             clipIndex: segIndex,
             reason: 'missing from the file',
-            detail: `${seg.original} is not in the archive`,
+            detail: `${path} is not in the archive`,
           });
+        const origBytes = archive[seg.original];
+        if (!origBytes) {
+          missing(seg.original);
+          continue;
+        }
+        let editState =
+          typeof seg.editState === 'string' && parseEdit(seg.editState) ? seg.editState : null;
+        const editedBytes = seg.edited ? archive[seg.edited] : undefined;
+        // A legacy baked edit travels only as its file: without it the clip would come in unedited.
+        if (!editState && seg.edited && !editedBytes) {
+          missing(seg.edited);
           continue;
         }
         const skip = (e: unknown) => {
@@ -143,10 +173,13 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         // Enforce the portrait reels contract on foreign media: bundles from older installs
         // can carry off-canvas / non-H.264 clips that would otherwise enter the draft unchecked.
         // Conform in place (before the thumbnail, so the cover reflects the stored pixels);
-        // a clip that can't be conformed is dropped like one missing from the archive.
+        // a clip that can't be conformed is dropped like one missing from the archive. Its length
+        // is the stored picture's, not the sender's (conforming can re-time it).
         let originalConformed: boolean;
+        let durationMs: number;
         try {
           originalConformed = await conformInPlace(originalFilename);
+          durationMs = await videoMs(originalFilename);
         } catch (e) {
           skip(e);
           try {
@@ -159,12 +192,10 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         // renders it) and, from older installs, also as a baked file. A crop is normalized to the
         // original's frame, so it can't be trusted once conforming reshaped that frame: fall back
         // to the baked file when there is one, else keep the rest of the edit without the crop.
-        let editState =
-          typeof seg.editState === 'string' && parseEdit(seg.editState) ? seg.editState : null;
-        const editedBytes = seg.edited ? archive[seg.edited] : undefined;
         if (editState && originalConformed && parseEdit(editState)?.crop) {
           editState = editedBytes ? null : withoutCrop(editState);
         }
+        if (editState) editState = withinSource(editState, seg.durationMs, durationMs);
 
         let editedFilename: string | null = null;
         let editedDurationMs: number | null = null;
@@ -180,9 +211,9 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         } else if (editedBytes) {
           // A legacy baked edit: kept as the clip's file, played whole.
           editedFilename = writeEditedBytes(draftId, segmentId, editedBytes);
-          editedDurationMs = seg.editedDurationMs ?? null;
           try {
             await conformInPlace(editedFilename);
+            editedDurationMs = await videoMs(editedFilename);
           } catch (e) {
             skip(e);
             for (const rel of [originalFilename, editedFilename]) {
@@ -204,7 +235,7 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
           order: typeof seg.order === 'number' ? seg.order : segIndex,
           label: '', // set below once the rows are sorted
           originalFilename,
-          durationMs: seg.durationMs,
+          durationMs,
           editedFilename,
           editedDurationMs,
           editState,
