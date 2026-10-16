@@ -64,8 +64,17 @@ export async function generateThumbnailFile(
 
 // VideoThumbnail is a native SharedRef with no file URI. Fallback for rows with no persisted
 // cover (null `thumbnail` column): persisted before disk thumbnails existed, or whose cover
-// failed to render. Cached by uri (and edit).
+// failed to render. Cached by uri (and edit), the oldest dropped past a bound.
 const thumbnailCache = new Map<string, VideoThumbnail | { uri: string }>();
+const THUMBNAIL_CACHE_LIMIT = 64;
+
+function cacheThumbnail(key: string, thumb: VideoThumbnail | { uri: string }) {
+  if (thumbnailCache.size >= THUMBNAIL_CACHE_LIMIT) {
+    const oldest = thumbnailCache.keys().next().value;
+    if (oldest !== undefined) thumbnailCache.delete(oldest);
+  }
+  thumbnailCache.set(key, thumb);
+}
 
 /**
  * A clip's cover when it has no persisted one, cached: the first frame, or for an edited clip
@@ -83,7 +92,7 @@ export async function generateThumbnail(
   if (editState && parseEdit(editState)) {
     try {
       const thumb = { uri: await coverFrame(uri, editState) };
-      thumbnailCache.set(key, thumb);
+      cacheThumbnail(key, thumb);
       return thumb;
     } catch (e) {
       console.warn('[video] edited thumbnail failed for', uri, e);
@@ -97,7 +106,7 @@ export async function generateThumbnail(
     await whenReady(player);
     const thumbs = await player.generateThumbnailsAsync(0, { maxWidth: 96, maxHeight: 128 });
     const thumb = thumbs[0];
-    if (thumb) thumbnailCache.set(uri, thumb);
+    if (thumb) cacheThumbnail(key, thumb);
     return thumb;
   } catch (e) {
     console.warn('[video] thumbnail failed for', uri, e);
