@@ -9,6 +9,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ExportButton } from '@/components/export-button';
 import { Icon, type IconName } from '@/components/icon';
 import Sortable from 'react-native-sortables';
 
@@ -136,7 +137,7 @@ export default function EditorScreen() {
   // Selection: a tapped clip (its tools open, the playhead goes to its start), kept while the
   // playhead plays or is scrubbed, for as long as the clip is on screen in either view; once it
   // scrolls out of view it's let go, so the clip being edited is always the one in red.
-  // Nothing selected on open (a clip tapped in the recorder opens playing from it, see below).
+  // Nothing selected on open (a clip tapped in the recorder opens paused on it, see below).
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const found = selectedId ? clips.findIndex((c) => c.id === selectedId) : -1;
   // A deleted clip can't stay selected (render-phase reset).
@@ -168,8 +169,8 @@ export default function EditorScreen() {
     if (placedOnce.current || clips.length === 0) return;
     placedOnce.current = true;
     const i = clips.findIndex((c) => c.id === clipId);
-    // Opened from a clip in the recorder: play the draft on from that clip's start.
-    ctl.place(i > 0 ? (layout.starts[i] ?? 0) : 0, !!clipId);
+    // Opened from a clip in the recorder: paused at that clip's start.
+    ctl.place(i > 0 ? (layout.starts[i] ?? 0) : 0);
     placed.set(1);
   }, [clips, clipId, ctl, layout.starts, placed]);
   const trackStyle = useAnimatedStyle(() => ({ opacity: placed.get() }));
@@ -314,6 +315,11 @@ export default function EditorScreen() {
     void draft.remove(t.clip.id);
   };
 
+  const openExport = () => {
+    ctl.pause();
+    router.push({ pathname: '/export', params: { draftId } });
+  };
+
   const reset = () => {
     const t = target();
     if (!t) return;
@@ -355,6 +361,10 @@ export default function EditorScreen() {
               onPress={history.redo}
               disabled={!history.canRedo}
             />
+            {/* Finished editing: on to the export screen (back returns here). */}
+            <View style={styles.export}>
+              <ExportButton onPress={openExport} />
+            </View>
           </View>
         </Pressable>
 
@@ -587,7 +597,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  headerRight: { flexDirection: 'row', gap: 4 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  export: { marginLeft: 8 },
   switcher: {
     flexDirection: 'row',
     padding: 2,

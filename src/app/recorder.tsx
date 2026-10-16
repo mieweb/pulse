@@ -18,7 +18,9 @@ import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
 import { CameraControls } from '@/features/recorder/camera-controls';
+import { ExportButton } from '@/components/export-button';
 import { CloseButton } from '@/features/recorder/close-button';
+import { EditButton } from '@/features/recorder/edit-button';
 import { ImportButton } from '@/features/recorder/import-button';
 import {
   DEFAULT_LENS_LABEL,
@@ -399,9 +401,16 @@ export default function RecorderScreen() {
     delayMs: 2000,
     learned: dragging,
   });
+  // After the clips tip (one tip at a time): the button that opens the whole draft in the editor.
+  const editTip = useTip(
+    'edit',
+    shutterIdle && !dragging && segments.length > 0 && !clipsTip.mounted,
+    { delayMs: 2000 },
+  );
   const closeTips = () => {
     recordTip.dismiss();
     clipsTip.dismiss();
+    editTip.dismiss();
     return false; // never takes the touch: it goes on to the shutter, the camera or the control
   };
 
@@ -503,7 +512,9 @@ export default function RecorderScreen() {
             styles.topBar,
             { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
           ]}>
-          <CloseButton onPress={handleClose} overVideo label="Close recorder" />
+          <View style={styles.topBarSide}>
+            <CloseButton onPress={handleClose} overVideo label="Close recorder" />
+          </View>
           {/* The running total, on glass over the live camera. */}
           <GlassPill style={styles.timerPill}>
             <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
@@ -512,8 +523,16 @@ export default function RecorderScreen() {
               {formatDuration(totalMs, { pad: true, floor: recordStartedAt != null })}
             </Text>
           </GlassPill>
-          {/* Mirrors the CloseButton's width so the timer stays optically centered. */}
-          <View style={styles.topBarSpacer} />
+          {/* On to the export screen once there's a clip; the sides share the width equally so
+              the timer stays centred either way. */}
+          <View style={[styles.topBarSide, styles.topBarEnd]}>
+            {draftId && segments.length > 0 && (
+              <ExportButton
+                onPress={() => router.push({ pathname: '/export', params: { draftId } })}
+                disabled={isRecording}
+              />
+            )}
+          </View>
         </View>
 
         <CameraControls
@@ -562,6 +581,26 @@ export default function RecorderScreen() {
                 <TipAnchor id="record" shown={recordTip.shown} onDismiss={recordTip.dismiss} />
               </View>
             )}
+            {/* The draft in the editor, from its start; there once there's a clip. Faded out with the
+                record button during a drag, like the "+". */}
+            {draftId && segments.length > 0 && (
+              <View style={styles.editSlot} pointerEvents="box-none">
+                <Animated.View style={[CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
+                  <EditButton
+                    onPress={() => {
+                      editTip.retire();
+                      router.push({ pathname: '/editor', params: { draftId } });
+                    }}
+                    disabled={isRecording || dragging}
+                  />
+                  {editTip.mounted && (
+                    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                      <TipAnchor id="edit" shown={editTip.shown} onDismiss={editTip.dismiss} />
+                    </View>
+                  )}
+                </Animated.View>
+              </View>
+            )}
             {/* Faded out with the record button during a drag so the trash has clear space. */}
             <Animated.View
               style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
@@ -595,9 +634,6 @@ export default function RecorderScreen() {
                 });
               }
             }}
-            onNext={
-              draftId ? () => router.push({ pathname: '/export', params: { draftId } }) : undefined
-            }
           />
         </View>
       </View>
@@ -641,7 +677,8 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
   },
-  topBarSpacer: { width: 40 },
+  topBarSide: { flex: 1, flexDirection: 'row' },
+  topBarEnd: { justifyContent: 'flex-end' },
   bottom: { alignItems: 'center', gap: Spacing.three },
   // Full-width row; the record button is centered by the row itself, so its position can't
   // be disturbed by the + control.
@@ -664,5 +701,17 @@ const styles = StyleSheet.create({
     marginLeft: RECORD_BUTTON_SIZE / 4 - 22,
     top: '50%',
     marginTop: -22,
+  },
+  // The gap between the screen's left edge and the record button, with the Edit button centred in
+  // it: the mirror image of the "+" (centred in the right-hand gap), whatever the label's width.
+  editSlot: {
+    position: 'absolute',
+    left: 0,
+    right: '50%',
+    marginRight: RECORD_BUTTON_SIZE / 2,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

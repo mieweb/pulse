@@ -61,8 +61,6 @@ export function usePreviewTransport() {
       afterBuild: null as number | null,
       /** Where the editor opened (a clip's start): the preview's first seek goes there. */
       placeMs: null as number | null,
-      /** Play once the preview is up (and at the opening place). */
-      autoplay: false,
       /** Play once the seeks in flight have landed (play from the start, at the end). */
       playAfterSeek: false,
 
@@ -124,14 +122,7 @@ export function usePreviewTransport() {
             .finally(() => {
               c.placeMs = null;
               covered.set(0);
-              if (c.autoplay) {
-                c.autoplay = false;
-                ref.play();
-              }
             });
-        } else if (st.ready && !st.error && c.autoplay && c.placeMs == null && c.ref) {
-          c.autoplay = false;
-          c.ref.play();
         }
         if (st.ready && !st.error && c.afterBuild != null) {
           const ms = c.afterBuild;
@@ -168,10 +159,9 @@ export function usePreviewTransport() {
       },
       toggle: () => (c.playing ? c.pause() : c.play()),
       /** Open at `ms` (before the preview is up): the playhead starts there, and so does the
-       * preview, without showing its first frame; `autoplay` plays on from there once it's up. */
-      place: (ms: number, autoplay = false) => {
+       * preview, without showing its first frame. */
+      place: (ms: number) => {
         c.lastMs = ms;
-        c.autoplay = autoplay;
         timeMs.set(ms);
         if (ms <= 0) return;
         c.placeMs = ms;
