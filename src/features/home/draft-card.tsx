@@ -35,6 +35,8 @@ type Props = {
   firstSegmentFilename?: string | null;
   /** Relative path of the first clip's persisted jpeg thumbnail (preferred cover frame). */
   firstSegmentThumbnail?: string | null;
+  /** The first clip's edit (settings), applied to the runtime fallback. */
+  firstSegmentEditState?: string | null;
   segmentCount: number;
   durationMs: number;
   lastModified: number;
@@ -62,6 +64,7 @@ export function DraftCard({
   name,
   firstSegmentFilename,
   firstSegmentThumbnail,
+  firstSegmentEditState,
   segmentCount,
   durationMs,
   lastModified,
@@ -75,7 +78,11 @@ export function DraftCard({
   onSubmitName,
 }: Props) {
   const theme = useTheme();
-  const thumbnail = useThumbnail(firstSegmentThumbnail, firstSegmentFilename);
+  const thumbnail = useThumbnail(
+    firstSegmentThumbnail,
+    firstSegmentFilename,
+    firstSegmentEditState,
+  );
 
   // An upload in progress is a ring on the cover — from the live state, or the persisted status
   // until the launch check settles a draft a killed app left `uploading`. A finished one gets a

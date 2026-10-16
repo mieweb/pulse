@@ -318,10 +318,11 @@ function SegmentThumb({
   onSelect: () => void;
   overlay?: ReactNode;
 }) {
-  // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original) for legacy rows.
+  // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original), its edit applied.
   const thumbnail = useThumbnail(
     segment.thumbnail,
     segment.editedFilename ?? segment.originalFilename,
+    segment.editedFilename ? null : segment.editState,
   );
 
   // Effective (post-trim) clip length, the same number the editor and export use. A failed
