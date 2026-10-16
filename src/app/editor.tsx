@@ -107,15 +107,31 @@ export default function EditorScreen() {
     void loadCustomSpeeds().then(setCustomSpeeds);
   }, []);
 
+  // The preview's clips: the draft's, with the clip being trimmed played whole so the handle can
+  // show frames past the current trim. Stable while those don't change (a new array rebuilds).
+  const previewClips = useMemo(
+    () => clips.map((c) => (c.id === trimmingId ? { ...c.merge, startMs: 0, endMs: 0 } : c.merge)),
+    [clips, trimmingId],
+  );
+
+  // The engine reports after each rebuild, so a status describes the clips the preview had when
+  // it came in. Once they change, it's the old clips' until the rebuild reports: lengths alone
+  // can't tell (a one-frame trim moves a clip by less than the layout's tolerance).
+  const [statusOf, setStatusOf] = useState({ status, clips: previewClips });
+  if (statusOf.status !== status) setStatusOf({ status, clips: previewClips });
+  const builtStatus = statusOf.clips === previewClips ? status : null;
+
   // Positions come from the engine once its status describes these clips (see timelineLayout).
   const layout = useMemo(
     () =>
       timelineLayout(
         clips.map((c) => c.lengthMs),
-        status,
+        builtStatus,
       ),
-    [clips, status],
+    [clips, builtStatus],
   );
+  // The playhead's range is the layout's, known as soon as the clips are (before the preview is up).
+  useLayoutEffect(() => ctl.setTotal(layout.totalMs), [ctl, layout.totalMs]);
 
   // Selection: a tapped clip (its tools open, the playhead goes to its start), kept while the
   // playhead plays or is scrubbed, for as long as the clip is on screen in either view; once it
@@ -127,13 +143,6 @@ export default function EditorScreen() {
   if (selectedId && draft.loaded && clips.length && found < 0) setSelectedId(null);
   const current = found;
   if (current < 0 && tools !== 'clip') setTools('clip');
-
-  // The preview's clips: the draft's, with the clip being trimmed played whole so the handle can
-  // show frames past the current trim. Stable while those don't change (a new array rebuilds).
-  const previewClips = useMemo(
-    () => clips.map((c) => (c.id === trimmingId ? { ...c.merge, startMs: 0, endMs: 0 } : c.merge)),
-    [clips, trimmingId],
-  );
 
   // Android back leaves crop or the speed row first, then the editor.
   useEffect(() => {
@@ -309,7 +318,8 @@ export default function EditorScreen() {
     const t = target();
     if (!t) return;
     haptics.tap();
-    history.record(null);
+    // A legacy baked edit can't come back once its file is gone: like delete, no undo step.
+    if (t.clip.editable) history.record(null);
     draft.setValue(t.clip.id, null);
   };
 

@@ -63,6 +63,8 @@ export function usePreviewTransport() {
       placeMs: null as number | null,
       /** Play once the preview is up (and at the opening place). */
       autoplay: false,
+      /** Play once the seeks in flight have landed (play from the start, at the end). */
+      playAfterSeek: false,
 
       setPlayingState: (p: boolean) => {
         if (p === c.playing) return;
@@ -87,6 +89,10 @@ export function usePreviewTransport() {
             const next = c.pending;
             c.pending = null;
             if (next != null) c.seek(next);
+            else if (c.playAfterSeek) {
+              c.playAfterSeek = false;
+              c.ref?.play();
+            }
           });
       },
       onTime: (ms: number, isPlaying: boolean) => {
@@ -104,8 +110,6 @@ export function usePreviewTransport() {
         if (!isPlaying && !c.dragging) timeMs.set(ms);
       },
       onStatus: (st: PreviewStatus) => {
-        c.totalMs = st.durationMs;
-        totalMs.set(st.durationMs);
         setStatus(st);
         if (c.placeMs != null && (st.error || !c.ref)) {
           c.placeMs = null;
@@ -138,19 +142,31 @@ export function usePreviewTransport() {
       onReady: (ref: PulsePreviewRef) => {
         c.ref = ref;
       },
+      /** The timeline's length as the editor lays it out (known before the preview is up). */
+      setTotal: (ms: number) => {
+        c.totalMs = ms;
+        totalMs.set(ms);
+      },
       play: () => {
         const ref = c.ref;
         if (!ref) return;
-        // At the end, play from the start.
+        // At the end, play from the start, once the preview is there (a play sent with the seek
+        // would start at the end and stop).
         if (c.lastMs >= c.totalMs - 50) {
           timeMs.set(0);
+          c.playAfterSeek = true;
           c.seek(0);
+          return;
         }
         ref.play();
       },
-      pause: () => c.ref?.pause(),
+      /** Pauses, and stops the playhead at once (the preview's own report follows). */
+      pause: () => {
+        c.playAfterSeek = false;
+        c.ref?.pause();
+        c.setPlayingState(false);
+      },
       toggle: () => (c.playing ? c.pause() : c.play()),
-      /** Move the playhead and the preview to `ms` (a tap, a selection). */
       /** Open at `ms` (before the preview is up): the playhead starts there, and so does the
        * preview, without showing its first frame; `autoplay` plays on from there once it's up. */
       place: (ms: number, autoplay = false) => {
@@ -161,6 +177,7 @@ export function usePreviewTransport() {
         c.placeMs = ms;
         covered.set(1);
       },
+      /** Move the playhead and the preview to `ms` (a tap, a selection). */
       seekTo: (ms: number) => {
         const t = Math.max(0, Math.min(ms, Math.max(0, c.totalMs - 1)));
         timeMs.set(t);
@@ -168,6 +185,7 @@ export function usePreviewTransport() {
       },
       beginDrag: () => {
         c.dragging = true;
+        c.playAfterSeek = false;
         if (c.playing) {
           c.ref?.pause();
           c.setPlayingState(false);
