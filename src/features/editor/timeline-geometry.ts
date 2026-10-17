@@ -20,6 +20,20 @@ export function snapToFrame(ms: number, frameMs: number): number {
   return Math.round(Math.round(ms / frameMs) * frameMs);
 }
 
+/** The first frame time at or after `ms` (within a ms counts as on it), in whole ms. */
+export function ceilToFrame(ms: number, frameMs: number): number {
+  'worklet';
+  const n = Math.round(ms / frameMs);
+  return Math.round((n * frameMs < ms - 1 ? n + 1 : n) * frameMs);
+}
+
+/** The last frame time at or before `ms` (within a ms counts as on it), in whole ms. */
+export function floorToFrame(ms: number, frameMs: number): number {
+  'worklet';
+  const n = Math.round(ms / frameMs);
+  return Math.round((n * frameMs > ms + 1 ? n - 1 : n) * frameMs);
+}
+
 /** Index of the clip under timeline time `ms` (-1 for an empty timeline). */
 export function clipIndexAt(starts: readonly number[], ms: number): number {
   'worklet';
@@ -44,10 +58,12 @@ export function formatTime(ms: number): string {
 export type TimelineLayout = { starts: number[]; totalMs: number };
 
 /**
- * The layout to draw: the engine's clip starts when its last status describes these clips
- * (every clip's length within a frame or two of the edit's), else the edits' own lengths. The
- * engine's numbers are the truth (an untrimmed clip's end differs per platform), but a status
- * lags an edit by one rebuild, so a stale one is told apart by its lengths.
+ * The layout to draw: the engine's clip starts when its status describes these clips (every
+ * clip's length within a frame or two of the edit's), else the edits' own lengths. The engine's
+ * numbers are the truth (an untrimmed clip's end differs per platform). Pass only a status built
+ * from the preview's current clips (a status lags an edit by one rebuild, and a one-frame trim is
+ * within the tolerance); the lengths still set aside one that played a clip differently (the clip
+ * being trimmed plays whole).
  */
 export function timelineLayout(
   lengthsMs: readonly number[],

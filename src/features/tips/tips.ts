@@ -33,6 +33,12 @@ export const TIPS = {
     symbol: 'film',
     kind: 'callout',
   },
+  edit: {
+    title: 'Edit your clips',
+    message: 'Trim, crop, rotate or change the speed of your clips, then export.',
+    symbol: 'scissors',
+    kind: 'callout',
+  },
   captions: {
     title: 'Add captions',
     message: 'Captions are made on this phone. Pick a model once and they’re added for you.',

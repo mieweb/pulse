@@ -18,8 +18,10 @@ import { haptics } from '@/utils/haptics';
 
 import { ClipTile, TILE_GAP, TILE_HEIGHT, TILE_RADIUS, type TilePalette } from './clip-tile';
 import {
+  ceilToFrame,
   clamp,
   DP_PER_MS,
+  floorToFrame,
   MIN_CLIP_SOURCE_MS,
   snapToFrame,
   type TimelineLayout,
@@ -312,8 +314,18 @@ export function TimelineStrip(props: Props) {
           const info = trimInfo.get();
           if (!info || side.get() !== s) return;
           const base = s === 1 ? info.startMs : info.endMs;
-          const lo = s === 1 ? 0 : Math.min(info.sourceMs, info.startMs + MIN_CLIP_SOURCE_MS);
-          const hi = s === 1 ? Math.max(0, info.endMs - MIN_CLIP_SOURCE_MS) : info.sourceMs;
+          // The shortest-clip limits sit on frames, so a handle stopped there leaves a frame edge.
+          const lo =
+            s === 1
+              ? 0
+              : Math.min(
+                  info.sourceMs,
+                  ceilToFrame(info.startMs + MIN_CLIP_SOURCE_MS, info.frameMs),
+                );
+          const hi =
+            s === 1
+              ? Math.max(0, floorToFrame(info.endMs - MIN_CLIP_SOURCE_MS, info.frameMs))
+              : info.sourceMs;
           const raw = clamp(base + (e.translationX / DP_PER_MS) * info.speed, lo, hi);
           const src = clamp(snapToFrame(raw, info.frameMs), lo, hi);
           const limited = src <= lo || src >= hi;

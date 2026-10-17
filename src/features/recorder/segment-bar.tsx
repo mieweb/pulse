@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { type ReactNode, useCallback, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   interpolateColor,
   ReduceMotion,
@@ -21,7 +21,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import { GlassPill } from '@/components/glass-pill';
 import { EaseOut } from '@/constants/motion';
-import { Accent, Opacity, Spacing } from '@/constants/theme';
+import { Accent, Spacing } from '@/constants/theme';
 import type { Segment } from '@/db/schema';
 import { TipClip } from '@/features/tips/tip-callout';
 import { useThumbnail } from '@/hooks/use-thumbnail';
@@ -72,7 +72,6 @@ type Props = {
   /** Fired true when a drag begins, false when it ends — lets the recorder hide its record
    *  button so the floating trash above the bar has clear space. */
   onDragActiveChange?: (active: boolean) => void;
-  onNext?: () => void;
   /** Laid over the first clip (it scrolls with it), taking no touches: the clips tip's anchor. */
   firstClipOverlay?: ReactNode;
 };
@@ -90,18 +89,12 @@ function Bar({
   onDelete,
   onSelect,
   onDragActiveChange,
-  onNext,
   firstClipOverlay,
 }: Props) {
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollOffset = useScrollViewOffset(scrollRef);
   // The viewport's width, for clamping the scroll restored after a delete.
   const viewportW = useSharedValue(0);
-
-  // React-side mirror of the drag state, used to hide the → (Next) button while reordering so
-  // the flex:1 viewport reclaims its slot (button + gap) for more room. Item slot positions are
-  // index-based (i * STEP), independent of viewport width, so widening mid-drag is reorder-safe.
-  const [dragActive, setDragActive] = useState(false);
 
   // Length-change reactions, mutually exclusive by direction (reorder never changes length):
   // — DECREASE (delete): preserve the user's place. Capture the current offset (the effect
@@ -165,7 +158,6 @@ function Bar({
       over.set(0);
       vis.set(withTiming(1, TRASH_FADE));
       measureTrash();
-      setDragActive(true); // hide → so the viewport gets its space
       latest.current.onDragActiveChange?.(true);
     },
     [measureTrash, overTrash, over, vis],
@@ -210,7 +202,6 @@ function Bar({
       }
       overTrash.set(false);
       draggedKey.current = null;
-      setDragActive(false); // restore → now the drag is done
       latest.current.onDragActiveChange?.(false);
     },
     [vis, over, overTrash],
@@ -292,18 +283,6 @@ function Bar({
             />
           </Animated.ScrollView>
         </TipClip>
-
-        {/* Hidden while reordering — its slot (button + gap) is handed to the flex:1 viewport for
-          more room; restored on drag end. */}
-        {onNext && !dragActive && (
-          <Pressable
-            onPress={onNext}
-            accessibilityRole="button"
-            accessibilityLabel="Next"
-            style={({ pressed }) => [styles.next, pressed && styles.nextPressed]}>
-            <Icon name="arrow.right" size={22} weight="semibold" tintColor="#fff" />
-          </Pressable>
-        )}
       </View>
     </Sortable.PortalProvider>
   );
@@ -318,10 +297,11 @@ function SegmentThumb({
   onSelect: () => void;
   overlay?: ReactNode;
 }) {
-  // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original) for legacy rows.
+  // Persisted jpeg cover; falls back to the EFFECTIVE clip (edited ?? original), its edit applied.
   const thumbnail = useThumbnail(
     segment.thumbnail,
     segment.editedFilename ?? segment.originalFilename,
+    segment.editedFilename ? null : segment.editState,
   );
 
   // Effective (post-trim) clip length, the same number the editor and export use. A failed
@@ -515,15 +495,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  next: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: Accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    // The viewport's room is symmetric (top + bottom), so the thumbs sit on the bar's
-    // centerline and the button centers naturally — no offset needed.
-  },
-  nextPressed: { opacity: Opacity.pressed },
 });

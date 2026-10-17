@@ -46,6 +46,10 @@ export const draftListQuery = db
     firstSegmentThumbnail: sql<
       string | null
     >`(select thumbnail from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
+    // Its edit as settings (none for a legacy baked file), so the fallback shows the edited frame.
+    firstSegmentEditState: sql<
+      string | null
+    >`(select case when edited_filename is null then edit_state end from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
   })
   .from(drafts)
   .leftJoin(segments, eq(segments.draftId, drafts.id))
