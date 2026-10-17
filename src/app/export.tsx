@@ -35,10 +35,7 @@ import { useTip } from '@/features/tips/use-tip';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { segmentsForDraft } from '@/db/drafts';
 import { useExport } from '@/features/export/use-export';
-import {
-  useMergedTranscription,
-  type MergedTranscriptionState,
-} from '@/features/export/use-merged-transcription';
+import { useDraftCaptions, type CaptionsState } from '@/features/export/use-draft-captions';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { useToast } from '@/features/toast/toast-provider';
@@ -80,9 +77,9 @@ export default function ExportScreen() {
       state.status === 'done' ? { path: state.outputPath, durationMs: state.durationMs } : null;
   }, [state]);
 
-  // Transcribe the merged video once it's ready; drives the "Transcribing…" state and the caption
-  // overlay/editor. Captions live on the merged timeline now — no per-clip stitching.
-  const transcription = useMergedTranscription(draftId ?? '', clips, state);
+  // The draft's captions, composed from its clips' transcripts (no wait for the merge); drives the
+  // captions button's state and the caption overlay/editor.
+  const transcription = useDraftCaptions(draftId ?? '', clips);
   const captionLines = transcription.lines;
 
   // Whether the share sheet is being presented, so we can disable the button and show a spinner.
@@ -484,7 +481,7 @@ function CaptionsButton({
   onAddCaptions,
   tip,
 }: {
-  status: MergedTranscriptionState['status'];
+  status: CaptionsState['status'];
   hasCaptions: boolean;
   onEditCaptions: () => void;
   onAddCaptions: () => void;

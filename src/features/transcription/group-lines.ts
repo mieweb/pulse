@@ -23,24 +23,49 @@ function flush(words: TranscriptWord[]): TranscriptLine {
 }
 
 /**
+ * Whole words from `maxLen: 1` segments. whisper.rn doesn't split on words, so a segment is a
+ * token: a word can come in pieces ("Jas|mine", "I|'m", "astronaut|.") and only a word's first
+ * piece starts with a space. A piece without one continues the word before it. On the speech
+ * bench (.devrun/whisper) taking pieces as words was most of the transcripts' errors.
+ */
+export function wholeWords(segments: TranscriptWord[]): TranscriptWord[] {
+  const out: TranscriptWord[] = [];
+  for (const seg of segments) {
+    const text = seg.text.trim();
+    if (!text) continue;
+    const last = out[out.length - 1];
+    if (last && !/^\s/.test(seg.text)) {
+      out[out.length - 1] = { text: last.text + text, t0: last.t0, t1: seg.t1 };
+    } else {
+      out.push({ text, t0: seg.t0, t1: seg.t1 });
+    }
+  }
+  return out;
+}
+
+/**
  * Fold word-level whisper segments (from a `maxLen: 1` pass) into caption-sized lines, each
- * carrying its `words[]` for word-level (karaoke) highlighting. A new line starts when the
+ * carrying its `words[]` for word-level (karaoke) highlighting. Pieces of a word are joined first
+ * (see `wholeWords`). A new line starts when the
  * current word ends a sentence, when appending the next word would exceed the character budget,
  * or when the cue would run past the max duration. Word `text` is trimmed (whisper prefixes a
  * space); `t0`/`t1` stay in centiseconds.
  */
 export function groupWordsIntoLines(segments: TranscriptWord[]): TranscriptLine[] {
+  return linesFromWords(wholeWords(segments));
+}
+
+/** Caption-sized lines from whole words (trimmed, centiseconds), as `groupWordsIntoLines`. */
+export function linesFromWords(words: TranscriptWord[]): TranscriptLine[] {
   const lines: TranscriptLine[] = [];
   let current: TranscriptWord[] = [];
   let chars = 0;
 
-  for (const seg of segments) {
-    const text = seg.text.trim();
-    if (!text) continue;
-    const word: TranscriptWord = { text, t0: seg.t0, t1: seg.t1 };
+  for (const word of words) {
+    const text = word.text;
 
     const wouldChars = chars + (current.length ? 1 : 0) + text.length;
-    const wouldDur = current.length ? seg.t1 - current[0].t0 : 0;
+    const wouldDur = current.length ? word.t1 - current[0].t0 : 0;
     if (current.length && (wouldChars > MAX_LINE_CHARS || wouldDur > MAX_DUR_CS)) {
       lines.push(flush(current));
       current = [];

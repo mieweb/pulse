@@ -161,7 +161,7 @@ function Editor({
   // On-device AI model in use for this draft's captions — surfaced here (not just at first pick)
   // so the user can switch models without leaving the caption editor.
   const { data: modelRow } = useLiveQuery(selectedModelQuery, []);
-  const selectedModel = resolveSelectedModel(modelRow[0]?.value);
+  const selectedModel = resolveSelectedModel(modelRow[0]?.value, Platform.OS);
 
   const player = useVideoPlayer(toFileUri(videoUri), (p) => {
     p.timeUpdateEventInterval = 0.1;

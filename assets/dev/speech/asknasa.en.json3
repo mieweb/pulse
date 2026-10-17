@@ -1,0 +1,391 @@
+{
+  "wireMagic": "pb3",
+  "pens": [ {
+  
+  } ],
+  "wsWinStyles": [ {
+  
+  } ],
+  "wpWinPositions": [ {
+  
+  } ],
+  "events": [ {
+    "tStartMs": 520,
+    "dDurationMs": 1220,
+    "segs": [ {
+      "utf8": "Hi, I'm Jasmin Moghbeli."
+    } ]
+  }, {
+    "tStartMs": 1740,
+    "dDurationMs": 3720,
+    "segs": [ {
+      "utf8": "I'm a NASA astronaut and this is #AskNASA."
+    } ]
+  }, {
+    "tStartMs": 5800,
+    "dDurationMs": 4460,
+    "segs": [ {
+      "utf8": "[Music]"
+    } ]
+  }, {
+    "tStartMs": 10600,
+    "dDurationMs": 5300,
+    "segs": [ {
+      "utf8": "NASA will be opening its applications\nfor more astronauts on March 2nd through March 31st."
+    } ]
+  }, {
+    "tStartMs": 16480,
+    "dDurationMs": 2959,
+    "segs": [ {
+      "utf8": "So, we've got a bunch of questions related\nto that."
+    } ]
+  }, {
+    "tStartMs": 19439,
+    "dDurationMs": 2670,
+    "segs": [ {
+      "utf8": "What is this online assessment about?"
+    } ]
+  }, {
+    "tStartMs": 22109,
+    "dDurationMs": 5111,
+    "segs": [ {
+      "utf8": "It's testing things like your aptitude and\nskills to make sure earlier in the process"
+    } ]
+  }, {
+    "tStartMs": 27220,
+    "dDurationMs": 2920,
+    "segs": [ {
+      "utf8": "that you have what it takes to be a NASA astronaut."
+    } ]
+  }, {
+    "tStartMs": 30580,
+    "dDurationMs": 2500,
+    "segs": [ {
+      "utf8": "Okay, let's move on to our next question."
+    } ]
+  }, {
+    "tStartMs": 33440,
+    "dDurationMs": 2720,
+    "segs": [ {
+      "utf8": "What degrees don't count?"
+    } ]
+  }, {
+    "tStartMs": 36160,
+    "dDurationMs": 3580,
+    "segs": [ {
+      "utf8": "So I like to be positive and start with what\ndegrees do count."
+    } ]
+  }, {
+    "tStartMs": 39740,
+    "dDurationMs": 2540,
+    "segs": [ {
+      "utf8": "So, you do need a master's degree."
+    } ]
+  }, {
+    "tStartMs": 42920,
+    "dDurationMs": 1460,
+    "segs": [ {
+      "utf8": "Thanks!"
+    } ]
+  }, {
+    "tStartMs": 44380,
+    "dDurationMs": 6040,
+    "segs": [ {
+      "utf8": "You need a master's degree in a STEM field\nso Science, Technology, Engineering or Mathematics."
+    } ]
+  }, {
+    "tStartMs": 50430,
+    "dDurationMs": 5730,
+    "segs": [ {
+      "utf8": "There are certain degrees in there that don't\ncount such as nursing, psychology, exercise"
+    } ]
+  }, {
+    "tStartMs": 56260,
+    "dDurationMs": 7160,
+    "segs": [ {
+      "utf8": "physiology or social sciences, but for details\non that you can go to nasa.gov/astronauts."
+    } ]
+  }, {
+    "tStartMs": 65260,
+    "dDurationMs": 3180,
+    "segs": [ {
+      "utf8": "What was the weirdest question you got during\nyour interview?"
+    } ]
+  }, {
+    "tStartMs": 70220,
+    "dDurationMs": 4520,
+    "segs": [ {
+      "utf8": "So, when I went to see the ear doctor in the\ninterview, and he asked if I could do a Valsalva"
+    } ]
+  }, {
+    "tStartMs": 74740,
+    "dDurationMs": 880,
+    "segs": [ {
+      "utf8": "Maneuver."
+    } ]
+  }, {
+    "tStartMs": 76840,
+    "dDurationMs": 4220,
+    "segs": [ {
+      "utf8": "You may be familiar with that from flying\nin commercial aircraft."
+    } ]
+  }, {
+    "tStartMs": 81069,
+    "dDurationMs": 4750,
+    "segs": [ {
+      "utf8": "Anyway, afterwords he told me I did textbook\nValsalva."
+    } ]
+  }, {
+    "tStartMs": 85819,
+    "dDurationMs": 1141,
+    "segs": [ {
+      "utf8": "Shoo in."
+    } ]
+  }, {
+    "tStartMs": 86960,
+    "dDurationMs": 1000,
+    "segs": [ {
+      "utf8": "Next question."
+    } ]
+  }, {
+    "tStartMs": 89020,
+    "dDurationMs": 3780,
+    "segs": [ {
+      "utf8": "What are you most excited about for being\na part of the Artemis generation?"
+    } ]
+  }, {
+    "tStartMs": 94020,
+    "dDurationMs": 680,
+    "segs": [ {
+      "utf8": "Wow!"
+    } ]
+  }, {
+    "tStartMs": 94880,
+    "dDurationMs": 2240,
+    "segs": [ {
+      "utf8": "I could go on about that one for a while."
+    } ]
+  }, {
+    "tStartMs": 97120,
+    "dDurationMs": 3200,
+    "segs": [ {
+      "utf8": "First off, we haven't stepped on another planetary\nbody in my lifetime."
+    } ]
+  }, {
+    "tStartMs": 100600,
+    "dDurationMs": 5200,
+    "segs": [ {
+      "utf8": "So, it will be super exciting to see someone\nI know stepping on the surface of the Moon."
+    } ]
+  }, {
+    "tStartMs": 105810,
+    "dDurationMs": 4309,
+    "segs": [ {
+      "utf8": "But also, how that sets us up for future missions\nto go farther than we have ever gone in our"
+    } ]
+  }, {
+    "tStartMs": 110120,
+    "dDurationMs": 2340,
+    "segs": [ {
+      "utf8": "solar system before, on to Mars."
+    } ]
+  }, {
+    "tStartMs": 113480,
+    "dDurationMs": 1940,
+    "segs": [ {
+      "utf8": "So, we're constantly working on training."
+    } ]
+  }, {
+    "tStartMs": 115430,
+    "dDurationMs": 2329,
+    "segs": [ {
+      "utf8": "Our first two years were purely training."
+    } ]
+  }, {
+    "tStartMs": 117759,
+    "dDurationMs": 3630,
+    "segs": [ {
+      "utf8": "Tomorrow I'm getting in the neutral buoyancy\nlab to practice a spacewalk."
+    } ]
+  }, {
+    "tStartMs": 121389,
+    "dDurationMs": 4260,
+    "segs": [ {
+      "utf8": "Friday I'm getting in a T-38, so it's a continuous\nprocess every day."
+    } ]
+  }, {
+    "tStartMs": 125649,
+    "dDurationMs": 2671,
+    "segs": [ {
+      "utf8": "Here, let's move on to our next question."
+    } ]
+  }, {
+    "tStartMs": 128320,
+    "dDurationMs": 2900,
+    "segs": [ {
+      "utf8": "Why do astronauts need to pass a physical?"
+    } ]
+  }, {
+    "tStartMs": 132120,
+    "dDurationMs": 4760,
+    "segs": [ {
+      "utf8": "So, there are actually lots of physical aspects\nto our astronaut training and I can tell you"
+    } ]
+  }, {
+    "tStartMs": 136880,
+    "dDurationMs": 3560,
+    "segs": [ {
+      "utf8": "that from the last two years I've constantly\nbeen working out."
+    } ]
+  }, {
+    "tStartMs": 140440,
+    "dDurationMs": 3090,
+    "segs": [ {
+      "utf8": "But you need to be able to one, do the spacewalks."
+    } ]
+  }, {
+    "tStartMs": 143530,
+    "dDurationMs": 5490,
+    "segs": [ {
+      "utf8": "You also need to be able to launch to space,\nfly in jets, so need to make sure everyone"
+    } ]
+  }, {
+    "tStartMs": 149020,
+    "dDurationMs": 1700,
+    "segs": [ {
+      "utf8": "is in their best physical condition."
+    } ]
+  }, {
+    "tStartMs": 151860,
+    "dDurationMs": 3860,
+    "segs": [ {
+      "utf8": "Well the first time I got in the suit, it\nwas a lot harder than I thought it was going"
+    } ]
+  }, {
+    "tStartMs": 155720,
+    "dDurationMs": 720,
+    "segs": [ {
+      "utf8": "to be."
+    } ]
+  }, {
+    "tStartMs": 156520,
+    "dDurationMs": 5160,
+    "segs": [ {
+      "utf8": "You're working within this whole spacesuit,\nit's really your own spacecraft and it's really tiring."
+    } ]
+  }, {
+    "tStartMs": 162160,
+    "dDurationMs": 2420,
+    "segs": [ {
+      "utf8": "You walk with your hands, not your feet."
+    } ]
+  }, {
+    "tStartMs": 164580,
+    "dDurationMs": 3090,
+    "segs": [ {
+      "utf8": "Everything you do, you're much bigger than\nyou expect to be so you have to make sure"
+    } ]
+  }, {
+    "tStartMs": 167670,
+    "dDurationMs": 1340,
+    "segs": [ {
+      "utf8": "you're not running into things."
+    } ]
+  }, {
+    "tStartMs": 169010,
+    "dDurationMs": 3670,
+    "segs": [ {
+      "utf8": "My first thought was, this is awesome, but\nthis it's also really hard."
+    } ]
+  }, {
+    "tStartMs": 173820,
+    "dDurationMs": 840,
+    "segs": [ {
+      "utf8": "Hummm."
+    } ]
+  }, {
+    "tStartMs": 174670,
+    "dDurationMs": 6280,
+    "segs": [ {
+      "utf8": "Well, tell your \"friend\" that at NASA we really\nlike the planet Earth and we don't wanna waste"
+    } ]
+  }, {
+    "tStartMs": 180950,
+    "dDurationMs": 1000,
+    "segs": [ {
+      "utf8": "all that paper."
+    } ]
+  }, {
+    "tStartMs": 181950,
+    "dDurationMs": 4870,
+    "segs": [ {
+      "utf8": "We had over eighteen thousand applications\nlast time so, we'll probably stick with emails."
+    } ]
+  }, {
+    "tStartMs": 186820,
+    "dDurationMs": 4780,
+    "segs": [ {
+      "utf8": "My best experience, by far, has been meeting\nthe other people that work here."
+    } ]
+  }, {
+    "tStartMs": 191600,
+    "dDurationMs": 5280,
+    "segs": [ {
+      "utf8": "Not just the other astronauts, but the engineers,\nthose that work in Mission Control, all the"
+    } ]
+  }, {
+    "tStartMs": 196880,
+    "dDurationMs": 1750,
+    "segs": [ {
+      "utf8": "support personnel that help us every day."
+    } ]
+  }, {
+    "tStartMs": 198630,
+    "dDurationMs": 2030,
+    "segs": [ {
+      "utf8": "The divers at the Neutral Buoyancy Lab."
+    } ]
+  }, {
+    "tStartMs": 200660,
+    "dDurationMs": 4930,
+    "segs": [ {
+      "utf8": "We've got so many people here at Johnson Space\nCenter and all the other NASA centers supporting"
+    } ]
+  }, {
+    "tStartMs": 205590,
+    "dDurationMs": 1250,
+    "segs": [ {
+      "utf8": "us every day."
+    } ]
+  }, {
+    "tStartMs": 207200,
+    "dDurationMs": 1320,
+    "segs": [ {
+      "utf8": "All right, that's all our questions."
+    } ]
+  }, {
+    "tStartMs": 209520,
+    "dDurationMs": 820,
+    "segs": [ {
+      "utf8": "Perfect!"
+    } ]
+  }, {
+    "tStartMs": 211020,
+    "dDurationMs": 4700,
+    "segs": [ {
+      "utf8": "[Music]"
+    } ]
+  }, {
+    "tStartMs": 222540,
+    "dDurationMs": 1300,
+    "segs": [ {
+      "utf8": "Do you have a question for NASA?"
+    } ]
+  }, {
+    "tStartMs": 224260,
+    "dDurationMs": 5540,
+    "segs": [ {
+      "utf8": "Send your questions to our experts on Twitter\nusing #AskNASA."
+    } ]
+  } ]
+}

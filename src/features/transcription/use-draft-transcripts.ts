@@ -20,7 +20,8 @@ export type DraftTranscript = {
 /**
  * Read-only: a draft's single MERGED transcript, for rendering captions over the merged video.
  * `lines` is the EFFECTIVE transcript (the hand-edit when present, else the auto lines). Writes are
- * owned by the export transcription orchestration (`useMergedTranscription`) and the subtitle editor.
+ * owned by the export screen's captions (`useDraftCaptions`, composed from the clips) and the
+ * subtitle editor.
  * Returns `null` until a transcript row exists for the draft.
  */
 export function useDraftTranscript(draftId: string | null): DraftTranscript | null {
