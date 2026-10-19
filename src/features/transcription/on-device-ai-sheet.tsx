@@ -56,12 +56,11 @@ function statusLine(status: ReturnType<typeof useTranscriptionStatus>): string |
 }
 
 /**
- * The on-device AI sheet, opened from the export screen's captions button and the captions
- * editor. Today it holds a single section — Captions — but it's structured so future on-device
- * features can slot in as additional sections. Selecting a model persists the choice and frees the
- * previous model's weights/contexts (`applyModelSelection`); the new model is downloaded lazily the
- * next time a draft is exported, not here — so selecting records intent without blocking on a
- * download. A large model not on disk yet asks first, in the sheet itself. The active model can be
+ * The on-device AI sheet, opened from the editor's Captions tool (and its Model tool). Today it
+ * holds a single section — Captions — but it's structured so future on-device features can slot in
+ * as additional sections. Selecting a model persists the choice and frees the previous model's
+ * weights/contexts (`applyModelSelection`); the editor downloads the new model once the sheet
+ * closes, not the sheet — so selecting records intent without blocking on a download. A large model not on disk yet asks first, in the sheet itself. The active model can be
  * removed here to free disk. Same sheet style as the pairing and destinations sheets.
  */
 export function OnDeviceAiSheet() {
@@ -77,7 +76,7 @@ export function OnDeviceAiSheet() {
   // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
   const [scrolls] = useState(() => !tallSheetFits());
   // A large model not on disk yet: the sheet asks first, in place of the list. Choosing it doesn't
-  // download it here; captions download it when they next run (`useDraftCaptions`).
+  // download it here; the editor's Captions tool does (`downloadModel`).
   const [confirming, setConfirming] = useState<WhisperModel | null>(null);
   // A switch or removal under way. Each ends by closing the sheet, so a second tap while the first
   // is still saving would start another change and close twice, popping the screen underneath
@@ -116,7 +115,7 @@ export function OnDeviceAiSheet() {
       return;
     }
     // Free the previous model's contexts + delete other weights now; the new model itself is
-    // downloaded lazily at export time (no background loop pulls it here anymore). The sheet stays
+    // downloaded by the editor's Captions tool (no background loop pulls it here). The sheet stays
     // up until that's done, so a reopened sheet can't start a second change over it. If it fails,
     // the previous model is selected again and the sheet stays open, so choosing again retries.
     try {

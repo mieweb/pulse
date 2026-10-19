@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Dimensions, StyleSheet, View } from 'react-native';
+import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   cancelAnimation,
@@ -20,9 +20,12 @@ import { ClipTile, TILE_GAP, TILE_HEIGHT, TILE_RADIUS, type TilePalette } from '
 import {
   ceilToFrame,
   clamp,
-  DP_PER_MS,
   floorToFrame,
+  formatTime,
+  MAX_DP_PER_MS,
   MIN_CLIP_SOURCE_MS,
+  minDpPerMs,
+  rulerSteps,
   snapToFrame,
   type TimelineLayout,
 } from './timeline-geometry';
@@ -30,24 +33,37 @@ import type { EditorClip } from './use-editor-draft';
 import { Mode, type PlayheadValues } from './use-preview-transport';
 import type { Peaks } from './use-waveforms';
 
-export const STRIP_HEIGHT = TILE_HEIGHT + 20;
+/** The time ruler, above the clips. */
+const RULER_HEIGHT = 16;
+/** Space below the captions lane. */
+const STRIP_PAD = 8;
+/** The captions lane, under the clips. */
+const LANE_GAP = 4;
+const LANE_HEIGHT = 22;
+const LANE_TOP = TILE_HEIGHT + LANE_GAP;
+export const STRIP_HEIGHT = RULER_HEIGHT + LANE_TOP + LANE_HEIGHT + STRIP_PAD;
+/** How often a pinch redraws the covers, waveforms, captions and ruler at the scale it's at
+ * (between, they stretch to it). */
+const ZOOM_REDRAW_MS = 100;
 const GRIP_WIDTH = 16;
 /** Extra touch area around each trim grip. */
 const GRIP_SLOP = 10;
-/** A selected clip counts as on screen while at least this much of it shows. */
-const VISIBLE_DP = 12;
 const FRAME_BAR = 3;
 
-/** Each clip's [left, width] in dp, flattened (the tiles' layout). */
+/** Each clip's [start, length] in timeline ms, flattened (the tiles' layout). */
 function slotsOf(layout: TimelineLayout): number[] {
   const g: number[] = [];
   const n = layout.starts.length;
   for (let i = 0; i < n; i++) {
     const end = i + 1 < n ? layout.starts[i + 1] : layout.totalMs;
-    g.push(layout.starts[i] * DP_PER_MS, (end - layout.starts[i]) * DP_PER_MS);
+    g.push(layout.starts[i], end - layout.starts[i]);
   }
   return g;
 }
+
+/** A ruler label: m:ss, with tenths while the marks are under a second apart. */
+const rulerLabel = (ms: number, majorMs: number) =>
+  majorMs < 1000 ? formatTime(ms) : formatTime(ms).slice(0, -2);
 
 /** The selected clip, as its trim handles need it. All times in ms. */
 export type TrimInfo = {
@@ -65,6 +81,9 @@ export type TrimInfo = {
 /** 1 = the left (in) handle, 2 = the right (out) handle. */
 export type TrimSide = 1 | 2;
 
+/** A caption on the lane: timeline centiseconds, and its text. */
+export type LaneCaption = { t0: number; t1: number; text: string };
+
 type Props = {
   clips: EditorClip[];
   covers: ReadonlyMap<string, string | null>;
@@ -73,8 +92,15 @@ type Props = {
   selected: number;
   trim: TrimInfo | null;
   values: PlayheadValues;
-  /** The selected clip scrolled out of view (it's let go). */
-  onSelectedHidden: () => void;
+  /** The draft's captions, drawn on a lane under the clips. */
+  captions: readonly LaneCaption[];
+  /** The caption being edited (outlined), or -1. */
+  captionSelected: number;
+  /** A tap on the captions lane at timeline `ms`. */
+  onCaptionTap: (ms: number) => void;
+  /** The scale to open at (dp per timeline ms), and where a pinch left it. */
+  zoom: number;
+  onZoom: (dpPerMs: number) => void;
   /** The scrub started (pause, approximate seeks). */
   onDragStart: () => void;
   /** A scrub (and its fling) ended at `ms`. */
@@ -87,14 +113,18 @@ type Props = {
 };
 
 /**
- * The timeline: clips laid out at a fixed scale under a fixed centre playhead. One animated
- * transform moves the whole strip (time lives in `values.timeMs` on the UI thread); a pan scrubs
- * it and flings on release, a tap selects the clip under the finger, and the selected clip gets
- * a frame with trim grips. Covers and waveforms draw only near the visible part.
+ * The timeline: clips laid out at a scale under a fixed centre playhead, a time ruler above them
+ * and the draft's captions on a lane below (a tap there opens them). One animated transform moves
+ * the whole strip (time lives in `values.timeMs` on the UI thread); a pan scrubs it and flings on
+ * release, a pinch zooms it around the playhead, a tap selects the clip under the finger, and the
+ * selected clip gets a frame with trim grips. The scale lives on the UI thread too: the clips and
+ * the frame follow a pinch every frame, while covers, waveforms, captions and the ruler are drawn
+ * at the scale of the last redraw and stretched to it in between. Covers, waveforms, captions and
+ * ruler marks draw only near the visible part.
  */
 export function TimelineStrip(props: Props) {
-  const { clips, covers, peaks, layout, selected, trim, values } = props;
-  const { timeMs, totalMs, mode, trimTarget, playing } = values;
+  const { clips, covers, peaks, layout, selected, trim, values, captions, captionSelected } = props;
+  const { timeMs, totalMs, mode, trimTarget } = values;
 
   // The strip spans the screen: start centred before the first layout (no frame off-centre).
   const half = useSharedValue(Dimensions.get('window').width / 2);
@@ -108,11 +138,17 @@ export function TimelineStrip(props: Props) {
   const atLimit = useSharedValue(false);
   const frameLeft = useSharedValue(0);
   const frameWidth = useSharedValue(0);
-  // Every clip's [left, width] (dp) on the UI thread, and which one a trim is resizing: tiles
+  // The scale: live on the UI thread (`zoomNow`, what a pinch moves), and the one the content
+  // was last drawn at (`zoom`).
+  const [zoom, setZoom] = useState(props.zoom);
+  const zoomNow = useSharedValue(props.zoom);
+  const pinchFrom = useSharedValue(props.zoom);
+  const lastRedraw = useSharedValue(0);
+  // Every clip's [start, length] (ms) on the UI thread, and which one a trim is resizing: tiles
   // draw from these, so a trim moves them live and its release lands in one frame.
   const slots = useSharedValue<number[]>(slotsOf(layout));
   const sel = useSharedValue(selected);
-  const [motion] = useState(() => ({ slots, sel, side, delta }));
+  const [motion] = useState(() => ({ slots, sel, side, delta, zoom: zoomNow }));
   const [trimming, setTrimming] = useState(-1);
   const scheme = useThemeMode();
   const theme = useTheme();
@@ -139,6 +175,7 @@ export function TimelineStrip(props: Props) {
     dragStart: () => latest.current.onDragStart(),
     scrubEnd: (ms: number) => latest.current.onScrubEnd(ms),
     tap: (ms: number) => latest.current.onTap(ms),
+    captionTap: (ms: number) => latest.current.onCaptionTap(ms),
     trimStart: (s: TrimSide) => {
       setTrimming(latest.current.selected);
       latest.current.onTrimStart(s);
@@ -146,8 +183,8 @@ export function TimelineStrip(props: Props) {
     trimEnd: (s: TrimSide, ms: number) => {
       const i = latest.current.selected;
       const next = latest.current.onTrimEnd(s, ms);
-      const left = next.leftMs * DP_PER_MS;
-      const w = next.lengthMs * DP_PER_MS;
+      const left = next.leftMs;
+      const w = next.lengthMs;
       // The clips' new places (the trimmed one resized, the ones after it moved by the change),
       // applied with the end of the drag in one UI frame, so nothing snaps back first.
       const g = slotsOf(latest.current.layout);
@@ -166,16 +203,19 @@ export function TimelineStrip(props: Props) {
       });
     },
     limit: () => haptics.drop(),
-    hidden: () => latest.current.onSelectedHidden(),
+    redraw: (z: number) => setZoom(z),
+    zoomed: (z: number) => {
+      setZoom(z);
+      latest.current.onZoom(z);
+    },
   }));
 
-  // The selected clip's frame follows the layout, except mid-trim (the drag owns it then).
-  const selLeft = selected >= 0 ? (layout.starts[selected] ?? 0) * DP_PER_MS : 0;
+  // The selected clip's frame follows the layout, except mid-trim (the drag owns it then). In ms.
+  const selLeft = selected >= 0 ? (layout.starts[selected] ?? 0) : 0;
   const selWidth =
     selected >= 0
-      ? ((selected + 1 < layout.starts.length ? layout.starts[selected + 1] : layout.totalMs) -
-          (layout.starts[selected] ?? 0)) *
-        DP_PER_MS
+      ? (selected + 1 < layout.starts.length ? layout.starts[selected + 1] : layout.totalMs) -
+        (layout.starts[selected] ?? 0)
       : 0;
   useEffect(() => {
     trimInfo.set(trim);
@@ -202,29 +242,17 @@ export function TimelineStrip(props: Props) {
     frameWidth,
   ]);
 
-  const { dragStart, scrubEnd, tap: tapAt, trimStart, trimEnd, limit, hidden: onHidden } = handlers;
-
-  // The selected clip scrolled out of view: let it go (the clip being edited is always on screen).
-  useAnimatedReaction(
-    () => {
-      if (selected < 0 || mode.get() === Mode.trim) return true;
-      const st = starts.get();
-      const s0 = st[selected];
-      if (s0 === undefined) return true;
-      const e0 = selected + 1 < st.length ? st[selected + 1] : totalMs.get();
-      const halfMs = half.get() / DP_PER_MS;
-      const edge = VISIBLE_DP / DP_PER_MS;
-      const t = timeMs.get();
-      return e0 > t - halfMs + edge && s0 < t + halfMs - edge;
-    },
-    (visible, prev) => {
-      // Only when the person moved it (a scrub, a fling, playback), never a layout or a placement.
-      if (prev === true && !visible && (mode.get() === Mode.scrub || playing.get())) {
-        scheduleOnRN(onHidden);
-      }
-    },
-    [selected],
-  );
+  const {
+    dragStart,
+    scrubEnd,
+    tap: tapAt,
+    captionTap,
+    trimStart,
+    trimEnd,
+    limit,
+    redraw,
+    zoomed,
+  } = handlers;
 
   // Switched away mid-scrub (or mid-fling): end it, so the preview leaves scrubbing.
   useEffect(
@@ -242,6 +270,7 @@ export function TimelineStrip(props: Props) {
   const [gestures] = useState(() => {
     const scrub = Gesture.Pan()
       .activeOffsetX([-8, 8])
+      .maxPointers(1)
       .onBegin(() => {
         // A touch stops a fling where it is.
         stopped.set(mode.get() === Mode.scrub && !panning.get());
@@ -255,7 +284,7 @@ export function TimelineStrip(props: Props) {
         if (!was) scheduleOnRN(dragStart);
       })
       .onUpdate((e) => {
-        timeMs.set(clamp(panFrom.get() - e.translationX / DP_PER_MS, 0, totalMs.get()));
+        timeMs.set(clamp(panFrom.get() - e.translationX / zoomNow.get(), 0, totalMs.get()));
       })
       .onFinalize((e) => {
         if (!panning.get()) {
@@ -269,7 +298,11 @@ export function TimelineStrip(props: Props) {
         panning.set(false);
         timeMs.set(
           withDecay(
-            { velocity: -e.velocityX / DP_PER_MS, clamp: [0, totalMs.get()], deceleration: 0.997 },
+            {
+              velocity: -e.velocityX / zoomNow.get(),
+              clamp: [0, totalMs.get()],
+              deceleration: 0.997,
+            },
             (finished) => {
               // Interrupted by a new touch: that touch carries the scrub on (or ends it, a tap).
               if (!finished) return;
@@ -285,13 +318,19 @@ export function TimelineStrip(props: Props) {
       .onEnd((e) => {
         // A tap that stopped a fling does only that (the pan's finalize ends the scrub).
         if (stopped.get() || mode.get() !== Mode.idle) return;
-        // Above or below the clips is off-clip space (-1 lets a selection go).
-        const band = (STRIP_HEIGHT - TILE_HEIGHT) / 2;
-        if (e.y < band || e.y > STRIP_HEIGHT - band) {
+        const ms = timeMs.get() + (e.x - half.get()) / zoomNow.get();
+        const y = e.y - RULER_HEIGHT;
+        // The captions lane (with a little slack into the gap above it).
+        if (y >= LANE_TOP - LANE_GAP && y <= LANE_TOP + LANE_HEIGHT + 4) {
+          scheduleOnRN(captionTap, ms);
+          return;
+        }
+        // The ruler, and below the lane, are off-clip space (-1 lets a selection go).
+        if (y < 0 || y > TILE_HEIGHT) {
           scheduleOnRN(tapAt, -1);
           return;
         }
-        scheduleOnRN(tapAt, timeMs.get() + (e.x - half.get()) / DP_PER_MS);
+        scheduleOnRN(tapAt, ms);
       });
 
     const grip = (s: TrimSide) =>
@@ -326,13 +365,13 @@ export function TimelineStrip(props: Props) {
             s === 1
               ? Math.max(0, floorToFrame(info.endMs - MIN_CLIP_SOURCE_MS, info.frameMs))
               : info.sourceMs;
-          const raw = clamp(base + (e.translationX / DP_PER_MS) * info.speed, lo, hi);
+          const raw = clamp(base + (e.translationX / zoomNow.get()) * info.speed, lo, hi);
           const src = clamp(snapToFrame(raw, info.frameMs), lo, hi);
           const limited = src <= lo || src >= hi;
           if (limited && !atLimit.get()) scheduleOnRN(limit);
           atLimit.set(limited);
           trimSrc.set(src);
-          delta.set(((src - base) / info.speed) * DP_PER_MS);
+          delta.set((src - base) / info.speed);
           // The preview has this clip untrimmed meanwhile: source time = slot start + src/speed.
           trimTarget.set(
             info.slotStartMs + (s === 1 ? src : Math.max(0, src - info.frameMs)) / info.speed,
@@ -344,30 +383,53 @@ export function TimelineStrip(props: Props) {
           scheduleOnRN(trimEnd, s, trimSrc.get());
         });
 
+    // Two fingers zoom around the playhead (it stays put, the timeline stretches or shrinks
+    // about it): from the whole draft fitting the strip to MAX_DP_PER_MS.
+    const pinch = Gesture.Pinch()
+      .onStart(() => {
+        pinchFrom.set(zoomNow.get());
+        lastRedraw.set(0);
+      })
+      .onUpdate((e) => {
+        const lo = minDpPerMs(totalMs.get(), half.get() * 2);
+        const z = clamp(pinchFrom.get() * e.scale, lo, MAX_DP_PER_MS);
+        zoomNow.set(z);
+        const now = Date.now();
+        if (now - lastRedraw.get() >= ZOOM_REDRAW_MS) {
+          lastRedraw.set(now);
+          scheduleOnRN(redraw, z);
+        }
+      })
+      .onEnd(() => {
+        scheduleOnRN(zoomed, zoomNow.get());
+      });
+
     const left = grip(1);
     const right = grip(2);
-    left.blocksExternalGesture(scrub, tap);
-    right.blocksExternalGesture(scrub, tap);
-    return { strip: Gesture.Race(scrub, tap), left, right };
+    left.blocksExternalGesture(scrub, tap, pinch);
+    right.blocksExternalGesture(scrub, tap, pinch);
+    return { strip: Gesture.Race(pinch, scrub, tap), left, right };
   });
 
-  // Draw covers and waveforms only within about a screen of the playhead: the page changes
-  // once per strip width of travel, so tiles re-render rarely.
+  // Draw covers, waveforms, captions and ruler marks only within about a screen of the playhead:
+  // the page changes once per strip width of travel, so they re-render rarely.
   const [page, setPage] = useState(0);
-  const pageWidth = Math.max(1, width);
+  const pageMs = Math.max(1, width) / zoom;
   useAnimatedReaction(
-    () => Math.floor((timeMs.get() * DP_PER_MS) / pageWidth),
+    () => Math.floor(timeMs.get() / pageMs),
     (p, prev) => {
       if (p !== prev) scheduleOnRN(setPage, p);
     },
-    [pageWidth],
+    [pageMs],
   );
-  const nearFrom = (page - 1) * pageWidth;
-  const nearTo = (page + 2) * pageWidth;
+  const nearFrom = (page - 1) * pageMs;
+  const nearTo = (page + 2) * pageMs;
 
   const content = useAnimatedStyle(() => ({
-    transform: [{ translateX: half.get() - timeMs.get() * DP_PER_MS }],
+    transform: [{ translateX: half.get() - timeMs.get() * zoomNow.get() }],
   }));
+  // The captions and the ruler, drawn at `zoom`, stretched to the live scale about time 0.
+  const drawn = useAnimatedStyle(() => ({ transform: [{ scaleX: zoomNow.get() / zoom }] }), [zoom]);
   // Each grip's chevron says which way its edge can go: inward while the edge is at the source's
   // own start or end (nothing hidden beyond it), outward once it's trimmed (footage to bring
   // back). Follows the drag live.
@@ -389,15 +451,26 @@ export function TimelineStrip(props: Props) {
   const rightIn = useAnimatedStyle(() => ({ opacity: rightTrimmed.get() ? 0 : 1 }));
 
   const frame = useAnimatedStyle(() => {
+    const z = zoomNow.get();
     const s = side.get();
     const d = delta.get();
     // The grips sit outside the clip, so the clip shows edge to edge inside the frame.
-    const clipWidth = Math.max(1, frameWidth.get() + (s === 1 ? -d : s === 2 ? d : 0) - TILE_GAP);
+    const clipMs = frameWidth.get() + (s === 1 ? -d : s === 2 ? d : 0);
     return {
-      left: frameLeft.get() + (s === 1 ? d : 0) - GRIP_WIDTH,
-      width: clipWidth + GRIP_WIDTH * 2,
+      left: (frameLeft.get() + (s === 1 ? d : 0)) * z - GRIP_WIDTH,
+      width: Math.max(1, clipMs * z - TILE_GAP) + GRIP_WIDTH * 2,
     };
   });
+
+  // The ruler's marks near the playhead: a tick every minorMs, a taller one and a label every
+  // majorMs.
+  const { majorMs, minorMs } = rulerSteps(zoom);
+  const marks: { ms: number; major: boolean }[] = [];
+  const lastMark = Math.min(layout.totalMs, nearTo);
+  for (let n = Math.max(0, Math.floor(nearFrom / minorMs)); n * minorMs <= lastMark; n++) {
+    const ms = n * minorMs;
+    marks.push({ ms, major: Math.abs(ms / majorMs - Math.round(ms / majorMs)) < 1e-6 });
+  }
 
   return (
     <GestureDetector gesture={gestures.strip}>
@@ -408,21 +481,76 @@ export function TimelineStrip(props: Props) {
           setWidth(w);
           half.set(w / 2);
         }}>
-        <Animated.View style={[styles.content, { width: layout.totalMs * DP_PER_MS }, content]}>
+        <Animated.View style={[styles.content, { width: layout.totalMs * zoom }, content]}>
+          <Animated.View
+            style={[styles.drawn, { width: layout.totalMs * zoom }, drawn]}
+            pointerEvents="none">
+            <View style={styles.ruler}>
+              {marks.map((m) => (
+                <View
+                  key={m.ms}
+                  style={[
+                    m.major ? styles.majorTick : styles.minorTick,
+                    { left: m.ms * zoom, backgroundColor: theme.textSecondary },
+                  ]}
+                />
+              ))}
+              {marks
+                .filter((m) => m.major)
+                .map((m) => (
+                  <Text
+                    key={`l${m.ms}`}
+                    allowFontScaling={false}
+                    style={[
+                      styles.rulerLabel,
+                      { left: m.ms * zoom + 3, color: theme.textSecondary },
+                    ]}>
+                    {rulerLabel(m.ms, majorMs)}
+                  </Text>
+                ))}
+            </View>
+            <View style={[styles.lane, { backgroundColor: palette.wave }]}>
+              {captions.map((c, i) => {
+                if (c.t1 * 10 < nearFrom || c.t0 * 10 > nearTo) return null;
+                return (
+                  <View
+                    key={i}
+                    style={[
+                      styles.cue,
+                      {
+                        left: c.t0 * 10 * zoom,
+                        width: Math.max(6, (c.t1 - c.t0) * 10 * zoom - 2),
+                        backgroundColor: palette.tile,
+                      },
+                      i === captionSelected && styles.cueSelected,
+                    ]}>
+                    <Text numberOfLines={1} style={[styles.cueText, { color: theme.text }]}>
+                      {c.text}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          </Animated.View>
           {clips.map((c, i) => {
-            const left = (layout.starts[i] ?? 0) * DP_PER_MS;
-            const end =
-              (i + 1 < layout.starts.length ? layout.starts[i + 1] : layout.totalMs) * DP_PER_MS;
+            const left = layout.starts[i] ?? 0;
+            const end = i + 1 < layout.starts.length ? layout.starts[i + 1] : layout.totalMs;
             return (
               <ClipTile
                 key={c.id}
+                id={c.id}
+                uri={c.uri}
                 index={i}
-                width={end - left}
+                lengthMs={end - left}
+                dpPerMs={zoom}
                 cover={covers.get(c.id) ?? null}
                 peaks={peaks.get(c.uri)}
                 edit={c.edit}
                 sourceMs={c.sourceMs}
+                startMs={left}
                 near={i === trimming || (end >= nearFrom && left <= nearTo)}
+                nearFromMs={nearFrom}
+                nearToMs={nearTo}
                 trimming={i === trimming}
                 motion={motion}
                 palette={palette}
@@ -465,8 +593,52 @@ export function TimelineStrip(props: Props) {
 }
 
 const styles = StyleSheet.create({
-  strip: { height: STRIP_HEIGHT, justifyContent: 'center', overflow: 'hidden' },
+  strip: { height: STRIP_HEIGHT, paddingTop: RULER_HEIGHT, overflow: 'hidden' },
   content: { height: TILE_HEIGHT },
+  // The ruler and the lane, scaled about the timeline's start (time 0).
+  drawn: { position: 'absolute', top: 0, left: 0, height: TILE_HEIGHT, transformOrigin: 'left' },
+  ruler: { position: 'absolute', top: -RULER_HEIGHT, left: 0, right: 0, height: RULER_HEIGHT },
+  majorTick: {
+    position: 'absolute',
+    bottom: 0,
+    width: StyleSheet.hairlineWidth * 2,
+    height: 6,
+    opacity: 0.5,
+  },
+  minorTick: {
+    position: 'absolute',
+    bottom: 0,
+    width: StyleSheet.hairlineWidth,
+    height: 3,
+    opacity: 0.35,
+  },
+  rulerLabel: {
+    position: 'absolute',
+    top: 0,
+    fontSize: 9,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
+    opacity: 0.7,
+  },
+  lane: {
+    position: 'absolute',
+    top: LANE_TOP,
+    left: 0,
+    right: 0,
+    height: LANE_HEIGHT,
+    borderRadius: 6,
+  },
+  cue: {
+    position: 'absolute',
+    top: 0,
+    height: LANE_HEIGHT,
+    borderRadius: 6,
+    borderCurve: 'continuous',
+    paddingHorizontal: 6,
+    justifyContent: 'center',
+  },
+  cueSelected: { borderWidth: 2, borderColor: Accent, paddingHorizontal: 4 },
+  cueText: { fontSize: 11, fontWeight: '600' },
   frame: {
     position: 'absolute',
     top: -FRAME_BAR,

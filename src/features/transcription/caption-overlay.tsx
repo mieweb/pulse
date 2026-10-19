@@ -1,105 +1,131 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { useTextSizeKey } from '@/hooks/use-text-size-key';
-import { Accent } from '@/constants/theme';
-import type { TranscriptLine, TranscriptWord } from './whisper';
+import type { CaptionStyle } from './caption-style';
+import { captionRows } from './caption-track';
+import { lineAt } from './compose';
+import { wordGap } from './group-lines';
+import type { TranscriptLine } from './whisper';
 
-const COLOR_SPOKEN = 'rgba(255,255,255,1)';
-const COLOR_FUTURE = 'rgba(255,255,255,0.45)';
-const COLOR_BG = 'rgba(0,0,0,0.6)';
-
-type Props = {
-  /** Effective caption lines (centiseconds), sorted by start. */
-  lines: TranscriptLine[];
-  /** Current playback position in milliseconds, in the same time base as `lines`. */
-  positionMs: number;
-  /** Caption text size; pass a smaller value when the host video view is compact. */
-  fontSize?: number;
-};
-
-/** Binary-search the line whose [t0,t1] (centiseconds) contains `posCs`; -1 if none. */
-function findActiveLine(lines: TranscriptLine[], posCs: number): number {
-  let lo = 0;
-  let hi = lines.length - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const l = lines[mid];
-    if (posCs < l.t0) hi = mid - 1;
-    else if (posCs > l.t1) lo = mid + 1;
-    else return mid;
-  }
-  return -1;
-}
-
-/**
- * Word-level (karaoke) caption overlay: the active line is picked by binary search; within it,
- * words already spoken render solid, upcoming words dim, and the current word is in the accent
- * color. Lines without `words` fall back to a static line. Plain nested <Text> spans — wrapping
- * and centering come from the text layout engine (this used to be a hand-measured Skia canvas).
- *
- * Time sync is the caller's job: feed `positionMs` from expo-video's `timeUpdate` event.
- */
-export function CaptionOverlay({ lines, positionMs, fontSize = 17 }: Props) {
-  const textSizeKey = useTextSizeKey();
-  const posCs = positionMs / 10;
-  const lineIdx = findActiveLine(lines, posCs);
-  const line = lineIdx >= 0 ? lines[lineIdx] : undefined;
-  if (!line) return null;
-
-  // The words to render: real word timing when present, else the whole line as one "word".
-  const words: TranscriptWord[] = line.words?.length
-    ? line.words
-    : [{ text: line.text, t0: line.t0, t1: line.t1 }];
-
-  // Active word index within the line: the word covering the playhead, else the last one already
-  // started (so the highlight rests on the most recent word during short gaps).
+/** The word to highlight in `line` at `posCs`: the one under the playhead, else the last one
+ * already started (so the highlight rests on the most recent word during short gaps). */
+export function activeWord(line: TranscriptLine, posCs: number): number {
+  const words = line.words ?? [];
   let active = -1;
   for (let i = 0; i < words.length; i++) {
     if (posCs >= words[i].t0) active = i;
     if (posCs >= words[i].t0 && posCs <= words[i].t1) break;
   }
+  return active;
+}
 
-  const pad = fontSize * 0.5; // background padding around the text block
-  const edge = fontSize * 0.7; // min gap from the host view's edges
-
+/**
+ * One caption as the style draws it on a picture `height` dp tall: its rows (caption-track.ts,
+ * never re-wrapped; a row too wide for the picture shrinks to fit), words already spoken in
+ * `color`, the current one in `activeColor`, the rest in `futureColor`, on the style's box. The
+ * text doesn't follow the phone's text size: it's sized to the picture, as the video will show it.
+ */
+export function CaptionText({
+  line,
+  active,
+  style,
+  height,
+}: {
+  line: TranscriptLine;
+  /** The word to highlight (`activeWord`). */
+  active: number;
+  style: CaptionStyle;
+  height: number;
+}) {
+  const size = style.size * height;
+  const text = {
+    fontSize: size,
+    lineHeight: size * style.lineHeight,
+    fontWeight: `${style.weight}` as const,
+  };
+  let index = 0;
   return (
-    <View style={[StyleSheet.absoluteFill, styles.wrap, { padding: edge }]} pointerEvents="none">
-      <View
-        style={{
-          backgroundColor: COLOR_BG,
-          borderRadius: pad * 0.8,
-          paddingHorizontal: pad,
-          paddingVertical: pad / 2,
-        }}>
-        {/* Capped like the app's other text over video: the caption grows with the text size,
-            but past 1.3× it would cover the frame it describes. */}
+    <View
+      style={{
+        backgroundColor: style.background,
+        borderRadius: style.radius * size,
+        paddingHorizontal: style.padX * size,
+        paddingVertical: style.padY * size,
+      }}>
+      {captionRows(line).map((row, r) => (
         <Text
-          key={textSizeKey}
-          maxFontSizeMultiplier={1.3}
-          style={[styles.text, { fontSize, lineHeight: fontSize * 1.3 }]}>
-          {words.map((w, i) => (
-            <Text
-              key={`${lineIdx}:${i}`}
-              style={{
-                color: i === active ? Accent : i < active ? COLOR_SPOKEN : COLOR_FUTURE,
-              }}>
-              {(i > 0 ? ' ' : '') + w.text}
-            </Text>
-          ))}
+          key={r}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          allowFontScaling={false}
+          style={[styles.text, text]}>
+          {row.map((w, i) => {
+            const at = index++;
+            const color =
+              at === active ? style.activeColor : at < active ? style.color : style.futureColor;
+            return (
+              <Text key={i} style={{ color }}>
+                {(i > 0 ? wordGap(row[i - 1].text, w.text) : '') + w.text}
+              </Text>
+            );
+          })}
         </Text>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * A row across the picture whose middle is at the style's `y`: what's laid in it is centred on
+ * that line, whatever its height. Twice the picture's height, so the text always has room to lay
+ * out (a zero-height row measures text into no lines at all). Absolute; style it over the picture.
+ */
+export function captionRowStyle(style: CaptionStyle, height: number): ViewStyle {
+  return {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: (style.y - 1) * height,
+    height: height * 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: style.margin * style.size * height,
+  };
+}
+
+type Props = {
+  /** Effective caption lines (centiseconds), sorted by start. */
+  lines: readonly TranscriptLine[];
+  /** Current playback position in milliseconds, in the same time base as `lines`. */
+  positionMs: number;
+  style: CaptionStyle;
+  /** The picture's height, dp. */
+  height: number;
+};
+
+/**
+ * Word-level (karaoke) caption overlay over a player: the line under `positionMs`, drawn by the
+ * style. Time sync is the caller's job (e.g. expo-video's `timeUpdate`).
+ */
+export function CaptionOverlay({ lines, positionMs, style, height }: Props) {
+  const posCs = positionMs / 10;
+  const i = lineAt(lines, posCs);
+  const line = i >= 0 ? lines[i] : undefined;
+  if (!line || height <= 0) return null;
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      <View style={captionRowStyle(style, height)}>
+        <CaptionText
+          key={i}
+          line={line}
+          active={activeWord(line, posCs)}
+          style={style}
+          height={height}
+        />
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  text: {
-    textAlign: 'center',
-    fontWeight: '700',
-    color: '#fff',
-  },
+  text: { textAlign: 'center' },
 });

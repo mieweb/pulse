@@ -1,4 +1,13 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { type ReactNode, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { Icon, type IconName } from '@/components/icon';
 import { Accent } from '@/constants/theme';
@@ -18,6 +27,10 @@ type Tool = {
   onPress: () => void;
   disabled?: boolean;
   destructive?: boolean;
+  /** Working on it: a spinner in place of the glyph (still tappable). */
+  busy?: boolean;
+  /** A tip's anchor, laid over the glyph. */
+  tip?: ReactNode;
 };
 
 function ToolButton({ tool }: { tool: Tool }) {
@@ -36,11 +49,14 @@ function ToolButton({ tool }: { tool: Tool }) {
         pressed && styles.pressed,
       ]}>
       <View style={styles.glyph}>
-        {tool.text ? (
+        {tool.busy ? (
+          <ActivityIndicator size="small" color={color} />
+        ) : tool.text ? (
           <Text style={[styles.glyphText, { color }]}>{tool.text}</Text>
         ) : (
           tool.icon && <Icon name={tool.icon} size={20} weight="medium" tintColor={color} />
         )}
+        {tool.tip}
       </View>
       <Text style={[styles.label, { color }]} numberOfLines={1}>
         {tool.label}
@@ -49,7 +65,7 @@ function ToolButton({ tool }: { tool: Tool }) {
   );
 }
 
-/** The selected clip's tools (shown only while a clip is selected). */
+/** The clip under the playhead's tools (edit mode). */
 type Props = {
   muted: boolean;
   speed: number;
@@ -62,9 +78,12 @@ type Props = {
   onSpeed: () => void;
   onReset: () => void;
   onDelete: () => void;
+  /** Leave edit mode. */
+  onDone: () => void;
 };
 
-/** The clip tools: flip, rotate, crop, mute, speed, then reset and delete. */
+/** The clip tools: flip, rotate, crop, mute, speed, then reset and delete (✓ leaves edit mode).
+ * They scroll sideways when the screen is too narrow for all of them. */
 export function ClipToolbar(p: Props) {
   const tools: Tool[] = [
     { key: 'flip', label: 'Flip', icon: FLIP_ICON, onPress: p.onFlip, disabled: !p.editable },
@@ -101,10 +120,31 @@ export function ClipToolbar(p: Props) {
   ];
   return (
     <View style={styles.row}>
-      {tools.map((t) => (
-        <ToolButton key={t.key} tool={t} />
-      ))}
+      <DoneButton label="Done editing" onPress={p.onDone} />
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.scrollTools}>
+        {tools.map((t) => (
+          <ToolButton key={t.key} tool={t} />
+        ))}
+      </ScrollView>
     </View>
+  );
+}
+
+/** ✓: back to the main tools. */
+function DoneButton({ label, onPress }: { label: string; onPress: () => void }) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={6}
+      style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
+      <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.text} />
+    </Pressable>
   );
 }
 
@@ -155,6 +195,132 @@ export function SpeedRow({
   );
 }
 
+/** Outside the modes: the draft's tools. Each opens its mode (✓ there comes back). */
+export function MainToolbar({
+  canEdit,
+  onEdit,
+  captionsBusy,
+  onCaptions,
+  tip,
+}: {
+  /** Some clip can be edited (the draft has clips). */
+  canEdit: boolean;
+  /** Edit mode, on the clip under the playhead. */
+  onEdit: () => void;
+  /** The model downloading, or clips being transcribed. */
+  captionsBusy: boolean;
+  onCaptions: () => void;
+  tip?: ReactNode;
+}) {
+  const tools: Tool[] = [
+    { key: 'edit', label: 'Edit', icon: 'scissors', onPress: onEdit, disabled: !canEdit },
+    {
+      key: 'captions',
+      label: 'Captions',
+      icon: 'captions.bubble',
+      onPress: onCaptions,
+      busy: captionsBusy,
+      tip,
+    },
+  ];
+  return (
+    <View style={[styles.row, styles.rowStart]}>
+      {tools.map((t) => (
+        <ToolButton key={t.key} tool={t} />
+      ))}
+    </View>
+  );
+}
+
+/** The captions tools: they act on the caption under the playhead (✓ goes back). */
+export function CaptionToolbar(p: {
+  /** A caption is under the playhead. */
+  onCaption: boolean;
+  /** Some clip's captions were edited. */
+  edited: boolean;
+  onDone: () => void;
+  onEdit: () => void;
+  onAdd: () => void;
+  onDelete: () => void;
+  onModel: () => void;
+  onReset: () => void;
+}) {
+  const tools: Tool[] = [
+    { key: 'edit', label: 'Edit', icon: 'pencil', onPress: p.onEdit, disabled: !p.onCaption },
+    { key: 'add', label: 'Add', icon: 'plus', onPress: p.onAdd, disabled: p.onCaption },
+    { key: 'model', label: 'Model', icon: 'wand.and.stars', onPress: p.onModel },
+    {
+      key: 'reset',
+      label: 'Reset',
+      icon: 'arrow.counterclockwise',
+      onPress: p.onReset,
+      disabled: !p.edited,
+    },
+    {
+      key: 'delete',
+      label: 'Delete',
+      icon: 'trash',
+      onPress: p.onDelete,
+      disabled: !p.onCaption,
+      destructive: true,
+    },
+  ];
+  return (
+    <View style={styles.row}>
+      <DoneButton label="Done with captions" onPress={p.onDone} />
+      {tools.map((t) => (
+        <ToolButton key={t.key} tool={t} />
+      ))}
+    </View>
+  );
+}
+
+/** A caption's words, typed (✓ keeps them, ✕ leaves them as they were). */
+export function CaptionTextBar({
+  initial,
+  onDone,
+  onCancel,
+}: {
+  initial: string;
+  onDone: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const theme = useTheme();
+  const [text, setText] = useState(initial);
+  return (
+    <View style={styles.row}>
+      <Pressable
+        onPress={onCancel}
+        accessibilityRole="button"
+        accessibilityLabel="Cancel"
+        hitSlop={6}
+        style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
+        <Icon name="xmark" size={16} weight="semibold" tintColor={theme.text} />
+      </Pressable>
+      <TextInput
+        value={text}
+        onChangeText={setText}
+        autoFocus
+        multiline={false}
+        returnKeyType="done"
+        onSubmitEditing={() => onDone(text)}
+        placeholder="Caption"
+        placeholderTextColor={theme.textSecondary}
+        accessibilityLabel="Caption text"
+        style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+      />
+      <Pressable
+        onPress={() => onDone(text)}
+        accessibilityRole="button"
+        accessibilityLabel="Done"
+        hitSlop={6}
+        style={[styles.done, styles.doneEnd, { backgroundColor: theme.text }]}>
+        <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.background} />
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   row: {
     height: TOOLBAR_HEIGHT,
@@ -163,6 +329,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-evenly',
     paddingHorizontal: 4,
   },
+  rowStart: { justifyContent: 'flex-start', paddingHorizontal: 12, gap: 16 },
+  scrollTools: { flexGrow: 1, justifyContent: 'space-evenly', alignItems: 'center' },
+  input: { flex: 1, height: 40, borderRadius: 20, paddingHorizontal: 16, fontSize: 16 },
+  doneEnd: { marginRight: 0, marginLeft: 8 },
   // Each tool's own size (not a stretched share of the row), so the space between tools is
   // off-tool: a tap there lets the selection go instead of firing a tool.
   tool: { minWidth: 44, alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 2 },

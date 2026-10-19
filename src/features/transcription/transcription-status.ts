@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from 'react';
 
 /**
- * Coarse transcription status, shown in the On-device AI sheet. Written by the clip queue
- * (`transcribing` while a clip is being transcribed), the export screen's captions (a model
+ * Coarse transcription status, shown in the On-device AI sheet and the editor's captions. Written
+ * by the clip queue (`transcribing` while a clip is being transcribed), `downloadModel` (a model
  * download) and model selection (`model-manager`), into this tiny module-level store.
  */
 export type TranscriptionStatus =

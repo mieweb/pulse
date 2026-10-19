@@ -117,7 +117,8 @@ export const getModel = (id: string | null | undefined): WhisperModel | null =>
  * Ids of models retired from the catalog, mapped to the id users should migrate to (`null` to just
  * clear the selection). Add an entry here whenever a model is removed from MODELS. A stored retired
  * selection is resolved to its replacement wherever the persisted selection is read
- * (`resolveSelectedModel`); the replacement's weights are then downloaded lazily at export time.
+ * (`resolveSelectedModel`); the replacement's weights are then downloaded from the editor's
+ * Captions tool.
  */
 export const RETIRED_MODELS: Record<string, string | null> = {
   // English: Parakeet, which on the speech bench (per clip) was at least as accurate as these

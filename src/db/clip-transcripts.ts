@@ -4,8 +4,11 @@ import type { TranscriptWord } from '@/features/transcription/whisper';
 import { db } from './client';
 import { clipTranscripts, segments } from './schema';
 
-/** A clip's transcript for one model: the file it was made from and its words (file time, cs). */
-export type ClipWords = { segmentId: string; file: string; words: TranscriptWord[] };
+/**
+ * A clip's transcript for one model: the file it was made from and its words (file time, cs).
+ * `failed`: the model couldn't transcribe that file (no words; Retry deletes the row).
+ */
+export type ClipWords = { segmentId: string; file: string; words: TranscriptWord[]; failed: boolean };
 
 function parseWords(json: string | null): TranscriptWord[] {
   if (!json) return [];
@@ -30,19 +33,24 @@ export function draftClipTranscriptsQuery(draftId: string, model: string) {
     .where(and(eq(segments.draftId, draftId), eq(clipTranscripts.model, model)));
 }
 
-/** Rows from `draftClipTranscriptsQuery` (or `getClipTranscripts`) as finished clip words. */
+/** Rows from `draftClipTranscriptsQuery` (or `getClipTranscripts`) as clip words. */
 export function clipWordsOf(
   rows: { segmentId: string; file: string; status: string; words: string | null }[],
 ): Map<string, ClipWords> {
   const out = new Map<string, ClipWords>();
   for (const r of rows) {
-    if (r.status !== 'done') continue;
-    out.set(r.segmentId, { segmentId: r.segmentId, file: r.file, words: parseWords(r.words) });
+    const failed = r.status !== 'done';
+    out.set(r.segmentId, {
+      segmentId: r.segmentId,
+      file: r.file,
+      words: failed ? [] : parseWords(r.words),
+      failed,
+    });
   }
   return out;
 }
 
-/** The finished clip transcripts among `segmentIds`, for one model. */
+/** The clip transcripts (finished or failed) among `segmentIds`, for one model. */
 export async function getClipTranscripts(
   segmentIds: string[],
   model: string,
@@ -79,4 +87,36 @@ export async function saveClipTranscript(
       target: [clipTranscripts.segmentId, clipTranscripts.model],
       set: { file, status: 'done', words: json },
     });
+}
+
+/** Record that `model` couldn't transcribe the clip's `file` (shown as failed until a retry). */
+export async function saveClipTranscriptFailure(
+  segmentId: string,
+  model: string,
+  file: string,
+): Promise<void> {
+  await db
+    .insert(clipTranscripts)
+    .values({ segmentId, model, file, status: 'error', words: null })
+    .onConflictDoUpdate({
+      target: [clipTranscripts.segmentId, clipTranscripts.model],
+      set: { file, status: 'error', words: null },
+    });
+}
+
+/** Forget the failed transcripts among `segmentIds` for `model`, so they're asked for again. */
+export async function clearClipTranscriptFailures(
+  segmentIds: string[],
+  model: string,
+): Promise<void> {
+  if (segmentIds.length === 0) return;
+  await db
+    .delete(clipTranscripts)
+    .where(
+      and(
+        inArray(clipTranscripts.segmentId, segmentIds),
+        eq(clipTranscripts.model, model),
+        eq(clipTranscripts.status, 'error'),
+      ),
+    );
 }

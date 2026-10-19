@@ -2,6 +2,7 @@ import type { MergeClip, MergeOptions } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useEffect, useRef, useState } from 'react';
 
+import { setCaptionEdits } from '@/db/captions';
 import {
   deleteSegment,
   reorderSegments,
@@ -106,7 +107,8 @@ function toEditorClip(s: Segment): EditorClip {
  */
 export function useEditorDraft(draftId: string) {
   const { data: rows, updatedAt } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
-  // Clips without a transcript yet are transcribed in the background while the editor is open.
+  // Every clip (muted ones too, ready for an unmute) is transcribed in the background while the
+  // editor is open; the captions ask for the ones they're missing at once (useDraftCaptions).
   useClipTranscription(rows, true);
   const { showToast } = useToast();
   const [pending, setPending] = useState<ReadonlyMap<string, EditValue>>(new Map());
@@ -143,8 +145,9 @@ export function useEditorDraft(draftId: string) {
     clips = segments.map(toEditorClip);
     setBuilt({ signature, clips });
   }
-  // Covers and labels follow the rows without rebuilding the clips.
+  // Covers, labels and caption edits follow the rows without rebuilding the clips.
   const covers = new Map(segments.map((s) => [s.id, s.thumbnail ? absolutize(s.thumbnail) : null]));
+  const captionEdits = new Map(segments.map((s) => [s.id, s.captionEdit]));
 
   const [options, setOptions] = useState<MergeOptions | null>(null);
   useEffect(() => {
@@ -204,6 +207,17 @@ export function useEditorDraft(draftId: string) {
     });
   };
 
+  /** Store clips' edited captions (JSON, or null for the model's words again). */
+  const setCaptions = (values: ReadonlyMap<string, string | null>) => {
+    setCaptionEdits(values).catch((e: unknown) =>
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t save the captions',
+        message: userMessage(e, 'Try again.', 'edit captions'),
+      }),
+    );
+  };
+
   const remove = async (id: string) => {
     try {
       await deleteSegment(id);
@@ -220,12 +234,17 @@ export function useEditorDraft(draftId: string) {
     /** False until the rows are first read. */
     loaded: updatedAt !== undefined,
     clips,
+    /** The clips' rows as they play now (pending edits applied), for the captions. */
+    segments,
     covers,
+    /** Each clip's edited captions (`segments.caption_edit`), by id. */
+    captionEdits,
     options,
     setEdit,
     /** Store a raw value (undo/redo): an edit string, or null to reset. */
     setValue: write,
     reorder,
     remove,
+    setCaptions,
   };
 }

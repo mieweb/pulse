@@ -32,8 +32,6 @@ const STEP = THUMB_WIDTH + THUMB_GAP;
 export const ROW_HEIGHT = THUMB_HEIGHT + 20;
 const BADGE = 18;
 const RADIUS = 10;
-/** A selected clip counts as on screen while at least this much of it shows. */
-const VISIBLE_DP = 12;
 
 // The row is padded half its width on each side, so the scroll offset IS the playhead's place
 // on the row: each clip spans its thumbnail and the gap after it, in proportion to its length.
@@ -125,8 +123,6 @@ type Props = {
   onReorderStart: () => void;
   /** A clip was dropped: the new order (ids) and the clip that moved. */
   onReorder: (order: string[], moved: string) => void;
-  /** The selected clip scrolled out of view (it's let go). */
-  onSelectedHidden: () => void;
   /** A tap on the row but not on a clip (the gaps, either side). */
   onBlankTap?: () => void;
 };
@@ -139,7 +135,7 @@ type Props = {
 export function ClipRow(props: Props) {
   const theme = useTheme();
   const { clips, covers, layout, selected, values } = props;
-  const { timeMs, totalMs, mode, playing } = values;
+  const { timeMs, totalMs, mode } = values;
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const offset = useScrollViewOffset(scrollRef);
   const [width, setWidth] = useState(0);
@@ -152,9 +148,8 @@ export function ClipRow(props: Props) {
   const [handlers] = useState(() => ({
     dragStart: () => latest.current.onDragStart(),
     scrubEnd: (ms: number) => latest.current.onScrubEnd(ms),
-    hidden: () => latest.current.onSelectedHidden(),
   }));
-  const { dragStart, scrubEnd, hidden } = handlers;
+  const { dragStart, scrubEnd } = handlers;
 
   const geom = useSharedValue({ starts: layout.starts, total: layout.totalMs });
   /** A finger (or its fling) is moving the row: time follows the row, not the other way. */
@@ -224,21 +219,6 @@ export function ClipRow(props: Props) {
       });
     },
     [user, mode, timeMs, scrubEnd],
-  );
-
-  // The selected clip scrolled out of view: let it go (the clip being edited is always on screen).
-  useAnimatedReaction(
-    () => {
-      if (selected < 0 || moving.get()) return true;
-      const x = width / 2 + selected * STEP - offset.get();
-      return x + THUMB_WIDTH > VISIBLE_DP && x < widthSv.get() - VISIBLE_DP;
-    },
-    (visible, prev) => {
-      // Only when the person moved it (a swipe, a fling, playback): the row's own layout and
-      // scrolls (opening, switching views, after a drop) never let a selection go.
-      if (prev === true && !visible && (user.get() || playing.get())) scheduleOnRN(hidden);
-    },
-    [selected, width],
   );
 
   const draggedKey = useRef<string | null>(null);

@@ -1,3 +1,4 @@
+import { wordGap } from './group-lines';
 import type { TranscriptLine } from './whisper';
 
 // Our `TranscriptLine` times are centiseconds (1/100 s); WebVTT timestamps are milliseconds.
@@ -19,15 +20,22 @@ function msToVttTime(ms: number): string {
  * gives us as inline cue timestamps (`word <00:00:01.500>word` — the karaoke syntax), so a web
  * viewer can highlight the exact spoken word the way `CaptionOverlay` does in-app. Lines
  * without word data emit plain cues — viewers fall back to whatever line-level treatment they
- * have.
+ * have. `y` (where the captions were moved to: the caption's centre, a fraction of the height)
+ * becomes each cue's `line:` setting, centred on that line.
  */
-export function linesToVtt(lines: TranscriptLine[]): string {
+export function linesToVtt(lines: readonly TranscriptLine[], y?: number | null): string {
+  const settings = y == null ? '' : ` line:${Math.round(y * 100)}%,center`;
   const cues = lines.map((line) => {
-    const timing = `${msToVttTime(csToMs(line.t0))} --> ${msToVttTime(csToMs(line.t1))}`;
-    const text = line.words?.length
-      ? line.words
-          .map((w, i) => (i === 0 ? w.text : `<${msToVttTime(csToMs(w.t0))}>${w.text}`))
-          .join(' ')
+    const timing = `${msToVttTime(csToMs(line.t0))} --> ${msToVttTime(csToMs(line.t1))}${settings}`;
+    const words = line.words;
+    const text = words?.length
+      ? words
+          .map((w, i) =>
+            i === 0
+              ? w.text
+              : `${wordGap(words[i - 1].text, w.text)}<${msToVttTime(csToMs(w.t0))}>${w.text}`,
+          )
+          .join('')
       : line.text;
     return `${timing}\n${text}`;
   });

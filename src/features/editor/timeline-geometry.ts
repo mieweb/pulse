@@ -2,8 +2,27 @@ import type { ParsedEdit } from '@/utils/segment-window';
 
 // Pure timeline maths for the editor, safe to call from worklets (UI thread) and from JS.
 
-/** Strip scale: dp per timeline ms (48 dp per second; a 12 s clip is a 576 dp tile). */
+/** The strip's scale when the editor opens: dp per timeline ms (48 dp per second; a 12 s clip is
+ * a 576 dp tile). A pinch zooms it between the draft fitting the strip and MAX_DP_PER_MS. */
 export const DP_PER_MS = 0.048;
+/** The furthest a pinch zooms in: 600 dp per second (a 0.3 s caption is 180 dp wide). */
+export const MAX_DP_PER_MS = 0.6;
+
+/** The scale at which `totalMs` fills `widthDp` (the furthest a pinch zooms out), at most the
+ * opening scale. */
+export function minDpPerMs(totalMs: number, widthDp: number): number {
+  'worklet';
+  return totalMs > 0 && widthDp > 0 ? Math.min(DP_PER_MS, (widthDp * 0.9) / totalMs) : DP_PER_MS;
+}
+
+/** The ruler's marks at a scale: labelled every `majorMs`, a tick every `minorMs`, with labels
+ * about 80 dp apart. */
+export function rulerSteps(dpPerMs: number): { majorMs: number; minorMs: number } {
+  const steps = [500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000];
+  const majorMs = steps.find((ms) => ms * dpPerMs >= 80) ?? steps[steps.length - 1];
+  const parts = [5, 4, 2].find((n) => (majorMs / n) * dpPerMs >= 12) ?? 1;
+  return { majorMs, minorMs: majorMs / parts };
+}
 /** Shortest clip a trim can make, in source ms. */
 export const MIN_CLIP_SOURCE_MS = 1000;
 /** A crop this close to the whole frame is stored as no crop. */

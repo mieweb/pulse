@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
@@ -29,6 +29,9 @@ export const drafts = sqliteTable('drafts', {
   // it back), and a mismatch or missing file means "merge again". Null = no export.
   mergedSignature: text('merged_signature'),
   mergedDurationMs: integer('merged_duration_ms'),
+  // Where the captions sit on the video: the caption's vertical centre, as a fraction of the
+  // picture's height (0 top, 1 bottom), dragged on the editor's preview. Null = the default place.
+  captionY: real('caption_y'),
   // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
   // every clip added, never decremented — so deleting (or renaming) a clip can never cause
   // its number to be reused.
@@ -74,6 +77,11 @@ export const segments = sqliteTable(
     // Shown on segment-bar thumbs and draft cards (the draft cover is the first clip's
     // thumbnail) and uploaded as the merged session's thumbnail artifact.
     thumbnail: text('thumbnail'),
+    // The clip's captions as the person edited them in the editor: JSON `{ file, words }`, the
+    // words timed in that file like a clip transcript's (centiseconds), so trims, speed and
+    // reorders carry them along. Used instead of the model's words while `file` is the clip's
+    // file. Null = the model's words.
+    captionEdit: text('caption_edit'),
   },
   // One slot per position: catches any regression of the order-assignment race at write time
   // (addSegment computes order inside a transaction; reorder renumbers in two passes).

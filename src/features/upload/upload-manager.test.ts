@@ -80,13 +80,10 @@ jest.mock('@/db/secure-token', () => {
     }),
   };
 });
-jest.mock('@/db/transcripts', () => ({
-  getDraftTranscriptRow: jest.fn(async () => ({ lines: '[{"text":"hi"}]', editedLines: null })),
+jest.mock('@/features/transcription/draft-captions', () => ({
+  getDraftCaptions: jest.fn(async () => ({ lines: [{ text: 'hi', t0: 0, t1: 100 }], y: null })),
 }));
 jest.mock('@/features/transcription/vtt', () => ({ linesToVtt: jest.fn(() => 'WEBVTT') }));
-jest.mock('@/features/transcription/whisper', () => ({
-  parseTranscriptLines: jest.fn(() => [{ text: 'hi' }]),
-}));
 jest.mock('@/utils/video', () => ({
   generateThumbnailFile: jest.fn(async (_video: string, out: string) => {
     (

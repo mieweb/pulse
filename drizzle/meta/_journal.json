@@ -127,6 +127,13 @@
       "when": 1792033508633,
       "tag": "0017_clip_transcripts",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792200279199,
+      "tag": "0018_caption_edits",
+      "breakpoints": true
     }
   ]
 }
