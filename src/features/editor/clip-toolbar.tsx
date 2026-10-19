@@ -232,22 +232,37 @@ export function MainToolbar({
   );
 }
 
-/** The captions tools: they act on the caption under the playhead (✓ goes back). */
+/**
+ * The captions tools. Like the clip tools in edit mode, they act on what's under the playhead:
+ * the word there (edit it, delete it), its sentence (Split cuts it at the word boundary nearest
+ * the playhead; Merge joins it with the next one, or the two either side of a gap), then the
+ * model and reset.
+ */
 export function CaptionToolbar(p: {
-  /** A caption is under the playhead. */
-  onCaption: boolean;
+  /** A word is selected (tapped): what Edit and Delete act on. */
+  hasWord: boolean;
+  canSplit: boolean;
+  canMerge: boolean;
   /** Some clip's captions were edited. */
   edited: boolean;
   onDone: () => void;
   onEdit: () => void;
-  onAdd: () => void;
   onDelete: () => void;
+  onSplit: () => void;
+  onMerge: () => void;
   onModel: () => void;
   onReset: () => void;
 }) {
   const tools: Tool[] = [
-    { key: 'edit', label: 'Edit', icon: 'pencil', onPress: p.onEdit, disabled: !p.onCaption },
-    { key: 'add', label: 'Add', icon: 'plus', onPress: p.onAdd, disabled: p.onCaption },
+    { key: 'edit', label: 'Edit', icon: 'pencil', onPress: p.onEdit, disabled: !p.hasWord },
+    { key: 'split', label: 'Split', icon: 'scissors', onPress: p.onSplit, disabled: !p.canSplit },
+    {
+      key: 'merge',
+      label: 'Merge',
+      icon: 'arrow.triangle.merge',
+      onPress: p.onMerge,
+      disabled: !p.canMerge,
+    },
     { key: 'model', label: 'Model', icon: 'wand.and.stars', onPress: p.onModel },
     {
       key: 'reset',
@@ -261,16 +276,21 @@ export function CaptionToolbar(p: {
       label: 'Delete',
       icon: 'trash',
       onPress: p.onDelete,
-      disabled: !p.onCaption,
+      disabled: !p.hasWord,
       destructive: true,
     },
   ];
   return (
     <View style={styles.row}>
       <DoneButton label="Done with captions" onPress={p.onDone} />
-      {tools.map((t) => (
-        <ToolButton key={t.key} tool={t} />
-      ))}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.scrollTools}>
+        {tools.map((t) => (
+          <ToolButton key={t.key} tool={t} />
+        ))}
+      </ScrollView>
     </View>
   );
 }

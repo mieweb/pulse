@@ -4,6 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
+  Dimensions,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -16,6 +17,7 @@ import Animated, {
   useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -33,17 +35,22 @@ import {
   TOOLBAR_HEIGHT,
 } from '@/features/editor/clip-toolbar';
 import { CropEditor } from '@/features/editor/crop-editor';
-import { EditorCaption } from '@/features/editor/editor-caption';
+import { SkiaCaption } from '@/features/transcription/skia-caption';
+import { PerfHud } from '@/features/editor/perf-hud';
 import {
+  resetTimelineZoom,
   STRIP_HEIGHT,
   TimelineStrip,
   type TrimInfo,
   type TrimSide,
 } from '@/features/editor/timeline-strip';
 import {
+  captionZoom,
   clamp,
   clipIndexAt,
-  DP_PER_MS,
+  clipZoom,
+  draftZoom,
+  type ZoomRequest,
   flippedEdit,
   formatTime,
   rotated,
@@ -53,6 +60,7 @@ import { captionYQuery, setCaptionY } from '@/db/captions';
 import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
+import { usePlayheadCaption } from '@/features/editor/use-playhead-caption';
 import { usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
@@ -62,19 +70,27 @@ import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
 import { useToast } from '@/features/toast/toast-provider';
 import { captionStyleFor } from '@/features/transcription/caption-style';
-import { insertLine, removeLine, replaceLineText } from '@/features/transcription/caption-edits';
-import { clipWords, lineAt, type CaptionLine } from '@/features/transcription/compose';
+import {
+  mergeWithNext,
+  MIN_WORD_CS,
+  removeWord,
+  replaceWordText,
+  setTimes,
+  splitAt,
+  type CaptionWord,
+} from '@/features/transcription/caption-edits';
+import {
+  clipSpans,
+  clipWords,
+  lineAt,
+  toFileCs,
+  type CaptionLine,
+} from '@/features/transcription/compose';
 import { useDraftCaptions, type DraftCaptions } from '@/features/transcription/use-draft-captions';
-import type { TranscriptWord } from '@/features/transcription/whisper';
 import { useTheme } from '@/hooks/use-theme';
 import { formatClipCount } from '@/utils/format';
 import { haptics } from '@/utils/haptics';
-import {
-  clipRender,
-  effMs,
-  type ClipCrop,
-  type ParsedEdit,
-} from '@/utils/segment-window';
+import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
 
 const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
 
@@ -121,6 +137,12 @@ function useFrameRates(uris: readonly string[]) {
  * trims and reorders carry them along.
  */
 export default function EditorScreen() {
+  // Spike: the editor's renders (commits), read from the debugger.
+  useEffect(() => {
+    if (!__DEV__) return;
+    const g = globalThis as { __editorRenders?: number };
+    g.__editorRenders = (g.__editorRenders ?? 0) + 1;
+  });
   const params = useLocalSearchParams<{ draftId: string; clipId?: string; view?: string }>();
   const { draftId, clipId } = params;
   const insets = useSafeAreaInsets();
@@ -137,7 +159,9 @@ export default function EditorScreen() {
   );
   const captions = useDraftCaptions(draftId, draft.segments);
   const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
-  const captionStyle = captionStyleFor(captionRows[0]?.captionY);
+  const captionYValue = captionRows[0]?.captionY;
+  // The same object until the place changes, so the caption on the video doesn't re-render.
+  const captionStyle = useMemo(() => captionStyleFor(captionYValue), [captionYValue]);
   const { showToast } = useToast();
   const fpsOf = useFrameRates(clips.map((c) => c.uri));
   const peaks = useWaveforms(
@@ -151,17 +175,32 @@ export default function EditorScreen() {
     () => getEditorView() ?? (params.view === 'timeline' ? 'timeline' : 'clips'),
   );
   const [tools, setTools] = useState<'clip' | 'speed'>('clip');
-  // The timeline's scale (dp per ms), as a pinch left it: kept while switching views.
-  const [zoom, setZoom] = useState(DP_PER_MS);
+  // Each editor opens the timeline at its usual scale (a pinch's scale is kept across views).
+  useState(resetTimelineZoom);
   // The bottom bar: the main tools, edit mode (the tools of the clip under the playhead) or the
   // captions tools (for the caption under it). Always the main tools on open (a clip tapped in the
   // recorder opens paused on it, nothing selected).
   const [mode, setMode] = useState<'main' | 'edit' | 'captions'>('main');
   const captionTools = mode === 'captions';
-  // A caption being typed: the one at `line`, or a new one at timeline `ms`.
-  const [typing, setTyping] = useState<{ line: CaptionLine } | { ms: number } | null>(null);
-  // The caption under the playhead, while the captions tools are open (-1: none).
-  const [captionLine, setCaptionLine] = useState(-1);
+  // Spike: drive the editor from the debugger.
+  useEffect(() => {
+    if (!__DEV__) return;
+    (globalThis as { __editor?: object }).__editor = {
+      toggle: () => ctl.toggle(),
+      seek: (ms: number) => ctl.seekTo(ms),
+      mode: (m: 'main' | 'edit' | 'captions') => setMode(m),
+    };
+  }, [ctl]);
+  // The word being typed (its clip and index in the clip's words), and its text as it was.
+  const [typing, setTyping] = useState<{
+    kind: 'word';
+    clipId: string;
+    i: number;
+    text: string;
+  } | null>(null);
+  // A scale for the timeline to zoom to (opening, a caption or a clip to edit), and how to ask.
+  const [zoomTo, setZoomTo] = useState<(ZoomRequest & { seq: number }) | null>(null);
+  const requestZoom = (req: ZoomRequest) => setZoomTo((z) => ({ ...req, seq: (z?.seq ?? 0) + 1 }));
   const [cropping, setCropping] = useState<{ id: string; timeMs: number } | null>(null);
   const [trimmingId, setTrimmingId] = useState<string | null>(null);
   const [customSpeeds, setCustomSpeeds] = useState<readonly number[]>([]);
@@ -200,8 +239,8 @@ export default function EditorScreen() {
 
   // In edit mode the clip being edited is the one under the playhead: scrubbing, flinging or
   // playing onto another clip moves the selection (and its red frame) with it.
-  const atClip = usePlayheadClip(layout.starts, values.timeMs);
-  const current = mode === 'edit' ? atClip : -1;
+  const atClip = usePlayheadClip(layout.starts, values.timeMs, mode === 'edit');
+  const current = atClip;
   if (current < 0 && tools !== 'clip') setTools('clip');
 
   // Android back leaves crop, typing, the speed row or a mode first, then the editor.
@@ -234,12 +273,27 @@ export default function EditorScreen() {
     ctl.place(i > 0 ? (layout.starts[i] ?? 0) : 0);
     placed.set(1);
   }, [clips, clipId, ctl, layout.starts, placed]);
+  // The scale the timeline opens at, once the clips are known: the clip it was opened on fitted
+  // (`clipZoom`, ready to trim), or the whole draft when it's short (`draftZoom`).
+  const openedZoom = useRef(false);
+  useLayoutEffect(() => {
+    if (openedZoom.current || clips.length === 0 || layout.totalMs <= 0) return;
+    openedZoom.current = true;
+    const w = Dimensions.get('window').width;
+    const c = clipId ? clips.find((x) => x.id === clipId) : undefined;
+    const target = c
+      ? clipZoom(c.lengthMs, layout.totalMs, w).target
+      : draftZoom(layout.totalMs, w);
+    setZoomTo((z) => ({ min: target, max: target, target, instant: true, seq: (z?.seq ?? 0) + 1 }));
+  }, [clips, clipId, layout.totalMs]);
   const trackStyle = useAnimatedStyle(() => ({ opacity: placed.get() }));
   const coverStyle = useAnimatedStyle(() => ({ opacity: values.covered.get() }));
 
-  /** Off-clip space was tapped: edit mode ends (the captions tools stay until ✓). */
+  /** Off-clip space was tapped: edit mode ends, or the selected caption word is let go (the
+   * captions tools stay until ✓). */
   const deselect = () => {
     if (mode === 'edit') setMode('main');
+    else if (captionTools) setPicked(null);
   };
   /** A reorder let go: store the new order (clip ids, slot by slot) if it changed; edit mode, on
    * the moved clip at its new place (the playhead just inside its start, so a slightly different
@@ -270,7 +324,8 @@ export default function EditorScreen() {
     haptics.tap();
     setTyping(null);
     setMode('edit');
-    if (i !== atClip) ctl.seekTo(ms ?? layout.starts[i] ?? 0);
+    zoomToClip(i);
+    if (i !== clipIndexAt(layout.starts, ctl.lastMs)) ctl.seekTo(ms ?? layout.starts[i] ?? 0);
   };
 
   const slotOf = (i: number) => {
@@ -415,48 +470,164 @@ export default function EditorScreen() {
     }
     if (captionStatus === 'needs-download') captions.download();
     setMode('captions');
+    setPicked(null);
+    // The sentence under the playhead (or the next one) at a scale its words can be edited at.
+    const pos = values.timeMs.get() / 10;
+    const at = lineAt(captions.lines, pos);
+    zoomToCaption(at >= 0 ? at : captions.lines.findIndex((l) => l.t0 > pos));
   };
 
-  /** A tap on the captions lane: the captions tools, the playhead on the caption tapped. */
-  const onCaptionTap = (ms: number) => {
-    const i = lineAt(captions.lines, ms / 10);
-    if (!captionTools) haptics.tap();
+  // Editing captions: the timeline (where the captions lane is), zoomed so the sentence's words
+  // can be read and grabbed (`captionZoom`).
+  const zoomToCaption = (i: number, word = -1) => {
+    const line = captions.lines[i];
+    if (!line?.words?.length) return;
+    if (view !== 'timeline') setView('timeline');
+    requestZoom(captionZoom(line.words, Dimensions.get('window').width, word));
+  };
+  /** Editing clip `i` on the timeline: zoomed so the whole clip and its grips are in view. */
+  const zoomToClip = (i: number) => {
+    const c = clips[i];
+    if (!c || view !== 'timeline') return;
+    requestZoom(clipZoom(c.lengthMs, layout.totalMs, Dimensions.get('window').width));
+  };
+
+  // --- Caption selection and editing (the lane) ---------------------------------------
+  const lines = captions.lines;
+  // A word is selected by tapping it (on the lane or on the video), and stays selected while the
+  // playhead moves or plays, until another is tapped, the lane's or the screen's empty space is,
+  // or it's deleted. Edit and Delete act on it (off until one is tapped); Split and Merge act at
+  // the playhead (`CaptionTools`).
+  /** The selected word (clip id and index in the clip's words), while the captions tools are
+   * open. */
+  const [picked, setPicked] = useState<{ clipId: string; i: number } | null>(null);
+  /** The selected word's sentence (its index in `lines`), and the word's index in its words. */
+  const selLine =
+    captionTools && picked
+      ? lines.findIndex((l) => l.clipId === picked.clipId && picked.i >= l.from && picked.i < l.to)
+      : -1;
+  const selWord = selLine >= 0 && picked ? picked.i - lines[selLine].from : -1;
+  const scrubStart = ctl.beginDrag;
+  const togglePlay = ctl.toggle;
+
+  /** A tap on a caption selects the word tapped and moves the playhead to its start (in a gap:
+   * lets the selection go, the playhead to where it was tapped). On the lane (`toggle`), a tap on
+   * the selected word lets it go. */
+  const onCaptionTap = (ms: number, toggle = false) => {
     setTyping(null);
-    setMode('captions');
-    if (i < 0) return;
+    if (!captionTools) setMode('captions');
     ctl.pause();
-    ctl.seekTo(captions.lines[i].t0 * 10);
+    const i = lineAt(lines, ms / 10);
+    if (i < 0) {
+      setPicked(null);
+      ctl.seekTo(ms);
+      return;
+    }
+    haptics.tap();
+    const ws = lines[i].words ?? [];
+    let k = 0;
+    for (let j = 0; j < ws.length; j++) if (ms / 10 >= ws[j].t0) k = j;
+    zoomToCaption(i, k);
+    const again = toggle && selLine === i && selWord === k;
+    setPicked(again ? null : { clipId: lines[i].clipId, i: lines[i].from + k });
+    ctl.seekTo((ws[k] ?? lines[i]).t0 * 10);
   };
 
   const segmentOf = (id: string) => draft.segments.find((s) => s.id === id);
   /** A clip's caption words as they are now (its edit, else the model's). */
-  const wordsOf = (clipId: string): TranscriptWord[] => {
+  const wordsOf = (clipId: string): CaptionWord[] => {
     const seg = segmentOf(clipId);
     return (seg && clipWords(seg, captions.clipRows)?.words) || [];
   };
   /** Store a clip's caption words, in the file it plays (one undo step). */
-  const saveCaptionWords = (clipId: string, words: TranscriptWord[]) => {
+  const saveCaptionWords = (clipId: string, words: CaptionWord[]) => {
     const seg = segmentOf(clipId);
     if (!seg) return;
     history.record(null);
     draft.setCaptions(new Map([[clipId, JSON.stringify({ file: clipRender(seg).file, words })]]));
   };
 
-  const currentCaption = captionTools ? (captions.lines[captionLine] ?? null) : null;
-  const editCaption = () => {
-    if (!currentCaption) return;
-    ctl.pause();
-    setTyping({ line: currentCaption });
+  // What the selected word's grips may do (timeline ms), worked out once per selection: its box,
+  // how far each edge can go, and whether it shares an edge with a neighbour (one drag moves
+  // both).
+  const spans = clipSpans(draft.segments);
+  const captionDrag = (() => {
+    if (selLine < 0) return null;
+    const line = lines[selLine];
+    const span = spans.get(line.clipId);
+    const ws = line.words ?? [];
+    if (!span || !ws.length) return null;
+    const prev =
+      selLine > 0 && lines[selLine - 1].clipId === line.clipId ? lines[selLine - 1] : null;
+    const next =
+      selLine + 1 < lines.length && lines[selLine + 1].clipId === line.clipId
+        ? lines[selLine + 1]
+        : null;
+    const lo = prev ? prev.t1 * 10 : span.offsetMs;
+    const hi = next ? next.t0 * 10 : span.offsetMs + span.lengthMs;
+    const min = MIN_WORD_CS * 10;
+    const w = ws[selWord];
+    if (!w) return null;
+    const pw = ws[selWord - 1];
+    const nw = ws[selWord + 1];
+    // Independent edges: each moves only its own word, and stops at the neighbour's (or the
+    // sentence's, or the clip's) edge, so words never overlap.
+    return {
+      box: { t0: w.t0 * 10, t1: w.t1 * 10 },
+      lo0: pw ? pw.t1 * 10 : lo,
+      hi0: w.t1 * 10 - min,
+      lo1: w.t0 * 10 + min,
+      hi1: nw ? nw.t0 * 10 : hi,
+    };
+  })();
+
+  /** A selected word's grip let go: `side` 1 its start, 2 its end, at timeline `ms` (that word
+   * only). Saved in the clip's file time, one undo step. */
+  const onCaptionDragEnd = (side: number, ms: number) => {
+    if (selLine < 0 || !captionDrag) return;
+    const line = lines[selLine];
+    const span = spans.get(line.clipId);
+    if (!span) return;
+    const words = wordsOf(line.clipId);
+    const cs = toFileCs(span, ms);
+    const i = line.from + selWord;
+    let next: CaptionWord[] | null = null;
+    if (side === 1) next = setTimes(words, [{ i, t0: cs }]);
+    else if (side === 2) next = setTimes(words, [{ i, t1: cs }]);
+    if (next) {
+      haptics.drop();
+      saveCaptionWords(line.clipId, next);
+    }
+    // The preview and the playhead on the edge that was moved (for its end, a hair inside, so a
+    // word that starts right there doesn't take the selection).
+    const at = side === 2 ? Math.max(captionDrag.box.t0, ms - 1) : ms;
+    ctl.endScrub(at);
+    ctl.seekTo(at);
   };
-  const addCaption = () => {
+
+  const editCaption = () => {
+    if (selLine < 0) return;
     ctl.pause();
-    setTyping({ ms: values.timeMs.get() });
+    const line = lines[selLine];
+    const w = line.words?.[selWord];
+    setTyping({ kind: 'word', clipId: line.clipId, i: line.from + selWord, text: w?.text ?? '' });
   };
   const deleteCaption = () => {
-    if (!currentCaption) return;
+    if (selLine < 0) return;
     haptics.tap();
-    const { clipId, from, to } = currentCaption;
-    saveCaptionWords(clipId, removeLine(wordsOf(clipId), from, to));
+    const line = lines[selLine];
+    setPicked(null);
+    saveCaptionWords(line.clipId, removeWord(wordsOf(line.clipId), line.from + selWord));
+  };
+  /** A new sentence from word `i` of the clip's words on. */
+  const splitCaption = (clipId: string, i: number) => {
+    haptics.tap();
+    saveCaptionWords(clipId, splitAt(wordsOf(clipId), i));
+  };
+  /** The sentence ending before word `to` of the clip's words joined with the next. */
+  const mergeCaption = (clipId: string, to: number) => {
+    haptics.tap();
+    saveCaptionWords(clipId, mergeWithNext(wordsOf(clipId), to));
   };
   const captionsEdited = [...draft.captionEdits.values()].some((v) => v != null);
   const resetCaptions = () => {
@@ -472,39 +643,18 @@ export default function EditorScreen() {
     );
   };
 
-  /** Typing done: the caption's new words (none deletes it), or a new caption at the playhead. */
+  /** Typing done: the word's new text (several words if typed as several; none deletes it). */
   const finishTyping = (text: string) => {
     const t = typing;
     setTyping(null);
     if (!t) return;
     const clean = text.trim();
-    if ('line' in t) {
-      const { clipId, from, to } = t.line;
-      if (clean !== t.line.text) {
-        saveCaptionWords(clipId, replaceLineText(wordsOf(clipId), from, to, clean));
-      }
+    if (t.kind === 'word') {
+      // Emptied: the word is gone, and so is the selection.
+      if (!clean) setPicked(null);
+      if (clean !== t.text)
+        saveCaptionWords(t.clipId, replaceWordText(wordsOf(t.clipId), t.i, clean));
       return;
-    }
-    if (!clean) return;
-    // The clip under the playhead, and the playhead's time in its file (centiseconds). The new
-    // caption lasts 2 s on the timeline, up to the clip's end or its next word.
-    let offset = 0;
-    for (const seg of draft.segments) {
-      const len = effMs(seg);
-      if (t.ms < offset + len) {
-        const r = clipRender(seg);
-        if (r.muted) {
-          showToast({ kind: 'error', title: 'This clip is muted', message: 'Unmute it to caption it.' });
-          return;
-        }
-        const base = wordsOf(seg.id);
-        const t0 = (r.inMs + (t.ms - offset) * r.speed) / 10;
-        const next = base.find((w) => w.t0 > t0);
-        const t1 = Math.min(r.outMs / 10, t0 + 200 * r.speed, next ? Math.max(t0 + 30, next.t0) : Infinity);
-        saveCaptionWords(seg.id, insertLine(base, Math.round(t0), Math.round(t1), clean));
-        return;
-      }
-      offset += len;
     }
   };
 
@@ -558,7 +708,7 @@ export default function EditorScreen() {
             setStage({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
           }
           // Plays or pauses, in any mode (watch an edit without leaving edit mode).
-          onPress={ctl.toggle}
+          onPress={togglePlay}
           accessibilityRole="button"
           accessibilityLabel={playing ? 'Pause' : 'Play'}>
           {/* Created once the area is measured, at the picture's size. */}
@@ -579,19 +729,21 @@ export default function EditorScreen() {
           />
           {fitW > 0 && captions.lines.length > 0 && (
             <View style={[styles.cover, picture]} pointerEvents="box-none">
-              <EditorCaption
+              <SkiaCaption
                 lines={captions.lines}
                 timeMs={values.timeMs}
                 style={captionStyle}
+                width={picture.width}
                 height={picture.height}
                 onPickUp={ctl.pause}
                 onMove={moveCaptions}
                 onTap={() => onCaptionTap(values.timeMs.get())}
-                onLine={captionTools ? setCaptionLine : undefined}
               />
             </View>
           )}
           <CaptionStatus captions={captions} open={captionTools} />
+          {/* Spike: thread frame rates while trying the timeline. */}
+          <PerfHud />
           {status?.error && (
             <Text style={[styles.error, { color: theme.textSecondary }]}>{status.error}</Text>
           )}
@@ -613,7 +765,7 @@ export default function EditorScreen() {
             </Text>
           </View>
           <Pressable
-            onPress={ctl.toggle}
+            onPress={togglePlay}
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={playing ? 'Pause' : 'Play'}
@@ -642,11 +794,17 @@ export default function EditorScreen() {
               trim={trim}
               values={values}
               captions={captions.lines}
-              captionSelected={currentCaption ? captionLine : -1}
-              onCaptionTap={onCaptionTap}
-              zoom={zoom}
-              onZoom={setZoom}
-              onDragStart={ctl.beginDrag}
+              captionSelected={selLine}
+              captionWord={selWord}
+              captionDrag={captionDrag}
+              onCaptionTap={(ms) => onCaptionTap(ms, true)}
+              onCaptionDragStart={() => {
+                ctl.pause();
+                ctl.beginDrag();
+              }}
+              onCaptionDragEnd={onCaptionDragEnd}
+              zoomTo={zoomTo}
+              onDragStart={scrubStart}
               onScrubEnd={ctl.endScrub}
               onTap={onTap}
               onTrimStart={onTrimStart}
@@ -662,7 +820,7 @@ export default function EditorScreen() {
               selected={current}
               values={values}
               onSelect={(id) => tapClip(clips.findIndex((c) => c.id === id))}
-              onDragStart={ctl.beginDrag}
+              onDragStart={scrubStart}
               onScrubEnd={ctl.endScrub}
               onReorderStart={ctl.pause}
               onReorder={commitOrder}
@@ -685,19 +843,22 @@ export default function EditorScreen() {
           accessible={false}>
           {typing ? (
             <CaptionTextBar
-              key={'line' in typing ? `${typing.line.clipId}:${typing.line.from}` : 'new'}
-              initial={'line' in typing ? typing.line.text : ''}
+              key={`${typing.clipId}:w${typing.i}`}
+              initial={typing.text}
               onDone={finishTyping}
               onCancel={() => setTyping(null)}
             />
           ) : captionTools ? (
-            <CaptionToolbar
-              onCaption={!!currentCaption}
+            <CaptionTools
+              lines={lines}
+              timeMs={values.timeMs}
+              hasWord={selWord >= 0}
               edited={captionsEdited}
               onDone={() => setMode('main')}
               onEdit={editCaption}
-              onAdd={addCaption}
               onDelete={deleteCaption}
+              onSplit={splitCaption}
+              onMerge={mergeCaption}
               onModel={() => router.push('/on-device-ai')}
               onReset={resetCaptions}
             />
@@ -707,6 +868,7 @@ export default function EditorScreen() {
               onEdit={() => {
                 haptics.tap();
                 setMode('edit');
+                zoomToClip(clipIndexAt(layout.starts, ctl.lastMs));
               }}
               captionsBusy={captionsBusy}
               onCaptions={openCaptions}
@@ -760,6 +922,65 @@ export default function EditorScreen() {
         <TipLayer />
       </KeyboardAvoidingView>
     </Sortable.PortalProvider>
+  );
+}
+
+/**
+ * The captions tools. Split and Merge act at the playhead, so this follows where it is among the
+ * captions (`usePlayheadCaption`): a new word under it re-renders only these tools, not the
+ * editor.
+ */
+function CaptionTools({
+  lines,
+  timeMs,
+  onSplit,
+  onMerge,
+  ...rest
+}: {
+  lines: readonly CaptionLine[];
+  timeMs: SharedValue<number>;
+  hasWord: boolean;
+  edited: boolean;
+  onDone: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  /** A new sentence from word `i` of the clip's words on. */
+  onSplit: (clipId: string, i: number) => void;
+  /** The sentence ending before word `to` of the clip's words joined with the next. */
+  onMerge: (clipId: string, to: number) => void;
+  onModel: () => void;
+  onReset: () => void;
+}) {
+  const at = usePlayheadCaption(lines, timeMs, true);
+  // Split: at the word boundary nearest the playhead inside the sentence under it (never inside a
+  // word).
+  const splitLine =
+    at.line >= 0 && (lines[at.line].words?.length ?? 0) >= 2 ? lines[at.line] : null;
+  const split = () => {
+    const ws = splitLine?.words ?? [];
+    if (!splitLine || ws.length < 2) return;
+    const pos = timeMs.get() / 10;
+    let k = 1;
+    for (let j = 2; j < ws.length; j++) {
+      if (Math.abs(ws[j].t0 - pos) < Math.abs(ws[k].t0 - pos)) k = j;
+    }
+    onSplit(splitLine.clipId, splitLine.from + k);
+  };
+  // Merge: the sentence under the playhead and the next, or the two either side of the gap it's
+  // in (in the same clip).
+  const first = at.line >= 0 ? at.line : at.next > 0 ? at.next - 1 : -1;
+  const mergeLine =
+    first >= 0 && first + 1 < lines.length && lines[first].clipId === lines[first + 1].clipId
+      ? lines[first]
+      : null;
+  return (
+    <CaptionToolbar
+      {...rest}
+      canSplit={!!splitLine}
+      canMerge={!!mergeLine}
+      onSplit={split}
+      onMerge={() => mergeLine && onMerge(mergeLine.clipId, mergeLine.to)}
+    />
   );
 }
 

@@ -3,7 +3,8 @@ import { parseCaptionEdit } from '@/db/captions';
 import type { Segment } from '@/db/schema';
 import { clipRender, effMs } from '@/utils/segment-window';
 
-import { linesFromWords } from './group-lines';
+import type { CaptionWord } from './caption-edits';
+import { joinWords, linesFromWords } from './group-lines';
 import type { TranscriptLine, TranscriptWord } from './whisper';
 
 /** A caption on the draft's timeline, and where its words are in its clip's words. */
@@ -32,7 +33,7 @@ export type Composed = {
 export function clipWords(
   s: Segment,
   clips: ReadonlyMap<string, ClipWords>,
-): { words: TranscriptWord[]; edited: boolean; failed: boolean } | null {
+): { words: CaptionWord[]; edited: boolean; failed: boolean } | null {
   const file = clipRender(s).file;
   const edit = parseCaptionEdit(s.captionEdit);
   if (edit && edit.file === file) return { words: edit.words, edited: true, failed: false };
@@ -82,7 +83,28 @@ export function composeCaptions(
         index.set(mapped, i);
         words.push(mapped);
       });
-      for (const line of linesFromWords(words)) {
+      // An edited clip's sentences are where the person put them; otherwise grouped by length.
+      const byStarts = own.words.some((w) => w.start);
+      const grouped: TranscriptLine[] = [];
+      if (byStarts) {
+        let run: TranscriptWord[] = [];
+        const flush = () => {
+          if (!run.length) return;
+          grouped.push({
+            text: joinWords(run),
+            t0: run[0].t0,
+            t1: run[run.length - 1].t1,
+            words: run,
+          });
+          run = [];
+        };
+        for (const w of words) {
+          if (own.words[index.get(w) ?? 0]?.start) flush();
+          run.push(w);
+        }
+        flush();
+      }
+      for (const line of byStarts ? grouped : linesFromWords(words)) {
         const first = line.words?.[0];
         const last = line.words?.[line.words.length - 1];
         if (!first || !last) continue;
@@ -99,6 +121,33 @@ export function composeCaptions(
   return { lines, durationMs: Math.round(offsetMs), missing, failed };
 }
 
+/** Where a clip sits on the timeline and the part of its file it plays (ms). */
+export type ClipSpan = {
+  offsetMs: number;
+  lengthMs: number;
+  inMs: number;
+  outMs: number;
+  speed: number;
+};
+
+/** Each clip's span, by id, as composeCaptions lays the clips out. */
+export function clipSpans(segments: readonly Segment[]): Map<string, ClipSpan> {
+  const out = new Map<string, ClipSpan>();
+  let offsetMs = 0;
+  for (const s of segments) {
+    const lengthMs = effMs(s);
+    if (lengthMs <= 0) continue;
+    const r = clipRender(s);
+    out.set(s.id, { offsetMs, lengthMs, inMs: r.inMs, outMs: r.outMs, speed: r.speed });
+    offsetMs += lengthMs;
+  }
+  return out;
+}
+
+/** Timeline ms → the clip's file time, centiseconds. */
+export const toFileCs = (span: ClipSpan, tlMs: number) =>
+  (span.inMs + (tlMs - span.offsetMs) * span.speed) / 10;
+
 /** The line at timeline `posCs` (centiseconds): its index in `lines` (sorted), or -1. */
 export function lineAt(lines: readonly TranscriptLine[], posCs: number): number {
   let lo = 0;
@@ -107,7 +156,8 @@ export function lineAt(lines: readonly TranscriptLine[], posCs: number): number 
     const mid = (lo + hi) >> 1;
     const l = lines[mid];
     if (posCs < l.t0) hi = mid - 1;
-    else if (posCs > l.t1) lo = mid + 1;
+    // Half-open (up to, not including, its end): where two touch, the later one has it.
+    else if (posCs >= l.t1) lo = mid + 1;
     else return mid;
   }
   return -1;

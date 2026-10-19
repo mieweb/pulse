@@ -7,22 +7,33 @@ import { Accent } from '@/constants/theme';
  * height. Colors are `#RRGGBBAA`.
  */
 export type CaptionStyle = {
+  /** The typeface: a font bundled with the app (assets/fonts), the same on every platform. */
+  font: 'inter-extrabold';
   /** Text size, as a fraction of the picture's height. */
   size: number;
   /** Line height, as a multiple of the text size. */
   lineHeight: number;
-  /** Font weight (the platform's bold system font until a bundled font is chosen). */
-  weight: 700;
   /** Words already spoken, the word being spoken, and words still to come. */
   color: string;
   activeColor: string;
   futureColor: string;
-  /** The box behind the text: its color, padding across and down, and corner radius. */
+  /** The spoken word's size, as a multiple of the text's (a small pop). */
+  activeScale: number;
+  /** A dark edge round each letter (its width a multiple of the text size; 0: none). */
+  outline: number;
+  outlineColor: string;
+  /** A soft shadow under the text: its blur and drop (multiples of the text size), and color. */
+  shadowBlur: number;
+  shadowDrop: number;
+  shadowColor: string;
+  /** A box behind the text (off by default: the outline reads on any picture): its color,
+   * padding across and down, and corner radius. */
+  box: boolean;
   background: string;
   padX: number;
   padY: number;
   radius: number;
-  /** The least room kept between the box and the picture's sides. */
+  /** The least room kept between the text and the picture's sides. */
   margin: number;
   /** Where the caption's centre sits: a fraction of the picture's height (0 top, 1 bottom). */
   y: number;
@@ -32,14 +43,22 @@ export type CaptionStyle = {
 export const CAPTION_Y_MIN = 0.1;
 export const CAPTION_Y_MAX = 0.9;
 
-/** The captions' look until it can be changed: bold white on a dark box, spoken word in accent. */
+/** The captions' look: Inter ExtraBold in white with a dark outline and a soft shadow, no box,
+ * the spoken word in the app's accent and a touch larger. */
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
-  size: 0.031,
-  lineHeight: 1.3,
-  weight: 700,
+  font: 'inter-extrabold',
+  size: 0.034,
+  lineHeight: 1.25,
   color: '#FFFFFFFF',
   activeColor: `${Accent}FF`,
-  futureColor: '#FFFFFF73',
+  futureColor: '#FFFFFFFF',
+  activeScale: 1.04,
+  outline: 0.055,
+  outlineColor: '#000000E6',
+  shadowBlur: 0.12,
+  shadowDrop: 0.06,
+  shadowColor: '#00000099',
+  box: false,
   background: '#00000099',
   padX: 0.5,
   padY: 0.25,

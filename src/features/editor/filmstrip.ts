@@ -1,56 +1,82 @@
-import { thumbnail } from '@mieweb/pulse-editor';
+import { frames as grabFrames } from '@mieweb/pulse-editor';
+import { Skia, type SkImage } from '@shopify/react-native-skia';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useEffect, useSyncExternalStore } from 'react';
+import { PixelRatio } from 'react-native';
 
 import type { ClipCrop } from '@/utils/segment-window';
 
+import { FILM_HEIGHT } from './clip-tile';
+
 // The editor's filmstrip: frames of a file at fixed source times, so a trim, a speed change or a
 // reorder only shows more or less of frames already there, and a pinch reuses them. Frames sit on
-// a grid of multiples of STEP_MS × 2^k; the scale picks the step that keeps them CELL_DP apart, and
-// a coarser step's frames are all on the finer grids. A file's whole source gets the COARSE_MS
+// a grid of multiples of STEP_MS × 2^k; the scale picks the coarsest step that still gives every
+// tile (FILM_HEIGHT tall, the clip's picture's shape) a frame near its middle, and a coarser
+// step's frames are all on the finer grids. A file's whole source gets the COARSE_MS
 // frames (a handful per clip) and the part near the screen the scale's step: fetched near the
-// screen first, then the coarse ones, two at a time. A frame not here yet shows the nearest
-// coarser one that is, else the clip's cover, so nothing is ever blank. Frames are kept as files
-// in the caches folder (the OS may clear it; they're fetched again), keyed by file, look and time.
+// screen first, then the coarse ones, a batch per file from one decoder (pulse-editor `frames`),
+// each the nearest keyframe within half a step. Frames are decoded into GPU images the timeline
+// canvas draws; one not here yet shows the nearest earlier one, else the clip's cover, so nothing
+// is ever blank. The JPEGs are kept in the caches folder (the OS may clear it; they're fetched
+// again), keyed by file, look and time; at most MAX_IMAGES are kept decoded.
 
-/** The finest step between frames, source ms. */
-const STEP_MS = 250;
+/** The finest step between frames, source ms: 1000 / 32, about a frame at 30 fps, for the deepest
+ * zoom (a tile there is under 80 ms). Exact in binary, so the grid's times add up without drift,
+ * and every coarser step (250, 2000, …) is on it. */
+const STEP_MS = 31.25;
 /** Every clip's whole source gets frames this far apart (source ms), before any detail. */
-const COARSE_MS = 4000;
-/** The narrowest a frame is drawn, dp (a step is at most twice this). */
-export const CELL_DP = 30;
+const COARSE_MS = 2000;
+/** Frames per call to the decoder, and calls running at once. */
+const BATCH = 12;
 const CONCURRENT = 2;
 /** Frames that landed are shown together, at most this often. */
 const NOTIFY_MS = 100;
+/** Decoded frames kept in memory (about 140 KB each at the size asked for). */
+const MAX_IMAGES = 400;
+/** Frames come fitted inside a FRAME_BOX square (px): enough for a 16:9 tile (or a 9:16 one)
+ * FILM_HEIGHT tall at the screen's density, so the whole frame is drawn sharp. */
+const FRAME_BOX = Math.ceil((FILM_HEIGHT * PixelRatio.get() * 16) / 9);
 
 /** How a clip's picture is drawn: as its edit has it (editor quarter turns, counter-clockwise). */
 export type FrameLook = { rotation: number; flipped: boolean; crop: ClipCrop | null };
 
-const lookKey = (l: FrameLook) =>
+export const lookKey = (l: FrameLook) =>
   `${l.rotation}${l.flipped ? 'f' : ''}${l.crop ? JSON.stringify(l.crop) : ''}`;
-const frameKey = (uri: string, look: string, t: number) => `${uri}|${look}|${t}`;
+const fileKey = (uri: string, look: string) => `${uri}|${look}`;
 
-// Frames fetched (key → file URI) or failed, those being fetched, and what each tile wants.
-const frames = new Map<string, string>();
-const failed = new Set<string>();
+// Per file and look: its decoded frames by source time (insertion order = least recently used
+// first, across all files via `lru`), the times failed or being fetched.
+type Store = {
+  uri: string;
+  look: FrameLook;
+  /** By the time asked for: the image, and the time it actually shows (ms). */
+  images: Map<number, { image: SkImage; at: number }>;
+  failed: Set<number>;
+};
+const stores = new Map<string, Store>();
+const lru = new Map<string, { key: string; t: number }>();
 const inFlight = new Set<string>();
-type Want = { uri: string; look: FrameLook; lookId: string; near: number[]; coarse: number[] };
+type Want = { key: string; near: number[]; nearStep: number; coarse: number[] };
 const wanted = new Map<string, Want>();
 let running = 0;
 
-// Per file, a number that changes when its frames do (what a tile re-renders on).
-const versions = new Map<string, number>();
+/** Spike: what the store has done, read from the debugger. */
+export const filmstripStats = {
+  batches: [] as { file: string; n: number; ms: number; tolerance: number }[],
+  failed: 0,
+  diskHits: 0,
+};
+
+// Per file and look, a number that changes when its frames do (what the strip re-renders on).
+let version = 0;
 const listeners = new Set<() => void>();
-const landed = new Set<string>();
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
-function changed(uri: string) {
-  landed.add(uri);
+function changed() {
   if (notifyTimer) return;
   notifyTimer = setTimeout(() => {
     notifyTimer = null;
-    for (const u of landed) versions.set(u, (versions.get(u) ?? 0) + 1);
-    landed.clear();
+    version++;
     for (const l of listeners) l();
   }, NOTIFY_MS);
 }
@@ -66,11 +92,70 @@ function hash(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-/** The step between frames (source ms) at `dpPerMs` for a clip at `speed`. */
-export function frameStep(dpPerMs: number, speed: number): number {
-  const need = (CELL_DP / dpPerMs) * speed;
+const cacheFile = (key: string, t: number) =>
+  new File(cacheDir(), `${hash(`${key}|${t}|${FRAME_BOX}`)}.jpg`);
+
+function storeFor(uri: string, look: FrameLook): Store {
+  const key = fileKey(uri, lookKey(look));
+  let s = stores.get(key);
+  if (!s) {
+    s = { uri, look, images: new Map(), failed: new Set() };
+    stores.set(key, s);
+  }
+  return s;
+}
+
+function keep(key: string, store: Store, t: number, image: SkImage, at: number) {
+  store.images.set(t, { image, at });
+  const id = `${key}|${t}`;
+  lru.delete(id);
+  lru.set(id, { key, t });
+  while (lru.size > MAX_IMAGES) {
+    const [oldest, v] = lru.entries().next().value as [string, { key: string; t: number }];
+    lru.delete(oldest);
+    // Dropped, not disposed: the canvas may still draw it until its next update; it's freed once
+    // nothing holds it.
+    stores.get(v.key)?.images.delete(v.t);
+  }
+}
+
+function decode(bytes: Uint8Array): SkImage | null {
+  const data = Skia.Data.fromBytes(bytes);
+  return Skia.Image.MakeImageFromEncoded(data);
+}
+
+/** The narrowest and widest a tile is, as a multiple of its height (a picture past these is drawn
+ * by its middle). */
+const MIN_ASPECT = 0.4;
+const MAX_ASPECT = 2.5;
+
+/**
+ * A clip's filmstrip tile width (dp): FILM_HEIGHT tall in the shape of its picture as edited, so a
+ * tile shows the whole picture. From one of its frames (with the edit's quarter turns and crop),
+ * else its cover (drawn with the edit), else square.
+ */
+export function tileWidth(
+  frame: SkImage | null,
+  cover: SkImage | null,
+  edit: { rotation: number; crop: ClipCrop | null },
+): number {
+  let aspect = 1;
+  if (frame) {
+    const turned = edit.rotation % 2 === 1;
+    const w = (turned ? frame.height() : frame.width()) * (edit.crop?.w ?? 1);
+    const h = (turned ? frame.width() : frame.height()) * (edit.crop?.h ?? 1);
+    if (w > 0 && h > 0) aspect = w / h;
+  } else if (cover && cover.height() > 0) aspect = cover.width() / cover.height();
+  return FILM_HEIGHT * Math.min(MAX_ASPECT, Math.max(MIN_ASPECT, aspect));
+}
+
+/** The step between frames (source ms) at `dpPerMs` for a clip at `speed` whose tiles are
+ * `tileDp` wide: the coarsest on the grid that's no longer than a tile's time, so each tile has a
+ * frame within half a step of its middle. */
+export function frameStep(dpPerMs: number, speed: number, tileDp: number): number {
+  const tileMs = (tileDp / dpPerMs) * speed;
   let step = STEP_MS;
-  while (step < need) step *= 2;
+  while (step * 2 <= tileMs) step *= 2;
   return step;
 }
 
@@ -82,73 +167,130 @@ export function frameTimes(step: number, fromMs: number, toMs: number, sourceMs:
   return out;
 }
 
-/** The frame to show for time `t` on `step`'s grid: its own, else the nearest coarser one here. */
-export function frameAt(uri: string, look: FrameLook, t: number, step: number): string | null {
-  const id = lookKey(look);
-  for (let s = step; s <= COARSE_MS * 64; s *= 2) {
-    const f = frames.get(frameKey(uri, id, Math.floor(t / s) * s));
-    if (f) return f;
-  }
-  return null;
+/** Any one of a file's decoded frames (for its size), or null. */
+export function anyFrame(uri: string, look: FrameLook): SkImage | null {
+  const s = stores.get(fileKey(uri, lookKey(look)));
+  return s?.images.values().next().value?.image ?? null;
 }
 
-/** The next frame to fetch: one wanted near the screen, else a coarse one. Disk hits on the way
- * are taken as they are (no fetch). */
-function next(): { key: string; uri: string; look: FrameLook; t: number; file: File } | null {
+/** A file's decoded frames by the time each shows (ascending, images beside them), for the
+ * canvas, which draws each cell with the frame nearest its time. */
+export function framesOf(uri: string, look: FrameLook): { times: number[]; images: SkImage[] } {
+  const s = stores.get(fileKey(uri, lookKey(look)));
+  if (!s) return { times: [], images: [] };
+  const all = [...s.images.values()].sort((a, b) => a.at - b.at);
+  return { times: all.map((f) => f.at), images: all.map((f) => f.image) };
+}
+
+/** The next batch: one file's frames still wanted, near the screen first, then coarse ones, its
+ * file claimed (in `inFlight`) until the batch is done. A frame on disk is decoded on the way
+ * instead of fetched. */
+async function nextBatch(): Promise<{
+  store: Store;
+  key: string;
+  times: number[];
+  step: number;
+} | null> {
   for (const pass of ['near', 'coarse'] as const) {
-    for (const w of wanted.values()) {
+    for (const w of [...wanted.values()]) {
+      const store = stores.get(w.key);
+      if (!store || inFlight.has(w.key)) continue;
+      inFlight.add(w.key);
+      const times: number[] = [];
       for (const t of w[pass]) {
-        const key = frameKey(w.uri, w.lookId, t);
-        if (frames.has(key) || failed.has(key) || inFlight.has(key)) continue;
-        const file = new File(cacheDir(), `${hash(key)}.jpg`);
+        if (store.images.has(t) || store.failed.has(t)) continue;
+        const file = cacheFile(w.key, t);
         if (file.exists) {
-          frames.set(key, file.uri);
-          changed(w.uri);
-          continue;
+          try {
+            const img = decode(await file.bytes());
+            if (img) {
+              keep(w.key, store, t, img, t);
+              filmstripStats.diskHits++;
+              changed();
+              continue;
+            }
+          } catch {
+            // Fetched again below.
+          }
         }
-        return { key, uri: w.uri, look: w.look, t, file };
+        times.push(t);
+        if (times.length >= BATCH) break;
       }
+      if (times.length)
+        return { store, key: w.key, times, step: pass === 'near' ? w.nearStep : COARSE_MS };
+      inFlight.delete(w.key);
     }
   }
   return null;
 }
 
+/** Start workers up to CONCURRENT; each takes batches until there's nothing left to fetch. */
 function pump() {
   while (running < CONCURRENT) {
-    const job = next();
-    if (!job) return;
     running++;
-    inFlight.add(job.key);
-    void fetchFrame(job).finally(() => {
+    void work().finally(() => {
       running--;
-      inFlight.delete(job.key);
-      pump();
     });
   }
 }
 
-async function fetchFrame(job: { key: string; uri: string; look: FrameLook; t: number; file: File }) {
+async function work() {
+  for (;;) {
+    const batch = await nextBatch();
+    if (!batch) return;
+    try {
+      await fetchBatch(batch);
+    } finally {
+      inFlight.delete(batch.key);
+    }
+  }
+}
+
+async function fetchBatch(batch: { store: Store; key: string; times: number[]; step: number }) {
+  const { store, key, times, step } = batch;
+  const began = Date.now();
   try {
-    const shot = await thumbnail(job.uri, {
-      timeMs: job.t,
-      maxWidth: 120,
-      maxHeight: 214,
+    const got = await grabFrames(store.uri, {
+      timesMs: times,
+      maxWidth: FRAME_BOX,
+      maxHeight: FRAME_BOX,
       quality: 0.6,
+      toleranceMs: step / 2,
       // The editor keeps counter-clockwise quarter turns; pulse-editor takes clockwise degrees.
-      rotation: ((4 - job.look.rotation) % 4) * 90,
-      flipped: job.look.flipped,
-      crop: job.look.crop ?? undefined,
+      rotation: ((4 - store.look.rotation) % 4) * 90,
+      flipped: store.look.flipped,
+      crop: store.look.crop ?? undefined,
+    });
+    filmstripStats.batches.push({
+      file: store.uri.split('/').pop() ?? '',
+      n: got.length,
+      ms: Date.now() - began,
+      tolerance: step / 2,
     });
     const dir = cacheDir();
     if (!dir.exists) dir.create({ intermediates: true });
-    if (job.file.exists) job.file.delete();
-    await new File(shot.uri).move(job.file);
-    frames.set(job.key, job.file.uri);
+    for (const f of got) {
+      const bytes = new Uint8Array(f.data);
+      const img = decode(bytes);
+      if (!img) {
+        store.failed.add(f.timeMs);
+        continue;
+      }
+      keep(key, store, f.timeMs, img, f.actualMs);
+      try {
+        const file = cacheFile(key, f.timeMs);
+        file.create({ overwrite: true });
+        file.write(bytes);
+      } catch {
+        // Not cached on disk: fetched again next time.
+      }
+    }
   } catch {
-    // Not fetched again this session; the cell keeps the coarser frame or the cover.
-    failed.add(job.key);
+    // Not fetched again this session; the cells keep the earlier frame or the cover.
+    for (const t of times) store.failed.add(t);
+    filmstripStats.failed += times.length;
   }
-  changed(job.uri);
+  changed();
 }
 
 function subscribe(listener: () => void) {
@@ -158,41 +300,54 @@ function subscribe(listener: () => void) {
   };
 }
 
+/** What a clip asks for: its file and look, the times near the screen (at `nearStep`), and its
+ * source length (for the coarse frames). */
+export type FrameWant = {
+  id: string;
+  uri: string;
+  look: FrameLook;
+  near: readonly number[];
+  nearStep: number;
+  sourceMs: number;
+};
+
 /**
- * A tile's frames: asks for `near` (the times it draws, near the screen) and the whole source's
- * coarse frames, for as long as it's mounted or until it asks for others. Returns a number that
- * changes when the file's frames do, to re-render on.
+ * The strip's frames: asks for each clip's near and coarse frames for as long as it's mounted or
+ * until it asks for others. Returns a number that changes when any frames land (throttled), to
+ * re-read `framesOf` on.
  */
-export function useFrames(
-  tileId: string,
-  uri: string,
-  look: FrameLook,
-  near: readonly number[],
-  sourceMs: number,
-): number {
-  const lookId = lookKey(look);
-  const nearKey = near.join(',');
+export function useFrames(wants: readonly FrameWant[]): number {
+  const signature = wants
+    .map(
+      (w) => `${w.id}:${w.uri}:${lookKey(w.look)}:${w.nearStep}:${w.near.join(',')}:${w.sourceMs}`,
+    )
+    .join('\n');
   useEffect(() => {
-    wanted.set(tileId, {
-      uri,
-      look,
-      lookId,
-      near: nearKey ? nearKey.split(',').map(Number) : [],
-      coarse: frameTimes(COARSE_MS, 0, sourceMs, sourceMs),
-    });
+    // In the order given (nearest the playhead first): the order batches are taken in.
+    wanted.clear();
+    for (const w of wants) {
+      const store = storeFor(w.uri, w.look);
+      const key = fileKey(store.uri, lookKey(store.look));
+      wanted.set(w.id, {
+        key,
+        near: [...w.near],
+        nearStep: w.nearStep,
+        coarse: frameTimes(COARSE_MS, 0, w.sourceMs, w.sourceMs),
+      });
+    }
     pump();
-    // `look` is read for the fetch; `lookId` is what decides to ask again.
+    // `wants` is read for the request; `signature` is what decides to ask again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tileId, uri, lookId, nearKey, sourceMs]);
+  }, [signature]);
   useEffect(
     () => () => {
-      wanted.delete(tileId);
+      wanted.clear();
     },
-    [tileId],
+    [],
   );
   return useSyncExternalStore(
     subscribe,
-    () => versions.get(uri) ?? 0,
-    () => versions.get(uri) ?? 0,
+    () => version,
+    () => version,
   );
 }

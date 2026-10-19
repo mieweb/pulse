@@ -427,6 +427,7 @@ function MergedPreview({
               lines={lines}
               positionMs={positionMs}
               style={captionStyleFor(captionY)}
+              width={cardWidth}
               height={cardHeight}
             />
           </View>

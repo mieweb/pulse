@@ -1,6 +1,6 @@
 import type { MergeClip, MergeOptions } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { setCaptionEdits } from '@/db/captions';
 import {
@@ -146,8 +146,21 @@ export function useEditorDraft(draftId: string) {
     setBuilt({ signature, clips });
   }
   // Covers, labels and caption edits follow the rows without rebuilding the clips.
-  const covers = new Map(segments.map((s) => [s.id, s.thumbnail ? absolutize(s.thumbnail) : null]));
-  const captionEdits = new Map(segments.map((s) => [s.id, s.captionEdit]));
+  // Same maps (by identity) until one of them changes, so what they feed doesn't re-render.
+  const coversKey = segments.map((s) => `${s.id}=${s.thumbnail ?? ''}`).join('|');
+  const captionsKey = segments.map((s) => `${s.id}=${s.captionEdit ?? ''}`).join('\u0000');
+  const covers = useMemo(
+    () => new Map(segments.map((s) => [s.id, s.thumbnail ? absolutize(s.thumbnail) : null])),
+    // `coversKey` is the segments' covers as one value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [coversKey],
+  );
+  const captionEdits = useMemo(
+    () => new Map(segments.map((s) => [s.id, s.captionEdit])),
+    // `captionsKey` is the segments' caption edits as one value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [captionsKey],
+  );
 
   const [options, setOptions] = useState<MergeOptions | null>(null);
   useEffect(() => {
