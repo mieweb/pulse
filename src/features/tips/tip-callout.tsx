@@ -16,12 +16,10 @@ import {
   View,
   type ViewProps,
 } from 'react-native';
-import Animated, { withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { EaseOut } from '@/constants/motion';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 
@@ -133,29 +131,6 @@ const MAX_WIDTH = 320;
 const ARROW = 16;
 const ARROW_INSET = Radius.card;
 
-/** Grows out of its arrow and shrinks back into it: the same path in and out. */
-const ENTER = { duration: 220, easing: EaseOut };
-const EXIT = { duration: 160, easing: EaseOut };
-const enter = () => {
-  'worklet';
-  return {
-    initialValues: { opacity: 0, transform: [{ scale: 0.9 }] },
-    animations: {
-      opacity: withTiming(1, ENTER),
-      transform: [{ scale: withTiming(1, ENTER) }],
-    },
-  };
-};
-const exit = () => {
-  'worklet';
-  return {
-    initialValues: { opacity: 1, transform: [{ scale: 1 }] },
-    animations: {
-      opacity: withTiming(0, EXIT),
-      transform: [{ scale: withTiming(0.9, EXIT) }],
-    },
-  };
-};
 
 /**
  * Where the screen's callout tip is drawn: put it last in a full-screen screen's root, over
@@ -242,9 +217,7 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
   const fill = mode === 'dark' ? theme.cardRaised : theme.card;
 
   return (
-    <Animated.View
-      entering={enter}
-      exiting={exit}
+    <View
       pointerEvents="box-none"
       style={[
         styles.callout,
@@ -286,7 +259,7 @@ function CalloutBubble({ callout, frame }: { callout: Callout; frame: LayoutRect
           <Icon name="xmark" size={13} weight="semibold" tintColor={theme.textSecondary} />
         </Pressable>
       </View>
-    </Animated.View>
+    </View>
   );
 }
 

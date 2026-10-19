@@ -2,14 +2,12 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
-import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { EaseOut, ListReflowMs } from '@/constants/motion';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { deleteDraft, draftListQuery, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
@@ -32,14 +30,6 @@ const DevSeedRow = __DEV__
 
 /** How often the cards' date labels ("Just now", "Today, 2:30 PM", …) re-evaluate. */
 const DATE_LABEL_REFRESH_MS = 60_000;
-
-// A deleted card closes its gap with the cards below gliding, instead of every one of them jumping
-// a row.
-const LIST_REFLOW = LinearTransition.duration(ListReflowMs).easing(EaseOut);
-// Only an exit, no `entering`: the list mounts cells as they scroll into view, and those would
-// fade in while scrolling. Opacity only, so it stays under Reduce Motion (`Never`): gentler than
-// the card vanishing, and nothing moves.
-const CARD_EXIT = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 export default function HomeScreen() {
   // First-run gate: pushes the onboarding tour over home when not yet completed.
@@ -288,10 +278,9 @@ export default function HomeScreen() {
           />
         </View>
       ) : (
-        <Animated.FlatList
+        <FlatList
           data={visibleDrafts}
           keyExtractor={(item) => item.id}
-          itemLayoutAnimation={LIST_REFLOW}
           contentContainerStyle={[
             styles.list,
             { paddingBottom: insets.bottom + Spacing.six + Spacing.four },
@@ -299,7 +288,7 @@ export default function HomeScreen() {
           renderItem={({ item }) => {
             const name = pendingRename?.id === item.id ? pendingRename.name : item.name;
             return (
-              <Animated.View exiting={CARD_EXIT}>
+              <View>
                 <DraftCard
                   id={item.id}
                   uploadStatus={item.uploadStatus}
@@ -335,7 +324,7 @@ export default function HomeScreen() {
                   )}
                   onSubmitName={(input) => submitRename(item.id, item.name, input)}
                 />
-              </Animated.View>
+              </View>
             );
           }}
         />

@@ -1,7 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import Animated, { FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DestructiveAction } from '@/components/destructive-action';
@@ -9,7 +8,6 @@ import { Icon } from '@/components/icon';
 import { compatLabel, type ServerCompat } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
 import { ThemedText } from '@/components/themed-text';
-import { EaseOut, ListReflowMs } from '@/constants/motion';
 import { CardShadow, Opacity, Radius, Spacing, type ThemeColor } from '@/constants/theme';
 import { useToast } from '@/features/toast/toast-provider';
 import { useTextScale } from '@/hooks/use-text-scale';
@@ -29,12 +27,6 @@ import { type DestinationOption, useDestinations } from './use-destinations';
  */
 const MAX_FITTED = 5;
 
-/**
- * A removed row fades out while the rows after it close the gap. The fade is opacity only, so it runs under Reduce Motion too (Reanimated's default would skip it
- * and drop the row at once).
- */
-const ROW_LAYOUT = LinearTransition.duration(ListReflowMs).easing(EaseOut);
-const ROW_EXITING = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 /**
  * Whether the sheet opens in its scrolling 60% → full-height mode: past `MAX_FITTED` rows, or at
@@ -109,23 +101,15 @@ export function DestinationsSheet() {
     });
   };
 
-  // Animated only when the sheet scrolls. A fitted sheet (`fitToContents`) is sized by iOS to its
-  // content: a removed row shrinks the content at once and iOS animates the sheet down to it, so a
-  // reflow on top would slide the rows (and the fading row) below the sheet's new bottom edge, out
-  // of step with the sheet's own resize. The scrolling sheet's height is its detent, not its
-  // content, so there the rows can close the gap themselves.
-  const layout = scrolls ? ROW_LAYOUT : undefined;
-  const exiting = scrolls ? ROW_EXITING : undefined;
-
   const rows = destinations.map((d) => (
-    <Animated.View key={d.id} layout={layout} exiting={exiting}>
+    <View key={d.id}>
       <DestinationRow
         server={d.server}
         expiryLabel={d.expiryLabel}
         compat={compatOf(d.server)}
         onRemove={() => remove([d])}
       />
-    </Animated.View>
+    </View>
   ));
 
   // The list runs to the sheet's bottom edge; its own bottom padding clears the home indicator.
@@ -146,13 +130,13 @@ export function DestinationsSheet() {
       {/* The app's destructive text action, centred below the list. Only for two or more: a single
           row already has its own trash. It moves with the rows as they reflow. */}
       {destinations.length > 1 && (
-        <Animated.View layout={layout} exiting={exiting}>
+        <View>
           <DestructiveAction
             label="Remove all"
             accessibilityLabel="Remove all destinations"
             onPress={() => remove(destinations)}
           />
-        </Animated.View>
+        </View>
       )}
     </>
   );
