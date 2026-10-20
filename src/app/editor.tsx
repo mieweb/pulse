@@ -113,6 +113,9 @@ const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
  * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
  */
 export default function EditorScreen() {
+  // Not compiled by the React Compiler (as before): its memoization here leaves the track's
+  // animated opacity stale until a re-render. To be turned on as a change of its own, tested.
+  'use no memo';
   // Spike: the editor's renders (commits), read from the debugger.
   useEffect(() => {
     if (!__DEV__) return;
@@ -267,6 +270,16 @@ export default function EditorScreen() {
     requestZoom({ min: target, max: target, target, instant: true });
   }, [clips, clipId, layout.totalMs]);
   const trackStyle = useAnimatedStyle(() => ({ opacity: placed.get() }));
+  // Spike: what the track shows, read from the debugger.
+  useEffect(() => {
+    if (!__DEV__) return;
+    (globalThis as { __track?: object }).__track = {
+      placed: () => placed.get(),
+      clips: clips.length,
+      view,
+      covered: values.covered.get(),
+    };
+  });
   const coverStyle = useAnimatedStyle(() => ({ opacity: values.covered.get() }));
 
   /** Off-clip space was tapped: edit mode ends, or the selected caption word is let go (the
@@ -760,8 +773,10 @@ export default function EditorScreen() {
           </View>
         </Pressable>
 
-        {view === 'timeline' ? (
-          <Animated.View style={[styles.track, trackStyle]}>
+        {/* One container for both views: hidden until the playhead is placed (its style stays on one
+            view, never moved between two). */}
+        <Animated.View style={[styles.track, trackStyle]}>
+          {view === 'timeline' ? (
             <TimelineStrip
               clips={clips}
               covers={covers}
@@ -787,9 +802,7 @@ export default function EditorScreen() {
               onTrimStart={onTrimStart}
               onTrimEnd={onTrimEnd}
             />
-          </Animated.View>
-        ) : (
-          <Animated.View style={[styles.track, trackStyle]}>
+          ) : (
             <ClipRow
               clips={clips}
               covers={covers}
@@ -803,8 +816,8 @@ export default function EditorScreen() {
               onReorder={commitOrder}
               onBlankTap={deselect}
             />
-          </Animated.View>
-        )}
+          )}
+        </Animated.View>
 
         <Pressable
           // One height whether it holds the tools or the hint, so selecting never moves the layout.
