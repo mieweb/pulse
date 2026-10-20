@@ -180,6 +180,10 @@ export function TimelineStrip(props: Props) {
   const user = useSharedValue(false);
   const pinching = useSharedValue(false);
   const stopped = useSharedValue(false);
+  // Where the scroll view is (its last reported offset), and a move made from code in progress
+  // (its scroll and momentum events, sent at once, aren't a finger's).
+  const offsetNow = useSharedValue(0);
+  const moving = useSharedValue(false);
   // The selected word's grips: what they may do, which one is held (1 start, 2 end) and where it
   // is (ms), all on the UI thread.
   const capInfo = useSharedValue<CaptionDrag | null>(null);
@@ -378,7 +382,12 @@ export function TimelineStrip(props: Props) {
   const follow = () => {
     'worklet';
     if (user.get() || pinching.get() || zooming.get()) return;
-    scrollTo(scrollRef, timeMs.get() * zoomNow.get(), 0, false);
+    const x = timeMs.get() * zoomNow.get();
+    // Already there: no move (a move ends a fling, and its end would ask again).
+    if (moving.get() || Math.abs(x - offsetNow.get()) < 0.5) return;
+    moving.set(true);
+    scrollTo(scrollRef, x, 0, false);
+    moving.set(false);
   };
   useAnimatedReaction(
     () => timeMs.get(),
@@ -416,24 +425,26 @@ export function TimelineStrip(props: Props) {
   const onScroll = useAnimatedScrollHandler({
     onBeginDrag: () => begin(),
     onScroll: (e) => {
-      if (!user.get() || pinching.get()) return;
+      offsetNow.set(e.contentOffset.x);
+      if (!user.get() || pinching.get() || moving.get()) return;
       timeMs.set(clamp(e.contentOffset.x / zoomNow.get(), 0, totalMs.get()));
     },
     onEndDrag: (e) => {
+      if (moving.get()) return;
       // A drag that wasn't a scrub (a pinch's fingers): the scroll view back under the playhead.
       if (!user.get()) follow();
       // No fling: done now; otherwise the momentum's end finishes it.
       else if (Math.abs(e.velocity?.x ?? 0) < 0.01) finish();
     },
     onMomentumBegin: () => {
+      if (moving.get()) return;
       // A pinch's fingers lifting with some speed: no fling; the scroll view back under the
       // playhead (which stops it).
       if (pinchy() || !user.get()) follow();
       else begin();
     },
     onMomentumEnd: () => {
-      if (user.get()) finish();
-      else follow();
+      if (!moving.get()) finish();
     },
   });
 
