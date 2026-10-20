@@ -1,4 +1,4 @@
-import { probe, PulsePreview } from '@mieweb/pulse-editor';
+import { PulsePreview } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -17,18 +17,19 @@ import Animated, {
   useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
-  type SharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ExportButton } from '@/components/export-button';
-import { Icon, type IconName } from '@/components/icon';
+import { Icon } from '@/components/icon';
 import Sortable from 'react-native-sortables';
 
+import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
 import { ClipRow } from '@/features/editor/clip-row';
+import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
+import { useFrameRates } from '@/features/editor/use-frame-rates';
 import {
   CaptionTextBar,
-  CaptionToolbar,
   ClipToolbar,
   MainToolbar,
   SpeedRow,
@@ -63,7 +64,6 @@ import { toMergeClip } from '@/features/export/editor-merge';
 import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
-import { usePlayheadCaption } from '@/features/editor/use-playhead-caption';
 import { usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
@@ -75,7 +75,6 @@ import { useToast } from '@/features/toast/toast-provider';
 import { captionStyleFor } from '@/features/transcription/caption-style';
 import {
   mergeWithNext,
-  MIN_WORD_CS,
   removeWord,
   replaceWordText,
   seedStarts,
@@ -89,11 +88,10 @@ import {
   lineAt,
   timelineCs,
   toFileCs,
-  type CaptionLine,
+  wordGripLimits,
 } from '@/features/transcription/compose';
-import { useDraftCaptions, type DraftCaptions } from '@/features/transcription/use-draft-captions';
+import { useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import { useTheme } from '@/hooks/use-theme';
-import { formatClipCount } from '@/utils/format';
 import { haptics } from '@/utils/haptics';
 import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
 
@@ -101,34 +99,6 @@ const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
 
 /** Back to the recorder (or Home, when the editor was opened by a link). */
 const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
-
-/** Each file's frame rate (for frame-snapped trims), probed once per file (30 if the probe fails). */
-const frameRates = new Map<string, number>();
-function useFrameRates(uris: readonly string[]) {
-  // The rates known to this editor, a new map as each probe answers.
-  const [rates, setRates] = useState(() => new Map(frameRates));
-  const key = [...new Set(uris)].join('\n');
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      for (const uri of key.split('\n')) {
-        if (!uri || frameRates.has(uri)) continue;
-        try {
-          const fps = (await probe(uri)).video?.fps ?? 0;
-          frameRates.set(uri, fps > 0 ? fps : 30);
-        } catch {
-          frameRates.set(uri, 30);
-        }
-        if (live) setRates(new Map(frameRates));
-      }
-    })();
-    return () => {
-      live = false;
-    };
-  }, [key]);
-  // Unknown until the probe answers (no trim before then: it would snap to a guessed rate).
-  return (uri: string) => rates.get(uri) ?? null;
-}
 
 /**
  * The timeline editor: the draft playing as it will export (<PulsePreview>), a strip of its
@@ -586,37 +556,7 @@ export default function EditorScreen() {
   // What the selected word's grips may do (timeline ms): its box and how far each edge can go
   // (each edge moves only its own word).
   const spans = clipSpans(draft.segments);
-  const captionDrag = (() => {
-    if (selLine < 0) return null;
-    const line = lines[selLine];
-    const span = spans.get(line.clipId);
-    const ws = line.words ?? [];
-    if (!span || !ws.length) return null;
-    const prev =
-      selLine > 0 && lines[selLine - 1].clipId === line.clipId ? lines[selLine - 1] : null;
-    const next =
-      selLine + 1 < lines.length && lines[selLine + 1].clipId === line.clipId
-        ? lines[selLine + 1]
-        : null;
-    const lo = prev ? prev.t1 * 10 : span.offsetMs;
-    const hi = next ? next.t0 * 10 : span.offsetMs + span.lengthMs;
-    // The shortest a word can be, on the timeline (MIN_WORD_CS is in the file's time; slowed
-    // down, a word is longer on the timeline).
-    const min = MIN_WORD_CS * 10 * Math.max(1, 1 / span.speed);
-    const w = ws[selWord];
-    if (!w) return null;
-    const pw = ws[selWord - 1];
-    const nw = ws[selWord + 1];
-    // Independent edges: each moves only its own word, and stops at the neighbour's (or the
-    // sentence's, or the clip's) edge, so words never overlap.
-    return {
-      box: { t0: w.t0 * 10, t1: w.t1 * 10 },
-      lo0: pw ? pw.t1 * 10 : lo,
-      hi0: w.t1 * 10 - min,
-      lo1: w.t0 * 10 + min,
-      hi1: nw ? nw.t0 * 10 : hi,
-    };
-  })();
+  const captionDrag = wordGripLimits(lines, selLine, selWord, spans);
 
   /** A selected word's grip let go: `side` 1 its start, 2 its end, at timeline `ms` (that word
    * only). Saved in the clip's file time, one undo step. */
@@ -962,179 +902,6 @@ export default function EditorScreen() {
   );
 }
 
-/**
- * The captions tools. Split and Merge act at the playhead, so this follows where it is among the
- * captions (`usePlayheadCaption`): a new word under it re-renders only these tools, not the
- * editor.
- */
-function CaptionTools({
-  lines,
-  timeMs,
-  onSplit,
-  onMerge,
-  ...rest
-}: {
-  lines: readonly CaptionLine[];
-  timeMs: SharedValue<number>;
-  hasWord: boolean;
-  edited: boolean;
-  onDone: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  /** A new sentence from word `i` of the clip's words on. */
-  onSplit: (clipId: string, i: number) => void;
-  /** The sentence ending before word `to` of the clip's words joined with the next. */
-  onMerge: (clipId: string, to: number) => void;
-  onModel: () => void;
-  onReset: () => void;
-}) {
-  const at = usePlayheadCaption(lines, timeMs, true);
-  // Split: at the word boundary nearest the playhead inside the sentence under it (never inside a
-  // word).
-  const splitLine =
-    at.line >= 0 && (lines[at.line].words?.length ?? 0) >= 2 ? lines[at.line] : null;
-  const split = () => {
-    const ws = splitLine?.words ?? [];
-    if (!splitLine || ws.length < 2) return;
-    const pos = timeMs.get() / 10;
-    let k = 1;
-    for (let j = 2; j < ws.length; j++) {
-      if (Math.abs(ws[j].t0 - pos) < Math.abs(ws[k].t0 - pos)) k = j;
-    }
-    onSplit(splitLine.clipId, splitLine.from + k);
-  };
-  // Merge: the sentence under the playhead and the next, or the two either side of the gap it's
-  // in (in the same clip).
-  const first = at.line >= 0 ? at.line : at.next > 0 ? at.next - 1 : -1;
-  const mergeLine =
-    first >= 0 && first + 1 < lines.length && lines[first].clipId === lines[first + 1].clipId
-      ? lines[first]
-      : null;
-  return (
-    <CaptionToolbar
-      {...rest}
-      canSplit={!!splitLine}
-      canMerge={!!mergeLine}
-      onSplit={split}
-      onMerge={() => mergeLine && onMerge(mergeLine.clipId, mergeLine.to)}
-    />
-  );
-}
-
-/**
- * What the captions are waiting on, over the top of the preview: the model's download (or its
- * error) always; while the captions tools are open, also clips being transcribed, ones that
- * failed, and a model to pick or download. Tappable when there's something to do.
- */
-function CaptionStatus({ captions, open }: { captions: DraftCaptions; open: boolean }) {
-  const theme = useTheme();
-  const st = captions.state;
-  let text: string | null = null;
-  let onPress: (() => void) | undefined;
-  if (captions.downloadError) {
-    text = 'Couldn’t download the captions model. Tap to try again.';
-    onPress = captions.download;
-  } else if (st.status === 'downloading') {
-    text = `Downloading the captions model… ${Math.floor(st.progress * 100)}%`;
-  } else if (!open) {
-    text = null;
-  } else if (st.status === 'no-model') {
-    text = 'Tap to pick a captions model.';
-    onPress = () => router.push('/on-device-ai');
-  } else if (st.status === 'needs-download') {
-    text = 'Tap to download the captions model.';
-    onPress = captions.download;
-  } else if (st.status === 'transcribing') {
-    text = 'Making captions…';
-  } else if (captions.failed.length) {
-    text = `Couldn’t caption ${formatClipCount(captions.failed.length)}. Tap to try again.`;
-    onPress = captions.retry;
-  }
-  if (!text) return null;
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={!onPress}
-      accessibilityRole={onPress ? 'button' : 'text'}
-      style={({ pressed }) => [
-        styles.status,
-        { backgroundColor: theme.backgroundElement },
-        pressed && styles.dim,
-      ]}>
-      <Text style={[styles.statusText, { color: theme.text }]}>{text}</Text>
-    </Pressable>
-  );
-}
-
-/** Clips | Timeline: which way the draft's clips are shown below the preview. */
-function ViewSwitcher({
-  view,
-  onChange,
-}: {
-  view: 'clips' | 'timeline';
-  onChange: (view: 'clips' | 'timeline') => void;
-}) {
-  const theme = useTheme();
-  const options = [
-    { key: 'clips', label: 'Clips', icon: 'rectangle.split.3x1' },
-    { key: 'timeline', label: 'Timeline', icon: 'waveform' },
-  ] as const;
-  return (
-    <View
-      style={[styles.switcher, { backgroundColor: theme.backgroundElement }]}
-      accessibilityRole="tablist">
-      {options.map((o) => {
-        const on = view === o.key;
-        return (
-          <Pressable
-            key={o.key}
-            onPress={() => {
-              if (on) return;
-              haptics.tap();
-              onChange(o.key);
-            }}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: on }}
-            accessibilityLabel={`${o.label} view`}
-            style={[styles.switchOption, on && { backgroundColor: theme.text }]}>
-            <Icon
-              name={o.icon}
-              size={16}
-              weight="semibold"
-              tintColor={on ? theme.background : theme.text}
-            />
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-function HeaderButton({
-  icon,
-  label,
-  onPress,
-  disabled,
-}: {
-  icon: IconName;
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  const theme = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      hitSlop={8}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [styles.headerButton, (disabled || pressed) && styles.dim]}>
-      <Icon name={icon} size={18} weight="semibold" tintColor={theme.text} />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
@@ -1146,27 +913,8 @@ const styles = StyleSheet.create({
   },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   export: { marginLeft: 8 },
-  switcher: {
-    flexDirection: 'row',
-    padding: 2,
-    borderRadius: 17,
-  },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
-  switchOption: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 44,
-    height: 30,
-    borderRadius: 15,
-  },
   track: { height: STRIP_HEIGHT },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   dim: { opacity: 0.35 },
   preview: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   cover: { position: 'absolute' },
@@ -1192,13 +940,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   tools: { justifyContent: 'center' },
-  status: {
-    position: 'absolute',
-    top: 8,
-    maxWidth: '86%',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-  },
-  statusText: { fontSize: 13, fontWeight: '500', textAlign: 'center' },
 });

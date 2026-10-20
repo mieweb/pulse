@@ -3,7 +3,7 @@ import { parseCaptionEdit } from '@/db/captions';
 import type { Segment } from '@/db/schema';
 import { clipRender, effMs } from '@/utils/segment-window';
 
-import type { CaptionWord } from './caption-edits';
+import { MIN_WORD_CS, type CaptionWord } from './caption-edits';
 import { joinWords, linesFromWords } from './group-lines';
 import type { TranscriptLine, TranscriptWord } from './whisper';
 
@@ -162,4 +162,39 @@ export function lineAt(lines: readonly TranscriptLine[], posCs: number): number 
     else return mid;
   }
   return -1;
+}
+
+/**
+ * What word `word` of sentence `line` can be dragged to (timeline ms), or null: its box, its
+ * start within lo0 … hi0 and its end within lo1 … hi1. Each edge moves only its own word and stops
+ * at the neighbouring word's edge (or the sentence's, or the clip's), so words never overlap, and
+ * the word stays at least MIN_WORD_CS long in its file's time.
+ */
+export function wordGripLimits(
+  lines: readonly CaptionLine[],
+  line: number,
+  word: number,
+  spans: ReadonlyMap<string, ClipSpan>,
+): { box: { t0: number; t1: number }; lo0: number; hi0: number; lo1: number; hi1: number } | null {
+  const l = lines[line];
+  const span = l ? spans.get(l.clipId) : undefined;
+  const ws = l?.words ?? [];
+  const w = ws[word];
+  if (!l || !span || !w) return null;
+  const prev = line > 0 && lines[line - 1].clipId === l.clipId ? lines[line - 1] : null;
+  const next =
+    line + 1 < lines.length && lines[line + 1].clipId === l.clipId ? lines[line + 1] : null;
+  const lo = prev ? prev.t1 * 10 : span.offsetMs;
+  const hi = next ? next.t0 * 10 : span.offsetMs + span.lengthMs;
+  // The shortest a word can be on the timeline (slowed down, a word is longer there).
+  const min = MIN_WORD_CS * 10 * Math.max(1, 1 / span.speed);
+  const pw = ws[word - 1];
+  const nw = ws[word + 1];
+  return {
+    box: { t0: w.t0 * 10, t1: w.t1 * 10 },
+    lo0: pw ? pw.t1 * 10 : lo,
+    hi0: w.t1 * 10 - min,
+    lo1: w.t0 * 10 + min,
+    hi1: nw ? nw.t0 * 10 : hi,
+  };
 }
