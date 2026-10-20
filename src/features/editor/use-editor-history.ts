@@ -83,7 +83,8 @@ export function useEditorHistory(
         return;
       }
       // Nothing left to change in that step: drop it, keep the other stack as it was.
-      h = direction === 'undo' ? { ...r.history, future: h.future } : { ...r.history, past: h.past };
+      h =
+        direction === 'undo' ? { ...r.history, future: h.future } : { ...r.history, past: h.past };
     }
   };
 

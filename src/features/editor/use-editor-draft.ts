@@ -127,14 +127,20 @@ export function useEditorDraft(draftId: string) {
   // A reorder shows at once, until the rows hold it (or it fails).
   const [pendingOrder, setPendingOrder] = useState<readonly string[] | null>(null);
   const rowOrder = rows.map((r) => r.id);
-  if (pendingOrder && rowOrder.filter((id) => pendingOrder.includes(id)).join() === pendingOrder.filter((id) => rowOrder.includes(id)).join()) {
+  if (
+    pendingOrder &&
+    rowOrder.filter((id) => pendingOrder.includes(id)).join() ===
+      pendingOrder.filter((id) => rowOrder.includes(id)).join()
+  ) {
     setPendingOrder(null);
   }
   const ordered = pendingOrder
     ? [...rows].sort((a, b) => rank(pendingOrder, a.id) - rank(pendingOrder, b.id))
     : rows;
 
-  const segments = ordered.map((s) => withPending(s, pending.get(s.id))).filter((s) => effMs(s) > 0);
+  const segments = ordered
+    .map((s) => withPending(s, pending.get(s.id)))
+    .filter((s) => effMs(s) > 0);
 
   // Clips change identity only when what they render changes (a new array rebuilds the preview):
   // a cover landing later, or a label, keeps the same clips.

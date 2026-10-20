@@ -16,13 +16,31 @@ export function minDpPerMs(totalMs: number, widthDp: number): number {
 }
 
 /** The ruler's marks at a scale: labelled every `majorMs`, a tick every `minorMs`, with labels
- * about 80 dp apart. */
+ * about 80 dp apart. (Loops, not `.find` callbacks: it runs in the canvas's worklet.) */
 export function rulerSteps(dpPerMs: number): { majorMs: number; minorMs: number } {
+  'worklet';
   const steps = [500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000];
-  const majorMs = steps.find((ms) => ms * dpPerMs >= 80) ?? steps[steps.length - 1];
-  const parts = [5, 4, 2].find((n) => (majorMs / n) * dpPerMs >= 12) ?? 1;
-  return { majorMs, minorMs: majorMs / parts };
+  let majorMs = steps[steps.length - 1];
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i] * dpPerMs >= 80) {
+      majorMs = steps[i];
+      break;
+    }
+  }
+  const parts = [5, 4, 2];
+  let n = 1;
+  for (let i = 0; i < parts.length; i++) {
+    if ((majorMs / parts[i]) * dpPerMs >= 12) {
+      n = parts[i];
+      break;
+    }
+  }
+  return { majorMs, minorMs: majorMs / n };
 }
+
+/** A selected caption word's grip, drawn just outside each of its edges (the strip's touch areas
+ * match it), dp. */
+export const CAP_GRIP = 10;
 /** Shortest clip a trim can make, in source ms. */
 export const MIN_CLIP_SOURCE_MS = 1000;
 /** A crop this close to the whole frame is stored as no crop. */
@@ -71,8 +89,6 @@ const WORD_PAD_DP = 8;
 const WORD_MIN_DP = 32;
 /** The most a caption zooms the timeline to on its own (dp per ms): 300 dp a second. */
 const CAPTION_ZOOM_MAX = 0.3;
-/** Room a tapped word takes past its text: its two grips (timeline-canvas CAP_GRIP, 10 dp). */
-const WORD_GRIPS_DP = 20;
 
 /** The dp a word needs on the lane: its text with padding, at least a fingertip. */
 const wordDp = (text: string) => Math.max(WORD_MIN_DP, text.length * LANE_CHAR_DP + WORD_PAD_DP);
@@ -98,7 +114,7 @@ export function captionZoom(
   let target = Math.min(CAPTION_ZOOM_MAX, median, fits);
   const w = words[focus];
   if (w) {
-    const own = Math.min(MAX_DP_PER_MS, (wordDp(w.text) + WORD_GRIPS_DP) / durMs(w));
+    const own = Math.min(MAX_DP_PER_MS, (wordDp(w.text) + CAP_GRIP * 2) / durMs(w));
     target = Math.max(target, own);
   }
   return { min: target, max: MAX_DP_PER_MS, target };
@@ -113,7 +129,13 @@ export function captionZoom(
 export function clipZoom(lengthMs: number, totalMs: number, stripWidth: number): ZoomRequest {
   const len = Math.max(1, lengthMs);
   const target = clamp((stripWidth * 0.8) / len, minDpPerMs(totalMs, stripWidth), CAPTION_ZOOM_MAX);
-  return { min: (stripWidth * 0.4) / len, max: stripWidth / len, target };
+  // The range always holds the target (a short clip's target is capped, a long one's raised to
+  // the draft fitting), so a scale already at it is left alone.
+  return {
+    min: Math.min((stripWidth * 0.4) / len, target),
+    max: Math.max(stripWidth / len, target),
+    target,
+  };
 }
 
 /**

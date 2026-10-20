@@ -1,7 +1,9 @@
 import {
   Canvas,
   ClipOp,
+  FilterMode,
   matchFont,
+  MipmapMode,
   PaintStyle,
   Picture,
   Skia,
@@ -26,8 +28,8 @@ import {
   type TileMotion,
   type TilePalette,
 } from './clip-tile';
-import type { Peaks } from './use-waveforms';
-import { PEAK_MS } from './use-waveforms';
+import { CAP_GRIP, rulerSteps } from './timeline-geometry';
+import { PEAK_MS, type Peaks } from './use-waveforms';
 import { advance } from '@/features/transcription/caption-font';
 
 // The timeline's picture, drawn by the GPU: every clip's filmstrip and waveform, the captions
@@ -38,9 +40,6 @@ import { advance } from '@/features/transcription/caption-font';
 
 const WAVE_TOP = FILM_HEIGHT + 2;
 const WAVE_HEIGHT = TILE_HEIGHT - WAVE_TOP;
-/** A selected caption's grip, drawn just outside each of its edges (the strip's touch areas
- * match it). */
-export const CAP_GRIP = 10;
 /** One waveform line per this many dp. */
 const WAVE_STEP = 2;
 
@@ -52,7 +51,6 @@ const LEVELS = Array.from({ length: 256 }, (_, l) =>
 /** What the canvas draws of one clip. Times in ms; `frameTimes` sorted, `frameImages` beside it. */
 export type CanvasClip = {
   inMs: number;
-  outMs: number;
   speed: number;
   sourceMs: number;
   muted: boolean;
@@ -109,7 +107,7 @@ type Props = {
   palette: TilePalette & { text: string; ruler: string };
 };
 
-function hexPaint(color: string, stroke = 0): SkPaint {
+function hexPaint(color: string, stroke = 0, alpha = 1): SkPaint {
   const p = Skia.Paint();
   p.setAntiAlias(true);
   p.setColor(Skia.Color(color));
@@ -117,6 +115,7 @@ function hexPaint(color: string, stroke = 0): SkPaint {
     p.setStyle(PaintStyle.Stroke);
     p.setStrokeWidth(stroke);
   }
+  if (alpha < 1) p.setAlphaf(alpha);
   return p;
 }
 
@@ -153,12 +152,16 @@ export function useCovers(
 ): (SkImage | null)[] {
   const key = covers.map((c) => `${c.id}=${c.uri ?? ''}`).join('\n');
   return useMemo(
-    () =>
-      covers.map(({ id, uri }) => {
+    () => {
+      // Only these clips' last covers are kept (a deleted clip's goes).
+      const ids = new Set(covers.map((c) => c.id));
+      for (const id of lastCover.keys()) if (!ids.has(id)) lastCover.delete(id);
+      return covers.map(({ id, uri }) => {
         const img = uri ? decodeCover(uri) : null;
         if (img) lastCover.set(id, img);
         return img ?? lastCover.get(id) ?? null;
-      }),
+      });
+    },
     // `key` is `covers` as one value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key],
@@ -195,47 +198,22 @@ export function TimelineCanvas(props: Props) {
       film: hexPaint(palette.film),
       wave: hexPaint(palette.wave),
       line: hexPaint(palette.line, 1),
-      lineSoft: (() => {
-        const p = hexPaint(palette.line, 1);
-        p.setAlphaf(0.5);
-        return p;
-      })(),
-      center: (() => {
-        const p = hexPaint(palette.line, 1);
-        p.setAlphaf(0.35);
-        return p;
-      })(),
+      lineSoft: hexPaint(palette.line, 1, 0.5),
+      center: hexPaint(palette.line, 1, 0.35),
       image: Skia.Paint(),
       text: hexPaint(palette.text),
-      ruler: (() => {
-        const p = hexPaint(palette.ruler, 1);
-        p.setAlphaf(0.5);
-        return p;
-      })(),
-      rulerText: (() => {
-        const p = hexPaint(palette.ruler);
-        p.setAlphaf(0.7);
-        return p;
-      })(),
-      selectedWord: (() => {
-        const p = hexPaint(Accent);
-        p.setAlphaf(0.25);
-        return p;
-      })(),
+      ruler: hexPaint(palette.ruler, 1, 0.5),
+      rulerText: hexPaint(palette.ruler, 0, 0.7),
+      selectedWord: hexPaint(Accent, 0, 0.25),
       active: hexPaint(Accent),
       activeText: hexPaint('#FFFFFF'),
       // A word's segment, a step lighter than its sentence's box.
-      word: (() => {
-        const p = hexPaint(palette.text);
-        p.setAlphaf(0.1);
-        return p;
-      })(),
+      word: hexPaint(palette.text, 0, 0.1),
     }),
     [palette.tile, palette.film, palette.wave, palette.line, palette.text, palette.ruler],
   );
 
-  // The captions with their words, prepared once per change of the captions (not per frame).
-  // Measured once per change of the captions, not per frame.
+  // The captions with their words measured, once per change of the captions (not per frame).
   const drawnCaptions = useMemo<DrawnCaption[]>(
     () =>
       captions.map((cap) => ({
@@ -282,7 +260,7 @@ export function TimelineCanvas(props: Props) {
     const trimmed = sel.get();
 
     // --- Ruler ---
-    const steps = rulerStepsWorklet(z);
+    const steps = rulerSteps(z);
     const first = Math.max(0, Math.floor(leftMs / steps.minorMs));
     for (let n = first; n * steps.minorMs <= rightMs; n++) {
       const ms = n * steps.minorMs;
@@ -334,9 +312,9 @@ export function TimelineCanvas(props: Props) {
 
       // Filmstrip: tiles in the shape of the clip's picture (the whole of it), the same size at
       // any zoom, laid from the source's start (so a scroll or a trim never moves one; a zoom
-      // changes the moment each shows). Each is drawn
-      // with the loaded frame nearest its middle (its own once it's in), else the cover; so a
-      // tile's picture only changes for a closer frame.
+      // changes the moment each shows). Each is drawn with the loaded frame nearest its middle
+      // (its own once it's in), else the cover; so a tile's picture only changes for a closer
+      // frame.
       c.drawRect(Skia.XYWHRect(x0, tilesTop, w, FILM_HEIGHT), paints.film);
       // A tile's length in source ms.
       const tileMs = (clip.tileW / z) * clip.speed;
@@ -478,7 +456,8 @@ export function TimelineCanvas(props: Props) {
           const paint = k === active ? paints.activeText : paints.text;
           if (fits) {
             c.drawText(words[k].text, wx + (span - words[k].w) / 2, textY, paint, font);
-          } else {
+          } else if (span > 3) {
+            // (Narrower, the clip leaves nothing of the text to draw.)
             c.save();
             c.clipRect(
               Skia.XYWHRect(wx + 1, laneTop, span - 2, laneHeight),
@@ -592,7 +571,9 @@ function drawCovered(
     c.translate(0, iw);
     c.rotate(270, 0, 0);
   }
-  c.drawImage(img, 0, 0, paint);
+  // Scaled smoothly (not point-sampled), so a downscaled frame doesn't shimmer as it moves.
+  const all = Skia.XYWHRect(0, 0, iw, ih);
+  c.drawImageRectOptions(img, all, all, FilterMode.Linear, MipmapMode.None, paint);
   c.restore();
 }
 
@@ -620,26 +601,4 @@ function dragged(cap: DrawnCaption, word: number, side: number, v: number): Draw
   if (side === 1) words[word].t0 = cs;
   else if (side === 2) words[word].t1 = cs;
   return { t0: words[0].t0, t1: words[last].t1, text: cap.text, words };
-}
-
-/** timeline-geometry's `rulerSteps`, runnable on the UI thread. */
-function rulerStepsWorklet(dpPerMs: number): { majorMs: number; minorMs: number } {
-  'worklet';
-  const steps = [500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000];
-  let majorMs = steps[steps.length - 1];
-  for (let i = 0; i < steps.length; i++) {
-    if (steps[i] * dpPerMs >= 80) {
-      majorMs = steps[i];
-      break;
-    }
-  }
-  const parts = [5, 4, 2];
-  let n = 1;
-  for (let i = 0; i < parts.length; i++) {
-    if ((majorMs / parts[i]) * dpPerMs >= 12) {
-      n = parts[i];
-      break;
-    }
-  }
-  return { majorMs, minorMs: majorMs / n };
 }

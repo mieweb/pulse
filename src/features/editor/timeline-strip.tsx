@@ -29,8 +29,9 @@ import {
   useFrames,
   type FrameWant,
 } from './filmstrip';
-import { CAP_GRIP, TimelineCanvas, useCovers, type CanvasClip } from './timeline-canvas';
+import { TimelineCanvas, useCovers, type CanvasCaption, type CanvasClip } from './timeline-canvas';
 import {
+  CAP_GRIP,
   ceilToFrame,
   clamp,
   DP_PER_MS,
@@ -73,15 +74,15 @@ const GRIP_WIDTH = 16;
 const GRIP_SLOP = 10;
 const FRAME_BAR = 3;
 
-/** The scale a pinch left the timeline at (dp per ms), kept while switching views. */
+/** The scale a pinch left the timeline at (dp per ms), kept while switching views; and the last
+ * zoom request applied (a strip mounted again doesn't replay it over a pinch). */
 let keptZoom = DP_PER_MS;
+let appliedZoomSeq = 0;
 /** Back to the usual scale (an editor opening). */
 export function resetTimelineZoom() {
   keptZoom = DP_PER_MS;
+  appliedZoomSeq = 0;
 }
-
-/** The look frames are fetched in: none (the canvas draws each clip's edit on them). */
-const UNEDITED = { rotation: 0, flipped: false, crop: null };
 
 /** Each clip's [start, length] in timeline ms, flattened (the tiles' layout). */
 function slotsOf(layout: TimelineLayout): number[] {
@@ -120,15 +121,6 @@ export type CaptionDrag = {
   hi1: number;
 };
 
-/** A caption on the lane: timeline centiseconds, and its text. */
-export type LaneCaption = {
-  t0: number;
-  t1: number;
-  text: string;
-  /** Its words (timeline centiseconds), drawn at their own times once they fit. */
-  words?: readonly { text: string; t0: number; t1: number }[];
-};
-
 type Props = {
   clips: EditorClip[];
   covers: ReadonlyMap<string, string | null>;
@@ -138,7 +130,7 @@ type Props = {
   trim: TrimInfo | null;
   values: PlayheadValues;
   /** The draft's captions, drawn on a lane under the clips. */
-  captions: readonly LaneCaption[];
+  captions: readonly CanvasCaption[];
   /** The selected caption (index in `captions`), or -1; its selected word, or -1. */
   captionSelected: number;
   captionWord: number;
@@ -146,13 +138,13 @@ type Props = {
   captionDrag: CaptionDrag | null;
   /** A tap on the captions lane at timeline `ms`, at the scale it was made at (dp per ms). */
   onCaptionTap: (ms: number, dpPerMs: number) => void;
-  /** A selected word's grip picked up, and let go: `side` 1 its start, 2 its end, at timeline
-   * `ms`. */
+  /** A selected word's grip was picked up. */
   onCaptionDragStart: () => void;
+  /** It was let go: `side` 1 the word's start, 2 its end, at timeline `ms`. */
+  onCaptionDragEnd: (side: number, ms: number) => void;
   /** Zoom to an editing scale (`captionZoom`, `clipZoom`): to `target`, unless the strip is
    * already within min … max. A new `seq` asks again. */
   zoomTo?: (ZoomRequest & { seq: number }) | null;
-  onCaptionDragEnd: (side: number, ms: number) => void;
   /** The scrub started (pause, approximate seeks). */
   onDragStart: () => void;
   /** A scrub (and its fling) ended at `ms`. */
@@ -166,13 +158,11 @@ type Props = {
 
 /**
  * The timeline: clips laid out at a scale under a fixed centre playhead, a time ruler above them
- * and the draft's captions on a lane below (a tap there opens them). One animated transform moves
- * the whole strip (time lives in `values.timeMs` on the UI thread); a pan scrubs it and flings on
- * release, a pinch zooms it around the playhead, a tap selects the clip under the finger, and the
- * selected clip gets a frame with trim grips. The scale lives on the UI thread too: the clips and
- * the frame follow a pinch every frame, while covers, waveforms, captions and the ruler are drawn
- * at the scale of the last redraw and stretched to it in between. Covers, waveforms, captions and
- * ruler marks draw only near the visible part.
+ * and the draft's captions on a lane below. A native scroll view scrubs and flings it (time lives
+ * in `values.timeMs` on the UI thread), a pinch zooms it about the playhead, and a tap selects the
+ * clip or the caption word under the finger. The Skia canvas draws the ruler, filmstrip, waveforms
+ * and caption lane from the live time and scale every frame; views over it hold the clips'
+ * outlines, the selected clip's frame with trim grips, and the selected word's grips.
  */
 export function TimelineStrip(props: Props) {
   const { clips, covers, peaks, layout, selected, trim, values, captions, captionSelected } = props;
@@ -193,18 +183,24 @@ export function TimelineStrip(props: Props) {
   // The selected word's grips: what they may do, which one is held (1 start, 2 end) and where it
   // is (ms), all on the UI thread.
   const capInfo = useSharedValue<CaptionDrag | null>(null);
+  // `capHeld`: the grip a finger is on (it owns the drag); `capSide`: the one the drawing shows
+  // moved, which stays after the release until the saved captions arrive.
+  const capHeld = useSharedValue(0);
   const capSide = useSharedValue(0);
   const capValue = useSharedValue(0);
   const capSnapped = useSharedValue(false);
   const pinchEndedAt = useSharedValue(0);
+  // An auto-zoom (`zoomTo`) easing: like a pinch, the scroll view's offset is ignored meanwhile.
+  const zooming = useSharedValue(false);
   const side = useSharedValue(0);
   const delta = useSharedValue(0);
   const trimSrc = useSharedValue(0);
   const atLimit = useSharedValue(false);
   const frameLeft = useSharedValue(0);
   const frameWidth = useSharedValue(0);
-  // The scale: live on the UI thread (`zoomNow`, what a pinch moves), and the one the content
-  // was last drawn at (`zoom`).
+  // The scale: live on the UI thread (`zoomNow`, what a pinch moves and the canvas draws at), and
+  // React's (`zoom`, updated every √2 of a pinch and at its end): the frames asked for, the page
+  // they're asked for around and the scroll view's width.
   const [zoom, setZoom] = useState(() => keptZoom);
   const zoomNow = useSharedValue(keptZoom);
   const pinchFrom = useSharedValue(keptZoom);
@@ -217,18 +213,18 @@ export function TimelineStrip(props: Props) {
   const [trimming, setTrimming] = useState(-1);
   const scheme = useThemeMode();
   const theme = useTheme();
-  const palette: TilePalette = {
-    tile: SystemColors.gray5[scheme],
-    film: SystemColors.gray4[scheme],
-    wave: SystemColors.gray6[scheme],
-    line: theme.warning,
-    dim: theme.textSecondary,
-  };
+  // One object while the theme stays (the tiles are memoized on it).
+  const palette = useMemo<TilePalette>(
+    () => ({
+      tile: SystemColors.gray5[scheme],
+      film: SystemColors.gray4[scheme],
+      wave: SystemColors.gray6[scheme],
+      line: theme.warning,
+      dim: theme.textSecondary,
+    }),
+    [scheme, theme],
+  );
   const trimInfo = useSharedValue<TrimInfo | null>(null);
-  const starts = useSharedValue<number[]>([]);
-  useEffect(() => {
-    starts.set(layout.starts);
-  }, [layout.starts, starts]);
   const [width, setWidth] = useState(0);
 
   // The gestures are built once; their JS callbacks reach the current props through this.
@@ -236,6 +232,12 @@ export function TimelineStrip(props: Props) {
   useEffect(() => {
     latest.current = props;
   });
+  /** The drawn drag ends, unless a finger has picked a grip up again meanwhile. */
+  const clearCapSide = () =>
+    scheduleOnUI(() => {
+      'worklet';
+      if (capHeld.get() === 0) capSide.set(0);
+    });
   const [handlers] = useState(() => ({
     dragStart: () => latest.current.onDragStart(),
     scrubEnd: (ms: number) => latest.current.onScrubEnd(ms),
@@ -249,7 +251,7 @@ export function TimelineStrip(props: Props) {
       latest.current.onCaptionDragEnd(side, ms);
       // The drag stays drawn until the saved captions arrive (`capKey` changes), or this long if
       // nothing changed.
-      setTimeout(() => capSide.set(0), 700);
+      setTimeout(clearCapSide, 700);
     },
     capSnap: () => haptics.tap(),
     trimStart: (s: TrimSide) => {
@@ -340,10 +342,10 @@ export function TimelineStrip(props: Props) {
     : '';
   useEffect(() => {
     capInfo.set(captionDrag);
-    capSide.set(0);
+    clearCapSide();
     // `capKey` is what decides; `captionDrag` is read for it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capKey, capInfo, capSide]);
+  }, [capKey, capInfo]);
   // The selection's touch areas: the box (or word) with a grip each side, following a drag.
   const capFrame = useAnimatedStyle(() => {
     const info = capInfo.get();
@@ -375,17 +377,18 @@ export function TimelineStrip(props: Props) {
   // The scroll view under the playhead's time, whenever something else moved it.
   const follow = () => {
     'worklet';
-    if (user.get() || pinching.get()) return;
+    if (user.get() || pinching.get() || zooming.get()) return;
     scrollTo(scrollRef, timeMs.get() * zoomNow.get(), 0, false);
   };
   useAnimatedReaction(
     () => timeMs.get(),
     () => follow(),
   );
-  // A pinch let go: the scroll view back under the playhead at the new scale (its content grows
-  // or shrinks with the next render, and `onContentSizeChange` places it again then).
+  // A pinch let go, or an auto-zoom done: the scroll view back under the playhead at the new
+  // scale (its content grows or shrinks with the next render, and `onContentSizeChange` places it
+  // again then).
   useAnimatedReaction(
-    () => pinching.get(),
+    () => pinching.get() || zooming.get(),
     (now, before) => {
       if (before && !now) follow();
     },
@@ -397,11 +400,11 @@ export function TimelineStrip(props: Props) {
     mode.set(Mode.idle);
     scheduleOnRN(scrubEnd, timeMs.get());
   };
-  /** A pinch is on, or just ended: the scroll view's moves are the pinch's fingers (or what's
-   * left of their momentum), not a scroll. */
+  /** A pinch (or an auto-zoom) is on, or just ended: the scroll view's moves are the pinch's
+   * fingers (or what's left of their momentum), not a scroll. */
   const pinchy = () => {
     'worklet';
-    return pinching.get() || Date.now() - pinchEndedAt.get() < PINCH_SETTLE_MS;
+    return pinching.get() || zooming.get() || Date.now() - pinchEndedAt.get() < PINCH_SETTLE_MS;
   };
   const begin = () => {
     'worklet';
@@ -417,16 +420,21 @@ export function TimelineStrip(props: Props) {
       timeMs.set(clamp(e.contentOffset.x / zoomNow.get(), 0, totalMs.get()));
     },
     onEndDrag: (e) => {
+      // A drag that wasn't a scrub (a pinch's fingers): the scroll view back under the playhead.
+      if (!user.get()) follow();
       // No fling: done now; otherwise the momentum's end finishes it.
-      if (Math.abs(e.velocity?.x ?? 0) < 0.01) finish();
+      else if (Math.abs(e.velocity?.x ?? 0) < 0.01) finish();
     },
     onMomentumBegin: () => {
       // A pinch's fingers lifting with some speed: no fling; the scroll view back under the
       // playhead (which stops it).
-      if (pinchy()) follow();
+      if (pinchy() || !user.get()) follow();
       else begin();
     },
-    onMomentumEnd: () => finish(),
+    onMomentumEnd: () => {
+      if (user.get()) finish();
+      else follow();
+    },
   });
 
   const [gestures] = useState(() => {
@@ -459,6 +467,11 @@ export function TimelineStrip(props: Props) {
     const grip = (s: TrimSide) =>
       Gesture.Pan()
         .hitSlop({ left: GRIP_SLOP, right: GRIP_SLOP, top: 6, bottom: 6 })
+        // A clip that can't be trimmed (a legacy baked one, or its frame rate not known yet):
+        // the touch goes to the scroll view and the tap instead.
+        .onTouchesDown((_e, manager) => {
+          if (!trimInfo.get()) manager.fail();
+        })
         .onStart(() => {
           const info = trimInfo.get();
           if (!info) return;
@@ -541,6 +554,7 @@ export function TimelineStrip(props: Props) {
         .onStart(() => {
           const info = capInfo.get();
           if (!info) return;
+          capHeld.set(side);
           capSide.set(side);
           capSnapped.set(false);
           capValue.set(side === 1 ? info.box.t0 : info.box.t1);
@@ -550,7 +564,7 @@ export function TimelineStrip(props: Props) {
         })
         .onUpdate((e) => {
           const info = capInfo.get();
-          if (!info || capSide.get() !== side) return;
+          if (!info || capHeld.get() !== side) return;
           const z = zoomNow.get();
           const base = side === 1 ? info.box.t0 : info.box.t1;
           const lo = side === 1 ? info.lo0 : info.lo1;
@@ -565,46 +579,37 @@ export function TimelineStrip(props: Props) {
           trimTarget.set(v);
         })
         .onFinalize(() => {
-          if (capSide.get() !== side || mode.get() !== Mode.trim) return;
+          if (capHeld.get() !== side || mode.get() !== Mode.trim) return;
+          capHeld.set(0);
           mode.set(Mode.idle);
           scheduleOnRN(capEnd, side, capValue.get());
         });
-    // A tap on the selected word lets it go.
-    const capTap = Gesture.Tap()
-      .maxDistance(10)
-      .onEnd((e) => {
-        const info = capInfo.get();
-        if (!info) return;
-        const z = zoomNow.get();
-        scheduleOnRN(captionTap, info.box.t0 + (e.x - CAP_GRIP) / z, z);
-      });
     const capLeft = capGrip(1);
     const capRight = capGrip(2);
-    const capBody = capTap;
 
     const left = grip(1);
     const right = grip(2);
-    for (const g of [left, right, capLeft, capRight, capTap]) {
+    for (const g of [left, right, capLeft, capRight]) {
       g.blocksExternalGesture(native, tap, pinch);
     }
     pinch.simultaneousWithExternalGesture(native);
     tap.simultaneousWithExternalGesture(native);
-    return { strip: Gesture.Race(pinch, tap), native, left, right, capLeft, capRight, capBody };
+    return { strip: Gesture.Race(pinch, tap), native, left, right, capLeft, capRight };
   });
 
-  // Draw covers, waveforms, captions and ruler marks only within about a screen of the playhead:
-  // the page changes once per strip width of travel, so they re-render rarely.
-  const [page, setPage] = useState(0);
+  // Frames are asked for within about a screen of the playhead: the page (its start, ms) changes
+  // once per strip width of travel.
+  const [pageStart, setPageStart] = useState(0);
   const pageMs = Math.max(1, width) / zoom;
   useAnimatedReaction(
-    () => Math.floor(timeMs.get() / pageMs),
+    () => Math.floor(timeMs.get() / pageMs) * pageMs,
     (p, prev) => {
-      if (p !== prev) scheduleOnRN(setPage, p);
+      if (p !== prev) scheduleOnRN(setPageStart, p);
     },
     [pageMs],
   );
-  const nearFrom = (page - 1) * pageMs;
-  const nearTo = (page + 2) * pageMs;
+  const nearFrom = pageStart - pageMs;
+  const nearTo = pageStart + 2 * pageMs;
 
   // A caption or a clip to edit: zoom to its scale, about the playhead (as a pinch does), unless
   // the current one already suits. The scroll view's offset is ignored meanwhile, and set again
@@ -612,7 +617,8 @@ export function TimelineStrip(props: Props) {
   const zoomSeq = props.zoomTo?.seq ?? 0;
   useEffect(() => {
     const req = latest.current.zoomTo;
-    if (!req) return;
+    if (!req || req.seq <= appliedZoomSeq) return;
+    appliedZoomSeq = req.seq;
     const z0 = zoomNow.get();
     if (z0 >= req.min && z0 <= req.max) return;
     const z = req.target;
@@ -622,11 +628,14 @@ export function TimelineStrip(props: Props) {
       zoomed(z);
       return;
     }
-    pinching.set(true);
+    // Ended either way: done, or taken over by a pinch (which owns the scale from there).
+    zooming.set(true);
     zoomNow.set(
       withTiming(z, { duration: 250, easing: EaseOut }, (finished) => {
-        pinching.set(false);
-        if (finished) scheduleOnRN(zoomed, z);
+        zooming.set(false);
+        if (!finished) return;
+        pinchEndedAt.set(Date.now());
+        scheduleOnRN(zoomed, z);
       }),
     );
     // `zoomSeq` is what asks; the request is read from `latest`.
@@ -683,66 +692,49 @@ export function TimelineStrip(props: Props) {
   });
 
   // What the canvas draws (timeline-canvas.tsx), and the frames each clip asks for: those near
-  // the screen at the scale of the last redraw, within its trim (all of its source while a grip
-  // drags, so footage brought back already has frames).
+  // the screen at React's scale, within its trim (all of its source while a grip drags, so
+  // footage brought back already has frames).
   const coverImages = useCovers(clips.map((c) => ({ id: c.id, uri: covers.get(c.id) ?? null })));
   // Every clip asks (for its coarse frames, the whole draft's from the start); the ones near the
   // screen also for their detail, nearest the middle of the screen first, and the clips are asked
   // for in order of how near they are, so what's on screen fills in first.
-  const centerMs = (page + 0.5) * pageMs;
-  // Frames are the file's own, unedited: the canvas draws a clip's rotate, flip and crop on them,
-  // so an edit shows at once on frames already loaded instead of fetching a new set.
-  const look = UNEDITED;
+  const centerMs = pageStart + pageMs / 2;
   // Each clip's tile width: its picture's shape as edited.
-  const tileWs = clips.map((c, i) =>
-    tileWidth(anyFrame(c.uri, UNEDITED), coverImages[i] ?? null, c.edit),
-  );
+  const tileWs = clips.map((c, i) => tileWidth(anyFrame(c.uri), coverImages[i] ?? null, c.edit));
   const wants: (FrameWant & { distance: number })[] = [];
   clips.forEach((c, i) => {
     const start = layout.starts[i] ?? 0;
     const end = i + 1 < layout.starts.length ? layout.starts[i + 1] : layout.totalMs;
     const distance = centerMs < start ? start - centerMs : centerMs > end ? centerMs - end : 0;
     const step = frameStep(zoom, c.edit.speed, tileWs[i]);
-    if (end < nearFrom || start > nearTo) {
-      wants.push({
-        id: c.id,
-        uri: c.uri,
-        look,
-        near: [],
-        nearStep: step,
-        sourceMs: c.sourceMs,
-        distance,
-      });
-      return;
+    let near: number[] = [];
+    if (end >= nearFrom && start <= nearTo) {
+      const { speed } = c.edit;
+      const lo = i === trimming ? 0 : c.edit.startMs;
+      const hi = i === trimming ? c.sourceMs : c.edit.endMs;
+      const from = Math.max(lo, c.edit.startMs + (nearFrom - start) * speed);
+      const to = Math.min(hi, c.edit.startMs + (nearTo - start) * speed);
+      // The source time at the middle of the screen, for ordering this clip's detail.
+      const centerSrc = c.edit.startMs + (centerMs - start) * speed;
+      if (to > from) near = frameTimes(step, from, to, c.sourceMs);
+      near.sort((a, b) => Math.abs(a - centerSrc) - Math.abs(b - centerSrc));
     }
-    const { speed } = c.edit;
-    const lo = i === trimming ? 0 : c.edit.startMs;
-    const hi = i === trimming ? c.sourceMs : c.edit.endMs;
-    const from = Math.max(lo, c.edit.startMs + (nearFrom - start) * speed);
-    const to = Math.min(hi, c.edit.startMs + (nearTo - start) * speed);
-    // The source time at the middle of the screen, for ordering this clip's detail.
-    const centerSrc = c.edit.startMs + (centerMs - start) * speed;
-    const near = to > from ? frameTimes(step, from, to, c.sourceMs) : [];
-    near.sort((a, b) => Math.abs(a - centerSrc) - Math.abs(b - centerSrc));
-    wants.push({
-      id: c.id,
-      uri: c.uri,
-      look,
-      near,
-      nearStep: step,
-      sourceMs: c.sourceMs,
-      distance,
-    });
+    wants.push({ id: c.id, uri: c.uri, near, nearStep: step, sourceMs: c.sourceMs, distance });
   });
   wants.sort((a, b) => a.distance - b.distance);
   const framesVersion = useFrames(wants);
   const canvasClips = useMemo<CanvasClip[]>(
-    () =>
-      clips.map((c, i) => {
-        const f = framesOf(c.uri, UNEDITED);
+    () => {
+      // Clips split from one file share its frames.
+      const byUri = new Map<string, ReturnType<typeof framesOf>>();
+      return clips.map((c, i) => {
+        let f = byUri.get(c.uri);
+        if (!f) {
+          f = framesOf(c.uri);
+          byUri.set(c.uri, f);
+        }
         return {
           inMs: c.edit.startMs,
-          outMs: c.edit.endMs,
           speed: c.edit.speed,
           sourceMs: c.sourceMs,
           muted: c.edit.muted,
@@ -756,7 +748,8 @@ export function TimelineStrip(props: Props) {
           frameTimes: f.times,
           frameImages: f.images,
         };
-      }),
+      });
+    },
     // `framesVersion` is what says the frames changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [clips, peaks, coverImages, framesVersion],
@@ -816,16 +809,14 @@ export function TimelineStrip(props: Props) {
           {clips.map((c, i) => (
             <ClipTile key={c.id} index={i} edit={c.edit} motion={motion} palette={palette} />
           ))}
-          {/* The selected word's touch areas (the canvas draws them): its grips, and the word
-              between, which a tap lets go. */}
+          {/* The selected word's grips (the canvas draws them). The word between takes no
+              touches: a drag there scrubs, a tap lets the word go (the strip's tap). */}
           {captionDrag && (
             <Animated.View style={[styles.capFrame, capFrame]} pointerEvents="box-none">
               <GestureDetector gesture={gestures.capLeft}>
                 <View style={styles.capGrip} />
               </GestureDetector>
-              <GestureDetector gesture={gestures.capBody}>
-                <View style={styles.capBody} />
-              </GestureDetector>
+              <View style={styles.capBody} pointerEvents="none" />
               <GestureDetector gesture={gestures.capRight}>
                 <View style={styles.capGrip} />
               </GestureDetector>

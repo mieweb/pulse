@@ -12,13 +12,15 @@ import { FILM_HEIGHT } from './clip-tile';
 // reorder only shows more or less of frames already there, and a pinch reuses them. Frames sit on
 // a grid of multiples of STEP_MS × 2^k; the scale picks the coarsest step that still gives every
 // tile (FILM_HEIGHT tall, the clip's picture's shape) a frame near its middle, and a coarser
-// step's frames are all on the finer grids. A file's whole source gets the COARSE_MS
-// frames (a handful per clip) and the part near the screen the scale's step: fetched near the
-// screen first, then the coarse ones, a batch per file from one decoder (pulse-editor `frames`),
-// each the nearest keyframe within half a step. Frames are decoded into GPU images the timeline
-// canvas draws; one not here yet shows the nearest earlier one, else the clip's cover, so nothing
-// is ever blank. The JPEGs are kept in the caches folder (the OS may clear it; they're fetched
-// again), keyed by file, look and time; at most MAX_IMAGES are kept decoded.
+// step's frames are all on the finer grids. A file's whole source gets the COARSE_MS frames (a
+// handful per clip) and the part near the screen the scale's step: fetched near the screen first,
+// then the coarse ones, a batch per file from one decoder (pulse-editor `frames`), each the
+// nearest keyframe within half a step. Frames are the file's own, upright and unedited (the canvas
+// draws a clip's rotate, flip and crop on them), decoded into GPU images the timeline canvas
+// draws; a tile whose frame isn't here yet shows the loaded frame nearest it, else the clip's
+// cover, so nothing is ever blank. The JPEGs are kept in the caches folder, a folder per file,
+// each named by the time asked for and the time it shows (the OS may clear it; they're fetched
+// again); at most MAX_IMAGES are kept decoded, the ones near the screen kept first.
 
 /** The finest step between frames, source ms: 1000 / 32, about a frame at 30 fps, for the deepest
  * zoom (a tile there is under 80 ms). Exact in binary, so the grid's times add up without drift,
@@ -37,37 +39,26 @@ const MAX_IMAGES = 400;
  * FILM_HEIGHT tall at the screen's density, so the whole frame is drawn sharp. */
 const FRAME_BOX = Math.ceil((FILM_HEIGHT * PixelRatio.get() * 16) / 9);
 
-/** How a clip's picture is drawn: as its edit has it (editor quarter turns, counter-clockwise). */
-export type FrameLook = { rotation: number; flipped: boolean; crop: ClipCrop | null };
-
-export const lookKey = (l: FrameLook) =>
-  `${l.rotation}${l.flipped ? 'f' : ''}${l.crop ? JSON.stringify(l.crop) : ''}`;
-const fileKey = (uri: string, look: string) => `${uri}|${look}`;
-
-// Per file and look: its decoded frames by source time (insertion order = least recently used
-// first, across all files via `lru`), the times failed or being fetched.
+// Per file: its decoded frames by the time asked for (insertion order = least recently used first,
+// across all files via `lru`), the times that failed, and what its disk folder holds (read once).
 type Store = {
   uri: string;
-  look: FrameLook;
   /** By the time asked for: the image, and the time it actually shows (ms). */
   images: Map<number, { image: SkImage; at: number }>;
   failed: Set<number>;
+  /** By the time asked for: the cached JPEG and the time it shows; null until read. */
+  disk: Map<number, { file: File; at: number }> | null;
 };
 const stores = new Map<string, Store>();
-const lru = new Map<string, { key: string; t: number }>();
+const lru = new Map<string, { uri: string; t: number }>();
 const inFlight = new Set<string>();
-type Want = { key: string; near: number[]; nearStep: number; coarse: number[] };
+type Want = { near: number[]; nearStep: number; coarse: number[] };
 const wanted = new Map<string, Want>();
+/** The frames near the screen (`uri|t`): kept decoded ahead of all others. */
+let pinned = new Set<string>();
 let running = 0;
 
-/** Spike: what the store has done, read from the debugger. */
-export const filmstripStats = {
-  batches: [] as { file: string; n: number; ms: number; tolerance: number }[],
-  failed: 0,
-  diskHits: 0,
-};
-
-// Per file and look, a number that changes when its frames do (what the strip re-renders on).
+// A number that changes when any file's frames do (what the strip re-renders on).
 let version = 0;
 const listeners = new Set<() => void>();
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -81,7 +72,7 @@ function changed() {
   }, NOTIFY_MS);
 }
 
-const cacheDir = () => new Directory(Paths.cache, 'filmstrip');
+const cacheRoot = () => new Directory(Paths.cache, 'filmstrip');
 
 function hash(s: string): string {
   let h = 2166136261;
@@ -92,36 +83,79 @@ function hash(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-const cacheFile = (key: string, t: number) =>
-  new File(cacheDir(), `${hash(`${key}|${t}|${FRAME_BOX}`)}.jpg`);
+/** A file's cache folder (its frames at this size). */
+const folderName = (uri: string) => hash(`${uri}|${FRAME_BOX}`);
+const folderOf = (uri: string) => new Directory(cacheRoot(), folderName(uri));
 
-function storeFor(uri: string, look: FrameLook): Store {
-  const key = fileKey(uri, lookKey(look));
-  let s = stores.get(key);
+function storeFor(uri: string): Store {
+  let s = stores.get(uri);
   if (!s) {
-    s = { uri, look, images: new Map(), failed: new Set() };
-    stores.set(key, s);
+    s = { uri, images: new Map(), failed: new Set(), disk: null };
+    stores.set(uri, s);
   }
   return s;
 }
 
-function keep(key: string, store: Store, t: number, image: SkImage, at: number) {
+/** What a file's cache folder holds: `<asked>@<shows>.jpg` files. */
+function readDisk(store: Store): Map<number, { file: File; at: number }> {
+  if (store.disk) return store.disk;
+  const disk = new Map<number, { file: File; at: number }>();
+  try {
+    const dir = folderOf(store.uri);
+    if (dir.exists) {
+      for (const f of dir.list()) {
+        const m = f instanceof File ? /^([\d.]+)@([\d.]+)\.jpg$/.exec(f.name) : null;
+        if (m && f instanceof File) disk.set(Number(m[1]), { file: f, at: Number(m[2]) });
+      }
+    }
+  } catch {
+    // Read as empty: the frames are fetched again.
+  }
+  store.disk = disk;
+  return disk;
+}
+
+function keep(store: Store, t: number, image: SkImage, at: number) {
   store.images.set(t, { image, at });
-  const id = `${key}|${t}`;
+  const id = `${store.uri}|${t}`;
   lru.delete(id);
-  lru.set(id, { key, t });
-  while (lru.size > MAX_IMAGES) {
-    const [oldest, v] = lru.entries().next().value as [string, { key: string; t: number }];
-    lru.delete(oldest);
-    // Dropped, not disposed: the canvas may still draw it until its next update; it's freed once
-    // nothing holds it.
-    stores.get(v.key)?.images.delete(v.t);
+  lru.set(id, { uri: store.uri, t });
+  if (lru.size <= MAX_IMAGES) return;
+  // The least recently used first, except frames near the screen (which may run over the limit
+  // for as long as they're wanted). Dropped, not disposed: the canvas may still draw one until its
+  // next update; it's freed once nothing holds it.
+  for (const [k, v] of lru) {
+    if (lru.size <= MAX_IMAGES) break;
+    if (pinned.has(k)) continue;
+    lru.delete(k);
+    stores.get(v.uri)?.images.delete(v.t);
   }
 }
 
 function decode(bytes: Uint8Array): SkImage | null {
   const data = Skia.Data.fromBytes(bytes);
   return Skia.Image.MakeImageFromEncoded(data);
+}
+
+/**
+ * The cache keeps only the files in `uris` (every clip's, in every draft), once per app run: a
+ * deleted clip's frames go with it. Earlier caches (flat files) go too.
+ */
+let pruned = false;
+export function pruneFrameCache(uris: readonly string[]) {
+  if (pruned) return;
+  pruned = true;
+  try {
+    const root = cacheRoot();
+    if (!root.exists) return;
+    const keepNames = new Set(uris.map(folderName));
+    for (const entry of root.list()) {
+      if (entry instanceof Directory && keepNames.has(entry.name)) continue;
+      entry.delete();
+    }
+  } catch {
+    // Tried again next run.
+  }
 }
 
 /** The narrowest and widest a tile is, as a multiple of its height (a picture past these is drawn
@@ -168,15 +202,14 @@ export function frameTimes(step: number, fromMs: number, toMs: number, sourceMs:
 }
 
 /** Any one of a file's decoded frames (for its size), or null. */
-export function anyFrame(uri: string, look: FrameLook): SkImage | null {
-  const s = stores.get(fileKey(uri, lookKey(look)));
-  return s?.images.values().next().value?.image ?? null;
+export function anyFrame(uri: string): SkImage | null {
+  return stores.get(uri)?.images.values().next().value?.image ?? null;
 }
 
 /** A file's decoded frames by the time each shows (ascending, images beside them), for the
- * canvas, which draws each cell with the frame nearest its time. */
-export function framesOf(uri: string, look: FrameLook): { times: number[]; images: SkImage[] } {
-  const s = stores.get(fileKey(uri, lookKey(look)));
+ * canvas, which draws each tile with the frame nearest its time. */
+export function framesOf(uri: string): { times: number[]; images: SkImage[] } {
+  const s = stores.get(uri);
   if (!s) return { times: [], images: [] };
   const all = [...s.images.values()].sort((a, b) => a.at - b.at);
   return { times: all.map((f) => f.at), images: all.map((f) => f.image) };
@@ -185,40 +218,35 @@ export function framesOf(uri: string, look: FrameLook): { times: number[]; image
 /** The next batch: one file's frames still wanted, near the screen first, then coarse ones, its
  * file claimed (in `inFlight`) until the batch is done. A frame on disk is decoded on the way
  * instead of fetched. */
-async function nextBatch(): Promise<{
-  store: Store;
-  key: string;
-  times: number[];
-  step: number;
-} | null> {
+async function nextBatch(): Promise<{ store: Store; times: number[]; step: number } | null> {
   for (const pass of ['near', 'coarse'] as const) {
-    for (const w of [...wanted.values()]) {
-      const store = stores.get(w.key);
-      if (!store || inFlight.has(w.key)) continue;
-      inFlight.add(w.key);
+    for (const [uri, w] of [...wanted]) {
+      const store = stores.get(uri);
+      if (!store || inFlight.has(uri)) continue;
+      inFlight.add(uri);
+      const disk = readDisk(store);
       const times: number[] = [];
       for (const t of w[pass]) {
         if (store.images.has(t) || store.failed.has(t)) continue;
-        const file = cacheFile(w.key, t);
-        if (file.exists) {
+        const cached = disk.get(t);
+        if (cached) {
           try {
-            const img = decode(await file.bytes());
+            const img = decode(await cached.file.bytes());
             if (img) {
-              keep(w.key, store, t, img, t);
-              filmstripStats.diskHits++;
+              keep(store, t, img, cached.at);
               changed();
               continue;
             }
           } catch {
             // Fetched again below.
           }
+          disk.delete(t);
         }
         times.push(t);
         if (times.length >= BATCH) break;
       }
-      if (times.length)
-        return { store, key: w.key, times, step: pass === 'near' ? w.nearStep : COARSE_MS };
-      inFlight.delete(w.key);
+      if (times.length) return { store, times, step: pass === 'near' ? w.nearStep : COARSE_MS };
+      inFlight.delete(uri);
     }
   }
   return null;
@@ -241,14 +269,12 @@ async function work() {
     try {
       await fetchBatch(batch);
     } finally {
-      inFlight.delete(batch.key);
+      inFlight.delete(batch.store.uri);
     }
   }
 }
 
-async function fetchBatch(batch: { store: Store; key: string; times: number[]; step: number }) {
-  const { store, key, times, step } = batch;
-  const began = Date.now();
+async function fetchBatch({ store, times, step }: { store: Store; times: number[]; step: number }) {
   try {
     const got = await grabFrames(store.uri, {
       timesMs: times,
@@ -256,40 +282,30 @@ async function fetchBatch(batch: { store: Store; key: string; times: number[]; s
       maxHeight: FRAME_BOX,
       quality: 0.6,
       toleranceMs: step / 2,
-      // The editor keeps counter-clockwise quarter turns; pulse-editor takes clockwise degrees.
-      rotation: ((4 - store.look.rotation) % 4) * 90,
-      flipped: store.look.flipped,
-      crop: store.look.crop ?? undefined,
     });
-    filmstripStats.batches.push({
-      file: store.uri.split('/').pop() ?? '',
-      n: got.length,
-      ms: Date.now() - began,
-      tolerance: step / 2,
-    });
-    const dir = cacheDir();
+    const dir = folderOf(store.uri);
     if (!dir.exists) dir.create({ intermediates: true });
+    const disk = readDisk(store);
     for (const f of got) {
       const bytes = new Uint8Array(f.data);
       const img = decode(bytes);
-      if (!img) {
-        store.failed.add(f.timeMs);
-        continue;
-      }
-      keep(key, store, f.timeMs, img, f.actualMs);
+      if (!img) continue;
+      keep(store, f.timeMs, img, f.actualMs);
       try {
-        const file = cacheFile(key, f.timeMs);
+        const file = new File(dir, `${f.timeMs}@${Math.round(f.actualMs * 1000) / 1000}.jpg`);
         file.create({ overwrite: true });
         file.write(bytes);
+        disk.set(f.timeMs, { file, at: f.actualMs });
       } catch {
         // Not cached on disk: fetched again next time.
       }
     }
   } catch {
-    // Not fetched again this session; the cells keep the earlier frame or the cover.
-    for (const t of times) store.failed.add(t);
-    filmstripStats.failed += times.length;
+    // The whole batch failed: its times count as failed below.
   }
+  // Not fetched again this session (a frame the decoder couldn't give, or a batch that failed):
+  // their tiles keep the nearest frame or the cover.
+  for (const t of times) if (!store.images.has(t)) store.failed.add(t);
   changed();
 }
 
@@ -300,12 +316,11 @@ function subscribe(listener: () => void) {
   };
 }
 
-/** What a clip asks for: its file and look, the times near the screen (at `nearStep`), and its
- * source length (for the coarse frames). */
+/** What a clip asks for: its file, the times near the screen (at `nearStep`), and its source
+ * length (for the coarse frames). */
 export type FrameWant = {
   id: string;
   uri: string;
-  look: FrameLook;
   near: readonly number[];
   nearStep: number;
   sourceMs: number;
@@ -318,23 +333,22 @@ export type FrameWant = {
  */
 export function useFrames(wants: readonly FrameWant[]): number {
   const signature = wants
-    .map(
-      (w) => `${w.id}:${w.uri}:${lookKey(w.look)}:${w.nearStep}:${w.near.join(',')}:${w.sourceMs}`,
-    )
+    .map((w) => `${w.id}:${w.uri}:${w.nearStep}:${w.near.join(',')}:${w.sourceMs}`)
     .join('\n');
   useEffect(() => {
-    // In the order given (nearest the playhead first): the order batches are taken in.
+    // Per file (clips split from one file share it), in the order given (nearest the playhead
+    // first): the order batches are taken in.
     wanted.clear();
+    const near = new Set<string>();
     for (const w of wants) {
-      const store = storeFor(w.uri, w.look);
-      const key = fileKey(store.uri, lookKey(store.look));
-      wanted.set(w.id, {
-        key,
-        near: [...w.near],
-        nearStep: w.nearStep,
-        coarse: frameTimes(COARSE_MS, 0, w.sourceMs, w.sourceMs),
-      });
+      storeFor(w.uri);
+      const was = wanted.get(w.uri);
+      const coarse = frameTimes(COARSE_MS, 0, w.sourceMs, w.sourceMs);
+      if (was) was.near.push(...w.near);
+      else wanted.set(w.uri, { near: [...w.near], nearStep: w.nearStep, coarse });
+      for (const t of w.near) near.add(`${w.uri}|${t}`);
     }
+    pinned = near;
     pump();
     // `wants` is read for the request; `signature` is what decides to ask again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
