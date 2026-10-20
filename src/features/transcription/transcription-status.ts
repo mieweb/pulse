@@ -20,6 +20,11 @@ export function setTranscriptionStatus(next: TranscriptionStatus): void {
   for (const listener of listeners) listener();
 }
 
+/** Back to idle, if the status is still `kind` (a writer finishing doesn't clear another's). */
+export function clearTranscriptionStatus(kind: TranscriptionStatus['kind']): void {
+  if (current.kind === kind) setTranscriptionStatus({ kind: 'idle' });
+}
+
 function subscribe(onStoreChange: () => void): () => void {
   listeners.add(onStoreChange);
   return () => {

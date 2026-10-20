@@ -1,7 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { groupWordsIntoLines } from './group-lines';
+import { linesFromWords, wholeWords } from './group-lines';
+
 import type { TranscriptWord } from './whisper';
+
+// Whisper's word pieces as the app groups them: whole words, then caption-sized lines.
+const groupWordsIntoLines = (w: TranscriptWord[]) => linesFromWords(wholeWords(w));
 
 // Build word segments at 50cs (0.5s) each, as whisper would emit them with maxLen: 1.
 const words = (...texts: string[]): TranscriptWord[] =>

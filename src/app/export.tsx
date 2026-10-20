@@ -3,7 +3,7 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { shareAsync } from 'expo-sharing';
+import { useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/primary-button';
@@ -36,7 +37,7 @@ import { useExport } from '@/features/export/use-export';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { useToast } from '@/features/toast/toast-provider';
-import { CaptionOverlay } from '@/features/transcription/caption-overlay';
+import { SkiaCaption } from '@/features/transcription/skia-caption';
 import { captionStyleFor } from '@/features/transcription/caption-style';
 import { useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import type { TranscriptLine } from '@/features/transcription/whisper';
@@ -59,7 +60,7 @@ export default function ExportScreen() {
 
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
   // Zero-length clips (failed native reads) can't be concatenated — drop them before merging.
-  const clips = segments.filter((s) => effMs(s) > 0);
+  const clips = useMemo(() => segments.filter((s) => effMs(s) > 0), [segments]);
 
   // Stable ref (not a plain value) so `useUpload` can be called — and its `destination`/pool
   // read — before the merge finishes. It's read at enqueue time, once the merge is done. See the
@@ -139,9 +140,8 @@ export default function ExportScreen() {
         title: 'Couldn’t share the video',
         message: userMessage(e, 'Try again.', 'share'),
       });
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
 
   // The pool selector + claim button, shared by every non-uploading state — including a draft
@@ -381,6 +381,12 @@ function MergedPreview({
   useParkedPlayback(player);
   const timeUpdate = useEvent(player, 'timeUpdate');
   const positionMs = (timeUpdate?.currentTime ?? player.currentTime) * 1000;
+  // The player's time for the caption (drawn on the UI thread, as in the editor).
+  const timeMs = useSharedValue(positionMs);
+  useEffect(() => {
+    timeMs.set(positionMs);
+  }, [positionMs, timeMs]);
+  const captionStyle = useMemo(() => captionStyleFor(captionY), [captionY]);
 
   // Largest 9:16 rect that fits the measured frame. Yoga can't express this — a max
   // constraint on the aspect-derived axis clamps it without re-shrinking the defined one,
@@ -423,13 +429,16 @@ function MergedPreview({
               // draw square corners over the rounded card. A TextureView clips like any view.
               surfaceType="textureView"
             />
-            <CaptionOverlay
-              lines={lines}
-              positionMs={positionMs}
-              style={captionStyleFor(captionY)}
-              width={cardWidth}
-              height={cardHeight}
-            />
+            {/* The captions as the editor draws them, where they were placed; shows only. */}
+            {cardWidth > 0 && cardHeight > 0 && (
+              <SkiaCaption
+                lines={lines}
+                timeMs={timeMs}
+                style={captionStyle}
+                width={cardWidth}
+                height={cardHeight}
+              />
+            )}
           </View>
         </View>
       )}

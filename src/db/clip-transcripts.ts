@@ -8,12 +8,18 @@ import { clipTranscripts, segments } from './schema';
  * A clip's transcript for one model: the file it was made from and its words (file time, cs).
  * `failed`: the model couldn't transcribe that file (no words; Retry deletes the row).
  */
-export type ClipWords = { segmentId: string; file: string; words: TranscriptWord[]; failed: boolean };
+export type ClipWords = {
+  segmentId: string;
+  file: string;
+  words: TranscriptWord[];
+  failed: boolean;
+};
 
 function parseWords(json: string | null): TranscriptWord[] {
   if (!json) return [];
   try {
-    return JSON.parse(json) as TranscriptWord[];
+    const v = JSON.parse(json) as unknown;
+    return Array.isArray(v) ? (v as TranscriptWord[]) : [];
   } catch {
     return [];
   }

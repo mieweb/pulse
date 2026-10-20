@@ -18,11 +18,14 @@ function msToVttTime(ms: number): string {
 /**
  * Serialize caption lines to a WebVTT document. WebVTT carries the word-level timing whisper
  * gives us as inline cue timestamps (`word <00:00:01.500>word` — the karaoke syntax), so a web
- * viewer can highlight the exact spoken word the way `CaptionOverlay` does in-app. Lines
+ * viewer can highlight the exact spoken word the way the app's caption (skia-caption.tsx) does. Lines
  * without word data emit plain cues — viewers fall back to whatever line-level treatment they
  * have. `y` (where the captions were moved to: the caption's centre, a fraction of the height)
  * becomes each cue's `line:` setting, centred on that line.
  */
+/** Text as cue text: `&`, `<` and `>` escaped (so typed text can't open a tag or end a cue). */
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 export function linesToVtt(lines: readonly TranscriptLine[], y?: number | null): string {
   const settings = y == null ? '' : ` line:${Math.round(y * 100)}%,center`;
   const cues = lines.map((line) => {
@@ -32,11 +35,11 @@ export function linesToVtt(lines: readonly TranscriptLine[], y?: number | null):
       ? words
           .map((w, i) =>
             i === 0
-              ? w.text
-              : `${wordGap(words[i - 1].text, w.text)}<${msToVttTime(csToMs(w.t0))}>${w.text}`,
+              ? esc(w.text)
+              : `${wordGap(words[i - 1].text, w.text)}<${msToVttTime(csToMs(w.t0))}>${esc(w.text)}`,
           )
           .join('')
-      : line.text;
+      : esc(line.text);
     return `${timing}\n${text}`;
   });
   return `WEBVTT\n\n${cues.join('\n\n')}\n`;

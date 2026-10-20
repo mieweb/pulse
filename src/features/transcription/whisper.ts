@@ -20,16 +20,6 @@ export type TranscriptWord = { text: string; t0: number; t1: number };
  */
 export type TranscriptLine = { text: string; t0: number; t1: number; words?: TranscriptWord[] };
 
-/** Parse a persisted `lines`/`editedLines` JSON column to `TranscriptLine[]`; `[]` on null/malformed. */
-export function parseTranscriptLines(json: string | null | undefined): TranscriptLine[] {
-  if (!json) return [];
-  try {
-    return JSON.parse(json) as TranscriptLine[];
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Whether the clip has no speech worth transcribing. Runs the VAD pre-gate; if the VAD itself is
  * unavailable (e.g. its model hasn't downloaded yet offline) we fail **open** — assume speech and

@@ -64,18 +64,11 @@ export function wholeWords(segments: TranscriptWord[]): TranscriptWord[] {
 }
 
 /**
- * Fold word-level whisper segments (from a `maxLen: 1` pass) into caption-sized lines, each
- * carrying its `words[]` for word-level (karaoke) highlighting. Pieces of a word are joined first
- * (see `wholeWords`). A new line starts when the
- * current word ends a sentence, when appending the next word would exceed the character budget,
- * or when the cue would run past the max duration. Word `text` is trimmed (whisper prefixes a
- * space); `t0`/`t1` stay in centiseconds.
+ * Whole words (trimmed, centiseconds; see `wholeWords`) folded into caption-sized lines, each
+ * carrying its `words[]` for word-level (karaoke) highlighting. A new line starts when the current
+ * word ends a sentence, when appending the next word would exceed the character budget, or when
+ * the cue would run past the max duration.
  */
-export function groupWordsIntoLines(segments: TranscriptWord[]): TranscriptLine[] {
-  return linesFromWords(wholeWords(segments));
-}
-
-/** Caption-sized lines from whole words (trimmed, centiseconds), as `groupWordsIntoLines`. */
 export function linesFromWords(words: TranscriptWord[]): TranscriptLine[] {
   const lines: TranscriptLine[] = [];
   let current: TranscriptWord[] = [];

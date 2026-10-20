@@ -1,11 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 import type { TranscriptLine } from '@/features/transcription/whisper';
 import { clipRender, effMs, segmentSignature } from '@/utils/segment-window';
-import { setCaptionEdits, type CaptionEdit } from './captions';
+import type { CaptionEdit } from './captions';
 import { db } from './client';
 import { segmentsForDraft } from './drafts';
-import { draftTranscripts } from './schema';
+import { drafts, draftTranscripts, segments } from './schema';
 
 /**
  * Earlier versions kept a draft's captions as one transcript of its merged video
@@ -21,11 +21,11 @@ export async function adoptMergedCaptionEdit(draftId: string): Promise<void> {
     .where(eq(draftTranscripts.draftId, draftId));
   if (!row) return;
   const clips = (await segmentsForDraft(draftId)).filter((s) => effMs(s) > 0);
+  const edits = new Map<string, string>();
   if (row.editedLines && row.signature === segmentSignature(clips)) {
     const words = parseLines(row.editedLines).flatMap(
       (l) => l.words ?? [{ text: l.text, t0: l.t0, t1: l.t1 }],
     );
-    const edits = new Map<string, string | null>();
     let offsetCs = 0;
     for (const s of clips) {
       const r = clipRender(s);
@@ -43,9 +43,21 @@ export async function adoptMergedCaptionEdit(draftId: string): Promise<void> {
       edits.set(s.id, JSON.stringify(edit));
       offsetCs = endCs;
     }
-    await setCaptionEdits(edits);
   }
-  await db.delete(draftTranscripts).where(eq(draftTranscripts.draftId, draftId));
+  // The clips' edits and the row's removal together (sync: drizzle's expo-sqlite transactions
+  // don't wait for promises), so a crash can't adopt the edit again over newer ones.
+  db.transaction((tx) => {
+    for (const [id, value] of edits) {
+      tx.update(segments).set({ captionEdit: value }).where(eq(segments.id, id)).run();
+    }
+    if (edits.size) {
+      tx.update(drafts)
+        .set({ lastModified: sql`(unixepoch('subsec') * 1000)` })
+        .where(eq(drafts.id, draftId))
+        .run();
+    }
+    tx.delete(draftTranscripts).where(eq(draftTranscripts.draftId, draftId)).run();
+  });
 }
 
 function parseLines(json: string): TranscriptLine[] {

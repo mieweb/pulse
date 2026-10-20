@@ -134,13 +134,14 @@ export function useEditorDraft(draftId: string) {
   ) {
     setPendingOrder(null);
   }
-  const ordered = pendingOrder
-    ? [...rows].sort((a, b) => rank(pendingOrder, a.id) - rank(pendingOrder, b.id))
-    : rows;
-
-  const segments = ordered
-    .map((s) => withPending(s, pending.get(s.id)))
-    .filter((s) => effMs(s) > 0);
+  // The same array until the rows, the pending edits or the pending order change, so what's
+  // composed from it (captions, spans) isn't redone on every render.
+  const segments = useMemo(() => {
+    const ordered = pendingOrder
+      ? [...rows].sort((a, b) => rank(pendingOrder, a.id) - rank(pendingOrder, b.id))
+      : rows;
+    return ordered.map((s) => withPending(s, pending.get(s.id))).filter((s) => effMs(s) > 0);
+  }, [rows, pending, pendingOrder]);
 
   // Clips change identity only when what they render changes (a new array rebuilds the preview):
   // a cover landing later, or a label, keeps the same clips.

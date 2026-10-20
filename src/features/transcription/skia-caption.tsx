@@ -27,7 +27,8 @@ import type { TranscriptLine } from './whisper';
 // The caption on the video, drawn with Skia: the style (caption-style.ts) and the rows decided in
 // JS (caption-track.ts), so what's drawn here is what a burn-in at export draws. The line under
 // the playhead, the word being spoken and where the caption sits are all worked out on the UI
-// thread each frame, so playback never re-renders React for it.
+// thread, so playback never re-renders React for it; the caption is redrawn only when one of
+// them changes.
 
 /** One word as drawn: the space before it and its text, with their widths at the font (dp). */
 type DrawnWord = { lead: string; text: string; t0: number; t1: number; lw: number; tw: number };
@@ -70,7 +71,8 @@ type Props = {
   /** Drag to move (`onMove` with the new centre, a fraction of the height) and tap; omitted: a
    * caption that only shows. */
   onPickUp?: () => void;
-  onMove?: (y: number) => void;
+  /** (If what it returns fails, the caption goes back to the style's place.) */
+  onMove?: (y: number) => Promise<unknown> | void;
   onTap?: () => void;
 };
 
@@ -164,6 +166,25 @@ export function SkiaCaption({
     return -1;
   });
 
+  /** The word to highlight in that line (counted across its rows): the one under the playhead,
+   * else the last one started; -1 with no line. */
+  const activeWord = useDerivedValue(() => {
+    const i = lineIndex.get();
+    const ls = model.get();
+    if (i < 0 || i >= ls.length) return -1;
+    const pos = timeMs.get() / 10;
+    const rows = ls[i].rows;
+    let active = -1;
+    let n = 0;
+    for (let r = 0; r < rows.length; r++) {
+      for (let k = 0; k < rows[r].length; k++) {
+        if (pos >= rows[r][k].t0) active = n;
+        n++;
+      }
+    }
+    return active;
+  });
+
   // A row wider than the picture's room shrinks, the whole caption with it.
   const room = width - style.margin * size * 2 - style.padX * size * 2;
 
@@ -180,17 +201,7 @@ export function SkiaCaption({
         const r = style.radius * size * scale;
         c.drawRRect(Skia.RRectXY(Skia.XYWHRect(b.x, b.y, b.w, b.h), r, r), paints.bg);
       }
-      // The word to highlight: the one under the playhead, else the last one started.
-      const pos = timeMs.get() / 10;
-      let active = -1;
-      let n = 0;
-      for (let r = 0; r < line.rows.length; r++) {
-        for (let k = 0; k < line.rows[r].length; k++) {
-          const w = line.rows[r][k];
-          if (pos >= w.t0) active = n;
-          n++;
-        }
-      }
+      const active = activeWord.get();
       // Baseline of each row: centred in its line height by the font's ascent and descent.
       const ascent = -metrics.ascent * scale;
       const descent = metrics.descent * scale;
@@ -262,10 +273,12 @@ export function SkiaCaption({
   const callbacks = useMemo(
     () => ({
       pickUp: () => onPickUp?.(),
-      move: (v: number) => onMove?.(v),
+      move: (v: number) => {
+        void Promise.resolve(onMove?.(v)).catch(() => yv.set(style.y));
+      },
       tap: () => onTap?.(),
     }),
-    [onPickUp, onMove, onTap],
+    [onPickUp, onMove, onTap, yv, style.y],
   );
   const { pickUp, move, tap } = callbacks;
   const gesture = useMemo(() => {

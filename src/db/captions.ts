@@ -36,7 +36,8 @@ export async function setCaptionEdits(values: ReadonlyMap<string, string | null>
     for (const [id, value] of values) {
       tx.update(segments).set({ captionEdit: value }).where(eq(segments.id, id)).run();
     }
-    if (first) tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId)).run();
+    if (first)
+      tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId)).run();
   });
 }
 
@@ -53,8 +54,5 @@ export async function getCaptionY(draftId: string): Promise<number | null> {
 
 /** Move the draft's captions (`y`: the caption's centre, 0 top … 1 bottom of the picture). */
 export async function setCaptionY(draftId: string, y: number | null): Promise<void> {
-  await db
-    .update(drafts)
-    .set({ captionY: y, lastModified: now })
-    .where(eq(drafts.id, draftId));
+  await db.update(drafts).set({ captionY: y, lastModified: now }).where(eq(drafts.id, draftId));
 }

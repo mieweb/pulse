@@ -678,11 +678,11 @@ export default function EditorScreen() {
     history.record(null);
     draft.setCaptions(new Map(edited.map(([id]) => [id, null])));
   };
-  const moveCaptions = (y: number) => {
-    setCaptionY(draftId, y).catch(() =>
-      showToast({ kind: 'error', title: 'Couldn’t move the captions', message: 'Try again.' }),
-    );
-  };
+  const moveCaptions = (y: number) =>
+    setCaptionY(draftId, y).catch((e: unknown) => {
+      showToast({ kind: 'error', title: 'Couldn’t move the captions', message: 'Try again.' });
+      throw e;
+    });
 
   /** Typing done: the word's new text (several words if typed as several; none deletes it). */
   const finishTyping = (text: string) => {

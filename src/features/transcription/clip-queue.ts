@@ -9,7 +9,7 @@ import { clipRender, effMs } from '@/utils/segment-window';
 
 import { isModelReady } from './model';
 import type { WhisperModel } from './models';
-import { setTranscriptionStatus } from './transcription-status';
+import { clearTranscriptionStatus, setTranscriptionStatus } from './transcription-status';
 import { transcribeWords } from './whisper';
 
 // Each clip is transcribed once, on its own, from the file it plays from (the untouched original
@@ -81,7 +81,7 @@ function pump(): void {
   const abort = new AbortController();
   const done = run(job, abort.signal).finally(() => {
     running = null;
-    if (pending.length === 0 || paused) setTranscriptionStatus({ kind: 'idle' });
+    if (pending.length === 0 || paused) clearTranscriptionStatus('transcribing');
     pump();
   });
   running = { job, abort, done };

@@ -2,7 +2,7 @@ import { clearClipQueue } from './clip-queue';
 import { cancelModelDownloadsExcept, deleteModelsExcept, ensureModel, isModelReady } from './model';
 import type { ModelProgress } from './model';
 import type { WhisperModel } from './models';
-import { setTranscriptionStatus } from './transcription-status';
+import { clearTranscriptionStatus, setTranscriptionStatus } from './transcription-status';
 import { releaseVad } from './vad';
 import { releaseWhisper } from './whisper';
 
@@ -29,7 +29,7 @@ export async function applyModelSelection(model: WhisperModel | null): Promise<v
     if (!model) await releaseVad();
     deleteModelsExcept(model);
   } finally {
-    setTranscriptionStatus({ kind: 'idle' });
+    clearTranscriptionStatus('deleting');
   }
 }
 
@@ -40,11 +40,17 @@ export async function applyModelSelection(model: WhisperModel | null): Promise<v
 export async function downloadModel(model: WhisperModel): Promise<void> {
   if (isModelReady(model)) return;
   setTranscriptionStatus({ kind: 'downloading', bytesWritten: 0, totalBytes: model.approxBytes });
+  // Published once per whole percent (what's shown), not per chunk, so the screens showing it
+  // don't re-render for nothing.
+  let shown = '';
   try {
-    await ensureModel(model, ({ bytesWritten, totalBytes }) =>
-      setTranscriptionStatus({ kind: 'downloading', bytesWritten, totalBytes }),
-    );
+    await ensureModel(model, ({ bytesWritten, totalBytes }) => {
+      const at = `${Math.floor((100 * bytesWritten) / Math.max(1, totalBytes))}/${totalBytes}`;
+      if (at === shown) return;
+      shown = at;
+      setTranscriptionStatus({ kind: 'downloading', bytesWritten, totalBytes });
+    });
   } finally {
-    setTranscriptionStatus({ kind: 'idle' });
+    clearTranscriptionStatus('downloading');
   }
 }
