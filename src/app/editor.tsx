@@ -1,7 +1,7 @@
 import { probe, PulsePreview } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
   Dimensions,
@@ -57,6 +57,9 @@ import {
   timelineLayout,
 } from '@/features/editor/timeline-geometry';
 import { captionYQuery, setCaptionY } from '@/db/captions';
+import { allSegments } from '@/db/drafts';
+import { pruneFrameCache } from '@/features/editor/filmstrip';
+import { toMergeClip } from '@/features/export/editor-merge';
 import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
@@ -75,6 +78,7 @@ import {
   MIN_WORD_CS,
   removeWord,
   replaceWordText,
+  seedStarts,
   setTimes,
   splitAt,
   type CaptionWord,
@@ -83,6 +87,7 @@ import {
   clipSpans,
   clipWords,
   lineAt,
+  timelineCs,
   toFileCs,
   type CaptionLine,
 } from '@/features/transcription/compose';
@@ -100,7 +105,8 @@ const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
 /** Each file's frame rate (for frame-snapped trims), probed once per file (30 if the probe fails). */
 const frameRates = new Map<string, number>();
 function useFrameRates(uris: readonly string[]) {
-  const [, setKnown] = useState(0);
+  // The rates known to this editor, a new map as each probe answers.
+  const [rates, setRates] = useState(() => new Map(frameRates));
   const key = [...new Set(uris)].join('\n');
   useEffect(() => {
     let live = true;
@@ -113,7 +119,7 @@ function useFrameRates(uris: readonly string[]) {
         } catch {
           frameRates.set(uri, 30);
         }
-        if (live) setKnown((n) => n + 1);
+        if (live) setRates(new Map(frameRates));
       }
     })();
     return () => {
@@ -121,7 +127,7 @@ function useFrameRates(uris: readonly string[]) {
     };
   }, [key]);
   // Unknown until the probe answers (no trim before then: it would snap to a guessed rate).
-  return (uri: string) => frameRates.get(uri) ?? null;
+  return (uri: string) => rates.get(uri) ?? null;
 }
 
 /**
@@ -129,12 +135,12 @@ function useFrameRates(uris: readonly string[]) {
  * clips under a centre playhead, and a bottom bar of tools. Every edit applies at once (no Save),
  * with undo/redo in the header; trims snap to source frames as the engine does.
  *
- * The bottom bar's main tools open a mode, and each mode acts on what's under the playhead until
- * its ✓: Edit (or a tap on a clip) edits the clip there, and moving the playhead onto another clip
- * moves the selection with it (nothing is selected on open); Captions picks and downloads a model (every clip is then
- * transcribed in the background) and edits the caption there. Captions show over the preview
- * (drag one to move them all) and on a lane under the clips; their edits are kept per clip, so
- * trims and reorders carry them along.
+ * The bottom bar's main tools open a mode until its ✓. Edit (or a tap on a clip) edits the clip
+ * under the playhead, and moving the playhead onto another clip moves the selection with it
+ * (nothing is selected on open). Captions picks and downloads a model (every clip is then
+ * transcribed in the background); a tapped word is edited or deleted, and sentences are split or
+ * merged at the playhead. Captions show over the preview (drag one to move them all) and on a
+ * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
  */
 export default function EditorScreen() {
   // Spike: the editor's renders (commits), read from the debugger.
@@ -192,12 +198,7 @@ export default function EditorScreen() {
     };
   }, [ctl]);
   // The word being typed (its clip and index in the clip's words), and its text as it was.
-  const [typing, setTyping] = useState<{
-    kind: 'word';
-    clipId: string;
-    i: number;
-    text: string;
-  } | null>(null);
+  const [typing, setTyping] = useState<{ clipId: string; i: number; text: string } | null>(null);
   // A scale for the timeline to zoom to (opening, a caption or a clip to edit), and how to ask.
   const [zoomTo, setZoomTo] = useState<(ZoomRequest & { seq: number }) | null>(null);
   const requestZoom = (req: ZoomRequest) => setZoomTo((z) => ({ ...req, seq: (z?.seq ?? 0) + 1 }));
@@ -239,22 +240,31 @@ export default function EditorScreen() {
 
   // In edit mode the clip being edited is the one under the playhead: scrubbing, flinging or
   // playing onto another clip moves the selection (and its red frame) with it.
-  const atClip = usePlayheadClip(layout.starts, values.timeMs, mode === 'edit');
-  const current = atClip;
+  const current = usePlayheadClip(layout.starts, values.timeMs, mode === 'edit');
   if (current < 0 && tools !== 'clip') setTools('clip');
 
-  // Android back leaves crop, typing, the speed row or a mode first, then the editor.
+  // Android back leaves crop, typing, the speed row or a mode first, then the editor (only while
+  // the editor is on screen: a screen pushed over it handles its own back).
+  useFocusEffect(
+    useCallback(() => {
+      if (!cropping && !typing && tools === 'clip' && mode === 'main') return;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (cropping) setCropping(null);
+        else if (typing) setTyping(null);
+        else if (tools !== 'clip') setTools('clip');
+        else setMode('main');
+        return true;
+      });
+      return () => sub.remove();
+    }, [cropping, typing, tools, mode]),
+  );
+
+  // Once per app run: the filmstrip's disk cache keeps only frames of files a clip still plays.
   useEffect(() => {
-    if (!cropping && !typing && tools === 'clip' && mode === 'main') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (cropping) setCropping(null);
-      else if (typing) setTyping(null);
-      else if (tools !== 'clip') setTools('clip');
-      else setMode('main');
-      return true;
-    });
-    return () => sub.remove();
-  }, [cropping, typing, tools, mode]);
+    allSegments()
+      .then((rows) => pruneFrameCache(rows.map((s) => toMergeClip(s).uri)))
+      .catch(() => {});
+  }, []);
 
   // Leave when the draft has no clips left.
   useEffect(() => {
@@ -284,7 +294,7 @@ export default function EditorScreen() {
     const target = c
       ? clipZoom(c.lengthMs, layout.totalMs, w).target
       : draftZoom(layout.totalMs, w);
-    setZoomTo((z) => ({ min: target, max: target, target, instant: true, seq: (z?.seq ?? 0) + 1 }));
+    requestZoom({ min: target, max: target, target, instant: true });
   }, [clips, clipId, layout.totalMs]);
   const trackStyle = useAnimatedStyle(() => ({ opacity: placed.get() }));
   const coverStyle = useAnimatedStyle(() => ({ opacity: values.covered.get() }));
@@ -507,8 +517,26 @@ export default function EditorScreen() {
       ? lines.findIndex((l) => l.clipId === picked.clipId && picked.i >= l.from && picked.i < l.to)
       : -1;
   const selWord = selLine >= 0 && picked ? picked.i - lines[selLine].from : -1;
-  const scrubStart = ctl.beginDrag;
-  const togglePlay = ctl.toggle;
+  // A selection (and typing) is an index in the clip's words: once the words are others (undo,
+  // redo, Reset, another model), it's let go rather than moved onto another word.
+  const letGo = () => {
+    setPicked(null);
+    setTyping(null);
+  };
+  const modelId = captions.model?.id ?? null;
+  const [pickedModel, setPickedModel] = useState(modelId);
+  if (pickedModel !== modelId) {
+    setPickedModel(modelId);
+    letGo();
+  }
+  const undo = () => {
+    letGo();
+    history.undo();
+  };
+  const redo = () => {
+    letGo();
+    history.redo();
+  };
 
   /** A tap on a caption selects the word tapped and moves the playhead to its start (in a gap:
    * lets the selection go, the playhead to where it was tapped). On the lane (`toggle`), a tap on
@@ -534,10 +562,18 @@ export default function EditorScreen() {
   };
 
   const segmentOf = (id: string) => draft.segments.find((s) => s.id === id);
-  /** A clip's caption words as they are now (its edit, else the model's). */
+  /** A clip's caption words as they are now (its edit, else the model's with the sentences shown
+   * marked, so the first edit keeps them). */
   const wordsOf = (clipId: string): CaptionWord[] => {
     const seg = segmentOf(clipId);
-    return (seg && clipWords(seg, captions.clipRows)?.words) || [];
+    const own = seg && clipWords(seg, captions.clipRows);
+    if (!own) return [];
+    const shown = lines.filter((l) => l.clipId === clipId);
+    return seedStarts(
+      own.words,
+      shown.map((l) => l.from),
+      shown.length ? shown[shown.length - 1].to : 0,
+    );
   };
   /** Store a clip's caption words, in the file it plays (one undo step). */
   const saveCaptionWords = (clipId: string, words: CaptionWord[]) => {
@@ -547,9 +583,8 @@ export default function EditorScreen() {
     draft.setCaptions(new Map([[clipId, JSON.stringify({ file: clipRender(seg).file, words })]]));
   };
 
-  // What the selected word's grips may do (timeline ms), worked out once per selection: its box,
-  // how far each edge can go, and whether it shares an edge with a neighbour (one drag moves
-  // both).
+  // What the selected word's grips may do (timeline ms): its box and how far each edge can go
+  // (each edge moves only its own word).
   const spans = clipSpans(draft.segments);
   const captionDrag = (() => {
     if (selLine < 0) return null;
@@ -565,7 +600,9 @@ export default function EditorScreen() {
         : null;
     const lo = prev ? prev.t1 * 10 : span.offsetMs;
     const hi = next ? next.t0 * 10 : span.offsetMs + span.lengthMs;
-    const min = MIN_WORD_CS * 10;
+    // The shortest a word can be, on the timeline (MIN_WORD_CS is in the file's time; slowed
+    // down, a word is longer on the timeline).
+    const min = MIN_WORD_CS * 10 * Math.max(1, 1 / span.speed);
     const w = ws[selWord];
     if (!w) return null;
     const pw = ws[selWord - 1];
@@ -584,25 +621,28 @@ export default function EditorScreen() {
   /** A selected word's grip let go: `side` 1 its start, 2 its end, at timeline `ms` (that word
    * only). Saved in the clip's file time, one undo step. */
   const onCaptionDragEnd = (side: number, ms: number) => {
-    if (selLine < 0 || !captionDrag) return;
-    const line = lines[selLine];
-    const span = spans.get(line.clipId);
-    if (!span) return;
-    const words = wordsOf(line.clipId);
-    const cs = toFileCs(span, ms);
-    const i = line.from + selWord;
-    let next: CaptionWord[] | null = null;
-    if (side === 1) next = setTimes(words, [{ i, t0: cs }]);
-    else if (side === 2) next = setTimes(words, [{ i, t1: cs }]);
-    if (next) {
+    const line = selLine >= 0 ? lines[selLine] : null;
+    const span = line ? spans.get(line.clipId) : undefined;
+    if (!line || !span || !captionDrag) {
+      ctl.endScrub(ctl.lastMs);
+      return;
+    }
+    // The word's edges as they'll be drawn (timeline ms): saved (if moved) and mapped back as the
+    // captions are, so the playhead lands inside the word.
+    let t0 = captionDrag.box.t0;
+    let t1 = captionDrag.box.t1;
+    if (Math.abs(ms - (side === 1 ? t0 : t1)) >= 1) {
+      const i = line.from + selWord;
+      const cs = toFileCs(span, ms);
+      const words = setTimes(wordsOf(line.clipId), i, side === 1 ? { t0: cs } : { t1: cs });
       haptics.drop();
-      saveCaptionWords(line.clipId, next);
+      saveCaptionWords(line.clipId, words);
+      t0 = timelineCs(span, words[i].t0) * 10;
+      t1 = timelineCs(span, words[i].t1) * 10;
     }
     // The preview and the playhead on the edge that was moved (for its end, a hair inside, so a
-    // word that starts right there doesn't take the selection).
-    const at = side === 2 ? Math.max(captionDrag.box.t0, ms - 1) : ms;
-    ctl.endScrub(at);
-    ctl.seekTo(at);
+    // word that starts right there isn't the one under it).
+    ctl.endScrub(side === 1 ? t0 : Math.max(t0, t1 - 1));
   };
 
   const editCaption = () => {
@@ -610,7 +650,7 @@ export default function EditorScreen() {
     ctl.pause();
     const line = lines[selLine];
     const w = line.words?.[selWord];
-    setTyping({ kind: 'word', clipId: line.clipId, i: line.from + selWord, text: w?.text ?? '' });
+    setTyping({ clipId: line.clipId, i: line.from + selWord, text: w?.text ?? '' });
   };
   const deleteCaption = () => {
     if (selLine < 0) return;
@@ -634,6 +674,7 @@ export default function EditorScreen() {
     const edited = [...draft.captionEdits].filter(([, v]) => v != null);
     if (!edited.length) return;
     haptics.tap();
+    letGo();
     history.record(null);
     draft.setCaptions(new Map(edited.map(([id]) => [id, null])));
   };
@@ -649,13 +690,10 @@ export default function EditorScreen() {
     setTyping(null);
     if (!t) return;
     const clean = text.trim();
-    if (t.kind === 'word') {
-      // Emptied: the word is gone, and so is the selection.
-      if (!clean) setPicked(null);
-      if (clean !== t.text)
-        saveCaptionWords(t.clipId, replaceWordText(wordsOf(t.clipId), t.i, clean));
-      return;
-    }
+    // Emptied: the word is gone, and so is the selection.
+    if (!clean) setPicked(null);
+    if (clean !== t.text)
+      saveCaptionWords(t.clipId, replaceWordText(wordsOf(t.clipId), t.i, clean));
   };
 
   const { timeMs } = values;
@@ -664,7 +702,6 @@ export default function EditorScreen() {
     return { text, defaultValue: text } as object;
   });
 
-  const active = sel ?? null;
   const cropClip = cropping ? clips.find((c) => c.id === cropping.id) : null;
   const aspect = options ? options.width / options.height : 9 / 16;
   const fitW = Math.min(stage.w, stage.h * aspect);
@@ -686,13 +723,13 @@ export default function EditorScreen() {
             <HeaderButton
               icon="arrow.uturn.backward"
               label="Undo"
-              onPress={history.undo}
+              onPress={undo}
               disabled={!history.canUndo}
             />
             <HeaderButton
               icon="arrow.uturn.forward"
               label="Redo"
-              onPress={history.redo}
+              onPress={redo}
               disabled={!history.canRedo}
             />
             {/* Finished editing: on to the export screen (back returns here). */}
@@ -708,7 +745,7 @@ export default function EditorScreen() {
             setStage({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
           }
           // Plays or pauses, in any mode (watch an edit without leaving edit mode).
-          onPress={togglePlay}
+          onPress={ctl.toggle}
           accessibilityRole="button"
           accessibilityLabel={playing ? 'Pause' : 'Play'}>
           {/* Created once the area is measured, at the picture's size. */}
@@ -765,7 +802,7 @@ export default function EditorScreen() {
             </Text>
           </View>
           <Pressable
-            onPress={togglePlay}
+            onPress={ctl.toggle}
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={playing ? 'Pause' : 'Play'}
@@ -804,7 +841,7 @@ export default function EditorScreen() {
               }}
               onCaptionDragEnd={onCaptionDragEnd}
               zoomTo={zoomTo}
-              onDragStart={scrubStart}
+              onDragStart={ctl.beginDrag}
               onScrubEnd={ctl.endScrub}
               onTap={onTap}
               onTrimStart={onTrimStart}
@@ -820,7 +857,7 @@ export default function EditorScreen() {
               selected={current}
               values={values}
               onSelect={(id) => tapClip(clips.findIndex((c) => c.id === id))}
-              onDragStart={scrubStart}
+              onDragStart={ctl.beginDrag}
               onScrubEnd={ctl.endScrub}
               onReorderStart={ctl.pause}
               onReorder={commitOrder}
@@ -862,7 +899,7 @@ export default function EditorScreen() {
               onModel={() => router.push('/on-device-ai')}
               onReset={resetCaptions}
             />
-          ) : !active ? (
+          ) : !sel ? (
             <MainToolbar
               canEdit={clips.length > 0}
               onEdit={() => {
@@ -885,16 +922,16 @@ export default function EditorScreen() {
           ) : tools === 'speed' ? (
             <SpeedRow
               speeds={speedMenu(customSpeeds)}
-              speed={active.edit.speed}
+              speed={sel.edit.speed}
               onPick={(s) => edit('speed', (e) => ({ ...e, speed: s }))}
               onDone={() => setTools('clip')}
             />
           ) : (
             <ClipToolbar
-              muted={active.edit.muted}
-              speed={active.edit.speed}
-              editable={active.editable}
-              edited={active.editKey !== null || !active.editable}
+              muted={sel.edit.muted}
+              speed={sel.edit.speed}
+              editable={sel.editable}
+              edited={sel.editKey !== null || !sel.editable}
               onFlip={() => edit(null, flippedEdit)}
               onRotate={() => edit('rotate', rotated)}
               onCrop={startCrop}

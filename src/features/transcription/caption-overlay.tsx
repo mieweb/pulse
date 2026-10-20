@@ -26,7 +26,5 @@ export function CaptionOverlay({ lines, positionMs, style, width, height }: Prop
     timeMs.set(positionMs);
   }, [positionMs, timeMs]);
   if (width <= 0 || height <= 0) return null;
-  return (
-    <SkiaCaption lines={lines} timeMs={timeMs} style={style} width={width} height={height} />
-  );
+  return <SkiaCaption lines={lines} timeMs={timeMs} style={style} width={width} height={height} />;
 }

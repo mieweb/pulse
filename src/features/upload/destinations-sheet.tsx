@@ -27,7 +27,6 @@ import { type DestinationOption, useDestinations } from './use-destinations';
  */
 const MAX_FITTED = 5;
 
-
 /**
  * Whether the sheet opens in its scrolling 60% → full-height mode: past `MAX_FITTED` rows, or at
  * any count when large text or a short screen would clip a fitted sheet (`tallSheetFits`). An

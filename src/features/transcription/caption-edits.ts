@@ -3,8 +3,8 @@ import type { TranscriptWord } from './whisper';
 
 // Edits to a clip's words (in the file's time, centiseconds), as the editor makes them on its
 // captions. Edited words carry where each sentence (a caption box) starts, `start`, so a split or
-// a merge sticks instead of being regrouped: a clip's first edit freezes the sentences its words
-// were grouped into, and every edit here keeps the starts right.
+// a merge sticks instead of being regrouped: a clip's first edit freezes the sentences shown
+// (`seedStarts`), and every edit here keeps the starts right.
 
 /** A clip's word as edited: `start` on the first word of each sentence. */
 export type CaptionWord = TranscriptWord & { start?: boolean };
@@ -22,14 +22,24 @@ export function withStarts(words: readonly CaptionWord[]): CaptionWord[] {
   return out;
 }
 
-/** The sentences, as [from, to) ranges of word indices. */
-export function sentences(words: readonly CaptionWord[]): [number, number][] {
-  const out: [number, number][] = [];
-  words.forEach((w, i) => {
-    if (i === 0 || w.start) out.push([i, i + 1]);
-    else out[out.length - 1][1] = i + 1;
-  });
-  return out;
+/**
+ * `words` with sentence starts where the editor shows its sentences: the starts already there;
+ * else (the model's words, never edited) the shown sentences' first words (`froms`, ascending)
+ * and the first word after the last shown one (`end`), the words outside them grouped on their
+ * own. So a clip's first edit keeps the sentences on screen as they are (its trim and speed
+ * decide how they were grouped).
+ */
+export function seedStarts(
+  words: readonly CaptionWord[],
+  froms: readonly number[],
+  end: number,
+): CaptionWord[] {
+  const w = withStarts(words);
+  if (words.some((x) => x.start) || !froms.length) return w;
+  for (let k = froms[0]; k < Math.min(end, w.length); k++) delete w[k].start;
+  for (const f of froms) if (w[f]) w[f].start = true;
+  if (w[end]) w[end].start = true;
+  return w;
 }
 
 /** `text` as words spread over `t0` … `t1` by length (a longer word gets more of the time). */
@@ -48,32 +58,27 @@ function spread(text: string, t0: number, t1: number): CaptionWord[] {
   return out;
 }
 
-/** Words `from` … `to` replaced by `text` over the same time, starting a sentence if they did. */
-function replaceRange(
+/** Word `i` with new text over its time (several words if it's typed as several; none removes
+ * it), starting a sentence if it did. */
+export function replaceWordText(
   words: readonly CaptionWord[],
-  from: number,
-  to: number,
+  i: number,
   text: string,
 ): CaptionWord[] {
   const w = withStarts(words);
-  const t0 = w[from]?.t0 ?? 0;
-  const t1 = w[to - 1]?.t1 ?? t0;
+  const t0 = w[i]?.t0 ?? 0;
+  const t1 = w[i]?.t1 ?? t0;
   const made = spread(text, t0, t1);
-  if (made.length && w[from]?.start) made[0].start = true;
-  const rest = w.slice(to);
+  if (made.length && w[i]?.start) made[0].start = true;
+  const rest = w.slice(i + 1);
   // The sentence's first word went with nothing in its place: the next word starts it.
-  if (!made.length && w[from]?.start && rest.length && !rest[0].start) rest[0].start = true;
-  return [...w.slice(0, from), ...made, ...rest];
+  if (!made.length && w[i]?.start && rest.length && !rest[0].start) rest[0].start = true;
+  return [...w.slice(0, i), ...made, ...rest];
 }
 
-/** One word with new text over its time (several words if it's typed as several). */
-export function replaceWordText(words: readonly CaptionWord[], i: number, text: string) {
-  return replaceRange(words, i, i + 1, text);
-}
-
-/** One word removed. */
+/** Word `i` removed. */
 export function removeWord(words: readonly CaptionWord[], i: number) {
-  return replaceRange(words, i, i + 1, '');
+  return replaceWordText(words, i, '');
 }
 
 /** A new sentence starts at word `i`. */
@@ -90,18 +95,17 @@ export function mergeWithNext(words: readonly CaptionWord[], to: number): Captio
   return w;
 }
 
-/** New times for some words (centiseconds), each kept at least MIN_WORD_CS long. */
+/** Word `i`'s new start or end (centiseconds), the word kept at least MIN_WORD_CS long. */
 export function setTimes(
   words: readonly CaptionWord[],
-  changes: readonly { i: number; t0?: number; t1?: number }[],
+  i: number,
+  t: { t0?: number; t1?: number },
 ): CaptionWord[] {
   const w = withStarts(words);
-  for (const c of changes) {
-    const x = w[c.i];
-    if (!x) continue;
-    if (c.t0 !== undefined) x.t0 = Math.round(c.t0);
-    if (c.t1 !== undefined) x.t1 = Math.round(c.t1);
-    if (x.t1 - x.t0 < MIN_WORD_CS) x.t1 = x.t0 + MIN_WORD_CS;
-  }
+  const x = w[i];
+  if (!x) return w;
+  if (t.t0 !== undefined) x.t0 = Math.round(t.t0);
+  if (t.t1 !== undefined) x.t1 = Math.round(t.t1);
+  if (x.t1 - x.t0 < MIN_WORD_CS) x.t1 = x.t0 + MIN_WORD_CS;
   return w;
 }

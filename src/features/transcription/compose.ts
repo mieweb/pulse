@@ -18,8 +18,6 @@ export type CaptionLine = TranscriptLine & {
 /** The draft's captions, composed from what its clips have so far. */
 export type Composed = {
   lines: CaptionLine[];
-  /** The timeline's length, ms. */
-  durationMs: number;
   /** Clips that speak with no transcript of the file they play yet (the queue's work). */
   missing: string[];
   /** Clips the model couldn't transcribe. */
@@ -66,20 +64,14 @@ export function composeCaptions(
     if (!r.muted && !own) missing.push(s.id);
     if (own?.failed) failed.push(s.id);
     if (own && own.words.length) {
-      const at = (ms: number) => (offsetMs + (ms - r.inMs) / r.speed) / 10;
-      const startCs = offsetMs / 10;
-      const endCs = (offsetMs + lengthMs) / 10;
+      const span: ClipSpan = { offsetMs, lengthMs, inMs: r.inMs, outMs: r.outMs, speed: r.speed };
       // Each timeline word, and the index of the clip word it came from.
       const index = new Map<TranscriptWord, number>();
       const words: TranscriptWord[] = [];
       own.words.forEach((w, i) => {
         const mid = ((w.t0 + w.t1) / 2) * 10;
         if (mid < r.inMs || mid >= r.outMs) return;
-        const mapped = {
-          text: w.text,
-          t0: Math.round(Math.max(startCs, at(w.t0 * 10))),
-          t1: Math.round(Math.min(endCs, at(w.t1 * 10))),
-        };
+        const mapped = { text: w.text, t0: timelineCs(span, w.t0), t1: timelineCs(span, w.t1) };
         index.set(mapped, i);
         words.push(mapped);
       });
@@ -118,7 +110,7 @@ export function composeCaptions(
     }
     offsetMs += lengthMs;
   }
-  return { lines, durationMs: Math.round(offsetMs), missing, failed };
+  return { lines, missing, failed };
 }
 
 /** Where a clip sits on the timeline and the part of its file it plays (ms). */
@@ -147,6 +139,15 @@ export function clipSpans(segments: readonly Segment[]): Map<string, ClipSpan> {
 /** Timeline ms → the clip's file time, centiseconds. */
 export const toFileCs = (span: ClipSpan, tlMs: number) =>
   (span.inMs + (tlMs - span.offsetMs) * span.speed) / 10;
+
+/** The clip's file time (centiseconds) → timeline centiseconds, as captions are drawn: kept
+ * within the clip, rounded to whole centiseconds. */
+export function timelineCs(span: ClipSpan, fileCs: number): number {
+  const cs = (span.offsetMs + (fileCs * 10 - span.inMs) / span.speed) / 10;
+  const lo = span.offsetMs / 10;
+  const hi = (span.offsetMs + span.lengthMs) / 10;
+  return Math.round(Math.min(hi, Math.max(lo, cs)));
+}
 
 /** The line at timeline `posCs` (centiseconds): its index in `lines` (sorted), or -1. */
 export function lineAt(lines: readonly TranscriptLine[], posCs: number): number {

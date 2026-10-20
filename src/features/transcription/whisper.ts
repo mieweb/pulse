@@ -1,10 +1,5 @@
 import { extractAudio } from '@mieweb/pulse-editor';
-import {
-  initParakeet,
-  initWhisper,
-  type ParakeetContext,
-  type WhisperContext,
-} from 'whisper.rn';
+import { initParakeet, initWhisper, type ParakeetContext, type WhisperContext } from 'whisper.rn';
 
 import { wholeWords } from './group-lines';
 import { ensureModel, modelFileUri } from './model';

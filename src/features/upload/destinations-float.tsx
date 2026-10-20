@@ -44,9 +44,7 @@ export function DestinationsFloat() {
   return (
     // The lane runs from the left margin to just short of the + FAB, so a long host truncates
     // instead of sliding under it; taps outside the pill fall through to the list.
-    <View
-      pointerEvents="box-none"
-      style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
+    <View pointerEvents="box-none" style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
       <Pressable
         // The count picks the sheet's size up front (`destinationsSheetOptions`).
         onPress={() => {

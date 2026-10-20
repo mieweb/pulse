@@ -23,5 +23,6 @@ export function usePlayheadClip(
     },
     [starts, active],
   );
-  return active ? index : -1;
+  // (Until the reaction answers, a clip just deleted may still be the one heard.)
+  return active && index < starts.length ? index : -1;
 }

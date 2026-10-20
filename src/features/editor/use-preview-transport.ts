@@ -23,6 +23,10 @@ export type PlayheadValues = {
   playing: SharedValue<boolean>;
 };
 
+/** How far the preview's reported paused time may be from where the playhead was sent and still
+ * be that seek's frame (a frame at 24 fps is 42 ms). */
+const FRAME_SLACK_MS = 50;
+
 /**
  * Owns the preview's handle and keeps the playhead on the UI thread:
  * - playing: `onTime` (~12 Hz) anchors the playhead and a frame callback moves it at wall-clock
@@ -32,10 +36,6 @@ export type PlayheadValues = {
  * Nothing on JS runs per frame. Also sets the audio session for playback (sound with the silent
  * switch on) and pauses when the app leaves the foreground.
  */
-/** How far the preview's reported paused time may be from where the playhead was sent and still
- * be that seek's frame (a frame at 24 fps is 42 ms). */
-const FRAME_SLACK_MS = 50;
-
 export function usePreviewTransport() {
   const timeMs = useSharedValue(0);
   const totalMs = useSharedValue(0);
@@ -89,41 +89,55 @@ export function usePreviewTransport() {
         c.inflight = true;
         ref
           .seek(ms)
-          .catch(() => {})
-          .finally(() => {
+          .then(
+            (landed) => landed,
+            () => null,
+          )
+          .then((landed) => {
             c.inflight = false;
             const next = c.pending;
             c.pending = null;
-            if (next != null) c.seek(next);
-            else if (c.playAfterSeek) {
+            if (next != null) {
+              c.seek(next);
+              return;
+            }
+            // The last seek's frame (paused reports during seeks are earlier ones', see onTime).
+            if (landed != null && !c.dragging && !c.playing && c.afterBuild == null) {
+              c.settle(landed);
+            }
+            if (c.playAfterSeek) {
               c.playAfterSeek = false;
               c.ref?.play();
             }
           });
       },
+      /** The preview paused on the frame at `ms`: the playhead goes there, unless it's the frame
+       * for where the playhead was sent (it stays where it was sent). */
+      settle: (ms: number) => {
+        if (c.target != null && Math.abs(ms - c.target) <= FRAME_SLACK_MS) {
+          c.lastMs = c.target;
+          timeMs.set(c.target);
+        } else {
+          c.target = null;
+          c.lastMs = ms;
+          timeMs.set(ms);
+        }
+      },
       onTime: (ms: number, isPlaying: boolean) => {
         // The first frame (0) of a preview about to seek to where the editor opened isn't news.
         if (c.placeMs != null) return;
-        if (!c.dragging) {
+        // Paused with a seek still on its way (or one waiting for a rebuild): an earlier seek's
+        // frame, not where the playhead is going (the last seek's landing settles it).
+        const superseded = !isPlaying && (c.inflight || c.pending != null || c.afterBuild != null);
+        if (isPlaying && !c.dragging) {
           c.lastMs = ms;
-          if (isPlaying) {
-            anchorMs.set(ms);
-            anchorAt.set(Date.now());
-          }
+          anchorMs.set(ms);
+          anchorAt.set(Date.now());
         }
         // Stop the frame callback's extrapolation before snapping to the paused frame.
         c.setPlayingState(isPlaying);
         if (isPlaying) c.target = null;
-        if (!isPlaying && !c.dragging) {
-          // The frame for where the playhead was sent: it stays where it was sent.
-          if (c.target != null && Math.abs(ms - c.target) <= FRAME_SLACK_MS) {
-            c.lastMs = c.target;
-            timeMs.set(c.target);
-          } else {
-            c.target = null;
-            timeMs.set(ms);
-          }
-        }
+        if (!isPlaying && !c.dragging && !superseded) c.settle(ms);
       },
       onStatus: (st: PreviewStatus) => {
         setStatus(st);
@@ -181,6 +195,7 @@ export function usePreviewTransport() {
        * preview, without showing its first frame. */
       place: (ms: number) => {
         c.lastMs = ms;
+        c.target = ms;
         timeMs.set(ms);
         if (ms <= 0) return;
         c.placeMs = ms;
@@ -190,12 +205,14 @@ export function usePreviewTransport() {
       seekTo: (ms: number) => {
         const t = Math.max(0, Math.min(ms, Math.max(0, c.totalMs - 1)));
         c.target = t;
+        c.afterBuild = null;
         timeMs.set(t);
         c.seek(t);
       },
       beginDrag: () => {
         c.dragging = true;
         c.target = null;
+        c.afterBuild = null;
         c.playAfterSeek = false;
         if (c.playing) {
           c.ref?.pause();
@@ -204,11 +221,13 @@ export function usePreviewTransport() {
         c.ref?.setScrubbing(true);
       },
       onTarget: (ms: number) => c.seek(ms),
-      /** A scrub ended at `ms`: one exact seek there. */
+      /** A scrub (or a caption grip's drag) ended at `ms`: the playhead there, one exact seek. */
       endScrub: (ms: number) => {
         c.ref?.setScrubbing(false);
         c.dragging = false;
         c.target = ms;
+        c.afterBuild = null;
+        timeMs.set(ms);
         c.seek(ms);
       },
       /** A trim ended: the playhead goes to the new edge once the trimmed timeline is up. */
@@ -218,6 +237,8 @@ export function usePreviewTransport() {
         c.lastMs = ms;
         c.afterBuild = ms;
         c.target = ms;
+        // A drag's last seek still waiting is the untrimmed clip's: dropped, the rebuild's goes.
+        c.pending = null;
         timeMs.set(ms);
       },
     };

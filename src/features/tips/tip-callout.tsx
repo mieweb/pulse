@@ -131,7 +131,6 @@ const MAX_WIDTH = 320;
 const ARROW = 16;
 const ARROW_INSET = Radius.card;
 
-
 /**
  * Where the screen's callout tip is drawn: put it last in a full-screen screen's root, over
  * everything. It lets every touch through except the callout's ✕.

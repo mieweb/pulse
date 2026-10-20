@@ -56,6 +56,11 @@ export const draftListQuery = db
   .groupBy(drafts.id)
   .orderBy(desc(drafts.lastModified));
 
+/** Every draft's clips (what the editor's caches keep). */
+export function allSegments() {
+  return db.select().from(segments);
+}
+
 export function segmentsForDraft(draftId: string) {
   return db
     .select()

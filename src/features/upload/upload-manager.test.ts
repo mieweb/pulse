@@ -231,7 +231,7 @@ jest.mock('./capability-token', () => ({
 // eslint-disable-next-line import/first
 import { deleteDestination } from '@/db/destinations';
 // eslint-disable-next-line import/first
-import { burnUploadPairing, getDraftName, setUploadDestination } from '@/db/drafts';
+import { burnUploadPairing, setUploadDestination } from '@/db/drafts';
 // eslint-disable-next-line import/first
 import { keepAlive } from './keep-alive';
 // eslint-disable-next-line import/first
