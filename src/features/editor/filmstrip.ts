@@ -2,7 +2,7 @@ import { frames as grabFrames } from '@mieweb/pulse-editor';
 import { Skia, type SkImage } from '@shopify/react-native-skia';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useEffect, useSyncExternalStore } from 'react';
-import { PixelRatio } from 'react-native';
+import { PixelRatio, Platform } from 'react-native';
 
 import type { ClipCrop } from '@/utils/segment-window';
 
@@ -28,9 +28,10 @@ import { FILM_HEIGHT } from './clip-tile';
 const STEP_MS = 31.25;
 /** Every clip's whole source gets frames this far apart (source ms), before any detail. */
 const COARSE_MS = 2000;
-/** Frames per call to the decoder, and calls running at once. */
+/** Frames per call to the decoder, and calls running at once (Android's frames come from one
+ * warm extractor, which a second file would make prepare again for each batch). */
 const BATCH = 12;
-const CONCURRENT = 2;
+const CONCURRENT = Platform.OS === 'android' ? 1 : 2;
 /** Frames that landed are shown together, at most this often. */
 const NOTIFY_MS = 100;
 /** Decoded frames kept in memory (about 140 KB each at the size asked for). */
