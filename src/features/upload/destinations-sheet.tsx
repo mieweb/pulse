@@ -101,14 +101,13 @@ export function DestinationsSheet() {
   };
 
   const rows = destinations.map((d) => (
-    <View key={d.id}>
-      <DestinationRow
-        server={d.server}
-        expiryLabel={d.expiryLabel}
-        compat={compatOf(d.server)}
-        onRemove={() => remove([d])}
-      />
-    </View>
+    <DestinationRow
+      key={d.id}
+      server={d.server}
+      expiryLabel={d.expiryLabel}
+      compat={compatOf(d.server)}
+      onRemove={() => remove([d])}
+    />
   ));
 
   // The list runs to the sheet's bottom edge; its own bottom padding clears the home indicator.
@@ -127,15 +126,13 @@ export function DestinationsSheet() {
       <View style={styles.list}>{rows}</View>
 
       {/* The app's destructive text action, centred below the list. Only for two or more: a single
-          row already has its own trash. It moves with the rows as they reflow. */}
+          row already has its own trash. */}
       {destinations.length > 1 && (
-        <View>
-          <DestructiveAction
-            label="Remove all"
-            accessibilityLabel="Remove all destinations"
-            onPress={() => remove(destinations)}
-          />
-        </View>
+        <DestructiveAction
+          label="Remove all"
+          accessibilityLabel="Remove all destinations"
+          onPress={() => remove(destinations)}
+        />
       )}
     </>
   );

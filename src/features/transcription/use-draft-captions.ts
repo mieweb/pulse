@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 
 import {
@@ -73,15 +73,17 @@ export function useDraftCaptions(draftId: string, segments: readonly Segment[]):
 
   // The clips still missing words, asked for whenever that set changes (or the model arrives).
   const missingKey = composed.missing.join('|');
-  useEffect(() => {
-    if (!model || !ready || !missingKey) return;
-    const ids = new Set(missingKey.split('|'));
+  // `segments` is read for the request (the latest); `missingKey` is what decides to ask again.
+  const request = useEffectEvent((key: string, m: WhisperModel) => {
+    const ids = new Set(key.split('|'));
     requestClipTranscripts(
       segments.filter((s) => ids.has(s.id)),
-      model,
+      m,
     );
-    // `segments` is read for the request; `missingKey` is what decides to ask again.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+  useEffect(() => {
+    if (!model || !ready || !missingKey) return;
+    request(missingKey, model);
   }, [model, ready, missingKey]);
 
   const state: CaptionsState = !model

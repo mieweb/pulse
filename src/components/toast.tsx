@@ -173,7 +173,7 @@ export function Toast({
   const swiped = useSharedValue(false);
   const isLeaving = useSharedValue(leaving);
 
-  // The first toast slides in whole; a replacement's content fades in over the surface.
+  // The first toast slides in whole; a replacement swaps in at once.
 
   useEffect(() => {
     isLeaving.set(leaving);

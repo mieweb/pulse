@@ -288,43 +288,41 @@ export default function HomeScreen() {
           renderItem={({ item }) => {
             const name = pendingRename?.id === item.id ? pendingRename.name : item.name;
             return (
-              <View>
-                <DraftCard
-                  id={item.id}
-                  uploadStatus={item.uploadStatus}
-                  name={name}
-                  firstSegmentFilename={item.firstSegmentFilename}
-                  firstSegmentThumbnail={item.firstSegmentThumbnail}
-                  firstSegmentEditState={item.firstSegmentEditState}
-                  segmentCount={item.segmentCount}
-                  durationMs={item.durationMs}
-                  lastModified={item.lastModified}
-                  now={now}
-                  editing={editingDraftId === item.id}
-                  selectionMode={selectionMode}
-                  selected={selectedIds.has(item.id)}
-                  onPress={() => {
-                    if (selectionMode) toggleSelected(item.id);
-                    // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
-                    else if (item.uploadStatus !== 'uploading')
-                      router.push({ pathname: '/recorder', params: { draftId: item.id } });
-                  }}
-                  onLongPress={
-                    item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
-                  }
-                  menu={(watchLink) => (
-                    <DraftMenu
-                      draftId={item.id}
-                      watchLink={watchLink}
-                      uploading={item.uploadStatus === 'uploading'}
-                      besidePill={item.uploadStatus === 'uploaded'}
-                      onRename={() => setEditingDraftId(item.id)}
-                      onDelete={() => removeDraft(item.id)}
-                    />
-                  )}
-                  onSubmitName={(input) => submitRename(item.id, item.name, input)}
-                />
-              </View>
+              <DraftCard
+                id={item.id}
+                uploadStatus={item.uploadStatus}
+                name={name}
+                firstSegmentFilename={item.firstSegmentFilename}
+                firstSegmentThumbnail={item.firstSegmentThumbnail}
+                firstSegmentEditState={item.firstSegmentEditState}
+                segmentCount={item.segmentCount}
+                durationMs={item.durationMs}
+                lastModified={item.lastModified}
+                now={now}
+                editing={editingDraftId === item.id}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(item.id)}
+                onPress={() => {
+                  if (selectionMode) toggleSelected(item.id);
+                  // Locked while uploading — the card shows the ring; ⋯ offers Cancel.
+                  else if (item.uploadStatus !== 'uploading')
+                    router.push({ pathname: '/recorder', params: { draftId: item.id } });
+                }}
+                onLongPress={
+                  item.uploadStatus === 'uploading' ? undefined : () => setEditingDraftId(item.id)
+                }
+                menu={(watchLink) => (
+                  <DraftMenu
+                    draftId={item.id}
+                    watchLink={watchLink}
+                    uploading={item.uploadStatus === 'uploading'}
+                    besidePill={item.uploadStatus === 'uploaded'}
+                    onRename={() => setEditingDraftId(item.id)}
+                    onDelete={() => removeDraft(item.id)}
+                  />
+                )}
+                onSubmitName={(input) => submitRename(item.id, item.name, input)}
+              />
             );
           }}
         />

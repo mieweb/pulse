@@ -139,7 +139,6 @@ export function ClipRow(props: Props) {
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const offset = useScrollViewOffset(scrollRef);
   const [width, setWidth] = useState(0);
-  const widthSv = useSharedValue(0);
 
   const latest = useRef(props);
   useEffect(() => {
@@ -270,7 +269,6 @@ export function ClipRow(props: Props) {
         rowX.current = e.nativeEvent.layout.x;
         const w = e.nativeEvent.layout.width;
         setWidth(w);
-        widthSv.set(w);
       }}>
       <Animated.ScrollView
         ref={scrollRef}

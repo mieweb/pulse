@@ -72,7 +72,7 @@ export function useEditorHistory(
   const step = (direction: 'undo' | 'redo') => {
     let h = history;
     const now = snapshot();
-    for (;;) {
+    while (true) {
       const r = direction === 'undo' ? undoStep(h, now) : redoStep(h, now);
       if (!r) {
         setHistory(h);

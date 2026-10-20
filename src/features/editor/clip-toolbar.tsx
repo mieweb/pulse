@@ -42,6 +42,7 @@ function ToolButton({ tool }: { tool: Tool }) {
       disabled={tool.disabled}
       accessibilityRole="button"
       accessibilityLabel={tool.label}
+      accessibilityState={{ disabled: !!tool.disabled, busy: !!tool.busy }}
       hitSlop={4}
       style={({ pressed }) => [
         styles.tool,
@@ -163,14 +164,7 @@ export function SpeedRow({
   const theme = useTheme();
   return (
     <View style={styles.row}>
-      <Pressable
-        onPress={onDone}
-        accessibilityRole="button"
-        accessibilityLabel="Done"
-        hitSlop={6}
-        style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
-        <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.text} />
-      </Pressable>
+      <DoneButton label="Done" onPress={onDone} />
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -233,10 +227,9 @@ export function MainToolbar({
 }
 
 /**
- * The captions tools. Like the clip tools in edit mode, they act on what's under the playhead:
- * the word there (edit it, delete it), its sentence (Split cuts it at the word boundary nearest
- * the playhead; Merge joins it with the next one, or the two either side of a gap), then the
- * model and reset.
+ * The captions tools: Edit and Delete act on the tapped word; Split and Merge on the sentence
+ * under the playhead (Split cuts it at the word boundary nearest the playhead; Merge joins it with
+ * the next one, or the two either side of a gap); then the model and Reset.
  */
 export function CaptionToolbar(p: {
   /** A word is selected (tapped): what Edit and Delete act on. */

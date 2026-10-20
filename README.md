@@ -89,7 +89,7 @@ flowchart TB
 - Each clip is transcribed once, in the background; the draft's captions are composed from the clips through their trims, speed, mutes and order, so an edit never re-runs the model
 - Silero VAD pre-gate skips silent clips and suppresses Whisper's hallucinated filler on empty audio
 - Word-level timestamps reflowed into broadcast-style cues (line-length, duration, and sentence-boundary aware; Chinese, Japanese and Thai keep their per-character timing), never across a cut
-- Captions live in the editor: shown over the preview and on a lane under the clips; edit, add or delete the one under the playhead, drag one to move them all — edits are kept per clip and undoable
+- Captions live in the editor: shown over the preview and on a lane under the clips; tap a word to edit or delete it, split or merge sentences at the playhead, drag the caption to move them all — edits are kept per clip and undoable
 - Captions upload as WebVTT with word-level cue timestamps (karaoke-ready) and their position, alongside the video
 
 ### Drafts & library
