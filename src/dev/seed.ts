@@ -1,9 +1,13 @@
 import { eq } from 'drizzle-orm';
 import { Asset } from 'expo-asset';
+import { deleteFile } from 'react-native-video-trim';
 
 import { db } from '@/db/client';
 import { addSegment } from '@/db/drafts';
 import { drafts } from '@/db/schema';
+import { getRecorderFormat } from '@/features/recorder/recorder-format';
+import { conformToContract } from '@/utils/contract-gate';
+import type { RecorderFormat } from '@/utils/import-normalization';
 import { absolutize, copyIntoSegments, deleteDraftDir, thumbRelPath } from '@/utils/file-store';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
@@ -20,9 +24,10 @@ const LARGE_UPLOAD_DRAFT_ID = 'dev-seed-large-upload';
 type SeedFixture = { readonly module: number; readonly label: string };
 
 /**
- * Bundled sample clips, laid into the seed draft in array order. Pick clips with
- * **deliberately mismatched** resolution / fps / codec / orientation so they also stress the
- * export normalization path (§1.0b). Drop the files in `assets/dev/` and list them here.
+ * Bundled sample clips, laid into the seed draft in array order. Clips are **deliberately
+ * mismatched** in resolution / fps / codec / orientation: seeding conforms them exactly like a
+ * real import, so this exercises import normalization (landscape → letterboxed portrait) and
+ * the resulting draft is uniform. Drop the files in `assets/dev/` and list them here.
  *
  * `require()` of a bundled `.mp4` returns an asset module id (resolved by metro at build time),
  * so paths must be static string literals — no variables, no globbing.
@@ -76,8 +81,9 @@ const SPEED = {
 // passthrough join (production fast path). Exercises how the fast path scales to a 2-min draft.
 const SPEED_UNIFORM_MODULES: readonly number[] = Array.from({ length: 20 }, () => SPEED.h264);
 
-// Dev sample 3: 14× recorder-match portrait (dominant) + 6 interleaved outliers → selective
-// conform re-encodes only the outliers, then passthrough-joins. Real-world mixed-format cost.
+// Dev sample 3: 14× recorder-match portrait (dominant) + 6 interleaved outliers. The outliers
+// are conformed at seed time like real imports, so the draft is uniform and export takes the
+// passthrough join — measures the merge cost of a real-world mixed draft after import.
 const SPEED_MIXED_MODULES: readonly number[] = [
   SPEED.h264,
   SPEED.h264,
@@ -116,7 +122,8 @@ const LARGE_UPLOAD_MODULES: readonly number[] = Array.from(
 // into assets/dev/import/) — HDR 10-bit, fps outliers/VFR, messaging/screen-rec geometry,
 // rotation variants, and audio outliers. Together with the recorder-adjacent FIXTURES above,
 // this is the acceptance corpus for import normalization + merge + upload compression: every
-// clip here must survive import → (normalize) → merge → upload without manual intervention.
+// clip here must survive import → normalize → merge → upload without manual intervention
+// (seeding runs the same conform as a real import; a clip that can't be conformed is skipped).
 
 const WILD_IMPORT_FIXTURES: readonly SeedFixture[] = [
   {
@@ -171,7 +178,9 @@ const WILD_IMPORT_FIXTURES: readonly SeedFixture[] = [
 
 /**
  * Create one draft from a list of bundled clip modules, laid out in array order. Idempotent on
- * `draftId` (re-pressing is a no-op once it exists). The same module may appear multiple times —
+ * `draftId` (re-pressing is a no-op once it exists). Each clip goes through the same conform as
+ * a real import (recorder signature target, fail closed: a clip that can't be conformed is
+ * skipped with a warning). The same module may appear multiple times — it's conformed once and
  * each entry is copied to its own segment file. Returns the draft id (or undefined if empty).
  */
 async function seedModules(
@@ -189,25 +198,59 @@ async function seedModules(
 
   await db.insert(drafts).values({ id: draftId, name });
 
-  for (let i = 0; i < modules.length; i++) {
-    const asset = Asset.fromModule(modules[i]);
-    await asset.downloadAsync(); // copies the bundled clip into the cache, populating localUri
-    if (!asset.localUri) continue;
+  const target = await getRecorderFormat();
+  // module id → file to copy per segment (the conformed output, or the bundled clip when it
+  // already matches the recorder); null when the clip couldn't be conformed.
+  const sources = new Map<number, string | null>();
+  const conformedPaths: string[] = [];
 
-    const segmentId = `${draftId}-${i}`;
-    const originalFilename = await copyIntoSegments(asset.localUri, draftId, segmentId);
-    const durationMs = await getDurationMs(absolutize(originalFilename));
-    const thumbRel = thumbRelPath(draftId, segmentId);
-    const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
-    await addSegment(draftId, {
-      id: segmentId,
-      originalFilename,
-      durationMs,
-      thumbnail: ok ? thumbRel : null,
-    });
+  try {
+    for (let i = 0; i < modules.length; i++) {
+      let source = sources.get(modules[i]);
+      if (source === undefined) {
+        source = await conformedSource(modules[i], target, conformedPaths);
+        sources.set(modules[i], source);
+      }
+      if (!source) continue;
+
+      const segmentId = `${draftId}-${i}`;
+      const originalFilename = await copyIntoSegments(source, draftId, segmentId);
+      const durationMs = await getDurationMs(absolutize(originalFilename));
+      const thumbRel = thumbRelPath(draftId, segmentId);
+      const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
+      await addSegment(draftId, {
+        id: segmentId,
+        originalFilename,
+        durationMs,
+        thumbnail: ok ? thumbRel : null,
+      });
+    }
+  } finally {
+    // Conform outputs live in the OS-purgeable cache dir; drop them once every segment is copied.
+    for (const path of conformedPaths) void deleteFile(path).catch(() => {});
   }
 
   return draftId;
+}
+
+/** Download one bundled clip and conform it like an import; the file to copy, or null. */
+async function conformedSource(
+  module: number,
+  target: RecorderFormat,
+  conformedPaths: string[],
+): Promise<string | null> {
+  const asset = Asset.fromModule(module);
+  await asset.downloadAsync(); // copies the bundled clip into the cache, populating localUri
+  if (!asset.localUri) return null;
+  try {
+    const conformed = await conformToContract(asset.localUri, target);
+    if (!conformed) return asset.localUri;
+    conformedPaths.push(conformed.path);
+    return conformed.path;
+  } catch (e) {
+    console.warn(`[seed] skipping ${asset.name}: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
 }
 
 /**
