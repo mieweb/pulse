@@ -4,7 +4,6 @@ import {
   PaintStyle,
   Picture,
   Skia,
-  useCanvasRef,
   StrokeJoin,
 } from '@shopify/react-native-skia';
 import { useEffect, useMemo } from 'react';
@@ -254,20 +253,6 @@ export function SkiaCaption({
     return { left: b.x, top: b.y, width: b.w, height: b.h };
   });
 
-  // Spike: the drawing as an image, read from the debugger (dev builds only).
-  const canvasRef = useCanvasRef();
-  useEffect(() => {
-    if (!__DEV__) return;
-    const g = globalThis as { __skiaSnaps?: Record<string, () => Promise<string | undefined>> };
-    const name = onMove ? 'caption' : 'captionExport';
-    const snap = async () => (await canvasRef.current?.makeImageSnapshotAsync())?.encodeToBase64();
-    g.__skiaSnaps = { ...g.__skiaSnaps, [name]: snap };
-    // Gone with the canvas: a snapshot of a canvas no longer shown crashes Skia.
-    return () => {
-      if (g.__skiaSnaps?.[name] === snap) delete g.__skiaSnaps[name];
-    };
-  }, [canvasRef, onMove]);
-
   const interactive = !!(onMove || onTap);
   const from = useSharedValue(0);
   const callbacks = useMemo(
@@ -309,7 +294,7 @@ export function SkiaCaption({
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <Canvas ref={canvasRef} style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
         <Picture picture={picture} />
       </Canvas>
       {interactive && (

@@ -7,7 +7,6 @@ import {
   PaintStyle,
   Picture,
   Skia,
-  useCanvasRef,
   type SkCanvas,
   type SkFont,
   type SkImage,
@@ -488,22 +487,8 @@ export function TimelineCanvas(props: Props) {
     return rec.finishRecordingAsPicture();
   });
 
-  // Spike: the drawing as an image, read from the debugger (dev builds only).
-  const canvasRef = useCanvasRef();
-  useEffect(() => {
-    if (!__DEV__) return;
-    const g = globalThis as { __skiaSnaps?: Record<string, () => Promise<string | undefined>> };
-    const snap = async () => (await canvasRef.current?.makeImageSnapshotAsync())?.encodeToBase64();
-    g.__skiaSnaps = { ...g.__skiaSnaps, timeline: snap };
-    // Gone with the canvas: a snapshot of a canvas no longer shown crashes Skia.
-    return () => {
-      if (g.__skiaSnaps?.timeline === snap) delete g.__skiaSnaps.timeline;
-    };
-  }, [canvasRef]);
-
   return (
     <Canvas
-      ref={canvasRef}
       style={[StyleSheet.absoluteFill, { width, height }]}
       pointerEvents="none">
       <Picture picture={picture} />

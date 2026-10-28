@@ -38,7 +38,6 @@ import {
 } from '@/features/editor/clip-toolbar';
 import { CropEditor } from '@/features/editor/crop-editor';
 import { SkiaCaption } from '@/features/transcription/skia-caption';
-import { PerfHud } from '@/features/editor/perf-hud';
 import {
   resetTimelineZoom,
   STRIP_HEIGHT,
@@ -117,12 +116,6 @@ export default function EditorScreen() {
   // Not compiled by the React Compiler (as before): its memoization here leaves the track's
   // animated opacity stale until a re-render. To be turned on as a change of its own, tested.
   'use no memo';
-  // Spike: the editor's renders (commits), read from the debugger.
-  useEffect(() => {
-    if (!__DEV__) return;
-    const g = globalThis as { __editorRenders?: number };
-    g.__editorRenders = (g.__editorRenders ?? 0) + 1;
-  });
   const params = useLocalSearchParams<{ draftId: string; clipId?: string; view?: string }>();
   const { draftId, clipId } = params;
   const insets = useSafeAreaInsets();
@@ -162,15 +155,6 @@ export default function EditorScreen() {
   // recorder opens paused on it, nothing selected).
   const [mode, setMode] = useState<'main' | 'edit' | 'captions'>('main');
   const captionTools = mode === 'captions';
-  // Spike: drive the editor from the debugger.
-  useEffect(() => {
-    if (!__DEV__) return;
-    (globalThis as { __editor?: object }).__editor = {
-      toggle: () => ctl.toggle(),
-      seek: (ms: number) => ctl.seekTo(ms),
-      mode: (m: 'main' | 'edit' | 'captions') => setMode(m),
-    };
-  }, [ctl]);
   // The word being typed (its clip and index in the clip's words), and its text as it was.
   const [typing, setTyping] = useState<{ clipId: string; i: number; text: string } | null>(null);
   // A scale for the timeline to zoom to (opening, a caption or a clip to edit), and how to ask.
@@ -271,16 +255,6 @@ export default function EditorScreen() {
     requestZoom({ min: target, max: target, target, instant: true });
   }, [clips, clipId, layout.totalMs]);
   const trackStyle = useAnimatedStyle(() => ({ opacity: placed.get() }));
-  // Spike: what the track shows, read from the debugger.
-  useEffect(() => {
-    if (!__DEV__) return;
-    (globalThis as { __track?: object }).__track = {
-      placed: () => placed.get(),
-      clips: clips.length,
-      view,
-      covered: values.covered.get(),
-    };
-  });
   const coverStyle = useAnimatedStyle(() => ({ opacity: values.covered.get() }));
 
   /** Off-clip space was tapped: edit mode ends, or the selected caption word is let go (the
@@ -748,8 +722,6 @@ export default function EditorScreen() {
             </View>
           )}
           <CaptionStatus captions={captions} open={captionTools} />
-          {/* Spike: thread frame rates while trying the timeline. */}
-          <PerfHud />
           {status?.error && (
             <Text style={[styles.error, { color: theme.textSecondary }]}>{status.error}</Text>
           )}

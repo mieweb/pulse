@@ -653,20 +653,6 @@ export function TimelineStrip(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomSeq]);
 
-  // Spike: drive the strip from the debugger (dev builds only).
-  useEffect(() => {
-    if (!__DEV__) return;
-    (globalThis as { __timeline?: object }).__timeline = {
-      seek: (ms: number) => timeMs.set(ms),
-      zoom: (z: number) => {
-        zoomNow.set(z);
-        setZoom(z);
-        keptZoom = z;
-      },
-      state: () => ({ timeMs: timeMs.get(), zoom: zoomNow.get(), totalMs: totalMs.get() }),
-    };
-  }, [timeMs, zoomNow, totalMs]);
-
   const content = useAnimatedStyle(() => ({
     transform: [{ translateX: half.get() - timeMs.get() * zoomNow.get() }],
   }));
