@@ -133,6 +133,11 @@ export function usePreviewTransport() {
       onReady: (ref: PulsePreviewRef) => {
         c.ref = ref;
       },
+      /** The preview view went away: Nitro never hands back a null ref, so drop it here (calls
+       * until the next one is ready are no-ops instead of reaching a released view). */
+      detach: () => {
+        c.ref = null;
+      },
       /** The timeline's length as the editor lays it out (known before the preview is up). */
       setTotal: (ms: number) => {
         c.totalMs = ms;

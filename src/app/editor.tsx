@@ -343,6 +343,11 @@ export default function EditorScreen() {
   const aspect = options ? options.width / options.height : 9 / 16;
   const fitW = Math.min(stage.w, stage.h * aspect);
   const picture = { width: fitW, height: fitW / aspect };
+  // Created once the area is measured and the clips are known; dropped with no clips left.
+  const showPreview = !!options && previewClips.length > 0 && fitW > 0;
+  useEffect(() => {
+    if (!showPreview) ctl.detach();
+  }, [showPreview, ctl]);
 
   return (
     // The portal lifts a picked-up clip above everything (preview, controls) while it's dragged.
@@ -381,7 +386,7 @@ export default function EditorScreen() {
           accessibilityRole="button"
           accessibilityLabel={selectedId ? 'Done editing the clip' : playing ? 'Pause' : 'Play'}>
           {/* Created once the area is measured, at the picture's size. */}
-          {options && previewClips.length > 0 && fitW > 0 && (
+          {showPreview && (
             <PulsePreview
               style={picture}
               clips={previewClips}
