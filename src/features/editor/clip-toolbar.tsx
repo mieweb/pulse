@@ -293,10 +293,13 @@ export function CaptionTextBar({
   initial,
   onDone,
   onCancel,
+  onChange,
 }: {
   initial: string;
   onDone: (text: string) => void;
   onCancel: () => void;
+  /** The text as it's typed (so a tap elsewhere can keep it). */
+  onChange?: (text: string) => void;
 }) {
   const theme = useTheme();
   const [text, setText] = useState(initial);
@@ -312,7 +315,10 @@ export function CaptionTextBar({
       </Pressable>
       <TextInput
         value={text}
-        onChangeText={setText}
+        onChangeText={(t) => {
+          setText(t);
+          onChange?.(t);
+        }}
         autoFocus
         multiline={false}
         returnKeyType="done"

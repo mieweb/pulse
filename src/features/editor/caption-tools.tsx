@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
 
-import type { CaptionLine } from '@/features/transcription/compose';
+import { lineAt, type CaptionLine } from '@/features/transcription/compose';
 import type { DraftCaptions } from '@/features/transcription/use-draft-captions';
 import { useTheme } from '@/hooks/use-theme';
 import { formatClipCount } from '@/utils/format';
@@ -42,14 +42,17 @@ export function CaptionTools({
   const splitLine =
     at.line >= 0 && (lines[at.line].words?.length ?? 0) >= 2 ? lines[at.line] : null;
   const split = () => {
-    const ws = splitLine?.words ?? [];
-    if (!splitLine || ws.length < 2) return;
+    // The sentence under the playhead now (the one shown can lag a moment while playing).
     const pos = timeMs.get() / 10;
+    const now = lineAt(lines, pos);
+    const line = now >= 0 ? lines[now] : null;
+    const ws = line?.words ?? [];
+    if (!line || ws.length < 2) return;
     let k = 1;
     for (let j = 2; j < ws.length; j++) {
       if (Math.abs(ws[j].t0 - pos) < Math.abs(ws[k].t0 - pos)) k = j;
     }
-    onSplit(splitLine.clipId, splitLine.from + k);
+    onSplit(line.clipId, line.from + k);
   };
   // Merge: the sentence under the playhead and the next, or the two either side of the gap it's
   // in (in the same clip).

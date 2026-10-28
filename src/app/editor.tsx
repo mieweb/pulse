@@ -123,15 +123,17 @@ export default function EditorScreen() {
   const draft = useEditorDraft(draftId);
   const { clips, covers, options } = draft;
   const { ctl, values, playing, status } = usePreviewTransport();
+  const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
+  const captionYValue = captionRows[0]?.captionY;
   const history = useEditorHistory(
     clips,
     draft.setValue,
     draft.reorder,
     draft.captionEdits,
     draft.setCaptions,
+    captionYValue ?? null,
+    (y) => void setCaptionY(draftId, y).catch(() => {}),
   );
-  const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
-  const captionYValue = captionRows[0]?.captionY;
   // The same object until the place changes, so the caption on the video doesn't re-render.
   const captionStyle = useMemo(() => captionStyleFor(captionYValue), [captionYValue]);
   const { showToast } = useToast();
@@ -156,6 +158,8 @@ export default function EditorScreen() {
   const captionTools = mode === 'captions';
   // The word being typed (its clip and index in the clip's words), and its text as it was.
   const [typing, setTyping] = useState<{ clipId: string; i: number; text: string } | null>(null);
+  // What's typed so far (the text bar keeps its own state): a tap elsewhere keeps it.
+  const typed = useRef<string | null>(null);
   // A scale for the timeline to zoom to (opening, a caption or a clip to edit), and how to ask.
   const [zoomTo, setZoomTo] = useState<(ZoomRequest & { seq: number }) | null>(null);
   const requestZoom = (req: ZoomRequest) => setZoomTo((z) => ({ ...req, seq: (z?.seq ?? 0) + 1 }));
@@ -199,7 +203,16 @@ export default function EditorScreen() {
 
   // In edit mode the clip being edited is the one under the playhead: scrubbing, flinging or
   // playing onto another clip moves the selection (and its red frame) with it.
-  const current = usePlayheadClip(layout.starts, values.timeMs, mode === 'edit');
+  const tracked = usePlayheadClip(layout.starts, values.timeMs, mode === 'edit');
+  // Entering edit mode on a known clip (tapped, moved, or under the playhead): that clip until
+  // the playhead's own answer arrives, so the clip's tools show at once, not the main ones first.
+  const [editOn, setEditOn] = useState(-1);
+  const current =
+    mode !== 'edit' ? -1 : tracked >= 0 ? tracked : editOn < clips.length ? editOn : -1;
+  const enterEdit = (i: number) => {
+    setEditOn(i);
+    setMode('edit');
+  };
   if (current < 0 && tools !== 'clip') setTools('clip');
 
   // Android back leaves crop, typing, the speed row or a mode first, then the editor (only while
@@ -272,7 +285,7 @@ export default function EditorScreen() {
     haptics.drop();
     history.record(null);
     draft.reorder(ids);
-    setMode('edit');
+    enterEdit(ids.indexOf(held));
     let at = 0;
     for (const id of ids) {
       if (id === held) break;
@@ -291,8 +304,8 @@ export default function EditorScreen() {
       return;
     }
     haptics.tap();
-    setTyping(null);
-    setMode('edit');
+    keepTyped();
+    enterEdit(i);
     zoomToClip(i);
     if (i !== clipIndexAt(layout.starts, ctl.lastMs)) ctl.seekTo(ms ?? layout.starts[i] ?? 0);
   };
@@ -568,7 +581,8 @@ export default function EditorScreen() {
    * lets the selection go, the playhead to where it was tapped). On the lane (`toggle`), a tap on
    * the selected word lets it go. */
   const onCaptionTap = (ms: number, toggle = false) => {
-    setTyping(null);
+    // A tap while typing finishes the word (keeping what's typed); the next tap selects.
+    if (keepTyped()) return;
     if (!captionTools) setMode('captions');
     ctl.pause();
     const i = lineAt(lines, ms / 10);
@@ -646,6 +660,7 @@ export default function EditorScreen() {
     ctl.pause();
     const line = lines[selLine];
     const w = line.words?.[selWord];
+    typed.current = null;
     setTyping({ clipId: line.clipId, i: line.from + selWord, text: w?.text ?? '' });
   };
   const deleteCaption = () => {
@@ -674,15 +689,26 @@ export default function EditorScreen() {
     history.record(null);
     draft.setCaptions(new Map(edited.map(([id]) => [id, null])));
   };
-  const moveCaptions = (y: number) =>
-    setCaptionY(draftId, y).catch((e: unknown) => {
+  const moveCaptions = (y: number) => {
+    // One undo step per drag (it reports once, when let go).
+    history.record('captionY');
+    history.close();
+    return setCaptionY(draftId, y).catch((e: unknown) => {
       showToast({ kind: 'error', title: 'Couldn’t move the captions', message: 'Try again.' });
       throw e;
     });
+  };
 
+  /** Typing interrupted by a tap elsewhere: what's typed is kept, as ✓ would. True if typing. */
+  const keepTyped = () => {
+    if (!typing) return false;
+    finishTyping(typed.current ?? typing.text);
+    return true;
+  };
   /** Typing done: the word's new text (several words if typed as several; none deletes it). */
   const finishTyping = (text: string) => {
     const t = typing;
+    typed.current = null;
     setTyping(null);
     if (!t) return;
     const clean = text.trim();
@@ -883,6 +909,9 @@ export default function EditorScreen() {
               initial={typing.text}
               onDone={finishTyping}
               onCancel={() => setTyping(null)}
+              onChange={(t) => {
+                typed.current = t;
+              }}
             />
           ) : captionTools ? (
             <CaptionTools
@@ -903,8 +932,9 @@ export default function EditorScreen() {
               canEdit={clips.length > 0}
               onEdit={() => {
                 haptics.tap();
-                setMode('edit');
-                zoomToClip(clipIndexAt(layout.starts, ctl.lastMs));
+                const i = clipIndexAt(layout.starts, ctl.lastMs);
+                enterEdit(i);
+                zoomToClip(i);
               }}
               captionsBusy={captionsBusy}
               onCaptions={openCaptions}
