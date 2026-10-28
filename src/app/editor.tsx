@@ -48,7 +48,8 @@ const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
 /** Each file's frame rate (for frame-snapped trims), probed once per file (30 if the probe fails). */
 const frameRates = new Map<string, number>();
 function useFrameRates(uris: readonly string[]) {
-  const [, setKnown] = useState(0);
+  // Read in render from state (a copy of the cache), so a new rate re-renders what uses it.
+  const [known, setKnown] = useState<ReadonlyMap<string, number>>(() => new Map(frameRates));
   const key = [...new Set(uris)].join('\n');
   useEffect(() => {
     let live = true;
@@ -61,15 +62,17 @@ function useFrameRates(uris: readonly string[]) {
         } catch {
           frameRates.set(uri, 30);
         }
-        if (live) setKnown((n) => n + 1);
+        if (live) setKnown(new Map(frameRates));
       }
+      // Rates another editor probed meanwhile.
+      if (live) setKnown((k) => (k.size === frameRates.size ? k : new Map(frameRates)));
     })();
     return () => {
       live = false;
     };
   }, [key]);
   // Unknown until the probe answers (no trim before then: it would snap to a guessed rate).
-  return (uri: string) => frameRates.get(uri) ?? null;
+  return (uri: string) => known.get(uri) ?? null;
 }
 
 /**
