@@ -253,15 +253,24 @@ export function ClipRow(props: Props) {
       mounted.current = false;
     };
   }, []);
+  const startReorder = useCallback((key: string) => {
+    haptics.pickUp();
+    draggedKey.current = key;
+    latest.current.onReorderStart();
+  }, []);
+  // A worklet, so the row stops following the playhead in the same frame the clip lifts.
   const onDragStartSortable = useCallback(
     ({ key }: { key: string }) => {
-      haptics.pickUp();
-      draggedKey.current = key;
+      'worklet';
       moving.set(true);
-      latest.current.onReorderStart();
+      scheduleOnRN(startReorder, key);
     },
-    [moving],
+    [moving, startReorder],
   );
+  const onDropped = useCallback(() => {
+    'worklet';
+    moving.set(false);
+  }, [moving]);
   const onDragEndSortable = useCallback(
     ({ data }: SortableGridDragEndParams<EditorClip>) => {
       moving.set(false);
@@ -334,7 +343,7 @@ export function ClipRow(props: Props) {
           onDragStart={onDragStartSortable}
           onDragEnd={onDragEndSortable}
           // Also on the drop: the row must never stay frozen if a drag's end goes unreported.
-          onActiveItemDropped={() => moving.set(false)}
+          onActiveItemDropped={onDropped}
           renderItem={({ item, index }) => (
             <Thumb
               clip={item}
