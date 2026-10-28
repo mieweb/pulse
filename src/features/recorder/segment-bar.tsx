@@ -185,8 +185,22 @@ function Bar({
     [trashRect, overTrash, over],
   );
 
+  // Sortables still reports the drag's end after the bar unmounts mid-drag (the remount on a
+  // change of clips): that late report must not delete a clip or write this bar's old order.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const onDragEnd = useCallback(
     ({ data }: SortableGridDragEndParams<Segment>) => {
+      if (!mounted.current) {
+        latest.current.onDragActiveChange?.(false);
+        return;
+      }
       vis.set(withTiming(0, TRASH_FADE));
       // Dropped on the trash → delete that clip; otherwise persist the new order.
       const key = draggedKey.current;

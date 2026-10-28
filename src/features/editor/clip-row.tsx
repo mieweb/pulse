@@ -244,6 +244,15 @@ export function ClipRow(props: Props) {
   const draggedKey = useRef<string | null>(null);
   const touchStart = useRef<{ x: number; y: number; at: number } | null>(null);
   const rowX = useRef(0);
+  // Sortables still reports the drag's end after the row unmounts mid-drag (switching views,
+  // closing): that late report must not commit an order.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const onDragStartSortable = useCallback(
     ({ key }: { key: string }) => {
       haptics.pickUp();
@@ -256,6 +265,7 @@ export function ClipRow(props: Props) {
   const onDragEndSortable = useCallback(
     ({ data }: SortableGridDragEndParams<EditorClip>) => {
       moving.set(false);
+      if (!mounted.current) return;
       const key = draggedKey.current;
       draggedKey.current = null;
       if (key)
