@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
-import { GestureDetector, type LegacyComposedGesture } from 'react-native-gesture-handler';
+import { GestureDetector, type ComposedGesture } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedReaction,
   useAnimatedStyle,
@@ -59,7 +59,7 @@ export function RecordButton({
   cameraReady,
   dragging,
 }: {
-  gesture: LegacyComposedGesture;
+  gesture: ComposedGesture;
   holdActive: SharedValue<boolean>;
   pressed: SharedValue<boolean>;
   isRecording: boolean;
