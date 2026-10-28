@@ -3,9 +3,9 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   scrollTo,
-  useAnimatedReaction,
   useAnimatedRef,
   useAnimatedScrollHandler,
+  useFrameCallback,
   useScrollOffset,
   useSharedValue,
 } from 'react-native-reanimated';
@@ -158,26 +158,26 @@ export function ClipRow(props: Props) {
   /** A clip is being moved: the row follows neither (sortables scrolls it). */
   const moving = useSharedValue(false);
 
-  /** The row under the playhead at the current time. */
-  const follow = useCallback(() => {
-    'worklet';
-    if (user.get() || moving.get()) return;
-    const g = geom.get();
-    scrollTo(scrollRef, offsetOfTime(g.starts, g.total, timeMs.get()), 0, false);
-  }, [user, moving, geom, scrollRef, timeMs]);
-
   useEffect(() => {
     const g = { starts: layout.starts, total: layout.totalMs };
     scheduleOnUI(() => {
       'worklet';
       geom.set(g);
-      follow();
     });
-  }, [layout, geom, follow]);
-  useAnimatedReaction(
-    () => timeMs.get(),
-    () => follow(),
-  );
+  }, [layout, geom]);
+
+  // The row sits under the playhead whenever nothing else moves it (a finger or its fling drives
+  // the time then; a clip being moved lets sortables scroll it). One loop on the UI thread keeps it
+  // there, scrolling only when the place it reports differs: after a seek, a tap, playback, a
+  // layout or content change, and when a scrollTo was dropped (one sent before the view is on
+  // screen is: switching views fast left the row at its start, out of step with the playhead).
+  useFrameCallback(() => {
+    if (user.get() || moving.get()) return;
+    const g = geom.get();
+    const x = offsetOfTime(g.starts, g.total, timeMs.get());
+    if (Math.abs(x - offset.get()) < 0.5) return;
+    scrollTo(scrollRef, x, 0, false);
+  });
 
   const finish = () => {
     'worklet';
@@ -297,13 +297,7 @@ export function ClipRow(props: Props) {
         showsHorizontalScrollIndicator={false}
         onScroll={onScroll}
         scrollEventThrottle={16}
-        contentContainerStyle={[styles.content, { paddingHorizontal: width / 2 }]}
-        onContentSizeChange={() =>
-          scheduleOnUI(() => {
-            'worklet';
-            follow();
-          })
-        }>
+        contentContainerStyle={[styles.content, { paddingHorizontal: width / 2 }]}>
         <Sortable.Grid
           rows={1}
           rowHeight={THUMB_HEIGHT}

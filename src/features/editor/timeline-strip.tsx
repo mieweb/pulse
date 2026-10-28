@@ -8,6 +8,7 @@ import Animated, {
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useDerivedValue,
+  useFrameCallback,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -380,30 +381,20 @@ export function TimelineStrip(props: Props) {
     [user, mode, timeMs, scrubEnd],
   );
 
-  // The scroll view under the playhead's time, whenever something else moved it.
-  const follow = () => {
-    'worklet';
+  // The scroll view sits under the playhead whenever nothing else moves it (a finger or its fling
+  // drives the time then; a pinch or an auto-zoom drives the scale). One loop on the UI thread keeps
+  // it there, scrolling only when the place it reports differs: after a seek, a tap, playback, a
+  // trim, a zoom, a layout or content change, and when a scrollTo was dropped (one sent before the
+  // view is on screen is: switching views fast left it at 0, and its offset IS the time, so the
+  // next swipe would have scrubbed from the start). `moving` marks its own moves for the handlers.
+  useFrameCallback(() => {
     if (user.get() || pinching.get() || zooming.get()) return;
     const x = timeMs.get() * zoomNow.get();
-    // Already there: no move (a move ends a fling, and its end would ask again).
-    if (moving.get() || Math.abs(x - offsetNow.get()) < 0.5) return;
+    if (Math.abs(x - offsetNow.get()) < 0.5) return;
     moving.set(true);
     scrollTo(scrollRef, x, 0, false);
     moving.set(false);
-  };
-  useAnimatedReaction(
-    () => timeMs.get(),
-    () => follow(),
-  );
-  // A pinch let go, or an auto-zoom done: the scroll view back under the playhead at the new
-  // scale (its content grows or shrinks with the next render, and `onContentSizeChange` places it
-  // again then).
-  useAnimatedReaction(
-    () => pinching.get() || zooming.get(),
-    (now, before) => {
-      if (before && !now) follow();
-    },
-  );
+  });
   const finish = () => {
     'worklet';
     if (!user.get()) return;
@@ -432,18 +423,10 @@ export function TimelineStrip(props: Props) {
       timeMs.set(clamp(e.contentOffset.x / zoomNow.get(), 0, totalMs.get()));
     },
     onEndDrag: (e) => {
-      if (moving.get()) return;
-      // A drag that wasn't a scrub (a pinch's fingers): the scroll view back under the playhead.
-      if (!user.get()) follow();
-      // No fling: done now; otherwise the momentum's end finishes it.
-      else if (Math.abs(e.velocity?.x ?? 0) < 0.01) finish();
-    },
-    onMomentumBegin: () => {
-      if (moving.get()) return;
-      // A pinch's fingers lifting with some speed: no fling; the scroll view back under the
-      // playhead (which stops it).
-      if (pinchy() || !user.get()) follow();
-      else begin();
+      // No fling: done now; otherwise the momentum's end finishes it. (A drag that wasn't a scrub,
+      // a pinch's fingers, is put back under the playhead by the loop above, momentum and all.)
+      if (moving.get() || !user.get()) return;
+      if (Math.abs(e.velocity?.x ?? 0) < 0.01) finish();
     },
     onMomentumEnd: () => {
       if (!moving.get()) finish();
@@ -791,13 +774,7 @@ export function TimelineStrip(props: Props) {
             style={StyleSheet.absoluteFill}
             showsHorizontalScrollIndicator={false}
             onScroll={onScroll}
-            scrollEventThrottle={16}
-            onContentSizeChange={() =>
-              scheduleOnUI(() => {
-                'worklet';
-                follow();
-              })
-            }>
+            scrollEventThrottle={16}>
             <View style={{ width: layout.totalMs * zoom + width, height: STRIP_HEIGHT }} />
           </Animated.ScrollView>
         </GestureDetector>
