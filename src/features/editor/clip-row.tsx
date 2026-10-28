@@ -20,6 +20,7 @@ import { haptics } from '@/utils/haptics';
 
 import { TILE_HEIGHT } from './clip-tile';
 import { EditCues } from './edit-cues';
+import { RULER_HEIGHT, STRIP_HEIGHT } from './timeline-strip';
 import { clamp, type TimelineLayout } from './timeline-geometry';
 import type { EditorClip } from './use-editor-draft';
 import { Mode, type PlayheadValues } from './use-preview-transport';
@@ -29,7 +30,9 @@ const THUMB_HEIGHT = TILE_HEIGHT;
 const THUMB_GAP = 8;
 /** One clip's share of the row: its thumbnail and the gap after it. */
 const STEP = THUMB_WIDTH + THUMB_GAP;
-export const ROW_HEIGHT = THUMB_HEIGHT + 20;
+/** The timeline strip's height, the thumbnails where its clip tiles are (under its ruler): a
+ * switch between the views changes what's in the clips, not where they are. */
+const ROW_HEIGHT = STRIP_HEIGHT;
 const BADGE = 18;
 const RADIUS = 10;
 
@@ -339,7 +342,7 @@ export function ClipRow(props: Props) {
 
 const styles = StyleSheet.create({
   row: { height: ROW_HEIGHT },
-  content: { paddingVertical: (ROW_HEIGHT - THUMB_HEIGHT) / 2 },
+  content: { paddingTop: RULER_HEIGHT, paddingBottom: ROW_HEIGHT - RULER_HEIGHT - THUMB_HEIGHT },
   thumb: {
     width: THUMB_WIDTH,
     height: THUMB_HEIGHT,
