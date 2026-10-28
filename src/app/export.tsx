@@ -3,7 +3,7 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -39,7 +39,7 @@ import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { useToast } from '@/features/toast/toast-provider';
 import { SkiaCaption } from '@/features/transcription/skia-caption';
 import { captionStyleFor } from '@/features/transcription/caption-style';
-import { useDraftCaptions } from '@/features/transcription/use-draft-captions';
+import { type DraftCaptions, useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import type { TranscriptLine } from '@/features/transcription/whisper';
 import { DestinationSelector } from '@/features/upload/destination-selector';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
@@ -194,9 +194,12 @@ export default function ExportScreen() {
           <>
             <MergedPreview
               uri={state.outputPath}
-              lines={captions.lines}
+              // What the upload will carry: the captions once every clip that speaks has its
+              // words (getDraftCaptions sends none before), so the preview never shows more.
+              lines={captions.state.status === 'ready' ? captions.lines : []}
               captionY={captionY}
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
+              note={<CaptionsNote captions={captions} />}
             />
 
             {/* Compact inline row — these are secondary actions; the upload button(s) below
@@ -363,6 +366,7 @@ function MergedPreview({
   lines,
   captionY,
   meta,
+  note,
 }: {
   uri: string;
   lines: readonly TranscriptLine[];
@@ -370,6 +374,8 @@ function MergedPreview({
   captionY: number | null;
   /** Clip-count · duration readout, a pill just above the video. */
   meta: string;
+  /** Over the top of the video: what's missing from the captions, if anything. */
+  note?: ReactNode;
 }) {
   const mode = useThemeMode();
   const player = useVideoPlayer(toFileUri(uri), (p) => {
@@ -439,10 +445,39 @@ function MergedPreview({
                 height={cardHeight}
               />
             )}
+            {note}
           </View>
         </View>
       )}
     </View>
+  );
+}
+
+/**
+ * What the upload's captions will be missing, over the video: captions still being made (an
+ * upload now goes without them), or clips the model couldn't caption (no captions there; a tap
+ * tries them again). Nothing when they're complete, or with no captions model chosen.
+ */
+function CaptionsNote({ captions }: { captions: DraftCaptions }) {
+  const mode = useThemeMode();
+  const st = captions.state.status;
+  let text: string | null = null;
+  let onPress: (() => void) | undefined;
+  if (st === 'transcribing' || st === 'downloading') {
+    text = 'Captions are still being made. Uploading now sends the video without them.';
+  } else if (st === 'ready' && captions.failed.length) {
+    text = `Couldn’t caption ${formatClipCount(captions.failed.length)}. Tap to try again.`;
+    onPress = captions.retry;
+  }
+  if (!text) return null;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole={onPress ? 'button' : 'text'}
+      style={[styles.captionsNote, ControlScrim[mode]]}>
+      <ThemedText style={styles.captionsNoteText}>{text}</ThemedText>
+    </Pressable>
   );
 }
 
@@ -509,6 +544,17 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: META_GAP,
   },
+  captionsNote: {
+    position: 'absolute',
+    top: Spacing.two,
+    alignSelf: 'center',
+    maxWidth: '86%',
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  captionsNoteText: { color: '#fff', fontSize: 13, textAlign: 'center' },
   metaText: {
     color: '#fff',
     fontSize: 16,
