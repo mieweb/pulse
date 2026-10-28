@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 
 import type { TranscriptLine } from '@/features/transcription/whisper';
+import { mergedSignature } from '@/features/export/merge-signature';
 import { clipRender, effMs, segmentSignature } from '@/utils/segment-window';
 import type { CaptionEdit } from './captions';
 import { db } from './client';
@@ -22,7 +23,13 @@ export async function adoptMergedCaptionEdit(draftId: string): Promise<void> {
   if (!row) return;
   const clips = (await segmentsForDraft(draftId)).filter((s) => effMs(s) > 0);
   const edits = new Map<string, string>();
-  if (row.editedLines && row.signature === segmentSignature(clips)) {
+  // Written as the clips' signature by versions up to 2.2.4, and with the merge version in front
+  // (mergedSignature) by builds of the pulse-editor migration: either means the same clips.
+  const signature = segmentSignature(clips);
+  if (
+    row.editedLines &&
+    (row.signature === signature || row.signature === mergedSignature(clips))
+  ) {
     const words = parseLines(row.editedLines).flatMap(
       (l) => l.words ?? [{ text: l.text, t0: l.t0, t1: l.t1 }],
     );
