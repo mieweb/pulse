@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { initWhisperVad, type WhisperVadContext } from 'whisper.rn';
 
+import { deleteDownload, downloadWhole, isWholeFile } from './verified-download';
 import { whisperJsiReady } from './whisper-jsi';
 
 /**
@@ -19,8 +20,9 @@ import { whisperJsiReady } from './whisper-jsi';
  */
 const VAD_URL = 'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin';
 const VAD_FILENAME = 'ggml-silero-v6.2.0.bin';
-// Completeness floor for a partial/interrupted download (the real file is ~865 KB).
-const VAD_MIN_BYTES = 512 * 1024;
+// Its exact size as served (2026-10-28): a file an older build left counts as whole only at this
+// size (downloads are whole or not at all: verified-download.ts).
+const VAD_BYTES = 885_098;
 
 function vadDir(): Directory {
   return new Directory(Paths.document, 'vad');
@@ -31,8 +33,7 @@ function vadFile(): File {
 }
 
 function isVadModelReady(): boolean {
-  const file = vadFile();
-  return file.exists && (file.size ?? 0) >= VAD_MIN_BYTES;
+  return isWholeFile(vadFile(), VAD_BYTES);
 }
 
 /** Ensure the Silero VAD model is on disk, downloading it on first use. Returns its file URI. */
@@ -40,16 +41,9 @@ async function ensureVadModel(): Promise<string> {
   const file = vadFile();
   if (isVadModelReady()) return file.uri;
 
-  if (file.exists) file.delete(); // clear a partial/corrupt prior attempt
+  deleteDownload(file); // an older build's partial download
   vadDir().create({ intermediates: true, idempotent: true });
-
-  const task = File.createDownloadTask(VAD_URL, file);
-  await task.downloadAsync();
-  if (!isVadModelReady()) {
-    if (file.exists) file.delete();
-    throw new Error('VAD model download failed or is incomplete');
-  }
-  return file.uri;
+  return downloadWhole(VAD_URL, file, VAD_BYTES).promise;
 }
 
 // The VAD context is independent of which speech model is selected, so we hold a single instance

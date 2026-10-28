@@ -23,8 +23,11 @@ export type WhisperModel = {
    */
   name: string;
   filename: string;
-  /** Approximate on-disk size, for the size label and a download-completeness floor. */
+  /** Approximate on-disk size, for the size label and progress before the server says. */
   approxBytes: number;
+  /** The file's exact size (as served, 2026-10-28): a model file left by a build that didn't
+   * record a verified download counts as complete only at this size. */
+  bytes: number;
   /** Short tradeoff note shown in the picker. */
   note: string;
   /**
@@ -44,6 +47,7 @@ export const MODELS: WhisperModel[] = [
     name: 'parakeet-tdt-0.6b-v3 · q4_0',
     filename: 'ggml-parakeet-tdt-0.6b-v3-q4_0.bin',
     approxBytes: 339 * 1024 * 1024,
+    bytes: 355_615_679,
     note: 'Most accurate · English only',
     lang: 'en',
   },
@@ -55,6 +59,7 @@ export const MODELS: WhisperModel[] = [
     name: 'large-v3-turbo · q5_0',
     filename: 'ggml-large-v3-turbo-q5_0.bin',
     approxBytes: 574 * 1024 * 1024,
+    bytes: 574_041_195,
     note: 'Any language · best quality',
     lang: 'auto',
   },
@@ -66,6 +71,7 @@ export const MODELS: WhisperModel[] = [
     name: 'small · q5_1',
     filename: 'ggml-small-q5_1.bin',
     approxBytes: 181 * 1024 * 1024,
+    bytes: 190_085_487,
     note: 'Any language',
     lang: 'auto',
   },
