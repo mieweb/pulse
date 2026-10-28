@@ -54,7 +54,9 @@ export function wholeWords(segments: TranscriptWord[]): TranscriptWord[] {
     const text = seg.text.trim();
     if (!text) continue;
     const last = out[out.length - 1];
-    if (last && !/^\s/.test(seg.text) && !wordGap(last.text, text)) {
+    // A piece continues the word before only where words are spaced (Latin "Jas|mine"); in
+    // no-space scripts each token stays its own word, with its own timing.
+    if (last && !/^\s/.test(seg.text) && wordGap(last.text, text)) {
       out[out.length - 1] = { text: last.text + text, t0: last.t0, t1: seg.t1 };
     } else {
       out.push({ text, t0: seg.t0, t1: seg.t1 });
