@@ -130,7 +130,6 @@ export default function EditorScreen() {
     draft.captionEdits,
     draft.setCaptions,
   );
-  const captions = useDraftCaptions(draftId, draft.segments);
   const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionYValue = captionRows[0]?.captionY;
   // The same object until the place changes, so the caption on the video doesn't re-render.
@@ -195,6 +194,8 @@ export default function EditorScreen() {
   );
   // The playhead's range is the layout's, known as soon as the clips are (before the preview is up).
   useLayoutEffect(() => ctl.setTotal(layout.totalMs), [ctl, layout.totalMs]);
+  // Captions at the clips' places on this timeline (the preview's), so they sit on the waveform.
+  const captions = useDraftCaptions(draftId, draft.segments, layout);
 
   // In edit mode the clip being edited is the one under the playhead: scrubbing, flinging or
   // playing onto another clip moves the selection (and its red frame) with it.
@@ -553,7 +554,7 @@ export default function EditorScreen() {
 
   // What the selected word's grips may do (timeline ms): its box and how far each edge can go
   // (each edge moves only its own word).
-  const spans = clipSpans(draft.segments);
+  const spans = clipSpans(draft.segments, layout);
   const captionDrag = wordGripLimits(lines, selLine, selWord, spans);
 
   /** A selected word's grip let go: `side` 1 its start, 2 its end, at timeline `ms` (that word

@@ -14,7 +14,7 @@ import { adoptMergedCaptionEdit } from '@/db/transcripts';
 import { userMessage } from '@/utils/user-message';
 
 import { requestClipTranscripts } from './clip-queue';
-import { composeCaptions, type CaptionLine } from './compose';
+import { composeCaptions, type CaptionLine, type ClipLayout } from './compose';
 import { downloadModel, isModelReady } from './model-manager';
 import { resolveSelectedModel, type WhisperModel } from './models';
 import { useTranscriptionStatus } from './transcription-status';
@@ -50,7 +50,12 @@ export type DraftCaptions = {
  * pending edits). Any clip still missing words is queued while the selected model is on the
  * phone. Shared by the editor (where captions are made and edited) and the export screen.
  */
-export function useDraftCaptions(draftId: string, segments: readonly Segment[]): DraftCaptions {
+export function useDraftCaptions(
+  draftId: string,
+  segments: readonly Segment[],
+  /** Where the clips sit (the editor's preview positions); summed lengths without it. */
+  layout?: ClipLayout,
+): DraftCaptions {
   const { data: modelRows } = useLiveQuery(selectedModelQuery, []);
   const model = resolveSelectedModel(modelRows[0]?.value ?? null, Platform.OS);
   const { data: rows } = useLiveQuery(draftClipTranscriptsQuery(draftId, model?.id ?? ''), [
@@ -68,7 +73,10 @@ export function useDraftCaptions(draftId: string, segments: readonly Segment[]):
   }, [draftId]);
 
   const clipRows = useMemo(() => clipWordsOf(rows), [rows]);
-  const composed = useMemo(() => composeCaptions(segments, clipRows), [segments, clipRows]);
+  const composed = useMemo(
+    () => composeCaptions(segments, clipRows, layout),
+    [segments, clipRows, layout],
+  );
   const ready = !!model && isModelReady(model);
 
   // The clips still missing words, asked for whenever that set changes (or the model arrives).

@@ -41,6 +41,29 @@ export function clipWords(
 }
 
 /**
+ * Where the clips sit on the timeline: the preview's own positions when it reported them for
+ * these clips (`starts`, one per clip with length, in order; `totalMs` ends the last), else their
+ * lengths summed. They differ: pulse-editor ends an untrimmed clip at its video track's end on
+ * iOS (its file's end on Android), and captions placed by summed lengths drifted later clip by
+ * clip from the picture and the waveform.
+ */
+export type ClipLayout = { starts: readonly number[]; totalMs: number };
+
+function placements(segments: readonly Segment[], layout?: ClipLayout) {
+  const placed = segments.filter((s) => effMs(s) > 0);
+  const engine = layout && layout.starts.length === placed.length ? layout : null;
+  let offsetMs = 0;
+  return placed.map((s, i) => {
+    const sum = { s, offsetMs, lengthMs: effMs(s) };
+    offsetMs += sum.lengthMs;
+    if (!engine) return sum;
+    const start = engine.starts[i];
+    const end = i + 1 < engine.starts.length ? engine.starts[i + 1] : engine.totalMs;
+    return { s, offsetMs: start, lengthMs: Math.max(0, end - start) };
+  });
+}
+
+/**
  * The draft's captions from its clips' words, through the clips' edits: clips in order
  * (zero-length ones left out, as the merge leaves them out), a muted clip's words dropped, a word
  * kept while its middle is inside the clip's trim window, and its times moved to the draft's
@@ -51,14 +74,12 @@ export function clipWords(
 export function composeCaptions(
   segments: readonly Segment[],
   clips: ReadonlyMap<string, ClipWords>,
+  layout?: ClipLayout,
 ): Composed {
   const lines: CaptionLine[] = [];
   const missing: string[] = [];
   const failed: string[] = [];
-  let offsetMs = 0;
-  for (const s of segments) {
-    const lengthMs = effMs(s);
-    if (lengthMs <= 0) continue;
+  for (const { s, offsetMs, lengthMs } of placements(segments, layout)) {
     const r = clipRender(s);
     const own = r.muted ? null : clipWords(s, clips);
     if (!r.muted && !own) missing.push(s.id);
@@ -108,7 +129,6 @@ export function composeCaptions(
         });
       }
     }
-    offsetMs += lengthMs;
   }
   return { lines, missing, failed };
 }
@@ -123,15 +143,14 @@ export type ClipSpan = {
 };
 
 /** Each clip's span, by id, as composeCaptions lays the clips out. */
-export function clipSpans(segments: readonly Segment[]): Map<string, ClipSpan> {
+export function clipSpans(
+  segments: readonly Segment[],
+  layout?: ClipLayout,
+): Map<string, ClipSpan> {
   const out = new Map<string, ClipSpan>();
-  let offsetMs = 0;
-  for (const s of segments) {
-    const lengthMs = effMs(s);
-    if (lengthMs <= 0) continue;
+  for (const { s, offsetMs, lengthMs } of placements(segments, layout)) {
     const r = clipRender(s);
     out.set(s.id, { offsetMs, lengthMs, inMs: r.inMs, outMs: r.outMs, speed: r.speed });
-    offsetMs += lengthMs;
   }
   return out;
 }
