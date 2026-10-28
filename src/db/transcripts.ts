@@ -30,8 +30,13 @@ export async function adoptMergedCaptionEdit(draftId: string): Promise<void> {
     row.editedLines &&
     (row.signature === signature || row.signature === mergedSignature(clips))
   ) {
-    const words = parseLines(row.editedLines).flatMap(
-      (l) => l.words ?? [{ text: l.text, t0: l.t0, t1: l.t1 }],
+    // Each edited line was a caption the person shaped (split, merged): its first word starts a
+    // sentence, so the captions keep those boxes rather than being regrouped by length.
+    const words = parseLines(row.editedLines).flatMap((l) =>
+      (l.words?.length ? l.words : [{ text: l.text, t0: l.t0, t1: l.t1 }]).map((w, i) => ({
+        ...w,
+        start: i === 0,
+      })),
     );
     let offsetCs = 0;
     for (const s of clips) {
@@ -45,7 +50,12 @@ export async function adoptMergedCaptionEdit(draftId: string): Promise<void> {
       const toFile = (cs: number) => Math.round(r.inMs / 10 + (cs - offsetCs) * r.speed);
       const own = words
         .filter((w) => w.t0 >= offsetCs && w.t0 < endCs)
-        .map((w) => ({ text: w.text, t0: toFile(w.t0), t1: toFile(Math.min(w.t1, endCs)) }));
+        .map((w) => ({
+          text: w.text,
+          t0: toFile(w.t0),
+          t1: toFile(Math.min(w.t1, endCs)),
+          ...(w.start ? { start: true } : {}),
+        }));
       const edit: CaptionEdit = { file: r.file, words: own };
       edits.set(s.id, JSON.stringify(edit));
       offsetCs = endCs;
