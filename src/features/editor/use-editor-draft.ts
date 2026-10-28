@@ -146,7 +146,11 @@ export function useEditorDraft(draftId: string) {
   const [pendingCaptions, setPendingCaptions] = useState<ReadonlyMap<string, string | null>>(
     new Map(),
   );
+  // Caption writes still running, per clip (they land in the order made): as with the edits
+  // above, an older write landing can make the row match for a moment (an edit, then its undo).
+  const [captionWrites, setCaptionWrites] = useState<ReadonlyMap<string, number>>(new Map());
   const captionsLanded = [...pendingCaptions].filter(([id, v]) => {
+    if (captionWrites.has(id)) return false;
     const row = rows.find((r) => r.id === id);
     return !row || (row.captionEdit ?? null) === v;
   });
@@ -260,33 +264,50 @@ export function useEditorDraft(draftId: string) {
   };
 
   /** Store clips' edited captions (JSON, or null for the model's words again). */
+  const countCaptionWrites = (ids: Iterable<string>, by: 1 | -1) =>
+    setCaptionWrites((m) => {
+      const n = new Map(m);
+      for (const id of ids) {
+        const left = (n.get(id) ?? 0) + by;
+        if (left > 0) n.set(id, left);
+        else n.delete(id);
+      }
+      return n;
+    });
+
   const setCaptions = (values: ReadonlyMap<string, string | null>) => {
     setPendingCaptions((p) => new Map([...p, ...values]));
-    setCaptionEdits(values).catch((e: unknown) => {
-      // The rows are the truth: what this write would have set drops (unless newer replaced it).
-      setPendingCaptions((p) => {
-        const n = new Map(p);
-        for (const [id, v] of values) if (n.get(id) === v) n.delete(id);
-        return n;
-      });
-      showToast({
-        kind: 'error',
-        title: 'Couldn’t save the captions',
-        message: userMessage(e, 'Try again.', 'edit captions'),
-      });
-    });
+    countCaptionWrites(values.keys(), 1);
+    setCaptionEdits(values)
+      .catch((e: unknown) => {
+        // The rows are the truth: what this write would have set drops (unless newer replaced it).
+        setPendingCaptions((p) => {
+          const n = new Map(p);
+          for (const [id, v] of values) if (n.get(id) === v) n.delete(id);
+          return n;
+        });
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t save the captions',
+          message: userMessage(e, 'Try again.', 'edit captions'),
+        });
+      })
+      .finally(() => countCaptionWrites(values.keys(), -1));
   };
 
-  const remove = async (id: string) => {
+  /** Delete a clip; resolves whether it was deleted (a failure is shown). */
+  const remove = async (id: string): Promise<boolean> => {
     try {
       dropClipJobs({ segmentIds: [id] });
       await deleteSegment(id);
+      return true;
     } catch (e) {
       showToast({
         kind: 'error',
         title: 'Couldn’t delete the clip',
         message: userMessage(e, 'Try again.', 'delete clip'),
       });
+      return false;
     }
   };
 

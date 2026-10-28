@@ -458,8 +458,9 @@ export default function EditorScreen() {
     deleting.current = t.clip.id;
     const { start } = slotOf(t.index);
     ctl.seekTo(start);
-    void draft.remove(t.clip.id).finally(() => {
-      if (clips.some((c) => c.id === t.clip.id)) deleting.current = null; // it failed
+    void draft.remove(t.clip.id).then((deleted) => {
+      // Deleted: the guard goes once the clip is gone from the clips (above).
+      if (!deleted) deleting.current = null;
     });
   };
 
