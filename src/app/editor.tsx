@@ -307,12 +307,47 @@ export default function EditorScreen() {
   const target = (): { clip: EditorClip; index: number } | null =>
     current >= 0 ? { clip: clips[current], index: current } : null;
 
+  // A change to a clip's length (speed, Reset, undo/redo) moves every later clip, so the playhead
+  // would land in another one (and edit mode with it). It stays in the clip it was in, on the same
+  // moment of its source, placed once the new layout is known (as a trim's end is).
+  const keepOn = useRef<{ id: string; sourceMs: number; until: number } | null>(null);
+  const keepPlayhead = () => {
+    const t = target();
+    if (!t) return;
+    const { start } = slotOf(t.index);
+    const e = t.clip.edit;
+    keepOn.current = {
+      id: t.clip.id,
+      sourceMs: e.startMs + Math.max(0, ctl.lastMs - start) * e.speed,
+      // The change shows on the next render; one that changed no clip (a caption undo) lapses.
+      until: Date.now() + 1000,
+    };
+  };
+  useEffect(() => {
+    const k = keepOn.current;
+    keepOn.current = null;
+    if (!k || Date.now() > k.until) return;
+    const i = clips.findIndex((c) => c.id === k.id);
+    if (i < 0) return;
+    const c = clips[i];
+    const start = layout.starts[i] ?? 0;
+    const end = i + 1 < layout.starts.length ? layout.starts[i + 1] : layout.totalMs;
+    const frameMs = 1000 / (fpsOf(c.uri) ?? 30);
+    const at =
+      start + (clamp(k.sourceMs, c.edit.startMs, c.edit.endMs) - c.edit.startMs) / c.edit.speed;
+    ctl.endTrim(clamp(at, start, Math.max(start, end - frameMs)));
+    // Only a change of the clips places it (the layout follows them).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clips]);
+
   const edit = (opKey: string | null, change: (e: ParsedEdit) => ParsedEdit) => {
     const t = target();
     if (!t || !t.clip.editable) return;
     haptics.tap();
     history.record(opKey && `${opKey}:${t.clip.id}`);
-    draft.setEdit(t.clip.id, change(t.clip.edit));
+    const next = change(t.clip.edit);
+    if (next.speed !== t.clip.edit.speed) keepPlayhead();
+    draft.setEdit(t.clip.id, next);
   };
 
   const onTap = (ms: number) => {
@@ -337,16 +372,24 @@ export default function EditorScreen() {
         }
       : null;
 
+  // The clip whose grip was grabbed, and its trim then: the release applies to it even if the
+  // clip under the playhead changed meanwhile.
+  const trimmed = useRef<{ clip: EditorClip; trim: TrimInfo } | null>(null);
   const onTrimStart = () => {
-    if (!sel) return;
+    if (!sel || !trim) return;
     haptics.pickUp();
+    trimmed.current = { clip: sel, trim };
     setTrimmingId(sel.id);
     ctl.beginDrag();
   };
 
   const onTrimEnd = (side: TrimSide, ms: number) => {
     setTrimmingId(null);
-    if (!sel || !trim) {
+    const grabbed = trimmed.current;
+    trimmed.current = null;
+    const sel = grabbed ? clips.find((c) => c.id === grabbed.clip.id) : undefined;
+    const trim = grabbed?.trim;
+    if (!sel || !trim || !sel.editable) {
       ctl.endScrub(ctl.lastMs);
       return { leftMs: 0, lengthMs: 0 };
     }
@@ -388,12 +431,23 @@ export default function EditorScreen() {
     draft.setEdit(c.id, { ...c.edit, crop });
   };
 
-  /** Delete the clip under the playhead (edit mode stays, on the clip that comes there next). */
+  /** Delete the clip under the playhead (edit mode stays, on the clip that comes there next: the
+   * playhead goes to the deleted clip's start). One at a time: a second tap while one is going
+   * would delete the clip that's under the playhead for a moment, not the next. */
+  const deleting = useRef<string | null>(null);
+  useEffect(() => {
+    if (deleting.current && !clips.some((c) => c.id === deleting.current)) deleting.current = null;
+  }, [clips]);
   const remove = () => {
     const t = target();
-    if (!t) return;
+    if (!t || deleting.current) return;
     haptics.drop();
-    void draft.remove(t.clip.id);
+    deleting.current = t.clip.id;
+    const { start } = slotOf(t.index);
+    ctl.seekTo(start);
+    void draft.remove(t.clip.id).finally(() => {
+      if (clips.some((c) => c.id === t.clip.id)) deleting.current = null; // it failed
+    });
   };
 
   // Export reads the stored clips: it opens once every edit asked for is stored (a cover renders
@@ -417,6 +471,7 @@ export default function EditorScreen() {
     haptics.tap();
     // A legacy baked edit can't come back once its file is gone: like delete, no undo step.
     if (t.clip.editable) history.record(null);
+    keepPlayhead();
     draft.setValue(t.clip.id, null);
   };
 
@@ -500,10 +555,12 @@ export default function EditorScreen() {
   }
   const undo = () => {
     letGo();
+    keepPlayhead();
     history.undo();
   };
   const redo = () => {
     letGo();
+    keepPlayhead();
     history.redo();
   };
 
