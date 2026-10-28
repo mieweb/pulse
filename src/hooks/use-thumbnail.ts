@@ -2,13 +2,9 @@ import { VideoThumbnail } from 'expo-video';
 import { useEffect, useState } from 'react';
 
 import { absolutize } from '@/utils/file-store';
-import { generateThumbnail } from '@/utils/video';
+import { cachedThumbnail, generateThumbnail } from '@/utils/video';
 
 type Thumb = { uri: string } | VideoThumbnail | undefined;
-
-/** Frames already extracted, by clip and edit: a copy mounted later (a dragged clip's) has its
- * frame on its first render instead of starting blank. */
-const extracted = new Map<string, Thumb>();
 
 /**
  * Cover frame for a stored clip. Prefers the persisted jpeg (`thumbRel`, written at record/edit
@@ -24,8 +20,12 @@ export function useThumbnail(
 ): Thumb {
   // Kept with the clip and edit it's for, so a changed edit never shows the previous frame.
   const key = `${videoRelFallback ?? ''}#${editState ?? ''}`;
+  // A frame already extracted (generateThumbnail's bounded cache) shows on the first render, so a
+  // copy mounted later (a dragged clip's) doesn't start blank.
   const [fallback, setFallback] = useState<{ key: string; thumb: Thumb } | undefined>(() => {
-    const hit = extracted.get(key);
+    const hit = videoRelFallback
+      ? cachedThumbnail(absolutize(videoRelFallback), editState)
+      : undefined;
     return hit ? { key, thumb: hit } : undefined;
   });
   const shown = fallback?.key === key;
@@ -33,11 +33,7 @@ export function useThumbnail(
   useEffect(() => {
     if (thumbRel || !videoRelFallback || shown) return;
     let alive = true;
-    const hit = extracted.get(key);
-    void (
-      hit ? Promise.resolve(hit) : generateThumbnail(absolutize(videoRelFallback), editState)
-    ).then((thumb) => {
-      if (thumb) extracted.set(key, thumb);
+    void generateThumbnail(absolutize(videoRelFallback), editState).then((thumb) => {
       if (alive) setFallback({ key, thumb });
     });
     return () => {
