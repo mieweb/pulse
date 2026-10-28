@@ -49,7 +49,7 @@ import { Mode, type PlayheadValues } from './use-preview-transport';
 import type { Peaks } from './use-waveforms';
 
 /** The time ruler, above the clips. */
-const RULER_HEIGHT = 16;
+export const RULER_HEIGHT = 16;
 /** Space below the captions lane. */
 const STRIP_PAD = 8;
 /** The captions lane, under the clips. */
@@ -367,18 +367,46 @@ export function TimelineStrip(props: Props) {
     return { left: a * z - CAP_GRIP, width: Math.max(1, (b - a) * z) + CAP_GRIP * 2 };
   });
 
-  // Switched away mid-scroll (or mid-fling): end it, so the preview leaves scrubbing.
+  // Switched away mid-scroll (or mid-fling), or with a trim or caption grip held: end it as a
+  // release would (the grip's release never arrives once its view is gone), so the preview leaves
+  // scrubbing and the editor leaves trimming (the trim or the word's edge as far as it got).
   useEffect(
     () => () => {
+      // Switched away mid-pinch: the scale it reached is kept (its end, which keeps it, won't come).
+      if (pinching.get()) keptZoom = zoomNow.get();
       scheduleOnUI(() => {
         'worklet';
-        if (!user.get()) return;
-        user.set(false);
+        if (user.get()) {
+          user.set(false);
+          mode.set(Mode.idle);
+          scheduleOnRN(scrubEnd, timeMs.get());
+          return;
+        }
+        if (mode.get() !== Mode.trim) return;
         mode.set(Mode.idle);
-        scheduleOnRN(scrubEnd, timeMs.get());
+        const held = capHeld.get();
+        if (held) {
+          capHeld.set(0);
+          scheduleOnRN(capEnd, held, capValue.get());
+        } else if (side.get()) {
+          scheduleOnRN(trimEnd, side.get() as TrimSide, trimSrc.get());
+        }
       });
     },
-    [user, mode, timeMs, scrubEnd],
+    [
+      user,
+      mode,
+      timeMs,
+      scrubEnd,
+      capHeld,
+      capValue,
+      capEnd,
+      side,
+      trimSrc,
+      trimEnd,
+      pinching,
+      zoomNow,
+    ],
   );
 
   // The scroll view sits under the playhead whenever nothing else moves it (a finger or its fling
@@ -624,7 +652,9 @@ export function TimelineStrip(props: Props) {
       zoomed(z);
       return;
     }
-    // Ended either way: done, or taken over by a pinch (which owns the scale from there).
+    // Ended either way: done, or taken over by a pinch (which owns the scale from there). The
+    // scale it goes to is kept now: a strip shown again before it lands starts there.
+    keptZoom = z;
     zooming.set(true);
     zoomNow.set(
       withTiming(z, { duration: 250, easing: EaseOut }, (finished) => {
