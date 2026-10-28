@@ -141,6 +141,21 @@ export function useEditorDraft(draftId: string) {
     setPending(next);
   }
 
+  // Caption edits show at once too, until the rows hold them (or the write fails): a second edit
+  // right after the first starts from the first's words, not from what the rows still say.
+  const [pendingCaptions, setPendingCaptions] = useState<ReadonlyMap<string, string | null>>(
+    new Map(),
+  );
+  const captionsLanded = [...pendingCaptions].filter(([id, v]) => {
+    const row = rows.find((r) => r.id === id);
+    return !row || (row.captionEdit ?? null) === v;
+  });
+  if (captionsLanded.length) {
+    const next = new Map(pendingCaptions);
+    for (const [id] of captionsLanded) next.delete(id);
+    setPendingCaptions(next);
+  }
+
   // A reorder shows at once, until the rows hold it (or it fails).
   const [pendingOrder, setPendingOrder] = useState<readonly string[] | null>(null);
   const rowOrder = rows.map((r) => r.id);
@@ -158,8 +173,14 @@ export function useEditorDraft(draftId: string) {
     const ordered = pendingOrder
       ? [...rows].sort((a, b) => rank(pendingOrder, a.id) - rank(pendingOrder, b.id))
       : rows;
-    return ordered.map((s) => withPending(s, pending.get(s.id))).filter((s) => effMs(s) > 0);
-  }, [rows, pending, pendingOrder]);
+    return ordered
+      .map((s) => {
+        const edited = withPending(s, pending.get(s.id));
+        const caption = pendingCaptions.get(s.id);
+        return caption === undefined ? edited : { ...edited, captionEdit: caption };
+      })
+      .filter((s) => effMs(s) > 0);
+  }, [rows, pending, pendingOrder, pendingCaptions]);
 
   // Clips change identity only when what they render changes (a new array rebuilds the preview):
   // a cover landing later, or a label, keeps the same clips.
@@ -240,13 +261,20 @@ export function useEditorDraft(draftId: string) {
 
   /** Store clips' edited captions (JSON, or null for the model's words again). */
   const setCaptions = (values: ReadonlyMap<string, string | null>) => {
-    setCaptionEdits(values).catch((e: unknown) =>
+    setPendingCaptions((p) => new Map([...p, ...values]));
+    setCaptionEdits(values).catch((e: unknown) => {
+      // The rows are the truth: what this write would have set drops (unless newer replaced it).
+      setPendingCaptions((p) => {
+        const n = new Map(p);
+        for (const [id, v] of values) if (n.get(id) === v) n.delete(id);
+        return n;
+      });
       showToast({
         kind: 'error',
         title: 'Couldn’t save the captions',
         message: userMessage(e, 'Try again.', 'edit captions'),
-      }),
-    );
+      });
+    });
   };
 
   const remove = async (id: string) => {
