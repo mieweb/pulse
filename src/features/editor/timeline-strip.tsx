@@ -229,7 +229,9 @@ export function TimelineStrip(props: Props) {
     [scheme, theme],
   );
   const trimInfo = useSharedValue<TrimInfo | null>(null);
-  const [width, setWidth] = useState(0);
+  // The window's width until the strip is laid out (it spans it), as `half` above: the playhead
+  // and the drawing are in place from the first frame, not at the left edge or blank until layout.
+  const [width, setWidth] = useState(() => Dimensions.get('window').width);
 
   // The gestures are built once; their JS callbacks reach the current props through this.
   const latest = useRef(props);

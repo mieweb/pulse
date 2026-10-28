@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   scrollTo,
   useAnimatedReaction,
@@ -138,7 +138,9 @@ export function ClipRow(props: Props) {
   const { timeMs, totalMs, mode } = values;
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const offset = useScrollOffset(scrollRef);
-  const [width, setWidth] = useState(0);
+  // The window's width until the row is laid out (it spans it): the playhead and the row's padding
+  // are in place from the first frame, not at the left edge until layout reports.
+  const [width, setWidth] = useState(() => Dimensions.get('window').width);
 
   const latest = useRef(props);
   useEffect(() => {
