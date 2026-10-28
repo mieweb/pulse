@@ -196,18 +196,34 @@ export function useEditorDraft(draftId: string) {
   /** Store `edit` for a clip (canonical form). */
   const setEdit = (id: string, edit: ParsedEdit) => write(id, canonicalEdit(JSON.stringify(edit)));
 
+  // Reorders are written like edits: one at a time, only the newest waiting, so two quick moves
+  // can't land out of order (each write awaits before its transaction).
+  const orderQueue = useRef({ next: null as string[] | null, running: false });
   /** Put the clips in this order (the editor's clips; any it hides, zero-length, go last). */
   const reorder = (ids: string[]) => {
     const all = [...ids, ...rows.map((r) => r.id).filter((id) => !ids.includes(id))];
     setPendingOrder(all);
-    reorderSegments(all).catch((e: unknown) => {
-      setPendingOrder(null);
-      showToast({
-        kind: 'error',
-        title: 'Couldn’t move the clip',
-        message: userMessage(e, 'Try again.', 'reorder clips'),
-      });
-    });
+    const q = orderQueue.current;
+    q.next = all;
+    if (q.running) return;
+    q.running = true;
+    void (async () => {
+      while (q.next) {
+        const order = q.next;
+        q.next = null;
+        try {
+          await reorderSegments(order);
+        } catch (e) {
+          setPendingOrder(null);
+          showToast({
+            kind: 'error',
+            title: 'Couldn’t move the clip',
+            message: userMessage(e, 'Try again.', 'reorder clips'),
+          });
+        }
+      }
+      q.running = false;
+    })();
   };
 
   const remove = async (id: string) => {
