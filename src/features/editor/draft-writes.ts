@@ -6,7 +6,8 @@ export type EditValue = string | null;
 /** What's being written: clips with an edit in flight, and whether an order is. */
 export type DraftWrites = { edits: ReadonlySet<string>; order: boolean };
 
-/** A write that failed: the clip (an edit) or null (an order), and why. */
+/** The newest write that failed (one already replaced by a newer value isn't reported): the clip
+ * (an edit) or null (an order), and why. */
 export type WriteFailure = { id: string | null; error: unknown };
 
 // The editor's writes live here rather than in one editor: a write still running when the editor
@@ -50,7 +51,9 @@ export function writeEdit(id: string, value: EditValue) {
         if (v === null) await resetEdit(id);
         else await setEditState(id, v);
       } catch (error) {
-        failed({ id, error });
+        // A newer value is queued: it's what the editor shows and what gets stored, so this one
+        // failing changes nothing the person sees.
+        if (!nextEdit.has(id)) failed({ id, error });
       }
     }
     editing.delete(id);
@@ -71,7 +74,7 @@ export function writeOrder(order: string[]) {
       try {
         await reorderSegments(o);
       } catch (error) {
-        failed({ id: null, error });
+        if (!nextOrder) failed({ id: null, error });
       }
     }
     ordering = false;
