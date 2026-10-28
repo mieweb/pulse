@@ -84,6 +84,11 @@
     }
   },
   "expo": {
+    "install": {
+      "exclude": [
+        "react-native-reanimated"
+      ]
+    },
     "doctor": {
       "reactNativeDirectoryCheck": {
         "exclude": [
