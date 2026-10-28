@@ -54,6 +54,9 @@ export function usePreviewTransport() {
       pending: null as number | null,
       /** Scrubbing or trimming: reported times don't move the playhead then. */
       dragging: false,
+      /** A scrub was let go and its seeks are still landing: an earlier seek's report must not pull
+       * the playhead back from where the finger let go (it's already there). */
+      settling: false,
       playing: false,
       lastMs: 0,
       totalMs: 0,
@@ -87,16 +90,20 @@ export function usePreviewTransport() {
             const next = c.pending;
             c.pending = null;
             if (next != null) c.seek(next);
-            else if (c.playAfterSeek) {
-              c.playAfterSeek = false;
-              c.ref?.play();
+            else {
+              c.settling = false;
+              if (c.playAfterSeek) {
+                c.playAfterSeek = false;
+                c.ref?.play();
+              }
             }
           });
       },
       onTime: (ms: number, isPlaying: boolean) => {
         // The first frame (0) of a preview about to seek to where the editor opened isn't news.
         if (c.placeMs != null) return;
-        if (!c.dragging) {
+        const following = !c.dragging && !c.settling;
+        if (following) {
           c.lastMs = ms;
           if (isPlaying) {
             anchorMs.set(ms);
@@ -105,7 +112,7 @@ export function usePreviewTransport() {
         }
         // Stop the frame callback's extrapolation before snapping to the paused frame.
         c.setPlayingState(isPlaying);
-        if (!isPlaying && !c.dragging) timeMs.set(ms);
+        if (!isPlaying && following) timeMs.set(ms);
       },
       onStatus: (st: PreviewStatus) => {
         setStatus(st);
@@ -192,6 +199,8 @@ export function usePreviewTransport() {
       endScrub: (ms: number) => {
         c.ref?.setScrubbing(false);
         c.dragging = false;
+        // Until the last seek lands (no preview yet: no seek, nothing to wait for).
+        c.settling = c.ref != null;
         c.seek(ms);
       },
       /** A trim ended: the playhead goes to the new edge once the trimmed timeline is up. */
