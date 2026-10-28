@@ -413,6 +413,9 @@ export function TimelineStrip(props: Props) {
             const left = (layout.starts[i] ?? 0) * DP_PER_MS;
             const end =
               (i + 1 < layout.starts.length ? layout.starts[i + 1] : layout.totalMs) * DP_PER_MS;
+            // The clip being trimmed draws a screen more each side: a grip can reveal footage.
+            const pad = i === trimming ? pageWidth : 0;
+            const near = end + pad >= nearFrom && left - pad <= nearTo;
             return (
               <ClipTile
                 key={c.id}
@@ -422,7 +425,8 @@ export function TimelineStrip(props: Props) {
                 peaks={peaks.get(c.uri)}
                 edit={c.edit}
                 sourceMs={c.sourceMs}
-                near={i === trimming || (end >= nearFrom && left <= nearTo)}
+                drawFrom={near ? nearFrom - pad - left : 0}
+                drawTo={near ? nearTo + pad - left : 0}
                 trimming={i === trimming}
                 motion={motion}
                 palette={palette}

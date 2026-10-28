@@ -31,16 +31,21 @@ const LEVELS = Array.from({ length: 256 }, (_, l) =>
 /**
  * The tile's sound as a waveform: one thin vertical line per WAVE_STEP dp of the source it shows
  * (its trim, at its speed), mirrored around the centre: the peak in that slice (outer, light) and
- * its RMS (inner, solid).
+ * its RMS (inner, solid). Only for [x0, x1) of the content, drawn from x0.
  */
-function wavePaths(peaks: Peaks, edit: ParsedEdit, width: number): { peak: string; rms: string } {
+function wavePaths(
+  peaks: Peaks,
+  edit: ParsedEdit,
+  x0: number,
+  x1: number,
+): { peak: string; rms: string } {
   const mid = WAVE_HEIGHT / 2;
   const half = mid - 2;
   const span = (WAVE_STEP / DP_PER_MS) * edit.speed;
   const count = peaks.length / 2;
   let peak = '';
   let rms = '';
-  for (let x = WAVE_STEP / 2; x < width; x += WAVE_STEP) {
+  for (let x = x0 + WAVE_STEP / 2; x < x1; x += WAVE_STEP) {
     const t0 = edit.startMs + ((x - WAVE_STEP / 2) / DP_PER_MS) * edit.speed;
     let p = 0;
     let r = 0;
@@ -53,7 +58,7 @@ function wavePaths(peaks: Peaks, edit: ParsedEdit, width: number): { peak: strin
     // Silence is the centre line (drawn once), not a row of dots.
     if (ph < 0.75) continue;
     const rh = Math.min(ph, LEVELS[r] * half);
-    const xs = x.toFixed(1);
+    const xs = (x - x0).toFixed(1);
     peak += `M${xs} ${(mid - ph).toFixed(1)}V${(mid + ph).toFixed(1)}`;
     rms += `M${xs} ${(mid - rh).toFixed(1)}V${(mid + rh).toFixed(1)}`;
   }
@@ -83,8 +88,11 @@ type Props = {
   edit: ParsedEdit;
   /** The source file's length, ms. */
   sourceMs: number;
-  /** Near the visible part of the strip: draws the covers and the waveform. */
-  near: boolean;
+  /** The part of the tile near the visible strip, dp from its left edge (none when `drawTo` <=
+   * `drawFrom`): only that part draws its covers and waveform, so a long clip costs a screen's
+   * worth, not its length. Numbers rather than a range object, so the memo holds. */
+  drawFrom: number;
+  drawTo: number;
   /** Being trimmed: shows its whole source behind the window, so a grip reveals or hides it. */
   trimming: boolean;
   motion: TileMotion;
@@ -104,7 +112,8 @@ export const ClipTile = memo(function ClipTile({
   peaks,
   edit,
   sourceMs,
-  near,
+  drawFrom,
+  drawTo,
   trimming,
   motion,
   palette,
@@ -117,10 +126,16 @@ export const ClipTile = memo(function ClipTile({
     () => (trimming ? { ...edit, startMs: 0, endMs: sourceMs } : edit),
     [trimming, edit, sourceMs],
   );
-  const cells = near && cover ? Math.ceil(contentWidth / CELL_WIDTH) : 0;
+  // The near part in the content's own dp (a trimmed tile's content starts `offset` to the left),
+  // snapped to whole cells and waveform steps.
+  const from = Math.max(0, drawFrom + offset);
+  const to = Math.min(contentWidth, drawTo + offset);
+  const firstCell = Math.floor(from / CELL_WIDTH);
+  const cells = cover && to > from ? Math.ceil(to / CELL_WIDTH) - firstCell : 0;
+  const waveFrom = Math.floor(from / WAVE_STEP) * WAVE_STEP;
   const wave = useMemo(
-    () => (near && peaks && !edit.muted ? wavePaths(peaks, contentEdit, contentWidth) : null),
-    [near, peaks, edit.muted, contentEdit, contentWidth],
+    () => (peaks && !edit.muted && to > from ? wavePaths(peaks, contentEdit, waveFrom, to) : null),
+    [peaks, edit.muted, contentEdit, waveFrom, to, from],
   );
 
   const { slots, sel, side, delta } = motion;
@@ -149,9 +164,10 @@ export const ClipTile = memo(function ClipTile({
     <Animated.View style={[styles.tile, { backgroundColor: palette.tile }, frame]}>
       <Animated.View style={[{ width: contentWidth }, content]}>
         <View style={[styles.film, { backgroundColor: palette.film }]}>
+          {cells > 0 && <View style={{ width: firstCell * CELL_WIDTH }} />}
           {Array.from({ length: cells }, (_, i) => (
             <Image
-              key={i}
+              key={firstCell + i}
               source={cover}
               style={styles.cell}
               contentFit="cover"
@@ -162,9 +178,12 @@ export const ClipTile = memo(function ClipTile({
         </View>
         <View style={[styles.wave, { backgroundColor: palette.wave }]}>
           {wave ? (
-            <Svg width={contentWidth} height={WAVE_HEIGHT}>
+            <Svg
+              width={to - waveFrom}
+              height={WAVE_HEIGHT}
+              style={[styles.waveSlice, { left: waveFrom }]}>
               <Path
-                d={`M0 ${WAVE_HEIGHT / 2}H${contentWidth}`}
+                d={`M0 ${WAVE_HEIGHT / 2}H${to - waveFrom}`}
                 stroke={palette.line}
                 strokeOpacity={0.35}
                 strokeWidth={1}
@@ -207,6 +226,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
+  waveSlice: { position: 'absolute', top: 0 },
   muted: { paddingLeft: 8 },
   silence: { height: 1, marginHorizontal: 4, opacity: 0.45 },
   cues: { position: 'absolute', top: 4, left: 4 },
