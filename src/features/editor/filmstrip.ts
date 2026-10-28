@@ -34,6 +34,10 @@ const BATCH = 12;
 const CONCURRENT = Platform.OS === 'android' ? 1 : 2;
 /** Frames that landed are shown together, at most this often. */
 const NOTIFY_MS = 100;
+/** A file whose batch the decoder turned down as a whole is asked again after this long, doubling
+ * each time, and given up on (its times count as failed) after MAX_REJECTIONS in a row. */
+const RETRY_MS = 1000;
+const MAX_REJECTIONS = 3;
 /** Decoded frames kept in memory (about 140 KB each at the size asked for). */
 const MAX_IMAGES = 400;
 /** Frames come fitted inside a FRAME_BOX square (px): enough for a 16:9 tile (or a 9:16 one)
@@ -41,7 +45,8 @@ const MAX_IMAGES = 400;
 const FRAME_BOX = Math.ceil((FILM_HEIGHT * PixelRatio.get() * 16) / 9);
 
 // Per file: its decoded frames by the time asked for (insertion order = least recently used first,
-// across all files via `lru`), the times that failed, and what its disk folder holds (read once).
+// across all files via `lru`), the times that failed, and what its disk folder holds (read once),
+// and its batches turned down in a row (with when it's asked again).
 type Store = {
   uri: string;
   /** By the time asked for: the image, and the time it actually shows (ms). */
@@ -49,6 +54,8 @@ type Store = {
   failed: Set<number>;
   /** By the time asked for: the cached JPEG and the time it shows; null until read. */
   disk: Map<number, { file: File; at: number }> | null;
+  rejections: number;
+  retryAt: number;
 };
 const stores = new Map<string, Store>();
 const lru = new Map<string, { uri: string; t: number }>();
@@ -91,7 +98,7 @@ const folderOf = (uri: string) => new Directory(cacheRoot(), folderName(uri));
 function storeFor(uri: string): Store {
   let s = stores.get(uri);
   if (!s) {
-    s = { uri, images: new Map(), failed: new Set(), disk: null };
+    s = { uri, images: new Map(), failed: new Set(), disk: null, rejections: 0, retryAt: 0 };
     stores.set(uri, s);
   }
   return s;
@@ -223,7 +230,7 @@ async function nextBatch(): Promise<{ store: Store; times: number[]; step: numbe
   for (const pass of ['near', 'coarse'] as const) {
     for (const [uri, w] of [...wanted]) {
       const store = stores.get(uri);
-      if (!store || inFlight.has(uri)) continue;
+      if (!store || inFlight.has(uri) || Date.now() < store.retryAt) continue;
       inFlight.add(uri);
       const disk = readDisk(store);
       const times: number[] = [];
@@ -276,35 +283,52 @@ async function work() {
 }
 
 async function fetchBatch({ store, times, step }: { store: Store; times: number[]; step: number }) {
+  let got: Awaited<ReturnType<typeof grabFrames>>;
   try {
-    const got = await grabFrames(store.uri, {
+    got = await grabFrames(store.uri, {
       timesMs: times,
       maxWidth: FRAME_BOX,
       maxHeight: FRAME_BOX,
       quality: 0.6,
       toleranceMs: step / 2,
     });
-    const dir = folderOf(store.uri);
-    if (!dir.exists) dir.create({ intermediates: true });
-    const disk = readDisk(store);
-    for (const f of got) {
-      const bytes = new Uint8Array(f.data);
-      const img = decode(bytes);
-      if (!img) continue;
-      keep(store, f.timeMs, img, f.actualMs);
-      try {
-        const file = new File(dir, `${f.timeMs}@${Math.round(f.actualMs * 1000) / 1000}.jpg`);
-        file.create({ overwrite: true });
-        file.write(bytes);
-        disk.set(f.timeMs, { file, at: f.actualMs });
-      } catch {
-        // Not cached on disk: fetched again next time.
-      }
-    }
   } catch {
-    // The whole batch failed: its times count as failed below.
+    // Turned down as a whole, which can pass (the decoder taken by an export or the preview, the
+    // app in the background): the file is asked again after a pause. One that keeps failing
+    // won't decode; its times count as failed (below).
+    store.rejections++;
+    if (store.rejections < MAX_REJECTIONS) {
+      const delay = RETRY_MS * 2 ** (store.rejections - 1);
+      store.retryAt = Date.now() + delay;
+      setTimeout(pump, delay);
+      return;
+    }
+    got = [];
   }
-  // Not fetched again this session (a frame the decoder couldn't give, or a batch that failed):
+  if (got.length) store.rejections = 0;
+  let dir: Directory | null = folderOf(store.uri);
+  try {
+    if (!dir.exists) dir.create({ intermediates: true });
+  } catch {
+    dir = null; // Shown but not cached on disk: fetched again next session.
+  }
+  const disk = readDisk(store);
+  for (const f of got) {
+    const bytes = new Uint8Array(f.data);
+    const img = decode(bytes);
+    if (!img) continue;
+    keep(store, f.timeMs, img, f.actualMs);
+    if (!dir) continue;
+    try {
+      const file = new File(dir, `${f.timeMs}@${Math.round(f.actualMs * 1000) / 1000}.jpg`);
+      file.create({ overwrite: true });
+      file.write(bytes);
+      disk.set(f.timeMs, { file, at: f.actualMs });
+    } catch {
+      // Not cached on disk: fetched again next time.
+    }
+  }
+  // Not fetched again this session (a frame the decoder couldn't give, or a file it gave up on):
   // their tiles keep the nearest frame or the cover.
   for (const t of times) if (!store.images.has(t)) store.failed.add(t);
   changed();
