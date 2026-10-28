@@ -6,7 +6,7 @@ import Animated, {
   useAnimatedReaction,
   useAnimatedRef,
   useAnimatedScrollHandler,
-  useScrollViewOffset,
+  useScrollOffset,
   useSharedValue,
 } from 'react-native-reanimated';
 import Sortable, { type SortableGridDragEndParams } from 'react-native-sortables';
@@ -141,7 +141,7 @@ export function ClipRow(props: Props) {
   const { clips, covers, layout, selected, values } = props;
   const { timeMs, totalMs, mode, playing } = values;
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
-  const offset = useScrollViewOffset(scrollRef);
+  const offset = useScrollOffset(scrollRef);
   const [width, setWidth] = useState(0);
   const widthSv = useSharedValue(0);
 

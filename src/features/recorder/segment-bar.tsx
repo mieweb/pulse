@@ -8,7 +8,7 @@ import Animated, {
   useAnimatedRef,
   useAnimatedStyle,
   useReducedMotion,
-  useScrollViewOffset,
+  useScrollOffset,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -77,7 +77,7 @@ type Props = {
 };
 
 export function SegmentBar(props: Props) {
-  // Gate BEFORE the hooks mount: useScrollViewOffset warns on every empty-draft render
+  // Gate BEFORE the hooks mount: useScrollOffset warns on every empty-draft render
   // while its ref has no ScrollView attached, so the hooks live in Bar below.
   if (props.segments.length === 0) return null;
   return <Bar {...props} />;
@@ -92,7 +92,7 @@ function Bar({
   firstClipOverlay,
 }: Props) {
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
-  const scrollOffset = useScrollViewOffset(scrollRef);
+  const scrollOffset = useScrollOffset(scrollRef);
   // The viewport's width, for clamping the scroll restored after a delete.
   const viewportW = useSharedValue(0);
 
