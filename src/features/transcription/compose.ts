@@ -186,15 +186,19 @@ export function wordGripLimits(
     line + 1 < lines.length && lines[line + 1].clipId === l.clipId ? lines[line + 1] : null;
   const lo = prev ? prev.t1 * 10 : span.offsetMs;
   const hi = next ? next.t0 * 10 : span.offsetMs + span.lengthMs;
-  // The shortest a word can be on the timeline (slowed down, a word is longer there).
-  const min = MIN_WORD_CS * 10 * Math.max(1, 1 / span.speed);
+  // The shortest a word can be on the timeline: MIN_WORD_CS in its file's time (what setTimes
+  // keeps), shorter when sped up and longer when slowed down.
+  const min = (MIN_WORD_CS * 10) / span.speed;
   const pw = ws[word - 1];
   const nw = ws[word + 1];
+  const lo0 = pw ? pw.t1 * 10 : lo;
+  const hi1 = nw ? nw.t0 * 10 : hi;
   return {
     box: { t0: w.t0 * 10, t1: w.t1 * 10 },
-    lo0: pw ? pw.t1 * 10 : lo,
-    hi0: w.t1 * 10 - min,
-    lo1: w.t0 * 10 + min,
-    hi1: nw ? nw.t0 * 10 : hi,
+    // Never a reversed range: a word already that short keeps the edge where it is.
+    lo0,
+    hi0: Math.max(lo0, w.t0 * 10, w.t1 * 10 - min),
+    lo1: Math.min(hi1, w.t1 * 10, w.t0 * 10 + min),
+    hi1,
   };
 }
