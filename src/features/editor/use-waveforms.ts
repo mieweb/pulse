@@ -35,7 +35,20 @@ function hash(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-async function peaksOf(uri: string): Promise<Peaks | null> {
+// Per file, the extraction under way: an effect restarted meanwhile (a reorder) waits for it
+// instead of decoding the file a second time.
+const running = new Map<string, Promise<Peaks | null>>();
+
+function peaksOf(uri: string): Promise<Peaks | null> {
+  let work = running.get(uri);
+  if (!work) {
+    work = readPeaks(uri).finally(() => running.delete(uri));
+    running.set(uri, work);
+  }
+  return work;
+}
+
+async function readPeaks(uri: string): Promise<Peaks | null> {
   const file = new File(cacheDir(), `${hash(uri)}.wave`);
   if (file.exists) {
     const bytes = await file.bytes();
