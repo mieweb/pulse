@@ -28,19 +28,30 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 
 export function linesToVtt(lines: readonly TranscriptLine[], y?: number | null): string {
   const settings = y == null ? '' : ` line:${Math.round(y * 100)}%,center`;
-  const cues = lines.map((line) => {
-    const timing = `${msToVttTime(csToMs(line.t0))} --> ${msToVttTime(csToMs(line.t1))}${settings}`;
-    const words = line.words;
-    const text = words?.length
-      ? words
-          .map((w, i) =>
-            i === 0
-              ? esc(w.text)
-              : `${wordGap(words[i - 1].text, w.text)}<${msToVttTime(csToMs(w.t0))}>${esc(w.text)}`,
-          )
-          .join('')
-      : esc(line.text);
-    return `${timing}\n${text}`;
-  });
+  // WebVTT needs a cue to end after it starts, and each inline timestamp to be later than the one
+  // before it and inside the cue: a word whose time doesn't move forward (equal token times, a
+  // word clamped to a clip's edge) is written without one, and an empty cue is left out.
+  const cues = lines
+    .filter((line) => csToMs(line.t1) > csToMs(line.t0))
+    .map((line) => {
+      const start = csToMs(line.t0);
+      const end = csToMs(line.t1);
+      const timing = `${msToVttTime(start)} --> ${msToVttTime(end)}${settings}`;
+      const words = line.words;
+      let last = start;
+      const text = words?.length
+        ? words
+            .map((w, i) => {
+              if (i === 0) return esc(w.text);
+              const gap = wordGap(words[i - 1].text, w.text);
+              const at = csToMs(w.t0);
+              if (at <= last || at >= end) return `${gap}${esc(w.text)}`;
+              last = at;
+              return `${gap}<${msToVttTime(at)}>${esc(w.text)}`;
+            })
+            .join('')
+        : esc(line.text);
+      return `${timing}\n${text}`;
+    });
   return `WEBVTT\n\n${cues.join('\n\n')}\n`;
 }
