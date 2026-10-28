@@ -1,14 +1,8 @@
 import type { MergeClip, MergeOptions } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import {
-  deleteSegment,
-  reorderSegments,
-  resetEdit,
-  segmentsForDraft,
-  setEditState,
-} from '@/db/drafts';
+import { deleteSegment, segmentsForDraft } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
 import { mergeOptions, toMergeClip } from '@/features/export/editor-merge';
 import { getRecorderFormat } from '@/features/recorder/recorder-format';
@@ -23,6 +17,17 @@ import {
   type ParsedEdit,
 } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
+
+import {
+  getWrites,
+  onWriteFailure,
+  subscribeWrites,
+  writeEdit,
+  writeOrder,
+  type EditValue,
+} from './draft-writes';
+
+export type { EditValue };
 
 /** A clip as the editor shows and edits it. */
 export type EditorClip = {
@@ -42,9 +47,6 @@ export type EditorClip = {
   uri: string;
   merge: MergeClip;
 };
-
-/** An edit as stored, or null for "no edit" (reset). */
-export type EditValue = string | null;
 
 /** The length of the file the clip plays: a legacy baked edit's own, else the original's. */
 const sourceMsOf = (s: Segment) =>
@@ -100,8 +102,9 @@ function toEditorClip(s: Segment): EditorClip {
 /**
  * The draft as the editor works on it: the live rows with the edits still being written laid
  * over them (so four quick rotates show at once, and the preview rebuilds once per change), and
- * writes that run one at a time per clip with only the newest pending one kept. The database
- * stays the truth: a pending edit drops away as soon as its row holds it, or when it fails.
+ * writes that run one at a time per clip with only the newest pending one kept (draft-writes.ts,
+ * shared by every editor). The database stays the truth: a pending edit drops away once no write
+ * for it is left and its row holds it, or when it fails.
  */
 export function useEditorDraft(draftId: string) {
   const { data: rows, updatedAt, error } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
@@ -116,9 +119,13 @@ export function useEditorDraft(draftId: string) {
     });
   }, [error, showToast]);
   const [pending, setPending] = useState<ReadonlyMap<string, EditValue>>(new Map());
+  const writes = useSyncExternalStore(subscribeWrites, getWrites);
 
-  // Drop pending edits the rows now hold (render-phase adjustment, no extra commit).
+  // Drop pending edits the rows now hold once nothing is left to write for them (render-phase
+  // adjustment, no extra commit): an older write landing first (a rotate, then its undo) can make
+  // the row match for a moment, and the pending value must hold until the newest one lands.
   const landed = [...pending].filter(([id, v]) => {
+    if (writes.edits.has(id)) return false;
     const row = rows.find((r) => r.id === id);
     return !row || settled(row, v);
   });
@@ -131,7 +138,7 @@ export function useEditorDraft(draftId: string) {
   // A reorder shows at once, until the rows hold it (or it fails).
   const [pendingOrder, setPendingOrder] = useState<readonly string[] | null>(null);
   const rowOrder = rows.map((r) => r.id);
-  if (pendingOrder && rowOrder.filter((id) => pendingOrder.includes(id)).join() === pendingOrder.filter((id) => rowOrder.includes(id)).join()) {
+  if (pendingOrder && !writes.order && rowOrder.filter((id) => pendingOrder.includes(id)).join() === pendingOrder.filter((id) => rowOrder.includes(id)).join()) {
     setPendingOrder(null);
   }
   const ordered = pendingOrder
@@ -161,69 +168,46 @@ export function useEditorDraft(draftId: string) {
     };
   }, []);
 
-  // Latest-wins writer: per clip, one write at a time, and only the newest waiting value.
-  const queue = useRef({ next: new Map<string, EditValue>(), running: new Set<string>() });
-  const write = (id: string, value: EditValue) => {
-    setPending((p) => new Map(p).set(id, value));
-    const q = queue.current;
-    q.next.set(id, value);
-    if (q.running.has(id)) return;
-    q.running.add(id);
-    void (async () => {
-      while (q.next.has(id)) {
-        const v = q.next.get(id) ?? null;
-        q.next.delete(id);
-        try {
-          if (v === null) await resetEdit(id);
-          else await setEditState(id, v);
-        } catch (e) {
-          setPending((p) => {
-            const n = new Map(p);
-            n.delete(id);
-            return n;
-          });
-          showToast({
-            kind: 'error',
-            title: 'Couldn’t save the edit',
-            message: userMessage(e, 'Try again.', 'edit clip'),
-          });
-        }
-      }
-      q.running.delete(id);
-    })();
-  };
-
-  /** Store `edit` for a clip (canonical form). */
-  const setEdit = (id: string, edit: ParsedEdit) => write(id, canonicalEdit(JSON.stringify(edit)));
-
-  // Reorders are written like edits: one at a time, only the newest waiting, so two quick moves
-  // can't land out of order (each write awaits before its transaction).
-  const orderQueue = useRef({ next: null as string[] | null, running: false });
-  /** Put the clips in this order (the editor's clips; any it hides, zero-length, go last). */
-  const reorder = (ids: string[]) => {
-    const all = [...ids, ...rows.map((r) => r.id).filter((id) => !ids.includes(id))];
-    setPendingOrder(all);
-    const q = orderQueue.current;
-    q.next = all;
-    if (q.running) return;
-    q.running = true;
-    void (async () => {
-      while (q.next) {
-        const order = q.next;
-        q.next = null;
-        try {
-          await reorderSegments(order);
-        } catch (e) {
+  // A write that failed: its pending value drops (the row is the truth) and the person is told.
+  useEffect(
+    () =>
+      onWriteFailure(({ id, error: e }) => {
+        if (id === null) {
           setPendingOrder(null);
           showToast({
             kind: 'error',
             title: 'Couldn’t move the clip',
             message: userMessage(e, 'Try again.', 'reorder clips'),
           });
+          return;
         }
-      }
-      q.running = false;
-    })();
+        setPending((p) => {
+          const n = new Map(p);
+          n.delete(id);
+          return n;
+        });
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t save the edit',
+          message: userMessage(e, 'Try again.', 'edit clip'),
+        });
+      }),
+    [showToast],
+  );
+
+  const write = (id: string, value: EditValue) => {
+    setPending((p) => new Map(p).set(id, value));
+    writeEdit(id, value);
+  };
+
+  /** Store `edit` for a clip (canonical form). */
+  const setEdit = (id: string, edit: ParsedEdit) => write(id, canonicalEdit(JSON.stringify(edit)));
+
+  /** Put the clips in this order (the editor's clips; any it hides, zero-length, go last). */
+  const reorder = (ids: string[]) => {
+    const all = [...ids, ...rows.map((r) => r.id).filter((id) => !ids.includes(id))];
+    setPendingOrder(all);
+    writeOrder(all);
   };
 
   const remove = async (id: string) => {
