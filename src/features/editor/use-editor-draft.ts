@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { setCaptionEdits } from '@/db/captions';
 import { deleteSegment, segmentsForDraft } from '@/db/drafts';
+import { dropClipJobs } from '@/features/transcription/clip-queue';
 import type { Segment } from '@/db/schema';
 import { mergeOptions, toMergeClip } from '@/features/export/editor-merge';
 import { getRecorderFormat } from '@/features/recorder/recorder-format';
@@ -250,6 +251,7 @@ export function useEditorDraft(draftId: string) {
 
   const remove = async (id: string) => {
     try {
+      dropClipJobs({ segmentIds: [id] });
       await deleteSegment(id);
     } catch (e) {
       showToast({

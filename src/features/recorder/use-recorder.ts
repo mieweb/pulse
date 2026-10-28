@@ -31,6 +31,7 @@ import {
   setSetting,
 } from '@/db/settings';
 import { useToast } from '@/features/toast/toast-provider';
+import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
 import {
   absolutize,
@@ -257,7 +258,10 @@ export function useRecorder(initialDraftId?: string) {
   const dropEmptyDraft = () => {
     const id = draftIdRef.current ?? sessionDraftId.current;
     const safeToDelete = sessionDraftId.current != null || everHadSegments.current;
-    if (id && segmentCount.current === 0 && safeToDelete) void deleteDraft(id);
+    if (id && segmentCount.current === 0 && safeToDelete) {
+      dropClipJobs({ draftId: id });
+      void deleteDraft(id);
+    }
   };
   useEffect(() => {
     unmountedRef.current = false;
@@ -691,6 +695,7 @@ export function useRecorder(initialDraftId?: string) {
   // No confirm: the clip goes at once (drag-to-trash in the clip bar).
   async function removeSegment(id: string) {
     try {
+      dropClipJobs({ segmentIds: [id] });
       await deleteSegment(id);
     } catch (e) {
       showToast({

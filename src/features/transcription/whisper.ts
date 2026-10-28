@@ -2,7 +2,7 @@ import { extractAudio } from '@mieweb/pulse-editor';
 import { initParakeet, initWhisper, type ParakeetContext, type WhisperContext } from 'whisper.rn';
 
 import { wholeWords } from './group-lines';
-import { ensureModel, modelFileUri } from './model';
+import { isModelReady, modelFileUri } from './model';
 import type { WhisperModel } from './models';
 import { hasSpeech } from './vad';
 import { whisperJsiReady } from './whisper-jsi';
@@ -78,8 +78,9 @@ export async function releaseWhisper(): Promise<void> {
 }
 
 /**
- * Get a context for `model`, loading (and downloading, if needed) on first use and swapping the
- * context when the selected model changes. Idempotent for the already-loaded model.
+ * Get a context for `model`, loading it on first use and swapping the context when the selected
+ * model changes. Idempotent for the already-loaded model. Never downloads: a model that isn't
+ * whole on disk (switched away, deleted) fails here, so a stale request can't start a download.
  */
 async function loadContext(model: WhisperModel): Promise<Context> {
   if (current?.id === model.id) return current.ctx;
@@ -88,7 +89,7 @@ async function loadContext(model: WhisperModel): Promise<Context> {
 
   loadPromise = (async () => {
     await releaseWhisper();
-    await ensureModel(model); // no-op if already on disk
+    if (!isModelReady(model)) throw new Error('The captions model isn’t downloaded');
     const ctx = await initContext(model, modelFileUri(model));
     current = { id: model.id, ctx };
     return ctx;
@@ -106,8 +107,8 @@ async function loadContext(model: WhisperModel): Promise<Context> {
  *
  * Pipeline: pulse-editor decodes the audio track in memory to what both engines take — 16 kHz
  * mono 16-bit PCM, downmixed and band-limited resampled natively — and the VAD gate and the model
- * both read that one buffer: no temp file, no second decode. The model is expected to be
- * downloaded already (the queue only runs with a downloaded model); if not, it's fetched here.
+ * both read that one buffer: no temp file, no second decode. The model must be downloaded already
+ * (the queue only runs with one); this never downloads it.
  *
  * @param fileUri absolute file URI of the clip's media (the file it plays from).
  */
@@ -157,6 +158,8 @@ export async function transcribeWords(
   signal?.addEventListener('abort', onAbort);
   try {
     const result = await promise;
+    // Stopped natively (a context released under it): partial words, not the clip's transcript.
+    if (result.isAborted) throw new Error('Transcription cancelled');
     return wholeWords(result.segments);
   } finally {
     signal?.removeEventListener('abort', onAbort);

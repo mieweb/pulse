@@ -15,6 +15,7 @@ import { DraftCard } from '@/features/home/draft-card';
 import { DraftMenu } from '@/features/home/draft-menu';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
 import { useToast } from '@/features/toast/toast-provider';
+import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
 import { useNow } from '@/hooks/use-now';
 import { useTheme, useThemeToggle } from '@/hooks/use-theme';
@@ -119,6 +120,7 @@ export default function HomeScreen() {
     setDeletingIds((prev) => new Set(prev).add(draftId));
     // Delete isn't offered while uploading (see `draftMenuActions`) and `deleteDraft` refuses an
     // uploading draft, so there's no live run to stop first.
+    dropClipJobs({ draftId });
     deleteDraft(draftId).catch((e: unknown) => {
       // The card comes back, so it never vanishes without its delete having happened.
       setDeletingIds((prev) => {

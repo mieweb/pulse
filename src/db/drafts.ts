@@ -162,6 +162,15 @@ async function beginClipMutation(draftId: string): Promise<void> {
   await assertNotUploading(draftId);
 }
 
+/** Whether a clip is still in the database (not deleted, nor its draft). */
+export async function segmentExists(segmentId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: segments.id })
+    .from(segments)
+    .where(eq(segments.id, segmentId));
+  return !!row;
+}
+
 /** The draft's persisted-export record (see `drafts.mergedSignature`), or null if no row. */
 export async function getMergedExport(
   draftId: string,
