@@ -104,8 +104,17 @@ function toEditorClip(s: Segment): EditorClip {
  * stays the truth: a pending edit drops away as soon as its row holds it, or when it fails.
  */
 export function useEditorDraft(draftId: string) {
-  const { data: rows, updatedAt } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
+  const { data: rows, updatedAt, error } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
   const { showToast } = useToast();
+  // A failed read leaves the last rows (none, on open) in place: say so, rather than wait.
+  useEffect(() => {
+    if (!error) return;
+    showToast({
+      kind: 'error',
+      title: 'Couldn’t open the clips',
+      message: userMessage(error, 'Try again.', 'load draft'),
+    });
+  }, [error, showToast]);
   const [pending, setPending] = useState<ReadonlyMap<string, EditValue>>(new Map());
 
   // Drop pending edits the rows now hold (render-phase adjustment, no extra commit).
@@ -214,8 +223,8 @@ export function useEditorDraft(draftId: string) {
   };
 
   return {
-    /** False until the rows are first read. */
-    loaded: updatedAt !== undefined,
+    /** False until the rows are first read (or the read failed). */
+    loaded: updatedAt !== undefined || error !== undefined,
     clips,
     covers,
     options,
