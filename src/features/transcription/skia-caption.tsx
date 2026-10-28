@@ -1,6 +1,7 @@
 import {
   BlurStyle,
   Canvas,
+  FontWeight,
   PaintStyle,
   Picture,
   Skia,
@@ -17,7 +18,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { advance, useCaptionFont } from './caption-font';
+import {
+  advance,
+  fallbackText,
+  lacksGlyphs,
+  useCaptionFont,
+  type FallbackText,
+} from './caption-font';
 import { CAPTION_Y_MAX, CAPTION_Y_MIN, type CaptionStyle } from './caption-style';
 import { captionRows } from './caption-track';
 import { wordGap } from './group-lines';
@@ -29,8 +36,20 @@ import type { TranscriptLine } from './whisper';
 // thread, so playback never re-renders React for it; the caption is redrawn only when one of
 // them changes.
 
-/** One word as drawn: the space before it and its text, with their widths at the font (dp). */
-type DrawnWord = { lead: string; text: string; t0: number; t1: number; lw: number; tw: number };
+/** The paints a word is drawn with, one pass each. */
+const WORD_PAINTS = ['shadow', 'outline', 'spoken', 'active', 'future'] as const;
+
+/** One word as drawn: the space before it and its text, with their widths at the font (dp); a
+ * word the font can't draw comes as paragraphs in the system's fonts (`fallback`). */
+type DrawnWord = {
+  lead: string;
+  text: string;
+  t0: number;
+  t1: number;
+  lw: number;
+  tw: number;
+  fallback: FallbackText<(typeof WORD_PAINTS)[number]> | null;
+};
 /** One caption, ready to draw: its rows of words, and the widest row's width. */
 type DrawnLine = { t0: number; t1: number; rows: DrawnWord[][]; widths: number[]; widest: number };
 
@@ -88,30 +107,6 @@ export function SkiaCaption({
   const size = Math.max(6, Math.round(style.size * height));
   const font = useCaptionFont(style.font, size);
   const outlineGap = style.outline * size * 2;
-  // Rows and word widths measured once per change of the captions (or the font).
-  const drawn = useMemo<DrawnLine[]>(
-    () =>
-      lines.map((line) => {
-        const rows = captionRows(line).map((row) =>
-          row.map((w, i) => {
-            const lead = i > 0 ? wordGap(row[i - 1].text, w.text) : '';
-            return {
-              lead,
-              text: w.text,
-              t0: w.t0,
-              t1: w.t1,
-              // The space, widened by what the outline covers of it on both words' sides, so
-              // the gap between outlined words reads as an ordinary space.
-              lw: lead ? advance(font, lead) + outlineGap : 0,
-              tw: advance(font, w.text),
-            };
-          }),
-        );
-        const widths = rows.map((r) => r.reduce((n, w) => n + w.lw + w.tw, 0));
-        return { t0: line.t0, t1: line.t1, rows, widths, widest: Math.max(0, ...widths) };
-      }),
-    [lines, font, outlineGap],
-  );
   const metrics = useMemo(() => font.getMetrics(), [font]);
   const paints = useMemo(() => {
     const p = (c: string) => {
@@ -137,6 +132,35 @@ export function SkiaCaption({
       shadow,
     };
   }, [style, size]);
+
+  // Rows and word widths measured once per change of the captions (or the font).
+  const drawn = useMemo<DrawnLine[]>(
+    () =>
+      lines.map((line) => {
+        const rows = captionRows(line).map((row) =>
+          row.map((w, i) => {
+            const lead = i > 0 ? wordGap(row[i - 1].text, w.text) : '';
+            const fallback = lacksGlyphs(font, w.text)
+              ? fallbackText(w.text, size, FontWeight.ExtraBold, paints, WORD_PAINTS)
+              : null;
+            return {
+              lead,
+              text: w.text,
+              t0: w.t0,
+              t1: w.t1,
+              // The space, widened by what the outline covers of it on both words' sides, so
+              // the gap between outlined words reads as an ordinary space.
+              lw: lead ? advance(font, lead) + outlineGap : 0,
+              tw: fallback ? fallback.width : advance(font, w.text),
+              fallback,
+            };
+          }),
+        );
+        const widths = rows.map((r) => r.reduce((n, w) => n + w.lw + w.tw, 0));
+        return { t0: line.t0, t1: line.t1, rows, widths, widest: Math.max(0, ...widths) };
+      }),
+    [lines, font, outlineGap, size, paints],
+  );
 
   const model = useSharedValue<DrawnLine[]>(drawn);
   useEffect(() => {
@@ -187,9 +211,10 @@ export function SkiaCaption({
   // A row wider than the picture's room shrinks, the whole caption with it.
   const room = width - style.margin * size * 2 - style.padX * size * 2;
 
+  // One recorder, reused for every frame's picture.
+  const recorder = useMemo(() => Skia.PictureRecorder(), []);
   const picture = useDerivedValue(() => {
-    const rec = Skia.PictureRecorder();
-    const c = rec.beginRecording(Skia.XYWHRect(0, 0, width, height));
+    const c = recorder.beginRecording(Skia.XYWHRect(0, 0, width, height));
     const i = lineIndex.get();
     const ls = model.get();
     if (i >= 0 && i < ls.length) {
@@ -226,12 +251,19 @@ export function SkiaCaption({
             c.translate(x + (w.tw * scale) / 2, baseline);
             c.scale(scale * pop, scale * pop);
             c.translate(-w.tw / 2, 0);
-            if (pass === 0) c.drawText(w.text, 0, style.shadowDrop * size, paints.shadow, font);
-            else if (pass === 1) c.drawText(w.text, 0, 0, paints.outline, font);
-            else {
-              const paint = isActive ? paints.active : at < active ? paints.spoken : paints.future;
-              c.drawText(w.text, 0, 0, paint, font);
-            }
+            const kind =
+              pass === 0
+                ? 'shadow'
+                : pass === 1
+                  ? 'outline'
+                  : isActive
+                    ? 'active'
+                    : at < active
+                      ? 'spoken'
+                      : 'future';
+            const dy = pass === 0 ? style.shadowDrop * size : 0;
+            if (w.fallback) w.fallback.by[kind].paint(c, 0, dy - w.fallback.baseline);
+            else c.drawText(w.text, 0, dy, paints[kind], font);
             c.restore();
             x += w.tw * scale;
             at++;
@@ -239,7 +271,7 @@ export function SkiaCaption({
         }
       }
     }
-    return rec.finishRecordingAsPicture();
+    return recorder.finishRecordingAsPicture();
   });
 
   // The touch area: the caption's box, wherever it's drawn (none while no line shows).

@@ -2,6 +2,7 @@ import {
   Canvas,
   ClipOp,
   FilterMode,
+  FontWeight,
   matchFont,
   MipmapMode,
   PaintStyle,
@@ -29,7 +30,12 @@ import {
 } from './clip-tile';
 import { CAP_GRIP, rulerSteps } from './timeline-geometry';
 import { PEAK_MS, type Peaks } from './use-waveforms';
-import { advance } from '@/features/transcription/caption-font';
+import {
+  advance,
+  fallbackText,
+  lacksGlyphs,
+  type FallbackText,
+} from '@/features/transcription/caption-font';
 
 // The timeline's picture, drawn by the GPU: every clip's filmstrip and waveform, the captions
 // lane and the time ruler, recorded on the UI thread each frame from the playhead, the scale and
@@ -76,14 +82,36 @@ export type CanvasCaption = {
   words?: readonly { text: string; t0: number; t1: number }[];
 };
 
+/** The paints the lane's text is drawn with. */
+const TEXT_PAINTS = ['text', 'activeText'] as const;
+/** Text the lane's font can't draw (Chinese, Arabic, emoji…), as paragraphs in the system's fonts. */
+type LaneFallback = FallbackText<(typeof TEXT_PAINTS)[number]> | null;
+
 /** A caption as drawn: its words always a list (empty without word timing), each with its text's
  * width at the lane's font (dp), for centring it in its slot. */
 type DrawnCaption = {
   t0: number;
   t1: number;
   text: string;
-  words: readonly { text: string; t0: number; t1: number; w: number }[];
+  fb: LaneFallback;
+  words: readonly { text: string; t0: number; t1: number; w: number; fb: LaneFallback }[];
 };
+
+/** `text` with its baseline at `y`, in the lane's font or, where that has no glyphs, its fallback. */
+function drawLabel(
+  c: SkCanvas,
+  text: string,
+  fb: LaneFallback,
+  x: number,
+  y: number,
+  kind: (typeof TEXT_PAINTS)[number],
+  paints: Record<(typeof TEXT_PAINTS)[number], SkPaint>,
+  font: SkFont,
+) {
+  'worklet';
+  if (fb) fb.by[kind].paint(c, x, y - fb.baseline);
+  else c.drawText(text, x, y, paints[kind], font);
+}
 
 type Props = {
   width: number;
@@ -211,6 +239,14 @@ export function TimelineCanvas(props: Props) {
     }),
     [palette.tile, palette.film, palette.wave, palette.line, palette.text, palette.ruler],
   );
+  const laneFallback = useMemo(
+    () =>
+      (text: string): LaneFallback =>
+        lacksGlyphs(font, text)
+          ? fallbackText(text, font.getSize(), FontWeight.SemiBold, paints, TEXT_PAINTS)
+          : null,
+    [font, paints],
+  );
 
   // The captions with their words measured, once per change of the captions (not per frame).
   const drawnCaptions = useMemo<DrawnCaption[]>(
@@ -219,9 +255,13 @@ export function TimelineCanvas(props: Props) {
         t0: cap.t0,
         t1: cap.t1,
         text: cap.text,
-        words: (cap.words ?? []).map((w) => ({ ...w, w: advance(font, w.text) })),
+        fb: laneFallback(cap.text),
+        words: (cap.words ?? []).map((w) => {
+          const fb = laneFallback(w.text);
+          return { ...w, w: fb ? fb.width : advance(font, w.text), fb };
+        }),
       })),
-    [captions, font],
+    [captions, font, laneFallback],
   );
 
   // What's drawn, on the UI thread. Peaks are copied there once per change of the clips.
@@ -455,9 +495,10 @@ export function TimelineCanvas(props: Props) {
           const fits = words[k].w + 8 <= span;
           // One colour for every word, so nothing changes as the playhead enters a sentence; only
           // the spoken word stands out.
-          const paint = k === active ? paints.activeText : paints.text;
+          const kind = k === active ? 'activeText' : 'text';
           if (fits) {
-            c.drawText(words[k].text, wx + (span - words[k].w) / 2, textY, paint, font);
+            const tx = wx + (span - words[k].w) / 2;
+            drawLabel(c, words[k].text, words[k].fb, tx, textY, kind, paints, font);
           } else if (span > 3) {
             // (Narrower, the clip leaves nothing of the text to draw.)
             c.save();
@@ -466,13 +507,13 @@ export function TimelineCanvas(props: Props) {
               ClipOp.Intersect,
               true,
             );
-            c.drawText(words[k].text, wx + 4, textY, paint, font);
+            drawLabel(c, words[k].text, words[k].fb, wx + 4, textY, kind, paints, font);
             c.restore();
           }
         }
       } else if (w > 14) {
         c.clipRect(Skia.XYWHRect(x + 6, laneTop, w - 12, laneHeight), ClipOp.Intersect, true);
-        c.drawText(cap.text, x + 6, textY, paints.text, font);
+        drawLabel(c, cap.text, cap.fb, x + 6, textY, 'text', paints, font);
       }
       c.restore();
       if (i === m.sel && words[m.word]) {
@@ -491,9 +532,7 @@ export function TimelineCanvas(props: Props) {
   });
 
   return (
-    <Canvas
-      style={[StyleSheet.absoluteFill, { width, height }]}
-      pointerEvents="none">
+    <Canvas style={[StyleSheet.absoluteFill, { width, height }]} pointerEvents="none">
       <Picture picture={picture} />
     </Canvas>
   );
@@ -578,15 +617,15 @@ function drawGrip(c: SkCanvas, x: number, y: number, h: number, fill: SkPaint, b
  */
 function dragged(cap: DrawnCaption, word: number, side: number, v: number): DrawnCaption {
   'worklet';
-  const words: { text: string; t0: number; t1: number; w: number }[] = [];
+  const words: DrawnCaption['words'][number][] = [];
   for (let k = 0; k < cap.words.length; k++) {
     const x = cap.words[k];
-    words.push({ text: x.text, t0: x.t0, t1: x.t1, w: x.w });
+    words.push({ text: x.text, t0: x.t0, t1: x.t1, w: x.w, fb: x.fb });
   }
   const cs = v / 10;
   const last = words.length - 1;
   if (last < 0 || !words[word]) return cap;
   if (side === 1) words[word].t0 = cs;
   else if (side === 2) words[word].t1 = cs;
-  return { t0: words[0].t0, t1: words[last].t1, text: cap.text, words };
+  return { t0: words[0].t0, t1: words[last].t1, text: cap.text, fb: cap.fb, words };
 }
