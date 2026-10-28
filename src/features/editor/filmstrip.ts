@@ -303,6 +303,7 @@ async function fetchBatch({ store, times, step }: { store: Store; times: number[
       setTimeout(pump, delay);
       return;
     }
+    store.rejections = 0; // the file's other times get their own tries
     got = [];
   }
   if (got.length) store.rejections = 0;
