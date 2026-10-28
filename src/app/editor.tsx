@@ -1,6 +1,6 @@
 import { probe, PulsePreview } from '@mieweb/pulse-editor';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, {
   useAnimatedProps,
@@ -16,6 +16,7 @@ import Sortable from 'react-native-sortables';
 import { ClipRow } from '@/features/editor/clip-row';
 import { ClipToolbar, SpeedRow, TOOLBAR_HEIGHT } from '@/features/editor/clip-toolbar';
 import { CropEditor } from '@/features/editor/crop-editor';
+import { flushDraftWrites } from '@/features/editor/draft-writes';
 import {
   STRIP_HEIGHT,
   TimelineStrip,
@@ -318,9 +319,19 @@ export default function EditorScreen() {
     void draft.remove(t.clip.id);
   };
 
+  // Export reads the stored clips: it opens once every edit asked for is stored (a cover renders
+  // first, up to about half a second), and once per tap until the editor is back on screen.
+  const exporting = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      exporting.current = false;
+    }, []),
+  );
   const openExport = () => {
+    if (exporting.current) return;
+    exporting.current = true;
     ctl.pause();
-    router.push({ pathname: '/export', params: { draftId } });
+    void flushDraftWrites().then(() => router.push({ pathname: '/export', params: { draftId } }));
   };
 
   const reset = () => {

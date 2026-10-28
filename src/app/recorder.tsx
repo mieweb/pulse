@@ -17,6 +17,7 @@ import { ThemedView } from '@/components/themed-view';
 import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
+import { flushDraftWrites } from '@/features/editor/draft-writes';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { ExportButton } from '@/components/export-button';
 import { CloseButton } from '@/features/recorder/close-button';
@@ -109,7 +110,8 @@ export default function RecorderScreen() {
   // camera session so it isn't capturing (and burning power) behind the modal. Restored on return.
   const [focused, setFocused] = useState(true);
   // One screen opened per tap: router.push always adds a screen, and two taps before it's shown
-  // would stack two editors over the same draft. Open again once back on this screen.
+  // would stack two editors over the same draft. Open again once back on this screen. Edits an
+  // editor just closed is still storing land first (export reads the stored clips).
   const opening = useRef(false);
   useFocusEffect(
     useCallback(() => {
@@ -121,7 +123,7 @@ export default function RecorderScreen() {
   const open = (href: Href) => {
     if (opening.current) return;
     opening.current = true;
-    router.push(href);
+    void flushDraftWrites().then(() => router.push(href));
   };
 
   // The clip bar's clips, held while another screen (the editor) covers the recorder: sortables
