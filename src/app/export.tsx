@@ -196,7 +196,7 @@ export default function ExportScreen() {
               uri={state.outputPath}
               // What the upload will carry: the captions once every clip that speaks has its
               // words (getDraftCaptions sends none before), so the preview never shows more.
-              lines={captions.state.status === 'ready' ? captions.lines : []}
+              lines={uploadCarries(captions) ? captions.lines : []}
               captionY={captionY}
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
               note={<CaptionsNote captions={captions} />}
@@ -453,10 +453,18 @@ function MergedPreview({
   );
 }
 
+/** Whether the upload carries the captions shown (getDraftCaptions' rule): every clip has its
+ * words, or no model is chosen (the hand-edited captions alone go). */
+function uploadCarries(captions: DraftCaptions): boolean {
+  const st = captions.state.status;
+  return st === 'ready' || st === 'no-model';
+}
+
 /**
- * What the upload's captions will be missing, over the video: captions still being made (an
- * upload now goes without them), or clips the model couldn't caption (no captions there; a tap
- * tries them again). Nothing when they're complete, or with no captions model chosen.
+ * What the upload's captions will be missing, over the video: captions still being made or
+ * waiting for their model's download (an upload now goes without them), or clips the model
+ * couldn't caption (no captions there; a tap tries them again). Nothing when they're complete,
+ * or with no captions model chosen.
  */
 function CaptionsNote({ captions }: { captions: DraftCaptions }) {
   const mode = useThemeMode();
@@ -465,6 +473,8 @@ function CaptionsNote({ captions }: { captions: DraftCaptions }) {
   let onPress: (() => void) | undefined;
   if (st === 'transcribing' || st === 'downloading') {
     text = 'Captions are still being made. Uploading now sends the video without them.';
+  } else if (st === 'needs-download') {
+    text = 'Captions need their model downloaded. Uploading now sends the video without them.';
   } else if (st === 'ready' && captions.failed.length) {
     text = `Couldn’t caption ${formatClipCount(captions.failed.length)}. Tap to try again.`;
     onPress = captions.retry;
