@@ -161,6 +161,12 @@ export function usePreviewTransport() {
           c.seek(0);
           return;
         }
+        // A seek still landing (just after a scrub or a tap): play from where it lands, not from
+        // the frame before it.
+        if (c.inflight || c.pending != null) {
+          c.playAfterSeek = true;
+          return;
+        }
         ref.play();
       },
       /** Pauses, and stops the playhead at once (the preview's own report follows). */
