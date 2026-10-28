@@ -20,6 +20,8 @@ export function useFrameRates(uris: readonly string[]) {
         }
         if (live) setRates(new Map(frameRates));
       }
+      // Rates another editor probed meanwhile.
+      if (live) setRates((r) => (r.size === frameRates.size ? r : new Map(frameRates)));
     })();
     return () => {
       live = false;

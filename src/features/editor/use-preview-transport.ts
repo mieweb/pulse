@@ -165,6 +165,11 @@ export function usePreviewTransport() {
       onReady: (ref: PulsePreviewRef) => {
         c.ref = ref;
       },
+      /** The preview view went away: Nitro never hands back a null ref, so drop it here (calls
+       * until the next one is ready are no-ops instead of reaching a released view). */
+      detach: () => {
+        c.ref = null;
+      },
       /** The timeline's length as the editor lays it out (known before the preview is up). */
       setTotal: (ms: number) => {
         c.totalMs = ms;
@@ -180,6 +185,12 @@ export function usePreviewTransport() {
           timeMs.set(0);
           c.playAfterSeek = true;
           c.seek(0);
+          return;
+        }
+        // A seek still landing (just after a scrub or a tap): play from where it lands, not from
+        // the frame before it.
+        if (c.inflight || c.pending != null) {
+          c.playAfterSeek = true;
           return;
         }
         ref.play();

@@ -1,4 +1,4 @@
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { type Href, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
@@ -17,6 +17,7 @@ import { ThemedView } from '@/components/themed-view';
 import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
+import { flushDraftWrites } from '@/features/editor/draft-writes';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { ExportButton } from '@/components/export-button';
 import { CloseButton } from '@/features/recorder/close-button';
@@ -110,12 +111,22 @@ export default function RecorderScreen() {
   // While the editor or Export is presented over this one, the recorder is unfocused — drop the
   // camera session so it isn't capturing (and burning power) behind the modal. Restored on return.
   const [focused, setFocused] = useState(true);
+  // One screen opened per tap: router.push always adds a screen, and two taps before it's shown
+  // would stack two editors over the same draft. Open again once back on this screen. Edits an
+  // editor just closed is still storing land first (export reads the stored clips).
+  const opening = useRef(false);
   useFocusEffect(
     useCallback(() => {
+      opening.current = false;
       setFocused(true);
       return () => setFocused(false);
     }, []),
   );
+  const open = (href: Href) => {
+    if (opening.current) return;
+    opening.current = true;
+    void flushDraftWrites().then(() => router.push(href));
+  };
 
   // The clip bar's clips, held while another screen (the editor) covers the recorder: sortables
   // lays its grid out from measurements, and a reorder applied while the recorder's views were off
@@ -538,7 +549,7 @@ export default function RecorderScreen() {
           <View style={[styles.topBarSide, styles.topBarEnd]}>
             {draftId && segments.length > 0 && (
               <ExportButton
-                onPress={() => router.push({ pathname: '/export', params: { draftId } })}
+                onPress={() => open({ pathname: '/export', params: { draftId } })}
                 disabled={isRecording}
               />
             )}
@@ -599,7 +610,7 @@ export default function RecorderScreen() {
                   <EditButton
                     onPress={() => {
                       editTip.retire();
-                      router.push({ pathname: '/editor', params: { draftId } });
+                      open({ pathname: '/editor', params: { draftId } });
                     }}
                     disabled={isRecording || dragging}
                   />
@@ -638,7 +649,7 @@ export default function RecorderScreen() {
             // A tapped clip opens the editor on it (in the view last used there).
             onSelect={(id) => {
               if (!isRecording && draftId) {
-                router.push({
+                open({
                   pathname: '/editor',
                   params: { draftId, clipId: id },
                 });

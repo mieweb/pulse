@@ -76,6 +76,18 @@ function cacheThumbnail(key: string, thumb: VideoThumbnail | { uri: string }) {
   thumbnailCache.set(key, thumb);
 }
 
+const thumbnailKey = (uri: string, editState?: string | null) =>
+  editState ? `${uri}#${editState}` : uri;
+
+/** `generateThumbnail`'s cached result, if it has one, at once: a view mounted later (a dragged
+ * clip's copy) starts with its frame instead of a blank. */
+export function cachedThumbnail(
+  uri: string,
+  editState?: string | null,
+): VideoThumbnail | { uri: string } | undefined {
+  return thumbnailCache.get(thumbnailKey(uri, editState));
+}
+
 /**
  * A clip's cover when it has no persisted one, cached: the first frame, or for an edited clip
  * (`editState`) its edited frame. Undefined on failure, so an edited clip shows no cover rather
@@ -85,7 +97,7 @@ export async function generateThumbnail(
   uri: string,
   editState?: string | null,
 ): Promise<VideoThumbnail | { uri: string } | undefined> {
-  const key = editState ? `${uri}#${editState}` : uri;
+  const key = thumbnailKey(uri, editState);
   const cached = thumbnailCache.get(key);
   if (cached) return cached;
 

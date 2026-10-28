@@ -6,7 +6,7 @@ import Animated, {
   useAnimatedReaction,
   useAnimatedRef,
   useAnimatedScrollHandler,
-  useScrollViewOffset,
+  useScrollOffset,
   useSharedValue,
 } from 'react-native-reanimated';
 import Sortable, { type SortableGridDragEndParams } from 'react-native-sortables';
@@ -137,7 +137,7 @@ export function ClipRow(props: Props) {
   const { clips, covers, layout, selected, values } = props;
   const { timeMs, totalMs, mode } = values;
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
-  const offset = useScrollViewOffset(scrollRef);
+  const offset = useScrollOffset(scrollRef);
   const [width, setWidth] = useState(0);
 
   const latest = useRef(props);
@@ -223,18 +223,37 @@ export function ClipRow(props: Props) {
   const draggedKey = useRef<string | null>(null);
   const touchStart = useRef<{ x: number; y: number; at: number } | null>(null);
   const rowX = useRef(0);
+  // Sortables still reports the drag's end after the row unmounts mid-drag (switching views,
+  // closing): that late report must not commit an order.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const startReorder = useCallback((key: string) => {
+    haptics.pickUp();
+    draggedKey.current = key;
+    latest.current.onReorderStart();
+  }, []);
+  // A worklet, so the row stops following the playhead in the same frame the clip lifts.
   const onDragStartSortable = useCallback(
     ({ key }: { key: string }) => {
-      haptics.pickUp();
-      draggedKey.current = key;
+      'worklet';
       moving.set(true);
-      latest.current.onReorderStart();
+      scheduleOnRN(startReorder, key);
     },
-    [moving],
+    [moving, startReorder],
   );
+  const onDropped = useCallback(() => {
+    'worklet';
+    moving.set(false);
+  }, [moving]);
   const onDragEndSortable = useCallback(
     ({ data }: SortableGridDragEndParams<EditorClip>) => {
       moving.set(false);
+      if (!mounted.current) return;
       const key = draggedKey.current;
       draggedKey.current = null;
       if (key)
@@ -302,7 +321,7 @@ export function ClipRow(props: Props) {
           onDragStart={onDragStartSortable}
           onDragEnd={onDragEndSortable}
           // Also on the drop: the row must never stay frozen if a drag's end goes unreported.
-          onActiveItemDropped={() => moving.set(false)}
+          onActiveItemDropped={onDropped}
           renderItem={({ item, index }) => (
             <Thumb
               clip={item}

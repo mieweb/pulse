@@ -28,6 +28,7 @@ import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
 import { ClipRow } from '@/features/editor/clip-row';
 import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
 import { useFrameRates } from '@/features/editor/use-frame-rates';
+import { flushDraftWrites } from '@/features/editor/draft-writes';
 import {
   CaptionTextBar,
   ClipToolbar,
@@ -420,9 +421,19 @@ export default function EditorScreen() {
     void draft.remove(t.clip.id);
   };
 
+  // Export reads the stored clips: it opens once every edit asked for is stored (a cover renders
+  // first, up to about half a second), and once per tap until the editor is back on screen.
+  const exporting = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      exporting.current = false;
+    }, []),
+  );
   const openExport = () => {
+    if (exporting.current) return;
+    exporting.current = true;
     ctl.pause();
-    router.push({ pathname: '/export', params: { draftId } });
+    void flushDraftWrites().then(() => router.push({ pathname: '/export', params: { draftId } }));
   };
 
   const reset = () => {
@@ -660,6 +671,11 @@ export default function EditorScreen() {
   const fitW = Math.min(stage.w, stage.h * aspect);
   const picture = { width: fitW, height: fitW / aspect };
   const captionsBusy = captionStatus === 'downloading' || captionStatus === 'transcribing';
+  // Created once the area is measured and the clips are known; dropped with no clips left.
+  const showPreview = !!options && previewClips.length > 0 && fitW > 0;
+  useEffect(() => {
+    if (!showPreview) ctl.detach();
+  }, [showPreview, ctl]);
 
   return (
     // The portal lifts a picked-up clip above everything (preview, controls) while it's dragged.
@@ -702,7 +718,7 @@ export default function EditorScreen() {
           accessibilityRole="button"
           accessibilityLabel={playing ? 'Pause' : 'Play'}>
           {/* Created once the area is measured, at the picture's size. */}
-          {options && previewClips.length > 0 && fitW > 0 && (
+          {showPreview && (
             <PulsePreview
               style={picture}
               clips={previewClips}

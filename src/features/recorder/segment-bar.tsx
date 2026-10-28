@@ -8,7 +8,7 @@ import Animated, {
   useAnimatedRef,
   useAnimatedStyle,
   useReducedMotion,
-  useScrollViewOffset,
+  useScrollOffset,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -77,7 +77,7 @@ type Props = {
 };
 
 export function SegmentBar(props: Props) {
-  // Gate BEFORE the hooks mount: useScrollViewOffset warns on every empty-draft render
+  // Gate BEFORE the hooks mount: useScrollOffset warns on every empty-draft render
   // while its ref has no ScrollView attached, so the hooks live in Bar below.
   if (props.segments.length === 0) return null;
   return <Bar {...props} />;
@@ -92,7 +92,7 @@ function Bar({
   firstClipOverlay,
 }: Props) {
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
-  const scrollOffset = useScrollViewOffset(scrollRef);
+  const scrollOffset = useScrollOffset(scrollRef);
   // The viewport's width, for clamping the scroll restored after a delete.
   const viewportW = useSharedValue(0);
 
@@ -185,8 +185,22 @@ function Bar({
     [trashRect, overTrash, over],
   );
 
+  // Sortables still reports the drag's end after the bar unmounts mid-drag (the remount on a
+  // change of clips): that late report must not delete a clip or write this bar's old order.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const onDragEnd = useCallback(
     ({ data }: SortableGridDragEndParams<Segment>) => {
+      if (!mounted.current) {
+        latest.current.onDragActiveChange?.(false);
+        return;
+      }
       vis.set(withTiming(0, TRASH_FADE));
       // Dropped on the trash → delete that clip; otherwise persist the new order.
       const key = draggedKey.current;
