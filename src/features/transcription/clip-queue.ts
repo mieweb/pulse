@@ -116,11 +116,17 @@ function pump(): void {
 }
 
 async function run(job: Job, signal: AbortSignal): Promise<void> {
-  // Gone since it was asked for: a clip (or draft) deleted, or the model switched away (only the
-  // selected model is kept on disk). Nothing to do and nothing to store; no model download.
-  if (!isModelReady(job.model) || !(await segmentExists(job.segmentId))) return;
-  const have = (await getClipTranscripts([job.segmentId], job.model.id)).get(job.segmentId);
-  if (signal.aborted || have?.file === job.file) return;
+  try {
+    // Gone since it was asked for: a clip (or draft) deleted, or the model switched away (only
+    // the selected model is kept on disk). Nothing to do and nothing to store; no model download.
+    if (!isModelReady(job.model) || !(await segmentExists(job.segmentId))) return;
+    const have = (await getClipTranscripts([job.segmentId], job.model.id)).get(job.segmentId);
+    if (signal.aborted || have?.file === job.file) return;
+  } catch (e) {
+    // A read that failed: dropped, asked for again the next time the clip's captions are wanted.
+    console.warn(`[captions] clip ${job.segmentId} skipped`, e);
+    return;
+  }
   setTranscriptionStatus({ kind: 'transcribing' });
   for (let attempt = 1; ; attempt++) {
     try {
