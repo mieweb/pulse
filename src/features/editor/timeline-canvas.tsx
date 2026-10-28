@@ -243,8 +243,11 @@ export function TimelineCanvas(props: Props) {
   const { slots, sel, side, delta, zoom } = motion;
   const half = width / 2;
 
+  // One recorder for the canvas's life, reused each frame (as Skia's Pictures guide does): a new
+  // one per frame reports 1 MiB of memory pressure to the UI runtime each time.
+  const recorder = useMemo(() => Skia.PictureRecorder(), []);
   const picture = useDerivedValue(() => {
-    const rec = Skia.PictureRecorder();
+    const rec = recorder;
     const c = rec.beginRecording(Skia.XYWHRect(0, 0, width, height));
     const z = zoom.get();
     const t = timeMs.get();
