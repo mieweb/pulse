@@ -1,10 +1,11 @@
 import { extractAudio } from '@mieweb/pulse-editor';
-import { initWhisper, type WhisperContext } from 'whisper.rn';
+import { initParakeet, initWhisper, type ParakeetContext, type WhisperContext } from 'whisper.rn';
 
-import { groupWordsIntoLines } from './group-lines';
-import { ensureModel, modelFileUri } from './model';
+import { wholeWords } from './group-lines';
+import { isModelReady, modelFileUri } from './model';
 import type { WhisperModel } from './models';
 import { hasSpeech } from './vad';
+import { whisperJsiReady } from './whisper-jsi';
 
 /**
  * One word of a transcript. `t0`/`t1` are whisper.cpp timestamps in **centiseconds** (1/100s)
@@ -19,25 +20,6 @@ export type TranscriptWord = { text: string; t0: number; t1: number };
  */
 export type TranscriptLine = { text: string; t0: number; t1: number; words?: TranscriptWord[] };
 
-export type TranscriptResult = {
-  language: string;
-  text: string;
-  lines: TranscriptLine[];
-};
-
-/** Parse a persisted `lines`/`editedLines` JSON column to `TranscriptLine[]`; `[]` on null/malformed. */
-export function parseTranscriptLines(json: string | null | undefined): TranscriptLine[] {
-  if (!json) return [];
-  try {
-    return JSON.parse(json) as TranscriptLine[];
-  } catch {
-    return [];
-  }
-}
-
-/** A clip with no detected speech: a settled, empty transcript (no captions, never re-run). */
-const EMPTY_TRANSCRIPT: TranscriptResult = { language: '', text: '', lines: [] };
-
 /**
  * Whether the clip has no speech worth transcribing. Runs the VAD pre-gate; if the VAD itself is
  * unavailable (e.g. its model hasn't downloaded yet offline) we fail **open** — assume speech and
@@ -51,26 +33,35 @@ async function isSilent(pcm: ArrayBuffer): Promise<boolean> {
   }
 }
 
-// A Whisper context is expensive to create (loads the weights into memory) and is reusable across
+// A model context is expensive to create (loads the weights into memory) and is reusable across
 // clips, so we hold a single instance, tagged with the model it was built from. Switching models
 // releases the old context before loading the new one.
-let current: { id: string; ctx: WhisperContext } | null = null;
-let loadPromise: Promise<WhisperContext> | null = null;
+type Context = WhisperContext | ParakeetContext;
+let current: { id: string; ctx: Context } | null = null;
+let loadPromise: Promise<Context> | null = null;
 
-// `maxLen: 1` makes whisper emit one segment per word, each with its own t0/t1 — the only way
-// whisper.rn surfaces word-level timing (its result exposes segments, not tokens). We then fold
-// those words back into caption-sized lines ourselves (see group-lines.ts), which gives both
-// word-level timing (for karaoke highlighting) and readable, standards-sized cues.
+// Whisper: `maxLen: 1` makes it emit one segment per token, each with its own t0/t1 — the only
+// way whisper.rn surfaces word-level timing (its result exposes segments, not tokens); the pieces
+// of a word are joined (group-lines.ts). Parakeet: one segment per word, timed from its tokens
+// (patches/whisper.rn+0.7.4.patch).
 const WORD_PER_SEGMENT = 1;
 
 /**
- * Build a Whisper context on the Metal GPU with Flash Attention (iOS). whisper.rn already runs on
- * the CPU when Metal isn't usable (simulators, GPUs older than Apple7), and Android has no GPU
+ * Build a context on the GPU (Metal on iOS; Whisper with Flash Attention). whisper.rn already runs
+ * on the CPU when Metal isn't usable (simulators, GPUs older than Apple7), and Android has no GPU
  * backend in whisper.rn (the flag is ignored there), so Android always runs on the CPU. If the GPU
  * context still fails to load, retry on the CPU rather than failing transcription outright;
  * `useGpu` defaults to true in whisper.rn, so the fallback has to turn it off explicitly.
  */
-async function initContext(filePath: string): Promise<WhisperContext> {
+async function initContext(model: WhisperModel, filePath: string): Promise<Context> {
+  await whisperJsiReady();
+  if (model.engine === 'parakeet') {
+    try {
+      return await initParakeet({ filePath, useGpu: true });
+    } catch {
+      return initParakeet({ filePath, useGpu: false });
+    }
+  }
   try {
     return await initWhisper({ filePath, useGpu: true, useFlashAttn: true });
   } catch {
@@ -78,7 +69,7 @@ async function initContext(filePath: string): Promise<WhisperContext> {
   }
 }
 
-/** Free the active Whisper context (e.g. on model switch / delete). Re-loads lazily on next use. */
+/** Free the active model context (e.g. on model switch / delete). Re-loads lazily on next use. */
 export async function releaseWhisper(): Promise<void> {
   loadPromise = null;
   const ctx = current?.ctx ?? null;
@@ -87,18 +78,19 @@ export async function releaseWhisper(): Promise<void> {
 }
 
 /**
- * Get a Whisper context for `model`, loading (and downloading, if needed) on first use and
- * swapping the context when the selected model changes. Idempotent for the already-loaded model.
+ * Get a context for `model`, loading it on first use and swapping the context when the selected
+ * model changes. Idempotent for the already-loaded model. Never downloads: a model that isn't
+ * whole on disk (switched away, deleted) fails here, so a stale request can't start a download.
  */
-async function loadContext(model: WhisperModel): Promise<WhisperContext> {
+async function loadContext(model: WhisperModel): Promise<Context> {
   if (current?.id === model.id) return current.ctx;
   if (loadPromise) await loadPromise.catch(() => {});
   if (current?.id === model.id) return current.ctx;
 
   loadPromise = (async () => {
     await releaseWhisper();
-    await ensureModel(model); // no-op if already on disk
-    const ctx = await initContext(modelFileUri(model));
+    if (!isModelReady(model)) throw new Error('The captions model isn’t downloaded');
+    const ctx = await initContext(model, modelFileUri(model));
     current = { id: model.id, ctx };
     return ctx;
   })();
@@ -110,71 +102,65 @@ async function loadContext(model: WhisperModel): Promise<WhisperContext> {
 }
 
 /**
- * Transcribe a single video clip's audio on-device with the given model.
+ * The words spoken in one clip's audio, on-device with the given model: whole words, each timed in
+ * centiseconds from the start of the file. `[]` for a file with no sound or no speech.
  *
- * Pipeline: pulse-editor decodes the audio track in memory to what whisper.cpp takes — 16 kHz mono
- * 16-bit PCM, downmixed and band-limited resampled natively — and the VAD gate and Whisper both
- * read that one buffer (`detectSpeechData` / `transcribeData`): no temp file, no second decode.
- * The model is expected to be downloaded already (the manager handles the download phase); if
- * not, it is fetched here as a fallback.
+ * Pipeline: pulse-editor decodes the audio track in memory to what both engines take — 16 kHz
+ * mono 16-bit PCM, downmixed and band-limited resampled natively — and the VAD gate and the model
+ * both read that one buffer: no temp file, no second decode. The model must be downloaded already
+ * (the queue only runs with one); this never downloads it.
  *
- * @param videoUri absolute file URI to the clip (the effective edited-or-original file).
+ * @param fileUri absolute file URI of the clip's media (the file it plays from).
  */
-export async function transcribeVideo(
-  videoUri: string,
+export async function transcribeWords(
+  fileUri: string,
   model: WhisperModel,
-  options?: { onProgress?: (progress: number) => void; signal?: AbortSignal },
-): Promise<TranscriptResult> {
-  const { onProgress, signal } = options ?? {};
-  // Cancelled during a step before inference (leaving the screen while the audio is read, the
-  // speech check runs or the model loads): stop there, so no inference starts for nobody.
+  options?: { signal?: AbortSignal },
+): Promise<TranscriptWord[]> {
+  const { signal } = options ?? {};
+  // Cancelled during a step before inference (the clip deleted, the recorder started recording,
+  // the model switched): stop there, so no inference starts for nobody.
   const stopIfCancelled = () => {
     if (signal?.aborted) throw new Error('Transcription cancelled');
   };
-  const { data: pcm } = await extractAudio(videoUri);
+  const { data: pcm } = await extractAudio(fileUri);
   stopIfCancelled();
   // No audio track: nothing to caption.
-  if (pcm.byteLength === 0) return EMPTY_TRANSCRIPT;
+  if (pcm.byteLength === 0) return [];
   // Pre-gate on voice activity: silent/noise-only clips make Whisper hallucinate (the
-  // multilingual model emits Chinese on noise, or canned subtitle credits on silence). Skip
-  // Whisper entirely and store an empty transcript so the clip settles instead of re-running.
-  if (await isSilent(pcm)) return EMPTY_TRANSCRIPT;
+  // multilingual model emits Chinese on noise, or canned subtitle credits on silence). Skip the
+  // model entirely: an empty transcript settles the clip instead of re-running.
+  if (await isSilent(pcm)) return [];
   stopIfCancelled();
 
   const ctx = await loadContext(model);
   stopIfCancelled();
-  // `tokenTimestamps` is what lets `maxLen` split output by token; with `maxLen: 1` we get one
-  // word per segment (with per-word t0/t1), then regroup into caption lines ourselves.
-  // `language` honors the model: 'en' for the English-only models, 'auto' for the multilingual one.
-  //
-  // Speed knobs for the on-device hot path (captions, not subtitling a film):
-  // - `maxThreads`: whisper.rn defaults to 2–4; modern iPhones have 6 cores, so let inference use
-  //   them. whisper.cpp clamps to what's actually available, so over-asking on a 4-core device is
-  //   safe.
-  // - Greedy, single-candidate decoding (`bestOf: 1`, and no `beamSize`: whisper.rn switches to
-  //   beam search for any beamSize, even 1). Same transcripts on our test clips, 8–15% faster.
-  const { stop, promise } = ctx.transcribeData(pcm, {
-    language: model.lang,
-    maxLen: WORD_PER_SEGMENT,
-    tokenTimestamps: true,
-    maxThreads: 6,
-    bestOf: 1,
-    onProgress,
-  });
-  // Cancellation once inference runs (export screen left, or the run superseded by a clip change;
-  // the checks above cover the steps before it, with no await between the last one and here):
-  // stop the native inference so it stops contending with a new recording/transcription AND so a
-  // later `releaseWhisper()` (model switch/delete) can't free the context out from under a live
-  // call.
+  // Whisper: `language` honors the model ('en' for the English-only one, 'auto' for the
+  // multilingual one); `maxThreads` 6 (whisper.rn defaults to 2–4; modern iPhones have 6 cores and
+  // whisper.cpp clamps to what's there); greedy, single-candidate decoding (`bestOf: 1`, and no
+  // `beamSize`: whisper.rn switches to beam search for any beamSize, even 1), the same transcripts
+  // on our test clips, 8–15% faster. Parakeet detects the language itself and decodes greedily.
+  const { stop, promise } =
+    model.engine === 'parakeet'
+      ? (ctx as ParakeetContext).transcribeData(pcm, { maxThreads: 6 })
+      : (ctx as WhisperContext).transcribeData(pcm, {
+          language: model.lang,
+          maxLen: WORD_PER_SEGMENT,
+          tokenTimestamps: true,
+          maxThreads: 6,
+          bestOf: 1,
+        });
+  // Cancellation once inference runs (the checks above cover the steps before it, with no await
+  // between the last one and here): stop the native inference so it stops contending with a new
+  // recording and so a later `releaseWhisper()` (model switch/delete) can't free the context out
+  // from under a live call.
   const onAbort = () => void stop().catch(() => {});
   signal?.addEventListener('abort', onAbort);
   try {
     const result = await promise;
-    return {
-      language: result.language,
-      text: result.result.trim(),
-      lines: groupWordsIntoLines(result.segments),
-    };
+    // Stopped natively (a context released under it): partial words, not the clip's transcript.
+    if (result.isAborted) throw new Error('Transcription cancelled');
+    return wholeWords(result.segments);
   } finally {
     signal?.removeEventListener('abort', onAbort);
   }

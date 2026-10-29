@@ -85,11 +85,12 @@ flowchart TB
 
 ### Captions & transcription
 
-- Fully on-device speech-to-text with [whisper.rn](https://github.com/mybigday/whisper.rn) — choose Base (en), Small (en), Small multilingual, or Large-v3-turbo, downloaded on demand
+- Fully on-device speech-to-text with [whisper.rn](https://github.com/mybigday/whisper.rn) — Parakeet for English, or a multilingual Whisper (Large Turbo on iOS, Small on Android), downloaded from the editor's Captions tool
+- Each clip is transcribed once, in the background; the draft's captions are composed from the clips through their trims, speed, mutes and order, so an edit never re-runs the model
 - Silero VAD pre-gate skips silent clips and suppresses Whisper's hallucinated filler on empty audio
-- Word-level timestamps reflowed into broadcast-style cues (line-length, duration, and sentence-boundary aware)
-- Optimistic caption editor with autosave and undoable edit history — hand-edited cues are protected from being overwritten by re-transcription or model switches
-- Captions upload as WebVTT with word-level cue timestamps (karaoke-ready) alongside the video
+- Word-level timestamps reflowed into broadcast-style cues (line-length, duration, and sentence-boundary aware; Chinese, Japanese and Thai keep their per-character timing), never across a cut
+- Captions live in the editor: shown over the preview and on a lane under the clips; tap a word to edit or delete it, split or merge sentences at the playhead, drag the caption to move them all — edits are kept per clip and undoable
+- Captions upload as WebVTT with word-level cue timestamps (karaoke-ready) and their position, alongside the video
 
 ### Drafts & library
 
@@ -191,7 +192,7 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, 
 
 ```
 src/
-├── app/            # expo-router screens: home, recorder, subtitles, export, onboarding
+├── app/            # expo-router screens: home, recorder, editor, export, onboarding
 ├── features/       # recorder, transcription, export, upload, draft-transfer, home, …
 ├── db/             # Drizzle ORM schema + queries (expo-sqlite)
 ├── components/     # shared themed UI

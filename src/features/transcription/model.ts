@@ -1,16 +1,16 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
 import { modelUrl, type WhisperModel } from './models';
+import { deleteDownload, downloadWhole, isWholeFile } from './verified-download';
 
 // On-device Whisper model files live under the document directory (so they survive launches) and
 // are downloaded on demand. Only the currently-selected model is kept on disk — switching deletes
 // the others — so the app never holds more than one set of weights at a time.
 //
-//   models/ggml-<id>.bin
+//   models/ggml-<id>.bin   (+ .ok: its verified size; .part while downloading)
 //
-// A partial/interrupted download is shorter than the real file; we treat anything well under the
-// model's approximate size as incomplete.
-const COMPLETE_FRACTION = 0.7;
+// Downloads are whole or not at all (verified-download.ts): a partial or interrupted one is never
+// at the model's path, so it's never loaded.
 
 function modelsDir(): Directory {
   return new Directory(Paths.document, 'models');
@@ -22,8 +22,7 @@ function modelFile(m: WhisperModel): File {
 
 /** Whether the given model is fully downloaded. */
 export function isModelReady(m: WhisperModel): boolean {
-  const file = modelFile(m);
-  return file.exists && (file.size ?? 0) >= m.approxBytes * COMPLETE_FRACTION;
+  return isWholeFile(modelFile(m), m.bytes);
 }
 
 /** Absolute file URI of the model's weights (only valid once downloaded). */
@@ -55,21 +54,10 @@ export function ensureModel(
   const existing = inFlight.get(m.filename);
   if (existing) return existing.promise;
 
-  if (file.exists) file.delete(); // clear a partial/corrupt prior attempt
+  // Anything at the path that isn't a whole model (an older build's partial download) goes.
+  deleteDownload(file);
   modelsDir().create({ intermediates: true, idempotent: true });
-
-  const task = File.createDownloadTask(modelUrl(m), file, {
-    onProgress: ({ bytesWritten, totalBytes }) => onProgress?.({ bytesWritten, totalBytes }),
-  });
-
-  const promise = (async () => {
-    await task.downloadAsync();
-    if (!isModelReady(m)) {
-      if (file.exists) file.delete();
-      throw new Error('Whisper model download failed or is incomplete');
-    }
-    return file.uri;
-  })();
+  const { task, promise } = downloadWhole(modelUrl(m), file, m.bytes, onProgress);
 
   inFlight.set(m.filename, { promise, task });
   return promise.finally(() => inFlight.delete(m.filename));
@@ -95,8 +83,8 @@ export function deleteModelsExcept(keep: WhisperModel | null): void {
   const dir = modelsDir();
   if (!dir.exists) return;
   for (const entry of dir.list()) {
-    if (entry instanceof File && entry.name.endsWith('.bin') && entry.name !== keep?.filename) {
-      entry.delete();
-    }
+    // The weights, their marker and any partial download, except `keep`'s.
+    const of = entry.name.replace(/\.(ok|part)$/, '');
+    if (entry instanceof File && of.endsWith('.bin') && of !== keep?.filename) entry.delete();
   }
 }

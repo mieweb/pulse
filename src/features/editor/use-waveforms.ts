@@ -88,7 +88,10 @@ async function readPeaks(uri: string): Promise<Peaks | null> {
  * The waveform of each file, worked out one file at a time once `enabled` (after the preview's
  * first frame, so it never delays it) and cached on disk. Missing entries are still loading.
  */
-export function useWaveforms(uris: readonly string[], enabled: boolean): ReadonlyMap<string, Peaks | null> {
+export function useWaveforms(
+  uris: readonly string[],
+  enabled: boolean,
+): ReadonlyMap<string, Peaks | null> {
   const [peaks, setPeaks] = useState<ReadonlyMap<string, Peaks | null>>(() => new Map(memory));
   const key = [...new Set(uris)].join('\n');
   useEffect(() => {

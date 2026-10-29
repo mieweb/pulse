@@ -1,11 +1,11 @@
 import { Image } from 'expo-image';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   scrollTo,
-  useAnimatedReaction,
   useAnimatedRef,
   useAnimatedScrollHandler,
+  useFrameCallback,
   useScrollOffset,
   useSharedValue,
 } from 'react-native-reanimated';
@@ -20,6 +20,7 @@ import { haptics } from '@/utils/haptics';
 
 import { TILE_HEIGHT } from './clip-tile';
 import { EditCues } from './edit-cues';
+import { RULER_HEIGHT, STRIP_HEIGHT } from './timeline-strip';
 import { clamp, type TimelineLayout } from './timeline-geometry';
 import type { EditorClip } from './use-editor-draft';
 import { Mode, type PlayheadValues } from './use-preview-transport';
@@ -29,11 +30,11 @@ const THUMB_HEIGHT = TILE_HEIGHT;
 const THUMB_GAP = 8;
 /** One clip's share of the row: its thumbnail and the gap after it. */
 const STEP = THUMB_WIDTH + THUMB_GAP;
-export const ROW_HEIGHT = THUMB_HEIGHT + 20;
+/** The timeline strip's height, the thumbnails where its clip tiles are (under its ruler): a
+ * switch between the views changes what's in the clips, not where they are. */
+const ROW_HEIGHT = STRIP_HEIGHT;
 const BADGE = 18;
 const RADIUS = 10;
-/** A selected clip counts as on screen while at least this much of it shows. */
-const VISIBLE_DP = 12;
 
 // The row is padded half its width on each side, so the scroll offset IS the playhead's place
 // on the row: each clip spans its thumbnail and the gap after it, in proportion to its length.
@@ -125,8 +126,6 @@ type Props = {
   onReorderStart: () => void;
   /** A clip was dropped: the new order (ids) and the clip that moved. */
   onReorder: (order: string[], moved: string) => void;
-  /** The selected clip scrolled out of view (it's let go). */
-  onSelectedHidden: () => void;
   /** A tap on the row but not on a clip (the gaps, either side). */
   onBlankTap?: () => void;
 };
@@ -139,11 +138,12 @@ type Props = {
 export function ClipRow(props: Props) {
   const theme = useTheme();
   const { clips, covers, layout, selected, values } = props;
-  const { timeMs, totalMs, mode, playing } = values;
+  const { timeMs, totalMs, mode } = values;
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const offset = useScrollOffset(scrollRef);
-  const [width, setWidth] = useState(0);
-  const widthSv = useSharedValue(0);
+  // The window's width until the row is laid out (it spans it): the playhead and the row's padding
+  // are in place from the first frame, not at the left edge until layout reports.
+  const [width, setWidth] = useState(() => Dimensions.get('window').width);
 
   const latest = useRef(props);
   useEffect(() => {
@@ -152,9 +152,8 @@ export function ClipRow(props: Props) {
   const [handlers] = useState(() => ({
     dragStart: () => latest.current.onDragStart(),
     scrubEnd: (ms: number) => latest.current.onScrubEnd(ms),
-    hidden: () => latest.current.onSelectedHidden(),
   }));
-  const { dragStart, scrubEnd, hidden } = handlers;
+  const { dragStart, scrubEnd } = handlers;
 
   const geom = useSharedValue({ starts: layout.starts, total: layout.totalMs });
   /** A finger (or its fling) is moving the row: time follows the row, not the other way. */
@@ -162,26 +161,26 @@ export function ClipRow(props: Props) {
   /** A clip is being moved: the row follows neither (sortables scrolls it). */
   const moving = useSharedValue(false);
 
-  /** The row under the playhead at the current time. */
-  const follow = useCallback(() => {
-    'worklet';
-    if (user.get() || moving.get()) return;
-    const g = geom.get();
-    scrollTo(scrollRef, offsetOfTime(g.starts, g.total, timeMs.get()), 0, false);
-  }, [user, moving, geom, scrollRef, timeMs]);
-
   useEffect(() => {
     const g = { starts: layout.starts, total: layout.totalMs };
     scheduleOnUI(() => {
       'worklet';
       geom.set(g);
-      follow();
     });
-  }, [layout, geom, follow]);
-  useAnimatedReaction(
-    () => timeMs.get(),
-    () => follow(),
-  );
+  }, [layout, geom]);
+
+  // The row sits under the playhead whenever nothing else moves it (a finger or its fling drives
+  // the time then; a clip being moved lets sortables scroll it). One loop on the UI thread keeps it
+  // there, scrolling only when the place it reports differs: after a seek, a tap, playback, a
+  // layout or content change, and when a scrollTo was dropped (one sent before the view is on
+  // screen is: switching views fast left the row at its start, out of step with the playhead).
+  useFrameCallback(() => {
+    if (user.get() || moving.get()) return;
+    const g = geom.get();
+    const x = offsetOfTime(g.starts, g.total, timeMs.get());
+    if (Math.abs(x - offset.get()) < 0.5) return;
+    scrollTo(scrollRef, x, 0, false);
+  });
 
   const finish = () => {
     'worklet';
@@ -224,21 +223,6 @@ export function ClipRow(props: Props) {
       });
     },
     [user, mode, timeMs, scrubEnd],
-  );
-
-  // The selected clip scrolled out of view: let it go (the clip being edited is always on screen).
-  useAnimatedReaction(
-    () => {
-      if (selected < 0 || moving.get()) return true;
-      const x = width / 2 + selected * STEP - offset.get();
-      return x + THUMB_WIDTH > VISIBLE_DP && x < widthSv.get() - VISIBLE_DP;
-    },
-    (visible, prev) => {
-      // Only when the person moved it (a swipe, a fling, playback): the row's own layout and
-      // scrolls (opening, switching views, after a drop) never let a selection go.
-      if (prev === true && !visible && (user.get() || playing.get())) scheduleOnRN(hidden);
-    },
-    [selected, width],
   );
 
   const draggedKey = useRef<string | null>(null);
@@ -309,7 +293,6 @@ export function ClipRow(props: Props) {
         rowX.current = e.nativeEvent.layout.x;
         const w = e.nativeEvent.layout.width;
         setWidth(w);
-        widthSv.set(w);
       }}>
       <Animated.ScrollView
         ref={scrollRef}
@@ -317,13 +300,7 @@ export function ClipRow(props: Props) {
         showsHorizontalScrollIndicator={false}
         onScroll={onScroll}
         scrollEventThrottle={16}
-        contentContainerStyle={[styles.content, { paddingHorizontal: width / 2 }]}
-        onContentSizeChange={() =>
-          scheduleOnUI(() => {
-            'worklet';
-            follow();
-          })
-        }>
+        contentContainerStyle={[styles.content, { paddingHorizontal: width / 2 }]}>
         <Sortable.Grid
           rows={1}
           rowHeight={THUMB_HEIGHT}
@@ -365,7 +342,7 @@ export function ClipRow(props: Props) {
 
 const styles = StyleSheet.create({
   row: { height: ROW_HEIGHT },
-  content: { paddingVertical: (ROW_HEIGHT - THUMB_HEIGHT) / 2 },
+  content: { paddingTop: RULER_HEIGHT, paddingBottom: ROW_HEIGHT - RULER_HEIGHT - THUMB_HEIGHT },
   thumb: {
     width: THUMB_WIDTH,
     height: THUMB_HEIGHT,

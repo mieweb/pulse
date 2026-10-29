@@ -120,6 +120,20 @@
       "when": 1790283443791,
       "tag": "0016_single_shot_uploads",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1792033508633,
+      "tag": "0017_clip_transcripts",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792200279199,
+      "tag": "0018_caption_edits",
+      "breakpoints": true
     }
   ]
 }

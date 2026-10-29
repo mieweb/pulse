@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
@@ -29,6 +29,9 @@ export const drafts = sqliteTable('drafts', {
   // it back), and a mismatch or missing file means "merge again". Null = no export.
   mergedSignature: text('merged_signature'),
   mergedDurationMs: integer('merged_duration_ms'),
+  // Where the captions sit on the video: the caption's vertical centre, as a fraction of the
+  // picture's height (0 top, 1 bottom), dragged on the editor's preview. Null = the default place.
+  captionY: real('caption_y'),
   // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
   // every clip added, never decremented — so deleting (or renaming) a clip can never cause
   // its number to be reused.
@@ -74,6 +77,11 @@ export const segments = sqliteTable(
     // Shown on segment-bar thumbs and draft cards (the draft cover is the first clip's
     // thumbnail) and uploaded as the merged session's thumbnail artifact.
     thumbnail: text('thumbnail'),
+    // The clip's captions as the person edited them in the editor: JSON `{ file, words }`, the
+    // words timed in that file like a clip transcript's (centiseconds), so trims, speed and
+    // reorders carry them along. Used instead of the model's words while `file` is the clip's
+    // file. Null = the model's words.
+    captionEdit: text('caption_edit'),
   },
   // One slot per position: catches any regression of the order-assignment race at write time
   // (addSegment computes order inside a transaction; reorder renumbers in two passes).
@@ -113,6 +121,29 @@ export const draftTranscripts = sqliteTable('draft_transcripts', {
   createdAt: integer('created_at').notNull().default(now),
 });
 
+/**
+ * A clip's own transcript, per model: the words of the file the clip plays from (`file`, the
+ * original for edits stored as settings), timed in THAT file (centiseconds), so trims, speed,
+ * mutes and reorders never make it stale — the draft's captions are composed from these through
+ * the clips' edits (compose.ts). Made once per clip by the background queue (clip-queue.ts).
+ * `words` is JSON `Array<{ text, t0, t1 }>` (whole words), `[]` for a clip with no speech, null
+ * after a failure. A row whose `file` isn't the clip's current file is stale.
+ */
+export const clipTranscripts = sqliteTable(
+  'clip_transcripts',
+  {
+    segmentId: text('segment_id')
+      .notNull()
+      .references(() => segments.id, { onDelete: 'cascade' }),
+    model: text('model').notNull(),
+    file: text('file').notNull(),
+    status: text('status', { enum: ['done', 'error'] }).notNull(),
+    words: text('words'),
+    createdAt: integer('created_at').notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.segmentId, t.model] })],
+);
+
 /** App-wide key/value settings (e.g. the selected transcription model). */
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -138,4 +169,5 @@ export const uploadDestinations = sqliteTable('upload_destinations', {
 export type Draft = typeof drafts.$inferSelect;
 export type Segment = typeof segments.$inferSelect;
 export type DraftTranscript = typeof draftTranscripts.$inferSelect;
+export type ClipTranscript = typeof clipTranscripts.$inferSelect;
 export type UploadDestination = typeof uploadDestinations.$inferSelect;

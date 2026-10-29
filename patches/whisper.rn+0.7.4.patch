@@ -1,0 +1,55 @@
+diff --git a/node_modules/whisper.rn/cpp/jsi/RNWhisperJSI.cpp b/node_modules/whisper.rn/cpp/jsi/RNWhisperJSI.cpp
+index ac3403e..8fc7747 100644
+--- a/node_modules/whisper.rn/cpp/jsi/RNWhisperJSI.cpp
++++ b/node_modules/whisper.rn/cpp/jsi/RNWhisperJSI.cpp
+@@ -1386,17 +1386,42 @@ TranscribeResultData buildParakeetTranscribeResult(
+         return result;
+     }
+ 
+-    result.segments.reserve(static_cast<size_t>(count));
++    // Pulse patch: one segment per WORD, timed from its tokens (Parakeet TDT predicts each
++    // token's duration, so its token times are word-accurate). A word starts at a token marked
++    // `is_word_start`; its text begins with a space, as Whisper's word segments do; "▁" (U+2581,
++    // SentencePiece's word marker) becomes that space.
+     for (int index = 0; index < count; ++index) {
+         const char *segmentText =
+             parakeet_full_get_segment_text(context, index);
+-        std::string text = segmentText ? segmentText : "";
+-        result.result.append(text);
+-        result.segments.push_back({
+-            std::move(text),
+-            static_cast<int>(parakeet_full_get_segment_t0(context, index)),
+-            static_cast<int>(parakeet_full_get_segment_t1(context, index)),
+-        });
++        result.result.append(segmentText ? segmentText : "");
++        const int tokens = parakeet_full_n_tokens(context, index);
++        for (int token = 0; token < tokens; ++token) {
++            const parakeet_token_data data =
++                parakeet_full_get_token_data(context, index, token);
++            const char *tokenText =
++                parakeet_full_get_token_text(context, index, token);
++            std::string piece = tokenText ? tokenText : "";
++            static const std::string marker = "\xE2\x96\x81";
++            for (size_t at = piece.find(marker); at != std::string::npos; at = piece.find(marker, at)) {
++                piece.replace(at, marker.size(), " ");
++            }
++            if (piece.empty()) {
++                continue;
++            }
++            if (data.is_word_start || result.segments.empty()) {
++                if (piece[0] != ' ') {
++                    piece.insert(0, " ");
++                }
++                result.segments.push_back({
++                    std::move(piece),
++                    static_cast<int>(data.t0),
++                    static_cast<int>(data.t1),
++                });
++            } else {
++                result.segments.back().text.append(piece);
++                result.segments.back().t1 = static_cast<int>(data.t1);
++            }
++        }
+     }
+ 
+     return result;

@@ -56,6 +56,11 @@ export const draftListQuery = db
   .groupBy(drafts.id)
   .orderBy(desc(drafts.lastModified));
 
+/** Every draft's clips (what the editor's caches keep). */
+export function allSegments() {
+  return db.select().from(segments);
+}
+
 export function segmentsForDraft(draftId: string) {
   return db
     .select()
@@ -155,6 +160,15 @@ export async function assertNotUploading(draftId: string): Promise<void> {
  */
 async function beginClipMutation(draftId: string): Promise<void> {
   await assertNotUploading(draftId);
+}
+
+/** Whether a clip is still in the database (not deleted, nor its draft). */
+export async function segmentExists(segmentId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: segments.id })
+    .from(segments)
+    .where(eq(segments.id, segmentId));
+  return !!row;
 }
 
 /** The draft's persisted-export record (see `drafts.mergedSignature`), or null if no row. */

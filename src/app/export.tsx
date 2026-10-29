@@ -3,7 +3,7 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { shareAsync } from 'expo-sharing';
+import { useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/primary-button';
@@ -29,20 +30,16 @@ import {
   Radius,
   Spacing,
 } from '@/constants/theme';
-import { TipAnchor } from '@/features/tips/tip-anchor';
-import { TipLayer } from '@/features/tips/tip-callout';
-import { useTip } from '@/features/tips/use-tip';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
+import { captionYQuery } from '@/db/captions';
 import { segmentsForDraft } from '@/db/drafts';
 import { useExport } from '@/features/export/use-export';
-import {
-  useMergedTranscription,
-  type MergedTranscriptionState,
-} from '@/features/export/use-merged-transcription';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { useToast } from '@/features/toast/toast-provider';
-import { CaptionOverlay } from '@/features/transcription/caption-overlay';
+import { SkiaCaption } from '@/features/transcription/skia-caption';
+import { captionStyleFor } from '@/features/transcription/caption-style';
+import { type DraftCaptions, useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import type { TranscriptLine } from '@/features/transcription/whisper';
 import { DestinationSelector } from '@/features/upload/destination-selector';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
@@ -63,7 +60,7 @@ export default function ExportScreen() {
 
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
   // Zero-length clips (failed native reads) can't be concatenated — drop them before merging.
-  const clips = segments.filter((s) => effMs(s) > 0);
+  const clips = useMemo(() => segments.filter((s) => effMs(s) > 0), [segments]);
 
   // Stable ref (not a plain value) so `useUpload` can be called — and its `destination`/pool
   // read — before the merge finishes. It's read at enqueue time, once the merge is done. See the
@@ -80,10 +77,11 @@ export default function ExportScreen() {
       state.status === 'done' ? { path: state.outputPath, durationMs: state.durationMs } : null;
   }, [state]);
 
-  // Transcribe the merged video once it's ready; drives the "Transcribing…" state and the caption
-  // overlay/editor. Captions live on the merged timeline now — no per-clip stitching.
-  const transcription = useMergedTranscription(draftId ?? '', clips, state);
-  const captionLines = transcription.lines;
+  // The draft's captions, composed from its clips (made and edited in the editor), where they
+  // were moved to there. No wait for the merge.
+  const captions = useDraftCaptions(draftId ?? '', clips);
+  const { data: captionRows } = useLiveQuery(captionYQuery(draftId ?? ''), [draftId]);
+  const captionY = captionRows[0]?.captionY ?? null;
 
   // Whether the share sheet is being presented, so we can disable the button and show a spinner.
   const [busy, setBusy] = useState(false);
@@ -94,12 +92,6 @@ export default function ExportScreen() {
   // Secondary buttons and the uploading bar: cards on the grouped background, lifted by a
   // shadow (no outline), like the app's other cards.
   const elementSurface = { backgroundColor: theme.card, ...CardShadow } as const;
-
-  // Open the merged-video caption editor (only meaningful once the merge is done).
-  const openCaptionEditor = () => {
-    if (state.status !== 'done' || !draftId) return;
-    router.push(`/subtitles?draftId=${draftId}&videoUri=${encodeURIComponent(state.outputPath)}`);
-  };
 
   // Uploading needs the video, so the Upload button waits for the merge. It only shows a spinner
   // while the merge runs — a failed merge has its own Retry above, so the button just stays disabled.
@@ -148,9 +140,8 @@ export default function ExportScreen() {
         title: 'Couldn’t share the video',
         message: userMessage(e, 'Try again.', 'share'),
       });
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
 
   // The pool selector + claim button, shared by every non-uploading state — including a draft
@@ -177,41 +168,10 @@ export default function ExportScreen() {
     </>
   );
 
-  // The first finished export without a captions model points out Add captions, once.
-  const captionsTip = useTip(
-    'captions',
-    state.status === 'done' && !uploading && transcription.state.status === 'no-model',
-    { delayMs: 800 },
-  );
-
   return (
     <ThemedView type="groupedBackground" style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
         <CloseButton onPress={close} />
-        {state.status === 'done' && !uploading && (
-          <CaptionsButton
-            status={transcription.state.status}
-            hasCaptions={captionLines.length > 0}
-            // Either press means the button's been found: the tip is done, even before it showed.
-            onEditCaptions={() => {
-              captionsTip.retire();
-              openCaptionEditor();
-            }}
-            onAddCaptions={() => {
-              captionsTip.retire();
-              router.push('/on-device-ai');
-            }}
-            tip={
-              captionsTip.mounted && (
-                <TipAnchor
-                  id="captions"
-                  shown={captionsTip.shown}
-                  onDismiss={captionsTip.dismiss}
-                />
-              )
-            }
-          />
-        )}
       </View>
 
       {/* Bottom padding tracks the home indicator instead of a fixed 64pt — the difference
@@ -234,8 +194,12 @@ export default function ExportScreen() {
           <>
             <MergedPreview
               uri={state.outputPath}
-              lines={captionLines}
+              // What the upload will carry: the captions once every clip that speaks has its
+              // words (getDraftCaptions sends none before), so the preview never shows more.
+              lines={uploadCarries(captions) ? captions.lines : []}
+              captionY={captionY}
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
+              note={<CaptionsNote captions={captions} />}
             />
 
             {/* Compact inline row — these are secondary actions; the upload button(s) below
@@ -388,8 +352,6 @@ export default function ExportScreen() {
           </View>
         )}
       </View>
-      {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
-      <TipLayer />
     </ThemedView>
   );
 }
@@ -402,12 +364,18 @@ export default function ExportScreen() {
 function MergedPreview({
   uri,
   lines,
+  captionY,
   meta,
+  note,
 }: {
   uri: string;
-  lines: TranscriptLine[];
+  lines: readonly TranscriptLine[];
+  /** Where the captions were moved to in the editor (null: the default place). */
+  captionY: number | null;
   /** Clip-count · duration readout, a pill just above the video. */
   meta: string;
+  /** Over the top of the video: what's missing from the captions, if anything. */
+  note?: ReactNode;
 }) {
   const mode = useThemeMode();
   const player = useVideoPlayer(toFileUri(uri), (p) => {
@@ -419,6 +387,12 @@ function MergedPreview({
   useParkedPlayback(player);
   const timeUpdate = useEvent(player, 'timeUpdate');
   const positionMs = (timeUpdate?.currentTime ?? player.currentTime) * 1000;
+  // The player's time for the caption (drawn on the UI thread, as in the editor).
+  const timeMs = useSharedValue(positionMs);
+  useEffect(() => {
+    timeMs.set(positionMs);
+  }, [positionMs, timeMs]);
+  const captionStyle = useMemo(() => captionStyleFor(captionY), [captionY]);
 
   // Largest 9:16 rect that fits the measured frame. Yoga can't express this — a max
   // constraint on the aspect-derived axis clamps it without re-shrinking the defined one,
@@ -461,9 +435,17 @@ function MergedPreview({
               // draw square corners over the rounded card. A TextureView clips like any view.
               surfaceType="textureView"
             />
-            <View style={styles.captionLayer} pointerEvents="none">
-              <CaptionOverlay lines={lines} positionMs={positionMs} />
-            </View>
+            {/* The captions as the editor draws them, where they were placed; shows only. */}
+            {cardWidth > 0 && cardHeight > 0 && (
+              <SkiaCaption
+                lines={lines}
+                timeMs={timeMs}
+                style={captionStyle}
+                width={cardWidth}
+                height={cardHeight}
+              />
+            )}
+            {note}
           </View>
         </View>
       )}
@@ -471,47 +453,40 @@ function MergedPreview({
   );
 }
 
+/** Whether the upload carries the captions shown (getDraftCaptions' rule): every clip has its
+ * words, or no model is chosen (the hand-edited captions alone go). */
+function uploadCarries(captions: DraftCaptions): boolean {
+  const st = captions.state.status;
+  return st === 'ready' || st === 'no-model';
+}
+
 /**
- * Edit/add captions, in the header opposite the ✕ — off the video so it never sits over the
- * native controls (#210). Working state → a spinner; actionable state → tappable; `idle` (merge
- * not done) → nothing. `error` is actionable: transcription failed, but the user can still open
- * the editor to add captions by hand. Same themed scrim as CloseButton on this flat screen.
+ * What the upload's captions will be missing, over the video: captions still being made or
+ * waiting for their model's download (an upload now goes without them), or clips the model
+ * couldn't caption (no captions there; a tap tries them again). Nothing when they're complete,
+ * or with no captions model chosen.
  */
-function CaptionsButton({
-  status,
-  hasCaptions,
-  onEditCaptions,
-  onAddCaptions,
-  tip,
-}: {
-  status: MergedTranscriptionState['status'];
-  hasCaptions: boolean;
-  onEditCaptions: () => void;
-  onAddCaptions: () => void;
-  /** The captions tip's anchor, laid over the button. */
-  tip?: ReactNode;
-}) {
+function CaptionsNote({ captions }: { captions: DraftCaptions }) {
   const mode = useThemeMode();
-  const surface = [styles.captionSurface, ControlScrim[mode]];
-  if (status === 'transcribing' || status === 'downloading') {
-    return (
-      <View style={surface} accessibilityLabel="Generating captions">
-        <ActivityIndicator size="small" color="#fff" />
-      </View>
-    );
+  const st = captions.state.status;
+  let text: string | null = null;
+  let onPress: (() => void) | undefined;
+  if (st === 'transcribing' || st === 'downloading') {
+    text = 'Captions are still being made. Uploading now sends the video without them.';
+  } else if (st === 'needs-download') {
+    text = 'Captions need their model downloaded. Uploading now sends the video without them.';
+  } else if (st === 'ready' && captions.failed.length) {
+    text = `Couldn’t caption ${formatClipCount(captions.failed.length)}. Tap to try again.`;
+    onPress = captions.retry;
   }
-  if (status !== 'ready' && status !== 'no-model' && status !== 'error') return null;
+  if (!text) return null;
   return (
     <Pressable
-      onPress={status === 'no-model' ? onAddCaptions : onEditCaptions}
-      hitSlop={8}
-      style={({ pressed }) => pressed && styles.pressed}
-      accessibilityRole="button"
-      accessibilityLabel={status === 'ready' && hasCaptions ? 'Edit captions' : 'Add captions'}>
-      <View style={surface}>
-        <Icon name="captions.bubble" size={20} weight="semibold" tintColor="#fff" />
-        {tip}
-      </View>
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole={onPress ? 'button' : 'text'}
+      style={[styles.captionsNote, ControlScrim[mode]]}>
+      <ThemedText style={styles.captionsNoteText}>{text}</ThemedText>
     </Pressable>
   );
 }
@@ -523,9 +498,6 @@ const META_LINE_HEIGHT = 20;
 const META_PILL_PAD_V = 4;
 const META_GAP = Spacing.one + Spacing.one;
 const META_MAX_SCALE = 1.3;
-
-/** Room for expo-video's native control bar (AVPlayerViewController / Media3) at the bottom. */
-const NATIVE_CONTROLS_INSET = 64;
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
@@ -582,6 +554,17 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: META_GAP,
   },
+  captionsNote: {
+    position: 'absolute',
+    top: Spacing.two,
+    alignSelf: 'center',
+    maxWidth: '86%',
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  captionsNoteText: { color: '#fff', fontSize: 13, textAlign: 'center' },
   metaText: {
     color: '#fff',
     fontSize: 16,
@@ -589,17 +572,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
-  },
-  // Captions are bottom-anchored; inset them above the native control bar (#210).
-  captionLayer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: NATIVE_CONTROLS_INSET },
-  // Matches CloseButton's 40pt circle + hairline edge so the header pair reads as a set.
-  captionSurface: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   smallButton: {
     flexDirection: 'row',

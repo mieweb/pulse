@@ -1,140 +1,87 @@
 import { eq, sql } from 'drizzle-orm';
 
-import type { TranscriptLine, TranscriptResult } from '@/features/transcription/whisper';
+import type { TranscriptLine } from '@/features/transcription/whisper';
+import { mergedSignature } from '@/features/export/merge-signature';
+import { clipRender, effMs, segmentSignature } from '@/utils/segment-window';
+import type { CaptionEdit } from './captions';
 import { db } from './client';
-import { draftTranscripts } from './schema';
+import { segmentsForDraft } from './drafts';
+import { drafts, draftTranscripts, segments } from './schema';
 
-/** Live-queryable: the single merged transcript row for a draft (or none). */
-export function draftTranscriptQuery(draftId: string) {
-  return db
-    .select({
-      draftId: draftTranscripts.draftId,
-      signature: draftTranscripts.signature,
-      model: draftTranscripts.model,
-      status: draftTranscripts.status,
-      lines: draftTranscripts.lines,
-      editedLines: draftTranscripts.editedLines,
-      durationMs: draftTranscripts.durationMs,
-    })
-    .from(draftTranscripts)
-    .where(eq(draftTranscripts.draftId, draftId));
-}
-
-/** Load a draft's merged transcript row (auto `lines`, `editedLines`, status, signature) for the editor/upload. */
-export async function getDraftTranscriptRow(draftId: string) {
+/**
+ * Earlier versions kept a draft's captions as one transcript of its merged video
+ * (`draft_transcripts`), hand-edited in the subtitle editor. Captions are composed from the clips
+ * now, and edited per clip (`segments.caption_edit`). This moves a hand-edit still valid for the
+ * draft's clips (same signature) onto those clips, words timed in each clip's file, and drops
+ * the row: an edit against other clips was already stale, and the auto lines are composed now.
+ */
+export async function adoptMergedCaptionEdit(draftId: string): Promise<void> {
   const [row] = await db
-    .select({
-      signature: draftTranscripts.signature,
-      lines: draftTranscripts.lines,
-      editedLines: draftTranscripts.editedLines,
-      status: draftTranscripts.status,
-      durationMs: draftTranscripts.durationMs,
-    })
+    .select({ signature: draftTranscripts.signature, editedLines: draftTranscripts.editedLines })
     .from(draftTranscripts)
     .where(eq(draftTranscripts.draftId, draftId));
-  return row ?? null;
+  if (!row) return;
+  const clips = (await segmentsForDraft(draftId)).filter((s) => effMs(s) > 0);
+  const edits = new Map<string, string>();
+  // Written as the clips' signature by versions up to 2.2.4, and with the merge version in front
+  // (mergedSignature) by builds of the pulse-editor migration: either means the same clips.
+  const signature = segmentSignature(clips);
+  if (
+    row.editedLines &&
+    (row.signature === signature || row.signature === mergedSignature(clips))
+  ) {
+    // Each edited line was a caption the person shaped (split, merged): its first word starts a
+    // sentence, so the captions keep those boxes rather than being regrouped by length.
+    const words = parseLines(row.editedLines).flatMap((l) =>
+      (l.words?.length ? l.words : [{ text: l.text, t0: l.t0, t1: l.t1 }]).map((w, i) => ({
+        ...w,
+        start: i === 0,
+      })),
+    );
+    let offsetCs = 0;
+    for (const s of clips) {
+      const r = clipRender(s);
+      const endCs = offsetCs + effMs(s) / 10;
+      // A muted clip had no captions to edit: it keeps the model's words for when it's unmuted.
+      if (r.muted) {
+        offsetCs = endCs;
+        continue;
+      }
+      const toFile = (cs: number) => Math.round(r.inMs / 10 + (cs - offsetCs) * r.speed);
+      const own = words
+        .filter((w) => w.t0 >= offsetCs && w.t0 < endCs)
+        .map((w) => ({
+          text: w.text,
+          t0: toFile(w.t0),
+          t1: toFile(Math.min(w.t1, endCs)),
+          ...(w.start ? { start: true } : {}),
+        }));
+      const edit: CaptionEdit = { file: r.file, words: own };
+      edits.set(s.id, JSON.stringify(edit));
+      offsetCs = endCs;
+    }
+  }
+  // The clips' edits and the row's removal together (sync: drizzle's expo-sqlite transactions
+  // don't wait for promises), so a crash can't adopt the edit again over newer ones.
+  db.transaction((tx) => {
+    for (const [id, value] of edits) {
+      tx.update(segments).set({ captionEdit: value }).where(eq(segments.id, id)).run();
+    }
+    if (edits.size) {
+      tx.update(drafts)
+        .set({ lastModified: sql`(unixepoch('subsec') * 1000)` })
+        .where(eq(drafts.id, draftId))
+        .run();
+    }
+    tx.delete(draftTranscripts).where(eq(draftTranscripts.draftId, draftId)).run();
+  });
 }
 
-/**
- * Mark a draft's merged transcript in-progress for a given segment-set signature + model (insert or
- * replace). A new signature means the merged timeline moved, so any prior auto lines AND hand-edit
- * are stale — cleared here.
- */
-export async function markTranscribing(
-  draftId: string,
-  signature: string,
-  model: string,
-): Promise<void> {
-  await db
-    .insert(draftTranscripts)
-    .values({ draftId, signature, model, status: 'processing' })
-    .onConflictDoUpdate({
-      target: draftTranscripts.draftId,
-      set: {
-        signature,
-        model,
-        status: 'processing',
-        lines: null,
-        editedLines: null,
-        durationMs: null,
-      },
-    });
-}
-
-/** Persist a completed merged transcription result. */
-export async function saveTranscript(
-  draftId: string,
-  signature: string,
-  model: string,
-  result: TranscriptResult,
-  durationMs: number,
-): Promise<void> {
-  await db
-    .update(draftTranscripts)
-    .set({
-      signature,
-      model,
-      status: 'done',
-      lines: JSON.stringify(result.lines),
-      durationMs,
-    })
-    .where(eq(draftTranscripts.draftId, draftId));
-}
-
-/** Mark a draft's merged transcription as failed for a given signature + model. */
-export async function markTranscriptError(
-  draftId: string,
-  signature: string,
-  model: string,
-): Promise<void> {
-  await db
-    .update(draftTranscripts)
-    .set({ signature, model, status: 'error', lines: null })
-    .where(eq(draftTranscripts.draftId, draftId));
-}
-
-/**
- * Persist the user's hand-edited captions for a draft's merged transcript. Stored alongside the
- * auto `lines` (which stay intact for "Reset to auto"); while `signature` still matches the current
- * segment set, `editedLines` is the effective transcript. Forces status to 'done' so the captions
- * render regardless of the prior auto state.
- *
- * Upserts: the merged video can be captioned before a row exists (edited from an export with no
- * model yet), and the edit must still stick. `signature` ties the row to the timeline the editor
- * showed — set on insert AND rewritten on conflict, so a hand-edit is never treated as stale
- * against its own video. The stored auto `lines` are left untouched so "Reset to auto" still works.
- */
-export async function saveEditedTranscript(
-  draftId: string,
-  signature: string,
-  lines: TranscriptLine[],
-): Promise<void> {
-  const editedLines = JSON.stringify(lines);
-  await db
-    .insert(draftTranscripts)
-    .values({ draftId, signature, status: 'done', editedLines })
-    .onConflictDoUpdate({
-      target: draftTranscripts.draftId,
-      // Rewrite `signature` too: the edit's cue timings match the merged video the editor showed,
-      // which corresponds to THIS signature. If the stored row was still on an older signature,
-      // binding the edit to the current one is what keeps it from being treated as stale (and
-      // wiped) on the next export.
-      set: { signature, status: 'done', editedLines },
-    });
-}
-
-/**
- * Clear a draft's manual edit ("Reset to auto"). If the row has no auto `lines` to fall back on (it
- * was edited before transcription produced any), re-arm it to 'processing' so the next export
- * regenerates captions rather than leaving it stranded at an empty 'done'; otherwise keep the
- * stored auto lines + status so they reappear instantly.
- */
-export async function clearEditedTranscript(draftId: string): Promise<void> {
-  await db
-    .update(draftTranscripts)
-    .set({
-      editedLines: null,
-      status: sql`CASE WHEN ${draftTranscripts.lines} IS NULL THEN 'processing' ELSE ${draftTranscripts.status} END`,
-    })
-    .where(eq(draftTranscripts.draftId, draftId));
+function parseLines(json: string): TranscriptLine[] {
+  try {
+    const v = JSON.parse(json) as unknown;
+    return Array.isArray(v) ? (v as TranscriptLine[]) : [];
+  } catch {
+    return [];
+  }
 }
