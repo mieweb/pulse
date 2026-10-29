@@ -36,9 +36,12 @@ export async function applyModelSelection(model: WhisperModel | null): Promise<v
 /**
  * Download `model`'s weights, its progress published as the transcription status (the editor's
  * Captions tool and the On-device AI sheet show it). Shared with a download already running.
+ * Every other model's weights go first: a retired selection resolves to its replacement without
+ * a selection change (models.ts), so the retired model's weights would otherwise stay.
  */
 export async function downloadModel(model: WhisperModel): Promise<void> {
   if (isModelReady(model)) return;
+  deleteModelsExcept(model);
   setTranscriptionStatus({ kind: 'downloading', bytesWritten: 0, totalBytes: model.approxBytes });
   // Published once per whole percent (what's shown), not per chunk, so the screens showing it
   // don't re-render for nothing.

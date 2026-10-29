@@ -63,7 +63,13 @@ export function useDraftCaptions(
     model?.id,
   ]);
   const status = useTranscriptionStatus();
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  // A failed download's message, with the model it was for: shown only while that model is the
+  // selection (switching cancels a download, and its rejection is no one's error then).
+  const [failedDownload, setFailedDownload] = useState<{ id: string; message: string } | null>(
+    null,
+  );
+  const downloadError =
+    failedDownload && failedDownload.id === model?.id ? failedDownload.message : null;
 
   // A hand-edit from the old merged-video subtitle editor moves onto the clips, once.
   useEffect(() => {
@@ -109,9 +115,12 @@ export function useDraftCaptions(
 
   const download = () => {
     if (!model) return;
-    setDownloadError(null);
+    setFailedDownload(null);
     downloadModel(model).catch((e) =>
-      setDownloadError(userMessage(e, 'Check your connection and try again.', 'download model')),
+      setFailedDownload({
+        id: model.id,
+        message: userMessage(e, 'Check your connection and try again.', 'download model'),
+      }),
     );
   };
 
