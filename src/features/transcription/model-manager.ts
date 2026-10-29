@@ -33,6 +33,9 @@ export async function applyModelSelection(model: WhisperModel | null): Promise<v
   }
 }
 
+/** Downloads started, counting up (the newest owns the downloading status). */
+let downloads = 0;
+
 /**
  * Download `model`'s weights, its progress published as the transcription status (the editor's
  * Captions tool and the On-device AI sheet show it). Shared with a download already running.
@@ -42,6 +45,9 @@ export async function applyModelSelection(model: WhisperModel | null): Promise<v
 export async function downloadModel(model: WhisperModel): Promise<void> {
   if (isModelReady(model)) return;
   deleteModelsExcept(model);
+  // Only the newest download clears the status: one cancelled by a switch settles later, after
+  // the next one has started showing its progress.
+  const mine = ++downloads;
   setTranscriptionStatus({ kind: 'downloading', bytesWritten: 0, totalBytes: model.approxBytes });
   // Published once per whole percent (what's shown), not per chunk, so the screens showing it
   // don't re-render for nothing.
@@ -54,6 +60,6 @@ export async function downloadModel(model: WhisperModel): Promise<void> {
       setTranscriptionStatus({ kind: 'downloading', bytesWritten, totalBytes });
     });
   } finally {
-    clearTranscriptionStatus('downloading');
+    if (mine === downloads) clearTranscriptionStatus('downloading');
   }
 }
