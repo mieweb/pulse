@@ -124,8 +124,8 @@ user (AAB) downloads **one** ABI. Per-device (arm64) ≈ **78 MB** uncompressed 
 
 ### Tier 3 — high payoff, real engineering
 4. **FFmpeg → AVFoundation (iOS) / MediaCodec (Android)** for speed/crop, dropping
-   ffmpeg-kit entirely → ~13–17 MB. The video-trim module currently needs FFmpeg for
-   speed (`atempo`), crop, rotation, and as the passthrough fallback.
+   ffmpeg-kit entirely → ~13–17 MB. Done (2026-10): pulse-editor (AVFoundation / Media3)
+   replaced the video-trim module and its FFmpeg; not re-measured since.
 5. **Skia (10.8 MB Android)** — rewrite the karaoke caption overlay
    (`src/features/transcription/caption-overlay.tsx`, the only Skia consumer) in plain RN +
    Reanimated to drop react-native-skia. Worth it mainly for Android; on iOS it's already

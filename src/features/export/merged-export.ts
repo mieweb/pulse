@@ -3,7 +3,7 @@ import type { Segment } from '@/db/schema';
 import type { MergedOutput } from '@/features/upload/types';
 import { absolutize, exportFileExists, exportRelPath, persistExportFile } from '@/utils/file-store';
 
-import { currentExportDuration, mergedSignature } from './merge-signature';
+import { currentExportDuration, exportSignature, type ExportAudio } from './merge-signature';
 
 /**
  * The draft's persisted export, if it is a valid export of exactly `segments` (file on disk AND
@@ -12,12 +12,14 @@ import { currentExportDuration, mergedSignature } from './merge-signature';
 export async function loadMergedExport(
   draftId: string,
   segments: Segment[],
+  audio: ExportAudio,
 ): Promise<MergedOutput | null> {
   const record = await getMergedExport(draftId);
   if (!record) return null;
   const durationMs = currentExportDuration(
     { fileExists: exportFileExists(draftId), ...record },
     segments,
+    audio,
   );
   return durationMs == null ? null : { path: absolutize(exportRelPath(draftId)), durationMs };
 }
@@ -28,10 +30,8 @@ let persistQueue: Promise<unknown> = Promise.resolve();
 
 /**
  * The draft's merged video for `segments`: the persisted export when it still matches, else a
- * fresh `mergeClips()` made the persisted export for next time. Every merge is persisted —
- * including a degraded one (Android emergency encoder): re-merging on a device whose H.264
- * encoder is broken would just degrade again, the vault re-encodes it anyway, and a `MERGE_VERSION`
- * bump still forces a fresh merge after an app update.
+ * fresh `mergeClips()` made the persisted export for next time. Every merge is persisted; a
+ * `MERGE_VERSION` bump forces a fresh merge after an app update.
  *
  * Persisted even if the caller has moved on (unmounted / clips changed) — the stored signature is
  * of the clips that were merged, so a stale one just won't match on the next read.
@@ -39,11 +39,12 @@ let persistQueue: Promise<unknown> = Promise.resolve();
 export async function resolveMergedExport(
   draftId: string,
   segments: Segment[],
+  audio: ExportAudio,
   mergeClips: () => Promise<MergedOutput>,
 ): Promise<MergedOutput> {
-  const persisted = await loadMergedExport(draftId, segments);
+  const persisted = await loadMergedExport(draftId, segments, audio);
   if (persisted) return persisted;
-  const signature = mergedSignature(segments);
+  const signature = exportSignature(segments, audio);
   const merged = await mergeClips();
   return {
     path: await persistMergedExport(draftId, signature, merged),

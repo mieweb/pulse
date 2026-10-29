@@ -2,6 +2,7 @@ import { File } from 'expo-file-system';
 import { strFromU8, unzipSync } from 'fflate';
 
 import { insertImportedDraft } from '@/db/drafts';
+import { describeError } from '@/features/upload/upload-log';
 import { conformToContract } from '@/utils/contract-gate';
 import {
   absolutize,
@@ -13,11 +14,31 @@ import {
   writeEditedBytes,
   writeOriginalBytes,
 } from '@/utils/file-store';
+import { importFailureNote } from '@/utils/import-copy';
 import { editTimelineMs, parseEdit } from '@/utils/segment-window';
-import { generateThumbnailFile } from '@/utils/video';
+import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 import { isPulseManifest, MANIFEST_NAME } from './manifest';
 
-export type ImportResult = { draftIds: string[] };
+/** A clip the bundle carried that was left out of its draft. */
+export type SkippedClip = {
+  /** Position of its draft in the bundle, and of the clip in that draft (both 0-based). */
+  draftIndex: number;
+  clipIndex: number;
+  /** Short user-facing reason ("damaged video"), for a summary line. */
+  reason: string;
+  /** The underlying error, for the log. */
+  detail: string;
+};
+
+export type ImportResult = { draftIds: string[]; skipped: SkippedClip[] };
+
+/** "3 clips skipped: damaged video" — the reason only when every skipped clip shares it. */
+export function skippedSummary(skipped: SkippedClip[]): string {
+  const n = skipped.length;
+  const reasons = new Set(skipped.map((s) => s.reason));
+  const head = `${n} clip${n === 1 ? '' : 's'} skipped`;
+  return reasons.size === 1 ? `${head}: ${skipped[0].reason}` : head;
+}
 
 const BAD_FILE = 'This file isn’t a valid .pulse bundle.';
 
@@ -34,6 +55,26 @@ async function conformInPlace(rel: string): Promise<boolean> {
 /** An editState with its crop removed (everything else — undo/redo included — kept). */
 function withoutCrop(editState: string): string {
   return JSON.stringify({ ...JSON.parse(editState), crop: null });
+}
+
+/**
+ * An editState's trim bounded to the stored original, whose picture can end elsewhere than the
+ * sender's (conforming re-times it): an out-point at the sender's end stays at the end, and a
+ * window left empty is dropped (the whole clip, the rest of the edit kept).
+ */
+function withinSource(editState: string, sentMs: number, durationMs: number): string {
+  const o = JSON.parse(editState);
+  const endMs = o.endMs >= sentMs ? durationMs : Math.min(o.endMs, durationMs);
+  return JSON.stringify(
+    o.startMs < endMs ? { ...o, endMs } : { ...o, startMs: 0, endMs: durationMs },
+  );
+}
+
+/** A stored clip's picture length; throws (a skip) when it has none. */
+async function videoMs(rel: string): Promise<number> {
+  const ms = await getDurationMs(absolutize(rel));
+  if (ms <= 0) throw new Error('no video stream after conforming');
+  return ms;
 }
 const TOO_BIG = 'This .pulse bundle is too large to import.';
 
@@ -84,6 +125,7 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
   // lastModified in import order.
   const base = Date.now();
   const draftIds: string[] = [];
+  const skipped: SkippedClip[] = [];
 
   for (let draftIndex = 0; draftIndex < manifest.drafts.length; draftIndex++) {
     const draft = manifest.drafts[draftIndex];
@@ -93,8 +135,37 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
       const segmentRows = [];
       for (let segIndex = 0; segIndex < draft.segments.length; segIndex++) {
         const seg = draft.segments[segIndex];
+        // A file the manifest references that the archive doesn't hold.
+        const missing = (path: string) =>
+          skipped.push({
+            draftIndex,
+            clipIndex: segIndex,
+            reason: 'missing from the file',
+            detail: `${path} is not in the archive`,
+          });
         const origBytes = archive[seg.original];
-        if (!origBytes) continue; // clip referenced by the manifest is missing from the archive
+        if (!origBytes) {
+          missing(seg.original);
+          continue;
+        }
+        let editState =
+          typeof seg.editState === 'string' && parseEdit(seg.editState) ? seg.editState : null;
+        const editedBytes = seg.edited ? archive[seg.edited] : undefined;
+        // A legacy baked edit travels only as its file: without it the clip would come in unedited.
+        if (!editState && seg.edited && !editedBytes) {
+          missing(seg.edited);
+          continue;
+        }
+        const skip = (e: unknown) => {
+          const detail = describeError(e);
+          skipped.push({
+            draftIndex,
+            clipIndex: segIndex,
+            reason: importFailureNote(detail),
+            detail,
+          });
+          console.warn('[draft-transfer] skipped clip', draftIndex, segIndex, detail);
+        };
 
         const segmentId = `${draftId}-${segIndex}`;
         const originalFilename = writeOriginalBytes(draftId, segmentId, origBytes);
@@ -102,11 +173,15 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         // Enforce the portrait reels contract on foreign media: bundles from older installs
         // can carry off-canvas / non-H.264 clips that would otherwise enter the draft unchecked.
         // Conform in place (before the thumbnail, so the cover reflects the stored pixels);
-        // a clip that can't be conformed is dropped like one missing from the archive.
+        // a clip that can't be conformed is dropped like one missing from the archive. Its length
+        // is the stored picture's, not the sender's (conforming can re-time it).
         let originalConformed: boolean;
+        let durationMs: number;
         try {
           originalConformed = await conformInPlace(originalFilename);
-        } catch {
+          durationMs = await videoMs(originalFilename);
+        } catch (e) {
+          skip(e);
           try {
             new File(absolutize(originalFilename)).delete();
           } catch {}
@@ -117,12 +192,10 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         // renders it) and, from older installs, also as a baked file. A crop is normalized to the
         // original's frame, so it can't be trusted once conforming reshaped that frame: fall back
         // to the baked file when there is one, else keep the rest of the edit without the crop.
-        let editState =
-          typeof seg.editState === 'string' && parseEdit(seg.editState) ? seg.editState : null;
-        const editedBytes = seg.edited ? archive[seg.edited] : undefined;
         if (editState && originalConformed && parseEdit(editState)?.crop) {
           editState = editedBytes ? null : withoutCrop(editState);
         }
+        if (editState) editState = withinSource(editState, seg.durationMs, durationMs);
 
         let editedFilename: string | null = null;
         let editedDurationMs: number | null = null;
@@ -138,10 +211,11 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
         } else if (editedBytes) {
           // A legacy baked edit: kept as the clip's file, played whole.
           editedFilename = writeEditedBytes(draftId, segmentId, editedBytes);
-          editedDurationMs = seg.editedDurationMs ?? null;
           try {
             await conformInPlace(editedFilename);
-          } catch {
+            editedDurationMs = await videoMs(editedFilename);
+          } catch (e) {
+            skip(e);
             for (const rel of [originalFilename, editedFilename]) {
               try {
                 new File(absolutize(rel)).delete();
@@ -161,7 +235,7 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
           order: typeof seg.order === 'number' ? seg.order : segIndex,
           label: '', // set below once the rows are sorted
           originalFilename,
-          durationMs: seg.durationMs,
+          durationMs,
           editedFilename,
           editedDurationMs,
           editState,
@@ -203,6 +277,9 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
     }
   }
 
-  if (draftIds.length === 0) throw new Error('No drafts could be imported from this file.');
-  return { draftIds };
+  if (draftIds.length === 0) {
+    const why = skipped.length > 0 ? ` (${skippedSummary(skipped)})` : '';
+    throw new Error(`No drafts could be imported from this file${why}.`);
+  }
+  return { draftIds, skipped };
 }

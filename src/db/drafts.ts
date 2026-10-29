@@ -9,7 +9,7 @@ import {
   editedThumbRelPath,
   thumbRelPath,
 } from '@/utils/file-store';
-import { editTimelineMs, parseEdit } from '@/utils/segment-window';
+import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
@@ -46,6 +46,10 @@ export const draftListQuery = db
     firstSegmentThumbnail: sql<
       string | null
     >`(select thumbnail from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
+    // Its edit as settings (none for a legacy baked file), so the fallback shows the edited frame.
+    firstSegmentEditState: sql<
+      string | null
+    >`(select case when edited_filename is null then edit_state end from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
   })
   .from(drafts)
   .leftJoin(segments, eq(segments.draftId, drafts.id))
@@ -91,29 +95,35 @@ export async function addSegment(draftId: string, segment: NewSegment): Promise<
   // comes from the draft's monotonic `lastClipNumber` counter (bump + read back atomically;
   // never decremented, so deletes/renames can't cause reuse), and `order` is the next free
   // slot (max + 1, race-safe and hole-tolerant after deletes — the unique (draftId, order)
-  // index backstops any regression).
-  await db.transaction(async (tx) => {
-    const [counter] = await tx
+  // index backstops any regression). drizzle's expo-sqlite transactions are synchronous (they
+  // commit when the callback returns), so the callback awaits nothing and runs each statement
+  // with the sync `.all()` / `.get()` / `.run()`.
+  db.transaction((tx) => {
+    const [counter] = tx
       .update(drafts)
       .set({ lastClipNumber: sql`${drafts.lastClipNumber} + 1`, lastModified: now })
       .where(eq(drafts.id, draftId))
-      .returning({ clipNumber: drafts.lastClipNumber });
+      .returning({ clipNumber: drafts.lastClipNumber })
+      .all();
     if (!counter) throw new Error(`addSegment: draft ${draftId} not found`);
 
-    const [{ maxOrder }] = await tx
+    const [{ maxOrder }] = tx
       .select({ maxOrder: sql<number | null>`max(${segments.order})` })
       .from(segments)
-      .where(eq(segments.draftId, draftId));
+      .where(eq(segments.draftId, draftId))
+      .all();
 
-    await tx.insert(segments).values({
-      id: segment.id,
-      draftId,
-      order: (maxOrder ?? -1) + 1,
-      label: String(counter.clipNumber),
-      originalFilename: segment.originalFilename,
-      durationMs: segment.durationMs,
-      thumbnail: segment.thumbnail ?? null,
-    });
+    tx.insert(segments)
+      .values({
+        id: segment.id,
+        draftId,
+        order: (maxOrder ?? -1) + 1,
+        label: String(counter.clipNumber),
+        originalFilename: segment.originalFilename,
+        durationMs: segment.durationMs,
+        thumbnail: segment.thumbnail ?? null,
+      })
+      .run();
   });
 }
 
@@ -224,34 +234,84 @@ export async function deleteSegment(segmentId: string): Promise<void> {
  * — a legacy baked file included, dropped once the row no longer points at it.
  */
 export async function setEditState(segmentId: string, editState: string): Promise<void> {
+  await saveEdit(segmentId, editState);
+}
+
+/** `setEditState` for a typed edit, stored in its canonical form (which `parseEdit` reads). */
+export async function setClipEdit(segmentId: string, edit: ParsedEdit): Promise<void> {
+  const editState = canonicalEdit(JSON.stringify(edit));
+  if (!editState) throw new Error('Unusable clip edit');
+  await saveEdit(segmentId, editState);
+}
+
+// Edit covers are revision-stamped with `Date.now()`, kept strictly increasing so two edits saved
+// in the same millisecond never render into (or delete) the same file.
+let lastCoverRev = 0;
+function coverRev(): number {
+  lastCoverRev = Math.max(Date.now(), lastCoverRev + 1);
+  return lastCoverRev;
+}
+
+/**
+ * Per clip, the edit or revert asked for last (its cover revision). The edit and its cover are
+ * written together once the cover is rendered, so a save that finishes after a newer one started
+ * stands down rather than land over it.
+ */
+const latestEditRev = new Map<string, number>();
+
+async function saveEdit(segmentId: string, editState: string): Promise<void> {
   const edit = parseEdit(editState);
   const durationMs = editTimelineMs(editState);
   if (!edit || durationMs == null) throw new Error('The editor returned an unusable edit');
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
   await beginClipMutation(seg.draftId);
-  const coverRel = editCoverRelPath(seg.draftId, segmentId, Date.now());
+  const rev = coverRev();
+  latestEditRev.set(segmentId, rev);
+  // The cover first (160–600 ms on a Galaxy S24), then the edit and its cover in one write: the
+  // row never holds an edit with another edit's cover, whenever the app stops.
+  const coverRel = editCoverRelPath(seg.draftId, segmentId, rev);
   const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(coverRel), {
     editState,
     startMs: edit.startMs,
-  });
-  await db
-    .update(segments)
-    .set({
-      editState,
-      editedDurationMs: durationMs,
-      editedFilename: null,
-      thumbnail: ok ? coverRel : seg.thumbnail,
-    })
-    .where(eq(segments.id, segmentId));
-  // Drop replaced files only now that the row points away from them, so a failure above never
-  // leaves the segment referencing deleted files. The prior cover goes only if the new one took
-  // its place; the pristine thumb stays on disk, ready for a reset.
-  if (seg.editedFilename) deleteSegmentFile(seg.editedFilename);
-  if (ok && seg.thumbnail && seg.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
-    deleteSegmentFile(seg.thumbnail);
+  }).catch(() => false);
+  if (latestEditRev.get(segmentId) !== rev) {
+    if (ok) deleteSegmentFile(coverRel);
+    return;
   }
-  await db.update(drafts).set({ lastModified: now }).where(eq(drafts.id, seg.draftId));
+  // A cover that failed leaves none (the clip shows its own first frame) rather than an older
+  // edit's. What the row held is read here, so the files it replaces are the ones it referenced.
+  const previous = db.transaction((tx) => {
+    const row = tx
+      .select({ thumbnail: segments.thumbnail, editedFilename: segments.editedFilename })
+      .from(segments)
+      .where(eq(segments.id, segmentId))
+      .get();
+    tx.update(segments)
+      .set({
+        editState,
+        editedDurationMs: durationMs,
+        editedFilename: null,
+        thumbnail: ok ? coverRel : null,
+      })
+      .where(eq(segments.id, segmentId))
+      .run();
+    return row;
+  });
+  await afterCommit('save edit', () => touchDraft(seg.draftId));
+  await afterCommit('save edit', async () => {
+    // Deleted meanwhile: nothing references the new cover.
+    if (!previous) {
+      if (ok) deleteSegmentFile(coverRel);
+      return;
+    }
+    if (previous.editedFilename) deleteSegmentFile(previous.editedFilename);
+    // Drop the replaced cover only now that the row points away from it; the pristine thumb
+    // stays for a reset.
+    if (previous.thumbnail && previous.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
+      deleteSegmentFile(previous.thumbnail);
+    }
+  });
 }
 
 /**
@@ -262,28 +322,45 @@ export async function resetEdit(segmentId: string): Promise<void> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
   if (!seg) return;
   await beginClipMutation(seg.draftId);
-  // Revert the cover to the pristine original's thumbnail.
+  const rev = coverRev();
+  latestEditRev.set(segmentId, rev);
+  // As in `saveEdit`: the pristine cover first, then the cleared edit and that cover in one write,
+  // unless a newer edit was asked for meanwhile.
   const thumbRel = thumbRelPath(seg.draftId, segmentId);
-  const ok = await generateThumbnailFile(absolutize(seg.originalFilename), absolutize(thumbRel));
-  await db
-    .update(segments)
-    .set({
-      editedFilename: null,
-      editedDurationMs: null,
-      editState: null,
-      thumbnail: ok ? thumbRel : null,
-    })
-    .where(eq(segments.id, segmentId));
+  const ok = await generateThumbnailFile(
+    absolutize(seg.originalFilename),
+    absolutize(thumbRel),
+  ).catch(() => false);
+  if (latestEditRev.get(segmentId) !== rev) return;
+  const previous = db.transaction((tx) => {
+    const row = tx
+      .select({ thumbnail: segments.thumbnail, editedFilename: segments.editedFilename })
+      .from(segments)
+      .where(eq(segments.id, segmentId))
+      .get();
+    tx.update(segments)
+      .set({
+        editedFilename: null,
+        editedDurationMs: null,
+        editState: null,
+        thumbnail: ok ? thumbRel : null,
+      })
+      .where(eq(segments.id, segmentId))
+      .run();
+    return row;
+  });
   await afterCommit('revert edits', () => touchDraft(seg.draftId));
   await afterCommit('revert edits', async () => {
     // Drop the now-orphaned edited file and thumb only after the row no longer references them.
-    if (seg.editedFilename) {
-      deleteSegmentFile(seg.editedFilename);
-      deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
+    const edited = previous?.editedFilename ?? seg.editedFilename;
+    if (edited) {
+      deleteSegmentFile(edited);
+      deleteSegmentFile(editedThumbRelPath(edited));
     }
-    // The prior cover may be from an older revision than `editedFilename` (kept as a fallback
-    // after a failed re-edit thumb generation) — drop it too, but never the fresh `thumbRel`.
-    if (seg.thumbnail && seg.thumbnail !== thumbRel) deleteSegmentFile(seg.thumbnail);
+    // The prior cover, read as it was replaced — never the fresh `thumbRel`.
+    if (previous?.thumbnail && previous.thumbnail !== thumbRel) {
+      deleteSegmentFile(previous.thumbnail);
+    }
   });
 }
 
@@ -292,22 +369,22 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
   if (orderedIds.length === 0) return;
   const [target] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
   if (target) await beginClipMutation(target.draftId);
-  await db.transaction(async (tx) => {
+  db.transaction((tx) => {
     // Two passes: SQLite checks UNIQUE per statement, so renumbering in place would collide
     // with rows still holding their old slot. Park all rows on distinct negatives first,
     // then assign final slots via one CASE update.
-    await tx
-      .update(segments)
+    tx.update(segments)
       .set({ order: sql`-${segments.order} - 1` })
-      .where(inArray(segments.id, orderedIds));
+      .where(inArray(segments.id, orderedIds))
+      .run();
     const finalOrder = sql`case ${sql.join(
       orderedIds.map((id, i) => sql`when ${segments.id} = ${id} then ${i}`),
       sql` `,
     )} else ${segments.order} end`;
-    await tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, orderedIds));
-    const [first] = await tx.select().from(segments).where(eq(segments.id, orderedIds[0]));
+    tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, orderedIds)).run();
+    const first = tx.select().from(segments).where(eq(segments.id, orderedIds[0])).get();
     if (first) {
-      await tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId));
+      tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId)).run();
     }
   });
 }
@@ -430,8 +507,8 @@ export async function insertImportedDraft(
   draft: typeof drafts.$inferInsert,
   segmentRows: (typeof segments.$inferInsert)[],
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    await tx.insert(drafts).values(draft);
-    if (segmentRows.length > 0) await tx.insert(segments).values(segmentRows);
+  db.transaction((tx) => {
+    tx.insert(drafts).values(draft).run();
+    if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
   });
 }

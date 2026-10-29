@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-// A stand-in for the drizzle client: every query builder chain is awaitable. Selects resolve to
-// the next queued result; writes resolve empty and are recorded (with their `.set()` payload) so a
-// test can assert what a mutation did — or that it did nothing.
+// A stand-in for the drizzle client: every query builder chain is awaitable, or runs at once with
+// `.all()` / `.get()` / `.run()` as in a sync transaction. Selects resolve to the next queued
+// result; writes resolve empty and are recorded (with their `.set()` payload) so a test can
+// assert what a mutation did — or that it did nothing.
 const mockSelects: unknown[][] = [];
 const mockWrites: { op: string; set?: unknown }[] = [];
 
@@ -13,6 +14,8 @@ function mockChain(resolve: () => unknown, write?: { op: string; set?: unknown }
         return (ok: (v: unknown) => unknown, fail: (e: unknown) => unknown) =>
           Promise.resolve(resolve()).then(ok, fail);
       }
+      if (prop === 'all' || prop === 'run') return () => resolve();
+      if (prop === 'get') return () => (resolve() as unknown[])[0];
       return (...args: unknown[]) => {
         if (prop === 'set' && write) write.set = args[0];
         return proxy;
@@ -34,7 +37,7 @@ jest.mock('./client', () => {
     update: write('update'),
     insert: write('insert'),
     delete: write('delete'),
-    transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+    transaction: (fn: (tx: unknown) => unknown) => {
       mockWrites.push({ op: 'transaction' });
       return fn(db);
     },
@@ -166,7 +169,8 @@ describe('edit state', () => {
   });
 
   it('setEditState drops a legacy baked file and its cover once the row moves off them', async () => {
-    mockSelects.push([{ ...SEG, editedFilename: 'e.mp4', thumbnail: 'e.thumb.jpg' }], idle);
+    const seg = { ...SEG, editedFilename: 'e.mp4', thumbnail: 'e.thumb.jpg' };
+    mockSelects.push([seg], idle, [seg]);
     await setEditState('s1', EDIT);
     expect(deleteSegmentFile).toHaveBeenCalledWith('e.mp4');
     expect(deleteSegmentFile).toHaveBeenCalledWith('e.thumb.jpg');

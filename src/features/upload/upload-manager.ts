@@ -687,7 +687,7 @@ class BackgroundUploadManager {
    */
   private async uploadPulse(run: Run): Promise<void> {
     const { draftId, destination, segments, merged } = run.session;
-    // merged.path is a bare filesystem path on Android (RNVT) — normalize to a file:// URI or the
+    // merged.path may be a bare filesystem path — normalize to a file:// URI or the
     // File API rejects it outright ("URI is not absolute").
     const file = new File(toFileUri(merged.path));
     // The draft's title rides the video.

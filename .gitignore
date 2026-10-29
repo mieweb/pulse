@@ -50,9 +50,6 @@ example
 # local-module Gradle build output (the module sources ARE tracked; build/ is not)
 modules/*/android/build/
 
-# stray Lefthook template dropped by the RNVT submodule's yarn install (not used by this app)
-/lefthook.yml
-
 # local scratch / reference clones (e.g. upstream mieweb/pulse)
 /tmp
 

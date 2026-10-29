@@ -8,6 +8,8 @@ import {
   seedLargeUpload,
   seedSpeedMixed,
   seedSpeedUniform,
+  seedSync,
+  seedSyncMixed,
   seedWildImports,
 } from '@/dev/seed';
 
@@ -44,6 +46,16 @@ export function DevSeedRow() {
           + s5
         </ThemedText>
       </Pressable>
+      <Pressable onPress={() => void seedSync()} hitSlop={8}>
+        <ThemedText themeColor="accent" type="small">
+          + s6
+        </ThemedText>
+      </Pressable>
+      <Pressable onPress={() => void seedSyncMixed()} hitSlop={8}>
+        <ThemedText themeColor="accent" type="small">
+          + s7
+        </ThemedText>
+      </Pressable>
       <Pressable onPress={() => void clearDrafts()} hitSlop={8}>
         <ThemedText themeColor="textSecondary" type="small">
           clear
@@ -56,7 +68,9 @@ export function DevSeedRow() {
 const styles = StyleSheet.create({
   devRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: Spacing.three,
+    columnGap: Spacing.three,
+    rowGap: Spacing.two,
   },
 });

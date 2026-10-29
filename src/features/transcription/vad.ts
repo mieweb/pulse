@@ -6,7 +6,7 @@ import { initWhisperVad, type WhisperVadContext } from 'whisper.rn';
  *
  * Whisper hallucinates on clips with no real speech: the multilingual model especially emits
  * Chinese on noise (auto language-detection falls back to its training prior) or canned subtitle
- * credits on silence ("Thank you for watching", "Gracias por ver"). whisper.rn 0.6.0 doesn't
+ * credits on silence ("Thank you for watching", "Gracias por ver"). whisper.rn (0.7.4) doesn't
  * expose the whisper.cpp no-speech / logprob / entropy thresholds that would suppress this, so we
  * run a Silero VAD pass first and skip Whisper entirely on clips with no detected speech.
  *
@@ -54,24 +54,18 @@ async function ensureVadModel(): Promise<string> {
 // across model switches (it's cheap and tiny) and only release it when on-device AI is turned off.
 let ctx: WhisperVadContext | null = null;
 let loadPromise: Promise<WhisperVadContext> | null = null;
-// Sticky flag set when VAD init fails even on the CPU fallback — the device genuinely can't run the
+// Sticky flag set when VAD init fails — the device genuinely can't run the
 // VAD, so we stop re-attempting it on every clip (callers fail open and let Whisper run). A model
 // download failure (offline) is NOT cached here: it's transient and retried on the next clip.
 // Cleared by releaseVad so a later toggle can try again.
 let unavailable = false;
 
 /**
- * Build a VAD context, preferring the Metal GPU and falling back to CPU. GPU init throws on
- * simulators / older devices without a usable GPU (mirrors the speech-context init in whisper.ts),
- * so we retry on CPU rather than letting the gate fail open — keeping hallucination suppression
- * active wherever the VAD can run at all.
+ * Build a VAD context on the CPU. whisper.rn 0.7.4 runs VAD on the CPU on both platforms whatever
+ * `useGpu` says; it defaults to true, so it's set to false here to say what actually happens.
  */
-async function initVadContext(filePath: string): Promise<WhisperVadContext> {
-  try {
-    return await initWhisperVad({ filePath, useGpu: true });
-  } catch {
-    return initWhisperVad({ filePath });
-  }
+function initVadContext(filePath: string): Promise<WhisperVadContext> {
+  return initWhisperVad({ filePath, useGpu: false });
 }
 
 async function loadVad(): Promise<WhisperVadContext> {
@@ -84,7 +78,7 @@ async function loadVad(): Promise<WhisperVadContext> {
     try {
       vadCtx = await initVadContext(vadFile().uri);
     } catch (error) {
-      unavailable = true; // failed even on CPU — don't retry this on every clip
+      unavailable = true; // the device can't run it — don't retry this on every clip
       throw error;
     }
     ctx = vadCtx;
@@ -107,16 +101,16 @@ export async function releaseVad(): Promise<void> {
 }
 
 /**
- * Whether the WAV at `wavPath` contains any detected speech. Throws if the VAD model isn't yet
- * available (e.g. offline before its first download) — callers should treat that as "unknown" and
- * fail open (transcribe anyway) rather than dropping captions.
+ * Whether `pcm` (16 kHz mono 16-bit PCM, as pulse-editor's `extractAudio` returns it) contains
+ * any detected speech. Throws if the VAD model isn't yet available (e.g. offline before its first
+ * download) — callers should treat that as "unknown" and fail open (transcribe anyway) rather
+ * than dropping captions.
  *
- * NOTE: `detectSpeech` segments' `t0`/`t1` are in **seconds** — unlike Whisper's transcript lines,
- * whose `t0`/`t1` are centiseconds. We only count segments here, but if you ever read these
- * timestamps, do NOT apply the centisecond (`*10` / `/100`) conversion used for caption lines.
+ * NOTE: `detectSpeechData` segments' `t0`/`t1` are in **centiseconds**, like Whisper's transcript
+ * lines (a 12 s clip's speech reads 99–1203). We only count segments here.
  */
-export async function hasSpeech(wavPath: string): Promise<boolean> {
+export async function hasSpeech(pcm: ArrayBuffer): Promise<boolean> {
   const vadCtx = await loadVad();
-  const segments = await vadCtx.detectSpeech(wavPath);
+  const segments = await vadCtx.detectSpeechData(pcm);
   return segments.length > 0;
 }

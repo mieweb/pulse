@@ -33,7 +33,11 @@ timeline.
 The `portrait-1080p-30fps-h264` clip mirrors **the recorder's stream format** (H.264/AAC 1080p30
 portrait; on iOS the container is QuickTime under a `.mp4` name). All have AAC audio and are ~12–24s
 so there's room to trim.
-Regenerate with [`scripts/make-dev-fixtures.sh`](../../scripts/make-dev-fixtures.sh).
+Like real recordings (checked on an iPhone 17 Pro Max and a Galaxy S24 Ultra), it and the speed
+set's `portrait-h264` have **no B-frames** and a keyframe every second, so edited drafts built from
+them take iOS's selective path as real ones do.
+Regenerate with [`scripts/make-dev-fixtures.sh`](../../scripts/make-dev-fixtures.sh) (`ONLY=<clip name>`
+regenerates one clip and leaves the rest).
 
 ## How to add / change clips
 
@@ -78,6 +82,26 @@ Use it to test uploads mid-transfer — backgrounding, airplane mode, cancel —
 `Dev sample 2` finishes too quickly for. It bundles no extra clip. Seed with **`+ s5`** on Home
 (idempotent; `clear` resets it).
 
+## A/V sync clips (`sync/`, `+ s6` / `+ s7`)
+
+[`sync/`](sync/) holds two 12 s flash/click clips for **measuring** lip sync of an export instead
+of judging it by eye. Every second (t = 0.5, 1.5, … 11.5) a 2-frame white flash and a 5 ms click
+start at the same instant; a yellow bar fills along the bottom so position is visible while
+trimming. Recorder-shaped like the other portrait fixtures (coded 1920×1080 + 90° rotation,
+QuickTime, H.264 High 30 fps, no B-frames like the camera), mono AAC. Generate with
+[`scripts/make-sync-fixtures.sh`](../../scripts/make-sync-fixtures.sh).
+
+| draft                              | button | composition                 | merge path                              |
+| ---------------------------------- | ------ | --------------------------- | --------------------------------------- |
+| `Dev sample 6 (sync)`              | `+ s6` | 4× `sync-48k`               | join (video copied)                     |
+| `Dev sample 7 (sync, mixed audio)` | `+ s7` | `sync-48k` / `sync-44k` × 2 | join, audio re-encoded to one rate |
+
+Edit the seeded draft (trim clip starts, set a clip to 2×, rotate or crop one) to measure those
+paths too. To measure: export on the phone, pull `drafts/<draft id>/export.mp4` back (draft ids
+`dev-seed-sync` / `dev-seed-sync-mixed`), and for every click take audio minus the start of the
+nearest flash (first frame brighter than mid-grey; first audio sample above 0.2). In sync is
+within a frame (33 ms); the merge fixes measured ≤ 3 ms on the emulator and macOS.
+
 ## Wild-import clips (`import/`)
 
 [`import/`](import/) holds one clip per **hostile real-world import format** — the Photos-library
@@ -112,13 +136,13 @@ bt2020 + HLG/PQ) rather than remastered HDR — which is exactly what trips AVFo
 
 The clips (~25 MB + ~23 MB `import/`) are stored in **Git LFS** (per-folder globs in
 [`.gitattributes`](../../.gitattributes): `assets/dev/*.mp4`, `assets/dev/speed/*.mp4`,
-`assets/dev/import/*.mp4` — new fixture subfolders need their own entry) and fetched
+`assets/dev/import/*.mp4`, `assets/dev/sync/*.mp4` — new fixture subfolders need their own entry) and fetched
 on a normal clone, so `+ seed` works out of the box — just have `git lfs` installed. The regen master
 (`fixtures/bbb_master.mov`, ~400 MB) is **also** in LFS but **excluded from normal clones** via
 [`.lfsconfig`](../../.lfsconfig); fetch it only when regenerating:
 
 ```sh
-git lfs pull --include "fixtures/*.mov"   # the make-dev-fixtures script does this automatically
+git lfs pull --include "fixtures/*.mov" --exclude ""   # the scripts do this automatically
 ```
 
 They rarely change — regenerate with the script rather than hand-editing.

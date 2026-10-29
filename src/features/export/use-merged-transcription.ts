@@ -16,8 +16,8 @@ import { useDraftTranscript } from '@/features/transcription/use-draft-transcrip
 import type { TranscriptLine } from '@/features/transcription/whisper';
 import { transcribeVideo } from '@/features/transcription/whisper';
 import { toFileUri } from '@/utils/file-store';
-import { segmentSignature } from '@/utils/segment-window';
 
+import { mergedSignature } from './merge-signature';
 import type { ExportState } from './use-export';
 
 export type MergedTranscriptionState =
@@ -38,7 +38,7 @@ export type MergedTranscription = {
  * Drives transcription of a draft's MERGED video, replacing the old always-on per-clip background
  * engine. Runs once the merge completes: ensures the selected model is on disk (downloading if
  * needed), then transcribes the whole merged timeline in one pass and persists it as the draft's
- * single transcript. Staleness is keyed on the segment-set signature — a clip change re-merges
+ * single transcript. Staleness is keyed on the merged signature — a clip change re-merges
  * (new `mergeState`) and re-transcribes, discarding stale auto lines and hand-edits. With no model
  * selected it stops at `no-model` so the screen can prompt the user to download one; captions are
  * then simply absent (the video still uploads).
@@ -57,7 +57,9 @@ export function useMergedTranscription(
 
   const [state, setState] = useState<MergedTranscriptionState>({ status: 'idle' });
 
-  const signature = useMemo(() => segmentSignature(clips), [clips]);
+  // The merge version too, so an export re-made by a new engine is transcribed again (its clip
+  // boundaries can move: the old captions' timing would no longer match).
+  const signature = useMemo(() => mergedSignature(clips), [clips]);
   const mergeStatus = mergeState.status;
   const outputPath = mergeState.status === 'done' ? mergeState.outputPath : null;
   const mergedDurationMs = mergeState.status === 'done' ? mergeState.durationMs : 0;

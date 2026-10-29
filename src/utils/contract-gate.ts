@@ -1,28 +1,30 @@
-import {
-  cancelCompress,
-  compress,
-  deleteFile,
-  probeVideo,
-  type CompressResult,
-} from 'react-native-video-trim';
+import { Platform } from 'react-native';
+import { File } from 'expo-file-system';
+import { conform, probe } from '@mieweb/pulse-editor';
 
 import { checkConform } from './conform-verify';
 import { decideImport, type RecorderFormat } from './import-normalization';
 
 /** A clip conformed by `conformToContract`. */
 export type ConformOutcome = {
-  /** The conformed file, in the OS-purgeable cache dir — callers move it into place. */
+  /** The conformed file (`file://` URI), in the OS-purgeable cache dir — callers move it into place. */
   path: string;
-  /** Engine that produced it (`avfoundation` | `ffmpeg`). */
+  /** Media stack that produced it (`AVFoundation` | `Media3`), for the debug log. */
   engine: string;
   /** Whether it also carries the recorder's signature (joins recordings with no re-encode). */
   mergeMatch: boolean;
-  /** One-line facts for the debug log: fallbacks, dropped audio, partial output, merge misses. */
+  /** One-line facts for the debug log: why it was converted, merge misses. */
   notes: string[];
 };
 
 function describe(e: unknown): string {
   return e instanceof Error ? e.message.split('\n')[0] : String(e);
+}
+
+function remove(uri: string) {
+  try {
+    new File(uri).delete();
+  } catch {}
 }
 
 /**
@@ -35,14 +37,14 @@ function describe(e: unknown): string {
  * a draft mixing recordings and imports merges without re-encoding. Without one (the `.pulse`
  * unpack gate), only the display-level contract is enforced.
  *
- * Engines: `auto` runs the platform engine (AVFoundation on iOS — hardware decode/encode, real
- * HDR tone mapping) with FFmpeg as the module's own fallback. Every output is verified here
- * (contract, audio kept, full length); a native result that fails verification is retried once
- * on FFmpeg. A short result from the last-resort engine is accepted — a truncated source only
- * holds that much — and reported in `notes`.
+ * The conversion is pulse-editor's `conform` on the platform media stack (AVFoundation /
+ * Media3: hardware decode and encode, real HDR tone mapping). Its output is verified here
+ * (contract, audio kept, full length) and rejected otherwise; there is no second engine. A video
+ * whose sound the phone can't decode is rejected too, never imported silent.
  *
- * `signal` cancels it: the running conversion is stopped natively (`cancelCompress`), no further
- * engine is tried, and the call rejects with "Import cancelled" right away.
+ * `signal` cancels it: the conversion is stopped natively and the call rejects with "Import
+ * cancelled" right away. `onProgress` gets the conversion's progress (0–1); it isn't called
+ * for a clip that passes through unchanged.
  *
  * Container layout (faststart) is deliberately NOT part of this gate: raw recorder files are
  * moov-at-end by AVFoundation constraint (see the codec-pin note in use-recorder.ts) and the
@@ -53,28 +55,23 @@ export async function conformToContract(
   uri: string,
   target?: RecorderFormat,
   signal?: AbortSignal,
+  onProgress?: (fraction: number) => void,
 ): Promise<ConformOutcome | null> {
-  const stopIfCancelled = () => {
-    if (signal?.aborted) throw new Error('Import cancelled');
-  };
-  stopIfCancelled();
-  const work = conform(uri, target, stopIfCancelled);
+  if (signal?.aborted) throw new Error('Import cancelled');
+  const work = run(uri, target, signal, onProgress);
   if (!signal) return work;
 
   // Reject the moment the signal aborts — never wait on the native side to confirm: a conversion
   // interrupted by the app going to the background can stay stuck until iOS resumes it (if ever).
-  // cancelCompress() still stops it; a result that lands anyway is thrown away.
+  // The abort still stops it natively; a result that lands anyway is thrown away.
   let onAbort = () => {};
   const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => {
-      cancelCompress();
-      reject(new Error('Import cancelled'));
-    };
+    onAbort = () => reject(new Error('Import cancelled'));
     signal.addEventListener('abort', onAbort);
   });
   void work.then(
     (outcome) => {
-      if (signal.aborted && outcome) void deleteFile(outcome.path).catch(() => {});
+      if (signal.aborted && outcome) remove(outcome.path);
     },
     () => {},
   );
@@ -85,63 +82,50 @@ export async function conformToContract(
   }
 }
 
-async function conform(
+async function run(
   uri: string,
   target: RecorderFormat | undefined,
-  stopIfCancelled: () => void,
+  signal: AbortSignal | undefined,
+  onProgress: ((fraction: number) => void) | undefined,
 ): Promise<ConformOutcome | null> {
-  const probe = await probeVideo(uri);
-  stopIfCancelled();
+  const source = await probe(uri);
+  if (signal?.aborted) throw new Error('Import cancelled');
   // decideImport passes no-video files through (audio-only is fine for a library), but a
   // SEGMENT without a video stream can never satisfy the portrait contract — fail closed.
-  if (!probe.hasVideo) throw new Error('Clip has no video stream.');
-  const decision = decideImport(probe, target);
+  if (!source.video) throw new Error('Clip has no video stream.');
+  const platform = Platform.OS === 'android' ? 'android' : 'ios';
+  const decision = decideImport(source, target, platform);
   if (decision.action === 'passthrough') return null;
 
-  const failures: string[] = [];
-  const notes: string[] = [`conform: ${decision.reasons.join('; ')}`];
-  let lastEngine = '';
-  for (const engine of ['auto', 'ffmpeg']) {
-    // `auto` already ended on FFmpeg: re-running the same engine can't change the outcome.
-    if (engine === 'ffmpeg' && lastEngine === 'ffmpeg') break;
-    stopIfCancelled();
-    let result: CompressResult;
-    try {
-      result = await compress(uri, { ...decision.options, engine });
-    } catch (e) {
-      stopIfCancelled();
-      // A rejection means every engine inside the module (FFmpeg included) already failed.
-      failures.push(`${engine}: ${describe(e)}`);
-      lastEngine = 'ffmpeg';
-      continue;
-    }
-    lastEngine = result.engine;
-    try {
-      stopIfCancelled();
-    } catch (e) {
-      void deleteFile(result.outputPath).catch(() => {});
-      throw e;
-    }
-    if (result.fallbackReason) notes.push(`native engine fell back: ${result.fallbackReason}`);
-
-    const output = await probeVideo(result.outputPath).catch(() => null);
-    const check = output
-      ? checkConform(probe, output, result, target)
-      : { fatal: ['output unreadable'], short: null, mergeMatch: false, mergeMisses: [] };
-    const lastResort = result.engine === 'ffmpeg';
-    if (check.fatal.length > 0 || (check.short && !lastResort)) {
-      failures.push(
-        `${result.engine}: ${check.fatal.length ? check.fatal.join('; ') : `short output (${check.short})`}`,
-      );
-      void deleteFile(result.outputPath).catch(() => {});
-      continue;
-    }
-
-    if (check.short) notes.push(`partial output ${check.short} (source truncated?)`);
-    if (result.audioDropped) notes.push('source audio undecodable — imported without sound');
-    if (target && !check.mergeMatch)
-      notes.push(`merge signature missed: ${check.mergeMisses.join('; ')}`);
-    return { path: result.outputPath, engine: result.engine, mergeMatch: check.mergeMatch, notes };
+  let result;
+  try {
+    result = await conform(uri, decision.options, { signal, onProgress });
+  } catch (e) {
+    if (signal?.aborted) throw new Error('Import cancelled');
+    throw new Error(`Could not convert this video (${describe(e)})`);
   }
-  throw new Error(`Could not convert this video (${failures.join(' | ')})`);
+  if (signal?.aborted) {
+    remove(result.uri);
+    throw new Error('Import cancelled');
+  }
+
+  const output = await probe(result.uri).catch(() => null);
+  const check = output
+    ? checkConform(source, output, target, platform)
+    : { fatal: ['output unreadable'], short: null, mergeMatch: false, mergeMisses: [] };
+  if (check.fatal.length > 0 || check.short) {
+    remove(result.uri);
+    const why = check.fatal.length ? check.fatal.join('; ') : `short output (${check.short})`;
+    throw new Error(`Could not convert this video (${why})`);
+  }
+
+  const notes = [`conform: ${decision.reasons.join('; ')}`];
+  if (target && !check.mergeMatch)
+    notes.push(`merge signature missed: ${check.mergeMisses.join('; ')}`);
+  return {
+    path: result.uri,
+    engine: Platform.OS === 'ios' ? 'AVFoundation' : 'Media3',
+    mergeMatch: check.mergeMatch,
+    notes,
+  };
 }

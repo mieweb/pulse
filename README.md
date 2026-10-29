@@ -62,7 +62,7 @@ flowchart TB
 ## Highlights
 
 - 🎬 **Segmented recording** — build a walkthrough from multiple clips, reorder them, re-record the ones you fumbled
-- ✂️ **Non-compounding edits** — trims re-encode from the pristine original every time, so re-editing never stacks generation loss
+- ✂️ **Non-compounding edits** — trims, crops, rotations and speed are stored as settings over the pristine original and rendered once at export, so re-editing never stacks generation loss
 - 🗣️ **On-device captions** — Whisper (whisper.cpp) transcription with word-level timing, no audio ever leaves the phone
 - 📡 **Resumable uploads** — TUS v1 protocol; a two-minute capture survives signal drops, app kills, and relaunches
 - 🔐 **Self-hosted by design** — pair with your server via QR / deep link; capability tokens live in the device keychain
@@ -210,17 +210,13 @@ Unit tests are co-located with the code and scoped to pure logic — cue reflow,
 npm test
 ```
 
-Two heavier suites are opt-in and skip themselves in a plain `npm test`:
+A heavier suite is opt-in and skips itself in a plain `npm test`:
 
 ```bash
 # Cross-repo integration: the app's real pairing + upload code against a real PulseVault
 # server built from the submodule (set PV_CORE=<path to core.js> to test another build)
 (cd pulsevault-mieweb && npm ci && npm run build)
 PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
-
-# Import → normalize → merge pipeline on the assets/dev/import corpus
-# (needs ffmpeg + ffprobe on PATH and the LFS fixtures pulled)
-PULSE_E2E=1 npx jest import-pipeline
 ```
 
 ## License
