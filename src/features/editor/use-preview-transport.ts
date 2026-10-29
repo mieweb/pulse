@@ -98,6 +98,9 @@ export function usePreviewTransport() {
           c.pending = ms;
           return;
         }
+        // Past an unanswered seek: drop it and the target queued behind it (sent after this one
+        // lands, it would take the preview back to it).
+        if (c.inflight) c.giveUp();
         c.inflight = true;
         c.sentAt = Date.now();
         const seq = ++c.seq;
