@@ -95,7 +95,11 @@ export function mergeWithNext(words: readonly CaptionWord[], to: number): Captio
   return w;
 }
 
-/** Word `i`'s new start or end (centiseconds), the word kept at least MIN_WORD_CS long. */
+/**
+ * Word `i`'s new start or end (centiseconds). Only the edge asked for moves: it stays between the
+ * words beside it in the clip (hidden ones too, which a wider trim shows again) and keeps the word
+ * at least MIN_WORD_CS long (a word already shorter, at least as long as it is).
+ */
 export function setTimes(
   words: readonly CaptionWord[],
   i: number,
@@ -104,8 +108,12 @@ export function setTimes(
   const w = withStarts(words);
   const x = w[i];
   if (!x) return w;
-  if (t.t0 !== undefined) x.t0 = Math.round(t.t0);
-  if (t.t1 !== undefined) x.t1 = Math.round(t.t1);
-  if (x.t1 - x.t0 < MIN_WORD_CS) x.t1 = x.t0 + MIN_WORD_CS;
+  const min = Math.max(0, Math.min(MIN_WORD_CS, x.t1 - x.t0));
+  if (t.t0 !== undefined) {
+    x.t0 = Math.min(Math.max(Math.round(t.t0), w[i - 1]?.t1 ?? 0), x.t1 - min);
+  }
+  if (t.t1 !== undefined) {
+    x.t1 = Math.max(Math.min(Math.round(t.t1), w[i + 1]?.t0 ?? Infinity), x.t0 + min);
+  }
   return w;
 }
