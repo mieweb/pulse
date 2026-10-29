@@ -48,10 +48,27 @@ type DrawnWord = {
   t1: number;
   lw: number;
   tw: number;
+  /** Its left edge in its row (dp at the font): rows in a right-to-left script run from the right. */
+  x: number;
   fallback: FallbackText<(typeof WORD_PAINTS)[number]> | null;
 };
 /** One caption, ready to draw: its rows of words, and the widest row's width. */
 type DrawnLine = { t0: number; t1: number; rows: DrawnWord[][]; widths: number[]; widest: number };
+
+// Strongly right-to-left letters (Hebrew, Arabic, Syriac, Thaana, N'Ko and their presentation
+// forms) and strongly left-to-right ones (Latin through CJK, without the surrogates).
+const RTL = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+const LTR = /[A-Za-z\u00C0-\u058F\u0900-\u1FFF\u2C00-\uD7FF\uF900-\uFB1C]/;
+
+/** Whether a row reads right to left: its first strongly directional letter is (Unicode's
+ * "first strong" rule; words in it keep their own order inside, drawn by their paragraphs). */
+function rightToLeft(text: string): boolean {
+  for (const ch of text) {
+    if (RTL.test(ch)) return true;
+    if (LTR.test(ch)) return false;
+  }
+  return false;
+}
 
 const clampW = (v: number, lo: number, hi: number) => {
   'worklet';
@@ -152,11 +169,21 @@ export function SkiaCaption({
               // the gap between outlined words reads as an ordinary space.
               lw: lead ? advance(font, lead) + outlineGap : 0,
               tw: fallback ? fallback.width : advance(font, w.text),
+              x: 0,
               fallback,
             };
           }),
         );
         const widths = rows.map((r) => r.reduce((n, w) => n + w.lw + w.tw, 0));
+        rows.forEach((row, r) => {
+          const rtl = rightToLeft(row.map((w) => w.text).join(' '));
+          let at = 0;
+          for (const w of row) {
+            at += w.lw;
+            w.x = rtl ? widths[r] - at - w.tw : at;
+            at += w.tw;
+          }
+        });
         return { t0: line.t0, t1: line.t1, rows, widths, widest: Math.max(0, ...widths) };
       }),
     [lines, font, outlineGap, size, paints],
@@ -240,10 +267,10 @@ export function SkiaCaption({
           const row = line.rows[r];
           const rowTop = b.y + b.padY + r * b.lh;
           const baseline = rowTop + (b.lh - (ascent + descent)) / 2 + ascent;
-          let x = (width - line.widths[r] * scale) / 2;
+          const left = (width - line.widths[r] * scale) / 2;
           for (let k = 0; k < row.length; k++) {
             const w = row[k];
-            x += w.lw * scale;
+            const x = left + w.x * scale;
             const isActive = at === active;
             // The spoken word a touch larger, about its own middle (the line doesn't move).
             const pop = isActive ? style.activeScale : 1;
@@ -265,7 +292,6 @@ export function SkiaCaption({
             if (w.fallback) w.fallback.by[kind].paint(c, 0, dy - w.fallback.baseline);
             else c.drawText(w.text, 0, dy, paints[kind], font);
             c.restore();
-            x += w.tw * scale;
             at++;
           }
         }
