@@ -5,6 +5,8 @@ import { AppState } from 'react-native';
 import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { claimAudioSession } from '@/utils/audio-session';
+
 /** What drives the preview's seeks: nothing, the strip's scrub, or a trim handle. */
 export const Mode = { idle: 0, scrub: 1, trim: 2 } as const;
 
@@ -26,6 +28,13 @@ export type PlayheadValues = {
 /** How far the preview's reported paused time may be from where the playhead was sent and still
  * be that seek's frame (a frame at 24 fps is 42 ms). */
 const FRAME_SLACK_MS = 50;
+
+/** A seek unanswered this long is given up on (one lands in tens of ms, a rebuild's in a few
+ * hundred): Play and the next seeks stop waiting for it, so the transport can't get stuck. */
+const SEEK_GIVE_UP_MS = 1500;
+
+/** Tries at the playback session, 250 ms apart (5 s). */
+const AUDIO_MODE_ATTEMPTS = 20;
 
 /**
  * Owns the preview's handle and keeps the playhead on the UI thread:
@@ -55,6 +64,9 @@ export function usePreviewTransport() {
     const c = {
       ref: null as PulsePreviewRef | null,
       inflight: false,
+      /** When the seek in flight was sent, and its number (an answer to a given-up seek is dropped). */
+      sentAt: 0,
+      seq: 0,
       pending: null as number | null,
       /** Scrubbing or trimming: reported times don't move the playhead then. */
       dragging: false,
@@ -82,11 +94,13 @@ export function usePreviewTransport() {
         c.lastMs = ms;
         const ref = c.ref;
         if (!ref) return;
-        if (c.inflight) {
+        if (c.inflight && !c.stale()) {
           c.pending = ms;
           return;
         }
         c.inflight = true;
+        c.sentAt = Date.now();
+        const seq = ++c.seq;
         ref
           .seek(ms)
           .then(
@@ -94,6 +108,7 @@ export function usePreviewTransport() {
             () => null,
           )
           .then((landed) => {
+            if (seq !== c.seq) return;
             c.inflight = false;
             const next = c.pending;
             c.pending = null;
@@ -110,6 +125,14 @@ export function usePreviewTransport() {
               c.ref?.play();
             }
           });
+      },
+      /** The seek in flight has gone unanswered too long. */
+      stale: () => c.inflight && Date.now() - c.sentAt >= SEEK_GIVE_UP_MS,
+      /** Stop waiting for the seek in flight (and the one queued behind it). */
+      giveUp: () => {
+        c.inflight = false;
+        c.pending = null;
+        c.seq++;
       },
       /** The preview paused on the frame at `ms`: the playhead goes there, unless it's the frame
        * for where the playhead was sent (it stays where it was sent). */
@@ -148,13 +171,16 @@ export function usePreviewTransport() {
         if (st.ready && !st.error && c.placeMs != null && c.ref) {
           const ms = c.placeMs;
           const ref = c.ref;
+          const placed = () => {
+            c.placeMs = null;
+            covered.set(0);
+          };
           ref
             .seek(ms)
             .catch(() => {})
-            .finally(() => {
-              c.placeMs = null;
-              covered.set(0);
-            });
+            .finally(placed);
+          // Unanswered, the preview still uncovers (on whatever frame it has).
+          setTimeout(placed, SEEK_GIVE_UP_MS);
         }
         if (st.ready && !st.error && c.afterBuild != null) {
           const ms = c.afterBuild;
@@ -183,17 +209,32 @@ export function usePreviewTransport() {
         // would start at the end and stop).
         if (c.lastMs >= c.totalMs - 50) {
           timeMs.set(0);
-          c.playAfterSeek = true;
           c.seek(0);
+          c.playAfterLanding();
           return;
         }
         // A seek still landing (just after a scrub or a tap): play from where it lands, not from
-        // the frame before it.
+        // the frame before it. One unanswered too long is given up on: play from where it is.
+        if (c.stale()) c.giveUp();
         if (c.inflight || c.pending != null) {
-          c.playAfterSeek = true;
+          c.playAfterLanding();
           return;
         }
         ref.play();
+      },
+      /** Play once the seeks in flight land, or once one of them goes unanswered too long. */
+      playAfterLanding: () => {
+        if (c.playAfterSeek) return;
+        c.playAfterSeek = true;
+        const watch = () =>
+          setTimeout(() => {
+            if (!c.playAfterSeek) return;
+            if (c.inflight && !c.stale()) return watch();
+            if (c.inflight) c.giveUp();
+            c.playAfterSeek = false;
+            c.ref?.play();
+          }, SEEK_GIVE_UP_MS);
+        watch();
       },
       /** Pauses, and stops the playhead at once (the preview's own report follows). */
       pause: () => {
@@ -273,15 +314,28 @@ export function usePreviewTransport() {
   // Playback session: sound even with the silent switch on, other apps' audio paused. The
   // recorder re-applies its own (record) session when it's back on screen.
   useEffect(() => {
-    void setAudioModeAsync({
-      playsInSilentMode: true,
-      allowsRecording: false,
-      interruptionMode: 'doNotMix',
-    }).catch(() => {});
+    claimAudioSession();
+    // Refused while the recorder's camera still holds the mic (as the editor opens over it,
+    // '!pri'): retried until the camera lets go. Plays before that sound in the camera's session.
+    let live = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const apply = (attempt: number) => {
+      setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+        interruptionMode: 'doNotMix',
+      }).catch(() => {
+        if (live && attempt < AUDIO_MODE_ATTEMPTS)
+          retry = setTimeout(() => apply(attempt + 1), 250);
+      });
+    };
+    apply(1);
     const sub = AppState.addEventListener('change', (s) => {
       if (s !== 'active') ctl.pause();
     });
     return () => {
+      live = false;
+      clearTimeout(retry);
       sub.remove();
       ctl.pause();
     };
