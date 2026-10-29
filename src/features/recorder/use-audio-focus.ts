@@ -1,6 +1,8 @@
 import { setAudioModeAsync, setIsAudioActiveAsync } from 'expo-audio';
 import { useCallback, useRef } from 'react';
 
+import { claimAudioSession, ownsAudioSession } from '@/utils/audio-session';
+
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
 
 /**
@@ -33,12 +35,18 @@ import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorMo
  * a pre-record `acquire` is mid-await) — so both re-check `heldRef` after each await and bail
  * when the other call flipped it meanwhile: the LAST requested state wins, and a slow stale
  * continuation can't re-seize focus after a release (or tear down a fresh acquire's config).
+ *
+ * A release also leaves the session alone once another screen has claimed it since (the editor,
+ * opened over the recorder, sets up playback as the recorder blurs): handing focus back after
+ * that would turn the editor's preview into ambient sound, muted by the silent switch.
  */
 export function useAudioFocus() {
   const heldRef = useRef(false);
+  const claimRef = useRef<symbol | null>(null);
 
   const acquire = useCallback(async () => {
     heldRef.current = true;
+    claimRef.current = claimAudioSession();
     try {
       await setAudioModeAsync({
         allowsRecording: true,
@@ -60,8 +68,10 @@ export function useAudioFocus() {
     if (!heldRef.current) return;
     heldRef.current = false;
     try {
+      if (!ownsAudioSession(claimRef.current)) return; // another screen set the session up since
       await setIsAudioActiveAsync(false);
       if (heldRef.current) return; // acquire() won while we awaited — leave its config alone
+      if (!ownsAudioSession(claimRef.current)) return;
       await setAudioModeAsync({
         allowsRecording: false,
         interruptionMode: 'mixWithOthers',
