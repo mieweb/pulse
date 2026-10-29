@@ -1,5 +1,6 @@
 import type { PairedDestination } from '@/db/destinations';
 import type { Segment } from '@/db/schema';
+import type { CaptionLine } from '@/features/transcription/compose';
 
 /**
  * The pairing a draft uploads under: the pool destination it claimed. The bearer
@@ -22,6 +23,9 @@ export type UploadSession = {
   destination: Destination;
   segments: Segment[];
   merged: MergedOutput;
+  /** The captions as composed when Upload was tapped (what the export screen showed), so a model
+   * switch while the upload waits can't drop them; null if they couldn't be read then. */
+  captions: { lines: CaptionLine[]; y: number | null } | null;
 };
 
 export type UploadProgress = { bytesSent: number; totalBytes: number };

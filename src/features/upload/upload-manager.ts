@@ -371,6 +371,11 @@ class BackgroundUploadManager {
     if (this.claiming.has(draftId) || this.getDraftState(draftId).status !== 'idle') return;
     const pending = { cancelled: false };
     this.claiming.set(draftId, pending);
+    // The captions now, as the export screen shows them (see UploadSession.captions).
+    const captions = await getDraftCaptions(draftId).catch((e: unknown) => {
+      uploadLog.warn(`${draftLabel(draftId)}: couldn’t read the captions yet: ${describeError(e)}`);
+      return null;
+    });
     uploadLog.info(
       `${draftLabel(draftId)}: upload to ${hostOf(destination.server)} ` +
         `(video ${shortId(destination.artifactId)})`,
@@ -385,7 +390,7 @@ class BackgroundUploadManager {
       }
       // Cancelled (from Home's ⋯ menu) after the pairing landed: the cancel unpaired it already.
       if (pending.cancelled) return;
-      this.enqueue({ draftId, destination, segments, merged });
+      this.enqueue({ draftId, destination, segments, merged, captions });
     } catch (err) {
       // The pairing or the pool write failed: undo the pairing (if it landed) rather than leave
       // the draft locked with nothing uploading it.
@@ -716,8 +721,8 @@ class BackgroundUploadManager {
         file: relatedFile,
       });
 
-    // Captions: composed from the clips as they are now (their edits and hand-edited words).
-    const captions = await getDraftCaptions(draftId);
+    // Captions: as composed when Upload was tapped, else from the clips as they are now.
+    const captions = run.session.captions ?? (await getDraftCaptions(draftId));
     if (captions.lines.length > 0) {
       this.setRunLive(run, { status: 'uploading', phase: 'captions', progress: 0 });
       const vttFile = writeTempTextFile(`${draftId}.vtt`, linesToVtt(captions.lines, captions.y));
