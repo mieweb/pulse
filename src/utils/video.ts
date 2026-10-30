@@ -23,21 +23,52 @@ function whenReady(player: Player): Promise<void> {
   });
 }
 
+/** The drafts list's thumbnails: small, since the list shows them small. */
+const LIST_THUMBNAIL = { maxWidth: 192, maxHeight: 256 };
+
+/**
+ * An uploaded pulse's cover: big enough for wherever it's shown off the phone — a video card, a
+ * link's preview card in Slack or iMessage (which shrink or drop a small image).
+ */
+const UPLOAD_COVER = { maxWidth: 1280, maxHeight: 1280 };
+
 /** A clip's cover frame as a jpeg (`file://`, in the cache): the first frame, or the frame at an
  * edit's start, rotated / flipped / cropped as the export renders it. */
-async function coverFrame(videoAbsUri: string, editState?: string): Promise<string> {
+async function coverFrame(
+  videoAbsUri: string,
+  editState?: string,
+  size: { maxWidth: number; maxHeight: number } = LIST_THUMBNAIL,
+): Promise<string> {
   const parsed = parseEdit(editState);
   const frame = await thumbnail(videoAbsUri, {
     timeMs: parsed?.startMs ?? 0,
     quality: 0.8,
-    maxWidth: 192,
-    maxHeight: 256,
+    ...size,
     // The editor stores counter-clockwise quarter turns; pulse-editor takes clockwise degrees.
     rotation: parsed ? ((4 - parsed.rotation) % 4) * 90 : 0,
     flipped: parsed?.flipped ?? false,
     crop: parsed?.crop ?? undefined,
   });
   return toFileUri(frame.uri);
+}
+
+/** A frame from `render`, moved to `destAbsUri`. False (logged) when either step fails. */
+async function saveFrame(
+  render: () => Promise<string>,
+  destAbsUri: string,
+  what: string,
+  videoAbsUri: string,
+): Promise<boolean> {
+  try {
+    const frame = await render();
+    const dest = new File(destAbsUri);
+    if (dest.exists) dest.delete();
+    await new File(frame).move(dest);
+    return true;
+  } catch (e) {
+    console.warn(`[video] ${what} file failed for`, videoAbsUri, e);
+    return false;
+  }
 }
 
 /**
@@ -50,16 +81,28 @@ export async function generateThumbnailFile(
   destAbsUri: string,
   edit?: { editState: string; startMs: number },
 ): Promise<boolean> {
-  try {
-    const frame = await coverFrame(videoAbsUri, edit?.editState);
-    const dest = new File(destAbsUri);
-    if (dest.exists) dest.delete();
-    await new File(frame).move(dest);
-    return true;
-  } catch (e) {
-    console.warn('[video] thumbnail file failed for', videoAbsUri, e);
-    return false;
-  }
+  return saveFrame(
+    () => coverFrame(videoAbsUri, edit?.editState),
+    destAbsUri,
+    'thumbnail',
+    videoAbsUri,
+  );
+}
+
+/**
+ * An exported pulse's cover for its upload: the merged video's first frame, full size (see
+ * `UPLOAD_COVER`), written to `destAbsUri`. It is the uploaded video's own frame and shape: the
+ * merge draws each clip's edit onto the reels canvas, so for an unedited first clip it's the
+ * drafts list's cover, and for one cropped or turned sideways it carries the canvas's bars, as the
+ * video does. False on failure.
+ */
+export async function generateCoverFile(videoAbsUri: string, destAbsUri: string): Promise<boolean> {
+  return saveFrame(
+    () => coverFrame(videoAbsUri, undefined, UPLOAD_COVER),
+    destAbsUri,
+    'cover',
+    videoAbsUri,
+  );
 }
 
 // VideoThumbnail is a native SharedRef with no file URI. Fallback for rows with no persisted
