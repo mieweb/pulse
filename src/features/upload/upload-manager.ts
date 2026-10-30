@@ -18,7 +18,7 @@ import { copyToClipboard } from '@/utils/clipboard';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { hostOf } from '@/utils/format';
 import { userMessage } from '@/utils/user-message';
-import { generateThumbnailFile } from '@/utils/video';
+import { generateCoverFile } from '@/utils/video';
 
 import { buildBeatManifest } from './beat-manifest';
 import { expiresAtMs, isTokenExpired } from './capability-token';
@@ -670,18 +670,19 @@ class BackgroundUploadManager {
     });
   }
 
-  /** The draft's cover: the first clip's persisted jpeg, or a frame from the video. */
+  /**
+   * The pulse's cover: the uploaded video's first frame at full size (`generateCoverFile`) — its
+   * own frame and shape, sharp enough for a video card or a link's preview card. The first clip's
+   * small list jpeg only when that frame can't be made.
+   */
   private async resolveThumbnailFile(run: Run, videoPath: string): Promise<File | null> {
     const { session } = run;
-    const firstThumb = session.segments[0]?.thumbnail;
-    if (firstThumb) {
-      const persisted = new File(absolutize(firstThumb));
-      if (persisted.exists) return persisted;
-    }
     const out = tempFile(`${session.draftId}.jpg`);
     run.temps.push(out);
-    const ok = await generateThumbnailFile(toFileUri(videoPath), out.uri);
-    return ok && out.exists ? out : null;
+    if ((await generateCoverFile(toFileUri(videoPath), out.uri)) && out.exists) return out;
+    const firstThumb = session.segments[0]?.thumbnail;
+    const persisted = firstThumb ? new File(absolutize(firstThumb)) : null;
+    return persisted?.exists ? persisted : null;
   }
 
   /**

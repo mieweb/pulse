@@ -8,6 +8,8 @@
  */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import type { Segment } from '@/db/schema';
+
 // ---- module-boundary mocks (hoisted by jest above the imports below) ----
 
 // Shared state lives INSIDE the factories (exposed as `__state`) because jest hoists these
@@ -85,7 +87,7 @@ jest.mock('@/features/transcription/draft-captions', () => ({
 }));
 jest.mock('@/features/transcription/vtt', () => ({ linesToVtt: jest.fn(() => 'WEBVTT') }));
 jest.mock('@/utils/video', () => ({
-  generateThumbnailFile: jest.fn(async (_video: string, out: string) => {
+  generateCoverFile: jest.fn(async (_video: string, out: string) => {
     (
       jest.requireMock('expo-file-system') as { __state: { present: Set<string> } }
     ).__state.present.add(out);
@@ -236,6 +238,8 @@ import { burnUploadPairing, setUploadDestination } from '@/db/drafts';
 import { keepAlive } from './keep-alive';
 // eslint-disable-next-line import/first
 import { checkCapabilities } from './capabilities';
+// eslint-disable-next-line import/first
+import { generateCoverFile } from '@/utils/video';
 // eslint-disable-next-line import/first
 import { TusUploadError } from './tus-client';
 // eslint-disable-next-line import/first
@@ -416,6 +420,67 @@ describe('launch check', () => {
 });
 
 describe('upload', () => {
+  /** A one-clip draft whose clip has its small drafts-list thumbnail on disk. */
+  function claimWithListThumbnail(draftId: string) {
+    const destId = `dest-${draftId}`;
+    pool.pool.add(destId);
+    const clip = {
+      id: `${draftId}-clip`,
+      originalFilename: `drafts/${draftId}/clip.mp4`,
+      durationMs: 1000,
+      editState: null,
+      editedFilename: null,
+      editedDurationMs: null,
+      thumbnail: `drafts/${draftId}/clip.jpg`,
+    } as unknown as Segment;
+    return uploads.claim({
+      draftId,
+      destinationId: destId,
+      destination: { server: SERVER, token: 'tok', artifactId: `art-${destId}` },
+      segments: [clip],
+      merged: { path: `/drafts/${draftId}/export.mp4`, durationMs: 1000 },
+    });
+  }
+  const uploadedCover = () =>
+    (
+      mockUploadViaTus.mock.calls.map(([o]) => o).find((o) => o.kind === 'thumbnail') as
+        (TusCall & { file?: { uri: string } }) | undefined
+    )?.file?.uri;
+
+  it("uploads the video's first frame, full size, over the clip's list thumbnail", async () => {
+    tusWith();
+    await claimWithListThumbnail('c1');
+    await eventually(() => db.status.get('c1') === 'uploaded');
+    // Made from the uploaded (merged) video itself, so it's that video's first frame and shape.
+    expect(jest.mocked(generateCoverFile)).toHaveBeenCalledWith(
+      expect.stringContaining('/drafts/c1/export.mp4'),
+      expect.any(String),
+    );
+    const [, coverPath] = jest.mocked(generateCoverFile).mock.calls.at(-1)!;
+    expect(uploadedCover()).toBe(coverPath);
+    expect(uploadedCover()).not.toBe('/abs/drafts/c1/clip.jpg');
+  });
+
+  it("falls back to the clip's list thumbnail when the cover can't be made", async () => {
+    jest.mocked(generateCoverFile).mockResolvedValueOnce(false);
+    tusWith();
+    await claimWithListThumbnail('c2');
+    await eventually(() => db.status.get('c2') === 'uploaded');
+    expect(uploadedCover()).toBe('/abs/drafts/c2/clip.jpg');
+  });
+
+  it('goes without a cover when none can be made and the draft has no list thumbnail', async () => {
+    jest.mocked(generateCoverFile).mockResolvedValueOnce(false);
+    tusWith();
+    await claim('c3');
+    await eventually(() => db.status.get('c3') === 'uploaded');
+    expect(mockUploadViaTus.mock.calls.map(([o]) => o.kind)).toEqual([
+      'captions',
+      'project',
+      'video',
+    ]);
+  });
+
   it('claims (draft first, then the pool row), uploads the related files then the video, and settles uploaded', async () => {
     tusWith();
     await claim('d1');
