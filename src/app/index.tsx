@@ -10,6 +10,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { deleteDraft, draftListQuery, duplicateDraft, renameDraft } from '@/db/drafts';
+import { adoptMergedCaptionEdit } from '@/db/transcripts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
 import { DraftMenu } from '@/features/home/draft-menu';
@@ -115,15 +116,20 @@ export default function HomeScreen() {
     });
   };
 
-  // The copy lands at the top of the list (newest first); only a failure says anything.
+  // The copy lands at the top of the list (newest first); only a failure says anything. A hand edit
+  // from the old merged-video subtitle editor moves onto the clips first (as upload, the editor
+  // and export do), so the copy carries it.
   const copyDraft = (draftId: string) => {
-    duplicateDraft(draftId).catch((e: unknown) => {
-      showToast({
-        kind: 'error',
-        title: 'Couldn’t duplicate the draft',
-        message: userMessage(e, 'Try again.', 'duplicate'),
+    adoptMergedCaptionEdit(draftId)
+      .catch((e: unknown) => console.warn('[captions] could not carry over the edited captions', e))
+      .then(() => duplicateDraft(draftId))
+      .catch((e: unknown) => {
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t duplicate the draft',
+          message: userMessage(e, 'Try again.', 'duplicate'),
+        });
       });
-    });
   };
 
   // No confirm dialog: the card goes at once.

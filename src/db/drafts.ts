@@ -442,9 +442,13 @@ export async function duplicateDraft(draftId: string): Promise<string> {
 
   try {
     const segmentRows: (typeof segments.$inferInsert)[] = [];
+    // Clips can share an original: each file is copied once.
+    const copied = new Set<string>();
     for (const seg of source.segments) {
       const files = [seg.originalFilename, seg.editedFilename].filter((f): f is string => !!f);
       for (const rel of files) {
+        if (copied.has(rel)) continue;
+        copied.add(rel);
         if (!(await copyRelFile(rel, remap(rel)))) {
           console.warn('[drafts] duplicate: missing clip file', rel);
           throw new Error('One of its clips’ video is missing.');
