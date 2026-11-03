@@ -3,6 +3,7 @@ import * as Crypto from 'expo-crypto';
 
 import {
   absolutize,
+  copyRelFile,
   deleteDraftDir,
   deleteSegmentFile,
   editCoverRelPath,
@@ -11,10 +12,11 @@ import {
 } from '@/utils/file-store';
 import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
 import { generateThumbnailFile } from '@/utils/video';
+import { parseCaptionEdit } from './captions';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
 import type { Draft, Segment } from './schema';
-import { drafts, segments } from './schema';
+import { clipTranscripts, drafts, segments } from './schema';
 import { deleteSavedLink } from './secure-token';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
@@ -408,6 +410,89 @@ export async function renameDraft(draftId: string, name: string | null): Promise
   // change, so the persisted export stays valid.
   await assertNotUploading(draftId);
   await db.update(drafts).set({ name, lastModified: now }).where(eq(drafts.id, draftId));
+}
+
+/**
+ * Copy a draft under a fresh id: its clips' files, and its rows with edits, clip names, captions
+ * and clip transcripts carried over, their paths pointing at the copies. Not carried: the upload
+ * pairing (a copy is a new, unsent draft) and the merged export (derived, merged again on
+ * export). The files are copied first and the rows committed in one transaction; a failure
+ * removes the copy's files. Returns the new draft's id.
+ */
+export async function duplicateDraft(draftId: string): Promise<string> {
+  const source = await getDraftForExport(draftId);
+  if (!source) throw new Error(`duplicateDraft: draft ${draftId} not found`);
+  const copyId = Crypto.randomUUID();
+  const newIds = new Map(source.segments.map((s) => [s.id, Crypto.randomUUID()]));
+  // `drafts/{draft}/segments/{clip}.….mp4` → the copy's draft and clip id; a file named after
+  // something else (e.g. a clip sharing another's original) keeps its name.
+  const remap = (rel: string) => {
+    const name = rel.slice(rel.lastIndexOf('/') + 1);
+    const stem = name.split('.')[0];
+    const id = newIds.get(stem);
+    return `drafts/${copyId}/segments/${id ? id + name.slice(stem.length) : name}`;
+  };
+  const transcripts =
+    newIds.size === 0
+      ? []
+      : await db
+          .select()
+          .from(clipTranscripts)
+          .where(inArray(clipTranscripts.segmentId, [...newIds.keys()]));
+
+  try {
+    const segmentRows: (typeof segments.$inferInsert)[] = [];
+    for (const seg of source.segments) {
+      const files = [seg.originalFilename, seg.editedFilename].filter((f): f is string => !!f);
+      for (const rel of files) {
+        if (!(await copyRelFile(rel, remap(rel)))) {
+          console.warn('[drafts] duplicate: missing clip file', rel);
+          throw new Error('One of its clips’ video is missing.');
+        }
+      }
+      // A cover that won't copy leaves none (the clip shows its own first frame).
+      const thumbnail =
+        seg.thumbnail && (await copyRelFile(seg.thumbnail, remap(seg.thumbnail)))
+          ? remap(seg.thumbnail)
+          : null;
+      const caption = parseCaptionEdit(seg.captionEdit);
+      segmentRows.push({
+        ...seg,
+        id: newIds.get(seg.id)!,
+        draftId: copyId,
+        originalFilename: remap(seg.originalFilename),
+        editedFilename: seg.editedFilename ? remap(seg.editedFilename) : null,
+        thumbnail,
+        captionEdit: caption ? JSON.stringify({ ...caption, file: remap(caption.file) }) : null,
+      });
+    }
+    db.transaction((tx) => {
+      tx.insert(drafts)
+        .values({
+          id: copyId,
+          name: `${source.draft.name || 'Untitled'} copy`,
+          captionY: source.draft.captionY,
+          lastClipNumber: source.draft.lastClipNumber,
+        })
+        .run();
+      if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
+      if (transcripts.length > 0) {
+        tx.insert(clipTranscripts)
+          .values(
+            transcripts.map((t) => ({
+              ...t,
+              segmentId: newIds.get(t.segmentId)!,
+              file: remap(t.file),
+            })),
+          )
+          .run();
+      }
+    });
+  } catch (e) {
+    deleteDraftDir(copyId);
+    throw e;
+  }
+  return copyId;
 }
 
 /** Delete a draft (segments cascade), its on-disk directory (clips + export) and its saved link. */

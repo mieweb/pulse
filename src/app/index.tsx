@@ -9,7 +9,7 @@ import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
-import { deleteDraft, draftListQuery, renameDraft } from '@/db/drafts';
+import { deleteDraft, draftListQuery, duplicateDraft, renameDraft } from '@/db/drafts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { DraftCard } from '@/features/home/draft-card';
 import { DraftMenu } from '@/features/home/draft-menu';
@@ -111,6 +111,17 @@ export default function HomeScreen() {
         kind: 'error',
         title: 'Couldn’t rename the draft',
         message: userMessage(e, 'Try again.', 'rename'),
+      });
+    });
+  };
+
+  // The copy lands at the top of the list (newest first); only a failure says anything.
+  const copyDraft = (draftId: string) => {
+    duplicateDraft(draftId).catch((e: unknown) => {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t duplicate the draft',
+        message: userMessage(e, 'Try again.', 'duplicate'),
       });
     });
   };
@@ -320,6 +331,7 @@ export default function HomeScreen() {
                     uploading={item.uploadStatus === 'uploading'}
                     besidePill={item.uploadStatus === 'uploaded'}
                     onRename={() => setEditingDraftId(item.id)}
+                    onDuplicate={() => copyDraft(item.id)}
                     onDelete={() => removeDraft(item.id)}
                   />
                 )}
