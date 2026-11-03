@@ -29,7 +29,8 @@ type Props = {
   muted: boolean;
   // A phone call holds the mic — audio is forced off and the toggle is locked while it lasts.
   callActive?: boolean;
-  disabled?: boolean;
+  /** A clip is recording: the flash stays live; flip, stabilization and the mic lock (see below). */
+  recording?: boolean;
   onFlip: () => void;
   onToggleTorch: () => void;
   onCycleStabilization: () => void;
@@ -42,7 +43,7 @@ export function CameraControls({
   stabilization,
   muted,
   callActive = false,
-  disabled = false,
+  recording = false,
   onFlip,
   onToggleTorch,
   onCycleStabilization,
@@ -53,25 +54,33 @@ export function CameraControls({
       <ControlButton
         icon="arrow.triangle.2.circlepath.camera"
         label="Flip camera"
-        disabled={disabled}
+        // Ends the take on both platforms (the camera device changes under the recorder).
+        disabled={recording}
         onPress={onFlip}
       />
-      <ControlButton
-        icon={torch ? 'bolt.fill' : 'bolt.slash.fill'}
-        label={torch ? 'Turn off flash' : 'Turn on flash'}
-        tint={torch ? Accent : '#fff'}
-        disabled={disabled || facing === 'front'}
-        onPress={onToggleTorch}
-      />
-      <ControlButton
-        icon={STABILIZATION_ICON}
-        label={`Stabilization: ${STABILIZATION_LABELS[stabilization]}`}
-        caption={STABILIZATION_LABELS[stabilization]}
-        tint={stabilization === 'off' ? '#fff' : Accent}
-        dimmed={stabilization === 'off'}
-        disabled={disabled}
-        onPress={onCycleStabilization}
-      />
+      {/* Back camera only, like the lens chips: the front camera has no torch, and records
+          without stabilization (see recorder.tsx). */}
+      {facing === 'back' && (
+        <>
+          <ControlButton
+            icon={torch ? 'bolt.fill' : 'bolt.slash.fill'}
+            label={torch ? 'Turn off flash' : 'Turn on flash'}
+            tint={torch ? Accent : '#fff'}
+            // Live while recording: the torch turns on and off in the running take.
+            onPress={onToggleTorch}
+          />
+          <ControlButton
+            icon={STABILIZATION_ICON}
+            label={`Stabilization: ${STABILIZATION_LABELS[stabilization]}`}
+            caption={STABILIZATION_LABELS[stabilization]}
+            tint={stabilization === 'off' ? '#fff' : Accent}
+            dimmed={stabilization === 'off'}
+            // Ends the take on both platforms (the session is reconfigured).
+            disabled={recording}
+            onPress={onCycleStabilization}
+          />
+        </>
+      )}
       <ControlButton
         icon={muted || callActive ? 'mic.slash.fill' : 'mic.fill'}
         label={
@@ -85,7 +94,9 @@ export function CameraControls({
         // locked because the OS, not the user, owns the mic while telephony has it.
         caption={callActive ? 'On call' : undefined}
         tint={muted || callActive ? Accent : '#fff'}
-        disabled={disabled || callActive}
+        // A take's audio is fixed when it starts (see use-recorder), so a toggle mid-take would
+        // show muted over a clip still recording sound.
+        disabled={recording || callActive}
         onPress={onToggleMute}
       />
     </View>
@@ -156,7 +167,7 @@ function ControlButton({
 /**
  * Press and disabled dimming for what's INSIDE a glass pill (and the caption under it), never the
  * pill: a partly transparent ancestor makes iOS draw the glass flat, and it can stay that way. The
- * disabled dim fades with the record controls (a recording locks the rail as it starts); the press
+ * disabled dim fades with the record controls (a recording locks most of the rail as it starts); the press
  * dim answers the finger at once.
  */
 function Dim({

@@ -33,7 +33,7 @@ const HOLD_OUT_MS = 120;
  * The record controls fade out while a clip is dragged (the trash takes their place) and back
  * when it's dropped — one timing for every piece that fades, so they leave and return together
  * (the lens pill steps instead, being glass: see recorder.tsx). The disabled dim a recording puts
- * on the rail, the lens chips and the + uses it too. EaseOut as a CSS timing function, so a React
+ * on the rail's locked controls and the +, and a drag on the lens chips, uses it too. EaseOut as a CSS timing function, so a React
  * state flip animates without a shared value per control.
  * Opacity only, so it should run under Reduce Motion too, and it does: Reanimated's CSS
  * transitions have no Reduce Motion switch. Never on a glass view's ancestor: a partly

@@ -362,9 +362,11 @@ export default function RecorderScreen() {
   }, [device]);
 
   // Pinned 1080p output + 30fps so every recorded clip is format-uniform (fast-path merge).
+  // Stabilization is the back camera's: the front records without it, as its control is hidden
+  // there (the setting is kept for the back).
   const constraints = useMemo<Constraint[]>(
-    () => [{ videoStabilizationMode: stabilization }, { fps: 30 }],
-    [stabilization],
+    () => [{ videoStabilizationMode: facing === 'front' ? 'off' : stabilization }, { fps: 30 }],
+    [facing, stabilization],
   );
   const outputs = useMemo(() => [videoOutput], [videoOutput]);
 
@@ -641,10 +643,7 @@ export default function RecorderScreen() {
           stabilization={stabilization}
           muted={muted}
           callActive={callActive}
-          // Lock every camera control while a clip is recording — flip / torch / stabilization /
-          // mute can't change mid-clip (audio state is fixed at record start, and the others would
-          // disrupt or stop capture). Mirrors the lens selector, which is already locked here.
-          disabled={isRecording}
+          recording={isRecording}
           onFlip={flipCamera}
           onToggleTorch={toggleTorch}
           onCycleStabilization={cycleStabilization}
@@ -663,7 +662,8 @@ export default function RecorderScreen() {
               presets={lensPresets}
               selected={activeLens}
               onSelect={(preset) => setZoomTo(preset.zoom)}
-              disabled={isRecording || dragging}
+              // Live while recording, like drag and pinch zoom: a chip only moves the zoom.
+              disabled={dragging}
             />
           </View>
 
