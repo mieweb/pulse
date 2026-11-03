@@ -17,9 +17,11 @@ import {
 
 import {
   addSegment,
+  addSegmentCover,
   createDraft,
   deleteDraft,
   deleteSegment,
+  expectSegmentCover,
   reorderSegments,
   segmentsForDraft,
 } from '@/db/drafts';
@@ -79,6 +81,12 @@ export function useRecorder(initialDraftId?: string) {
   // Wall-clock start of the active recording, for the live running timer in the UI. Mirrors
   // recordCallAtRef (which stays a ref for the MIN_RECORD_MS stop-guard); null when idle.
   const [recordStartedAt, setRecordStartedAt] = useState<number | null>(null);
+  // When the stop was asked for, while the clip finalizes and saves (`isRecording` stays true
+  // until it's in the draft): the button and the timer show the take as over from here, so a stop
+  // answers at once even where saving takes a while (CameraX finalizing the file, the row).
+  const [recordStoppedAt, setRecordStoppedAt] = useState<number | null>(null);
+  // A start asked for while the last clip was still saving; it runs as soon as that one is in.
+  const [startQueued, setStartQueued] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   // The import's conversion progress (0–1) for the + ring; null until the conversion reports
@@ -225,6 +233,8 @@ export function useRecorder(initialDraftId?: string) {
   // Set only when a hold STARTED the recording — releasing a hold begun on top of a
   // tap-started recording must not stop it (that hold is just drag-zooming).
   const holdInitiatedRef = useRef(false);
+  // The queued start (see `startQueued`), and whether a hold asked for it (its release takes it back).
+  const queuedStartRef = useRef<'tap' | 'hold' | null>(null);
   // The promise for the in-flight startRecording() run (it resolves once the clip is persisted).
   // Awaited by finalizeRecording so leaving the screen can save the segment before the camera
   // tears down.
@@ -314,6 +324,7 @@ export function useRecorder(initialDraftId?: string) {
   // change: it's finalized and saved at the boundary, and the user starts the next one manually
   // (with the mic in its new state). We deliberately do NOT auto-resume.
   useEffect(() => {
+    queueStart(null);
     if (isRecordingRef.current) stopRecording();
   }, [callActive]);
 
@@ -391,6 +402,7 @@ export function useRecorder(initialDraftId?: string) {
     stopRequestedRef.current = false;
     recordCallAtRef.current = Date.now();
     setRecordStartedAt(Date.now());
+    setRecordStoppedAt(null);
     setIsRecording(true);
     try {
       // Codec: VisionCamera defaults to the most efficient codec available (HEVC/h265 on modern
@@ -443,7 +455,14 @@ export function useRecorder(initialDraftId?: string) {
       const segmentId = `${id}-${Date.now()}`;
       const originalFilename = await persistRecording(uri, id, segmentId);
       const durationMs = await getDurationMs(absolutize(originalFilename));
-      await persistSegment(id, segmentId, originalFilename, durationMs);
+      // The row first, the cover after: the clip shows as soon as it's saved. On Android the
+      // cover is the longest step after a stop (150–400 ms: Media3 prepares a player for each new
+      // file). Imports stay cover-first (persistSegment): they can be cancelled while it renders.
+      expectSegmentCover(originalFilename);
+      await addSegment(id, { id: segmentId, originalFilename, durationMs, thumbnail: null });
+      everHadSegments.current = true;
+      segmentCount.current = Math.max(segmentCount.current, 1);
+      void addSegmentCover(id, segmentId, originalFilename);
       // Imports are conformed to exactly what the recorder writes on this device (so mixed
       // drafts merge without re-encoding) — keep that signature current.
       void learnRecorderFormat(absolutize(originalFilename));
@@ -457,8 +476,28 @@ export function useRecorder(initialDraftId?: string) {
       holdInitiatedRef.current = false;
       setIsRecording(false);
       setRecordStartedAt(null);
+      setRecordStoppedAt(null);
     }
   }
+
+  function queueStart(kind: 'tap' | 'hold' | null) {
+    queuedStartRef.current = kind;
+    setStartQueued(kind != null);
+  }
+
+  // The queued start, once the clip before it is saved. From an effect rather than that clip's
+  // `finally`, so it runs with this render's camera output (the mic setting may have changed
+  // while the last clip held it).
+  useEffect(() => {
+    const kind = queuedStartRef.current;
+    if (isRecording || !kind) return;
+    queueStart(null);
+    if (kind === 'hold') holdInitiatedRef.current = true;
+    recordingPromiseRef.current = startRecording();
+    // startRecording is recreated each render; this effect only needs to run when a save ends or
+    // a start is queued.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording, startQueued]);
 
   // Pick an existing device video (system picker — no permission prompt) and add it as a
   // segment, following the same persist path as a recording. Imports already in the recorder's
@@ -630,6 +669,7 @@ export function useRecorder(initialDraftId?: string) {
     // Remembered so a stop that lands before the recorder is even created still fires once it
     // exists (see startRecording). recorderRef may be null here if createRecorder is in flight.
     stopRequestedRef.current = true;
+    setRecordStoppedAt((at) => at ?? Date.now());
     const elapsed = Date.now() - recordCallAtRef.current;
     if (elapsed < MIN_RECORD_MS) {
       stopTimerRef.current = setTimeout(() => {
@@ -643,21 +683,43 @@ export function useRecorder(initialDraftId?: string) {
     void recorderRef.current?.stopRecording().catch(() => {});
   }
 
+  /** A take is running and no stop has been asked for. */
+  function recordingLive() {
+    return isRecordingRef.current && !stopRequestedRef.current;
+  }
+
+  /** What the record button should show: a live take, or a start queued behind a saving clip. */
+  function recordingShownNow() {
+    return recordingLive() || queuedStartRef.current != null;
+  }
+
+  // A tap acts on what the button shows. A queued start shows as recording, so a tap takes it
+  // back, even once the clip ahead of it is in: until the queued start runs, `isRecordingRef`
+  // can already read idle, and starting there would leave the queued take to follow.
   function toggleRecording() {
-    if (isRecordingRef.current) stopRecording();
-    else recordingPromiseRef.current = startRecording();
+    if (queuedStartRef.current) queueStart(null);
+    else if (!isRecordingRef.current) recordingPromiseRef.current = startRecording();
+    else if (!stopRequestedRef.current) stopRecording();
+    // The last clip is still saving: the next one starts once it's in.
+    else queueStart('tap');
   }
 
   function startHoldRecording() {
-    if (isRecordingRef.current) return;
-    holdInitiatedRef.current = true;
-    recordingPromiseRef.current = startRecording();
+    // A queued start already shows as recording: this hold only drag-zooms, as over a live take.
+    if (queuedStartRef.current) return;
+    if (!isRecordingRef.current) {
+      holdInitiatedRef.current = true;
+      recordingPromiseRef.current = startRecording();
+    } else if (stopRequestedRef.current) {
+      queueStart('hold');
+    }
   }
 
   // Stop an in-flight recording and wait for its clip to be persisted into the draft. Called before
   // leaving the screen (the close button) so the segment is saved instead of being lost when the
   // camera tears down. No-op when idle.
   async function finalizeRecording() {
+    queueStart(null);
     if (!isRecordingRef.current) return;
     stopRecording();
     try {
@@ -668,7 +730,11 @@ export function useRecorder(initialDraftId?: string) {
   }
 
   function endHoldRecording() {
-    if (holdInitiatedRef.current) stopRecording();
+    // A hold queued behind a saving clip and released before it began is taken back. Checked
+    // first: the clip still saving may be a hold's own, and `holdInitiatedRef` stays set until
+    // it's in, so that check alone would leave the queued take to start after the release.
+    if (queuedStartRef.current === 'hold') queueStart(null);
+    else if (holdInitiatedRef.current) stopRecording();
   }
 
   function flipCamera() {
@@ -720,6 +786,9 @@ export function useRecorder(initialDraftId?: string) {
     segments,
     isRecording,
     recordStartedAt,
+    recordStoppedAt,
+    startQueued,
+    recordingShownNow,
     cameraReady,
     isImporting,
     importProgress,

@@ -41,8 +41,8 @@ export function LensSelector({
     <GlassPill style={styles.row}>
       {presets.map((preset) => (
         // The chips dim, never the pill: a partly transparent ancestor makes iOS draw the glass
-        // flat. The disabled dim fades with the record controls (a recording locks the lens as it
-        // starts); the press dim answers the finger at once.
+        // flat. The disabled dim fades with the record controls (a clip being dragged locks the
+        // lens); the press dim answers the finger at once.
         <Animated.View
           key={preset.label}
           style={[CONTROLS_FADE, { opacity: disabled ? Opacity.disabled : 1 }]}>

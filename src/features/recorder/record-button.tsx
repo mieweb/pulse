@@ -33,7 +33,7 @@ const HOLD_OUT_MS = 120;
  * The record controls fade out while a clip is dragged (the trash takes their place) and back
  * when it's dropped — one timing for every piece that fades, so they leave and return together
  * (the lens pill steps instead, being glass: see recorder.tsx). The disabled dim a recording puts
- * on the rail, the lens chips and the + uses it too. EaseOut as a CSS timing function, so a React
+ * on the rail's locked controls and the +, and a drag on the lens chips, uses it too. EaseOut as a CSS timing function, so a React
  * state flip animates without a shared value per control.
  * Opacity only, so it should run under Reduce Motion too, and it does: Reanimated's CSS
  * transitions have no Reduce Motion switch. Never on a glass view's ancestor: a partly
@@ -55,6 +55,7 @@ export function RecordButton({
   gesture,
   holdActive,
   pressed,
+  recordingShown,
   isRecording,
   cameraReady,
   dragging,
@@ -62,6 +63,9 @@ export function RecordButton({
   gesture: ComposedGesture;
   holdActive: SharedValue<boolean>;
   pressed: SharedValue<boolean>;
+  /** What the button shows, flipped by the gestures on the UI thread (see recorder.tsx). */
+  recordingShown: SharedValue<boolean>;
+  /** The take as the recorder has it; the button follows it whenever it changes. */
   isRecording: boolean;
   cameraReady: boolean;
   dragging: boolean;
@@ -91,8 +95,15 @@ export function RecordButton({
     },
   );
   useEffect(() => {
-    recording.set(withTiming(isRecording ? 1 : 0, { duration: MORPH_MS, easing: EaseOut }));
-  }, [isRecording, recording]);
+    recordingShown.set(isRecording);
+  }, [isRecording, recordingShown]);
+  useAnimatedReaction(
+    () => recordingShown.get(),
+    (on, prev) => {
+      if (on !== prev)
+        recording.set(withTiming(on ? 1 : 0, { duration: MORPH_MS, easing: EaseOut }));
+    },
+  );
 
   const ringStyle = useAnimatedStyle(() => ({
     transform: [{ scale: 1 + (HOLD_RING_SCALE - 1) * hold.get() }],

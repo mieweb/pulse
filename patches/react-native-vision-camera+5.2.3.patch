@@ -1,0 +1,23 @@
+diff --git a/node_modules/react-native-vision-camera/android/src/main/java/com/margelo/nitro/camera/extensions/CameraInfo+utils.kt b/node_modules/react-native-vision-camera/android/src/main/java/com/margelo/nitro/camera/extensions/CameraInfo+utils.kt
+index d75f186..f8c68a8 100644
+--- a/node_modules/react-native-vision-camera/android/src/main/java/com/margelo/nitro/camera/extensions/CameraInfo+utils.kt
++++ b/node_modules/react-native-vision-camera/android/src/main/java/com/margelo/nitro/camera/extensions/CameraInfo+utils.kt
+@@ -17,10 +17,16 @@ val CameraInfo.modelID: String
+     return "$implementationType:${position.name}"
+   }
+ 
++// The nominal focal length in 35 mm film format, as `CameraDevice.focalLength` documents: the
++// lens's focal length scaled by the full-frame diagonal (43.27 mm) over the sensor's.
++// Raw millimetres don't compare across sensors: a Galaxy S24 Ultra's 7.9 mm telephoto is 61 mm
++// equivalent next to its 6.3 mm main lens at 22 mm.
+ val CameraCharacteristics.focalLength: Float?
+   get() {
+-    val focalLengths = this[CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]
+-    return focalLengths?.firstOrNull()
++    val focalLength = this[CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]?.firstOrNull() ?: return null
++    val sensor = this[CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE] ?: return focalLength
++    val diagonal = kotlin.math.hypot(sensor.width, sensor.height)
++    return if (diagonal > 0f) focalLength * 43.27f / diagonal else focalLength
+   }
+ 
+ val CameraCharacteristics.supportsDistortionCorrection: Boolean

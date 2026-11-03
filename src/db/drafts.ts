@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -11,7 +11,7 @@ import {
   thumbRelPath,
 } from '@/utils/file-store';
 import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
-import { generateThumbnailFile } from '@/utils/video';
+import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
 import { parseCaptionEdit } from './captions';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
@@ -160,6 +160,48 @@ export async function assertNotUploading(draftId: string): Promise<void> {
  * signature with the clips on arrival, so edits that are undone (reorder back, reset a trim,
  * delete an added clip) reuse it, and anything still changed merges again.
  */
+/**
+ * Mark a just-recorded clip's cover as on its way, before its row goes in (`addSegment` with no
+ * thumbnail), so its tile waits for `addSegmentCover` instead of extracting a frame itself.
+ */
+export function expectSegmentCover(originalFilename: string) {
+  markCoverInFlight(absolutize(originalFilename));
+}
+
+/**
+ * A just-recorded clip's cover, made after its row so the clip shows as soon as it's saved (see
+ * the recorder). Written only onto a row still without a cover or an edit: an edit saved
+ * meanwhile brought its own.
+ */
+export async function addSegmentCover(
+  draftId: string,
+  segmentId: string,
+  originalFilename: string,
+): Promise<void> {
+  const video = absolutize(originalFilename);
+  // Takes a revision like `saveEdit` and `resetEdit`: an edit or reset asked for while this cover
+  // renders owns the clip's cover from then on. Its own revision-stamped file, as an edit's
+  // cover, never the pristine path a reset writes, so dropping it can't take a reset's cover.
+  const rev = coverRev();
+  latestEditRev.set(segmentId, rev);
+  const coverRel = editCoverRelPath(draftId, segmentId, rev);
+  const ok = await generateThumbnailFile(video, absolutize(coverRel)).catch(() => false);
+  const applied =
+    ok &&
+    latestEditRev.get(segmentId) === rev &&
+    db
+      .update(segments)
+      .set({ thumbnail: coverRel })
+      .where(
+        and(eq(segments.id, segmentId), isNull(segments.thumbnail), isNull(segments.editState)),
+      )
+      .returning({ id: segments.id })
+      .all().length > 0;
+  if (applied) return;
+  if (ok) deleteSegmentFile(coverRel);
+  coverFailed(video);
+}
+
 async function beginClipMutation(draftId: string): Promise<void> {
   await assertNotUploading(draftId);
 }

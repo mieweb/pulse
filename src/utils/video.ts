@@ -23,6 +23,38 @@ function whenReady(player: Player): Promise<void> {
   });
 }
 
+// Clips whose cover is still being made (see `addSegmentCover`), by absolute video uri: their
+// tiles wait for it rather than extracting a frame of their own (a video player each). A cover
+// that lands stays listed until a tile has seen it (`coverSeen`), so no tile starts a fallback in
+// the moment between the row's update and the tile receiving it; one that fails is dropped at once,
+// and its tiles fall back.
+const coversInFlight = new Set<string>();
+const coverListeners = new Set<() => void>();
+
+export function markCoverInFlight(uri: string) {
+  coversInFlight.add(uri);
+}
+
+/** Whether the clip at `uri` has a cover on its way. */
+export function coverInFlight(uri: string): boolean {
+  return coversInFlight.has(uri);
+}
+
+export function subscribeCoversInFlight(listener: () => void): () => void {
+  coverListeners.add(listener);
+  return () => coverListeners.delete(listener);
+}
+
+/** The cover for `uri` failed or wasn't used: its tiles fall back now. */
+export function coverFailed(uri: string) {
+  if (coversInFlight.delete(uri)) coverListeners.forEach((listener) => listener());
+}
+
+/** A tile showed the clip's cover: nothing waits for it any more. */
+export function coverSeen(uri: string) {
+  coversInFlight.delete(uri);
+}
+
 /** The drafts list's thumbnails: small, since the list shows them small. */
 const LIST_THUMBNAIL = { maxWidth: 192, maxHeight: 256 };
 

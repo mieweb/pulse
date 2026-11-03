@@ -1,15 +1,15 @@
 import { type Href, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useAnimatedReaction } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Camera,
+  type CameraDevice,
   type Constraint,
-  type PhysicalDeviceType,
-  useCameraDevice,
+  useCameraDevices,
 } from 'react-native-vision-camera';
 import { scheduleOnRN } from 'react-native-worklets';
 
@@ -37,19 +37,70 @@ import { useRecorder } from '@/features/recorder/use-recorder';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
-import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
+import { RecordingTimer } from '@/features/recorder/recording-timer';
 import { setClipQueuePaused } from '@/features/transcription/clip-queue';
 import { useClipTranscription } from '@/features/transcription/use-clip-transcription';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
-import { formatDuration } from '@/utils/format';
 import { muteHaptics } from '@/utils/haptics';
 import { closeToHome } from '@/utils/navigation';
 
-// Ask for the full multi-camera device on the back so 0.5x / 1x / Tele are all reachable via
-// zoom; the front falls back to its single wide lens automatically.
-const PHYSICAL_DEVICES: PhysicalDeviceType[] = ['ultra-wide-angle', 'wide-angle', 'telephoto'];
+/**
+ * Lens chips from each lens's focal length, for Android, where CameraX names every lens
+ * "unknown": a lens's stop is its 35 mm-equivalent focal length over the main lens's (the
+ * camera's own), e.g. a Galaxy S24 Ultra's 13.6 / 22.3 / 61 / 112.7 mm → 0.6x · 1x · 3x · 5x.
+ * Android reports raw millimetres, which don't compare across sensors, so this relies on
+ * patches/react-native-vision-camera (35 mm-equivalent). A chip zooms to its rounded stop, where
+ * phones switch to that lens; the widest to `minZoom`. Null when the phone reports fewer than two
+ * lenses with focal lengths or no main lens: the zoom-range fallback below takes over.
+ */
+function focalLengthPresets(device: CameraDevice): LensPreset[] | null {
+  const main = device.focalLength;
+  const focals = device.physicalDevices
+    .map((d) => d.focalLength)
+    .filter((f): f is number => f != null && f > 0)
+    .sort((a, b) => a - b);
+  if (main == null || main <= 0 || focals.length < 2) return null;
+  const presets: LensPreset[] = [];
+  for (const focal of focals) {
+    const ratio = focal / main;
+    if (ratio < 0.95) {
+      // Reachable only if the zoom range goes that wide.
+      if (device.minZoom > ratio + 0.1) continue;
+      presets.push({ label: `${device.minZoom.toFixed(1)}x`, zoom: device.minZoom });
+    } else if (ratio <= 1.05) {
+      presets.push({ label: DEFAULT_LENS_LABEL, zoom: 1 });
+    } else {
+      const stop = Math.round(ratio);
+      if (stop > device.maxZoom) continue;
+      presets.push({ label: `${stop}x`, zoom: stop });
+    }
+  }
+  const unique = presets.filter((p, i) => presets.findIndex((q) => q.label === p.label) === i);
+  return unique.length >= 2 && unique.some((p) => p.label === DEFAULT_LENS_LABEL) ? unique : null;
+}
+
+/**
+ * The camera for a side: the one with the most lenses (so 0.5x / 1x / Tele are all reachable by
+ * zoom), then the widest zoom range. Not VisionCamera's own pick: it scores each lens against the
+ * types asked for and takes a point off for any other type, and CameraX reports every lens as
+ * "unknown". A Galaxy S24 Ultra lists its 4-lens back camera (0.6–10×) and its ultra-wide alone
+ * (1–8×), and the ultra-wide won (-4 vs 0): every recording on the ultra-wide, with no lens chips.
+ */
+function pickCamera(devices: CameraDevice[], position: 'front' | 'back'): CameraDevice | undefined {
+  return devices
+    .filter((d) => d.position === position)
+    .reduce<CameraDevice | undefined>((best, d) => {
+      if (!best) return d;
+      if (d.physicalDevices.length !== best.physicalDevices.length) {
+        return d.physicalDevices.length > best.physicalDevices.length ? d : best;
+      }
+      if (d.minZoom !== best.minZoom) return d.minZoom < best.minZoom ? d : best;
+      return d.maxZoom > best.maxZoom ? d : best;
+    }, undefined);
+}
+
 // Upper zoom cap (factor). Devices expose 100x+ of mostly-unusable digital zoom; cap so the
 // drag/pinch range stays useful. Tunable on-device.
 const MAX_ZOOM_FACTOR = 16;
@@ -74,6 +125,9 @@ export default function RecorderScreen() {
     segments,
     isRecording,
     recordStartedAt,
+    recordStoppedAt,
+    startQueued,
+    recordingShownNow,
     cameraReady,
     prefsReady,
     facing,
@@ -99,10 +153,6 @@ export default function RecorderScreen() {
     deleteSegment,
     reorderSegments,
   } = useRecorder(draftIdParam);
-
-  // Top running timer: always the live draft total — saved clips plus wall-clock while
-  // recording.
-  const totalMs = useRecordingTimer(segments, recordStartedAt);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
@@ -258,7 +308,8 @@ export default function RecorderScreen() {
     [reportMicPriorityError, muted, callActive, acquireFocus],
   );
 
-  const device = useCameraDevice(facing, { physicalDevices: PHYSICAL_DEVICES });
+  const devices = useCameraDevices();
+  const device = useMemo(() => pickCamera(devices, facing), [devices, facing]);
 
   // Lens chips are zoom presets on the (possibly multi-camera) device. Each physical lens
   // engages at a zoom boundary: the widest lens at `minZoom`, every subsequent lens at the
@@ -276,6 +327,8 @@ export default function RecorderScreen() {
     ] as const;
     const present = order.filter((o) => types.has(o.type));
     if (present.length === 0) {
+      const byFocal = focalLengthPresets(device);
+      if (byFocal) return { lensPresets: byFocal, neutralZoom: 1 };
       // Android: CameraX regularly reports no per-lens metadata even on multi-camera phones
       // (physicalDevices comes back empty), so derive presets from the logical zoom bounds
       // instead: a sub-1 minZoom means an ultra-wide is fused into the logical camera, and any
@@ -296,13 +349,24 @@ export default function RecorderScreen() {
     }));
     // The camera opens at (and flips back to) the 1x wide lens when present, else the widest.
     const neutral = presets.find((p) => p.label === DEFAULT_LENS_LABEL)?.zoom ?? device.minZoom;
-    return { lensPresets: presets, neutralZoom: neutral };
+    // With the wide lens there, the other chips say their stop relative to it, as the Camera app
+    // does: 0.5x, and the telephoto's 2x / 2.5x / 3x / 4x / 5x by model instead of "Tele" (to a
+    // tenth, so an iPhone 12 Pro Max's 2.5x telephoto doesn't read 3x).
+    const wide = presets.some((p) => p.label === DEFAULT_LENS_LABEL) ? neutral : null;
+    const labelled = presets.map((p) => {
+      if (wide == null || p.label === DEFAULT_LENS_LABEL) return p;
+      const stop = Math.round((p.zoom / wide) * 10) / 10;
+      return { ...p, label: `${Number.isInteger(stop) ? stop : stop.toFixed(1)}x` };
+    });
+    return { lensPresets: labelled, neutralZoom: neutral };
   }, [device]);
 
   // Pinned 1080p output + 30fps so every recorded clip is format-uniform (fast-path merge).
+  // Stabilization is the back camera's: the front records without it, as its control is hidden
+  // there (the setting is kept for the back).
   const constraints = useMemo<Constraint[]>(
-    () => [{ videoStabilizationMode: stabilization }, { fps: 30 }],
-    [stabilization],
+    () => [{ videoStabilizationMode: facing === 'front' ? 'off' : stabilization }, { fps: 30 }],
+    [facing, stabilization],
   );
   const outputs = useMemo(() => [videoOutput], [videoOutput]);
 
@@ -315,20 +379,27 @@ export default function RecorderScreen() {
     isRecording,
   });
 
-  // Re-assert the recording session config right before capture starts — cheap insurance
+  // Re-assert the recording session config right before a take starts — cheap insurance
   // against anything else (another expo-video player, a system event) having flipped the
   // session category since the last acquire. No-op when the config is already correct.
-  // Awaited so the session is `.playAndRecord` BEFORE the recorder attaches the mic input
-  // (acquire never throws and completes in single-digit ms, so stop-taps aren't delayed).
-  const reacquireThen = useCallback(
-    (action: () => void) => async () => {
-      if (!muted && !callActive) await acquireFocus();
-      action();
-    },
-    [muted, callActive, acquireFocus],
-  );
+  // Awaited so the session is `.playAndRecord` BEFORE the recorder attaches the mic input. Only
+  // a start waits for it: on Android it takes 20–90 ms, which a stop tap would feel.
+  // What the record button shows, on the UI thread: the gestures flip it as the finger decides,
+  // so the button answers in that frame however busy JS is; after each request the recorder
+  // writes back what it actually did (a start it refused, a hold dropped below), and the button
+  // follows the take's own state too (see RecordButton).
+  const recordingShown = useSharedValue(false);
 
-  // Hold-to-record needs more than reacquireThen: acquire() is awaited, and the gesture's
+  const onToggle = useCallback(async () => {
+    // Only a tap that starts (or queues) a take waits: one that stops a take or takes back a
+    // queued one must act at once, or the queued take could start during the wait and this tap
+    // then stop it, leaving a short clip.
+    if (!recordingShownNow() && !muted && !callActive) await acquireFocus();
+    toggleRecording();
+    recordingShown.set(recordingShownNow());
+  }, [toggleRecording, recordingShownNow, recordingShown, muted, callActive, acquireFocus]);
+
+  // Hold-to-record needs more than onToggle: acquire() is awaited, and the gesture's
   // release reaches JS straight away via scheduleOnRN — a quick press-release could run onHoldEnd
   // BEFORE the delayed startHoldRecording() (holdInitiatedRef still false, so nothing to
   // stop), and the start would then fire AFTER the gesture ended, leaving an unheld
@@ -339,11 +410,13 @@ export default function RecorderScreen() {
     const seq = ++holdSeqRef.current;
     if (!muted && !callActive) await acquireFocus();
     if (seq === holdSeqRef.current) startHoldRecording();
-  }, [muted, callActive, acquireFocus, startHoldRecording]);
+    recordingShown.set(recordingShownNow());
+  }, [muted, callActive, acquireFocus, startHoldRecording, recordingShownNow, recordingShown]);
   const onHoldEnd = useCallback(() => {
     holdSeqRef.current++;
     endHoldRecording();
-  }, [endHoldRecording]);
+    recordingShown.set(recordingShownNow());
+  }, [endHoldRecording, recordingShownNow, recordingShown]);
 
   const {
     zoomSv,
@@ -355,7 +428,8 @@ export default function RecorderScreen() {
     resetZoom,
     setZoomTo,
   } = useRecorderGestures({
-    onToggle: reacquireThen(toggleRecording),
+    onToggle,
+    recordingShown,
     onHoldStart,
     onHoldEnd,
     onFocus,
@@ -538,11 +612,13 @@ export default function RecorderScreen() {
           </View>
           {/* The running total, on glass over the live camera. */}
           <GlassPill style={styles.timerPill}>
-            <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
-              {/* Floored like a playhead while recording, so it doesn't tick to the next
-                    second half a second early; at rest it rounds, like the draft's total on Home. */}
-              {formatDuration(totalMs, { pad: true, floor: recordStartedAt != null })}
-            </Text>
+            <RecordingTimer
+              key={textSizeKey}
+              style={styles.timerText}
+              segments={segments}
+              startedAt={recordStartedAt}
+              stoppedAt={recordStoppedAt}
+            />
           </GlassPill>
           {/* On to the export screen once there's a clip; the sides share the width equally so
               the timer stays centred either way. */}
@@ -562,10 +638,7 @@ export default function RecorderScreen() {
           stabilization={stabilization}
           muted={muted}
           callActive={callActive}
-          // Lock every camera control while a clip is recording — flip / torch / stabilization /
-          // mute can't change mid-clip (audio state is fixed at record start, and the others would
-          // disrupt or stop capture). Mirrors the lens selector, which is already locked here.
-          disabled={isRecording}
+          recording={isRecording}
           onFlip={flipCamera}
           onToggleTorch={toggleTorch}
           onCycleStabilization={cycleStabilization}
@@ -584,7 +657,8 @@ export default function RecorderScreen() {
               presets={lensPresets}
               selected={activeLens}
               onSelect={(preset) => setZoomTo(preset.zoom)}
-              disabled={isRecording || dragging}
+              // Live while recording, like drag and pinch zoom: a chip only moves the zoom.
+              disabled={dragging}
             />
           </View>
 
@@ -593,7 +667,10 @@ export default function RecorderScreen() {
               gesture={buttonGesture}
               holdActive={holdActive}
               pressed={pressed}
-              isRecording={isRecording}
+              recordingShown={recordingShown}
+              // The take as the user sees it: over once its stop is asked for (the clip may still be
+              // saving), and on as soon as a start is queued behind that save.
+              isRecording={(isRecording && recordStoppedAt == null) || startQueued}
               cameraReady={cameraReady}
               dragging={dragging}
             />
