@@ -127,7 +127,6 @@ export default function RecorderScreen() {
     recordStartedAt,
     recordStoppedAt,
     startQueued,
-    recordingLive,
     recordingShownNow,
     cameraReady,
     prefsReady,
@@ -391,18 +390,13 @@ export default function RecorderScreen() {
   const recordingShown = useSharedValue(false);
 
   const onToggle = useCallback(async () => {
-    if (!recordingLive() && !muted && !callActive) await acquireFocus();
+    // Only a tap that starts (or queues) a take waits: one that stops a take or takes back a
+    // queued one must act at once, or the queued take could start during the wait and this tap
+    // then stop it, leaving a short clip.
+    if (!recordingShownNow() && !muted && !callActive) await acquireFocus();
     toggleRecording();
     recordingShown.set(recordingShownNow());
-  }, [
-    recordingLive,
-    toggleRecording,
-    recordingShownNow,
-    recordingShown,
-    muted,
-    callActive,
-    acquireFocus,
-  ]);
+  }, [toggleRecording, recordingShownNow, recordingShown, muted, callActive, acquireFocus]);
 
   // Hold-to-record needs more than onToggle: acquire() is awaited, and the gesture's
   // release reaches JS straight away via scheduleOnRN — a quick press-release could run onHoldEnd

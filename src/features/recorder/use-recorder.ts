@@ -693,18 +693,24 @@ export function useRecorder(initialDraftId?: string) {
     return recordingLive() || queuedStartRef.current != null;
   }
 
+  // A tap acts on what the button shows. A queued start shows as recording, so a tap takes it
+  // back, even once the clip ahead of it is in: until the queued start runs, `isRecordingRef`
+  // can already read idle, and starting there would leave the queued take to follow.
   function toggleRecording() {
-    if (!isRecordingRef.current) recordingPromiseRef.current = startRecording();
+    if (queuedStartRef.current) queueStart(null);
+    else if (!isRecordingRef.current) recordingPromiseRef.current = startRecording();
     else if (!stopRequestedRef.current) stopRecording();
-    // The last clip is still saving: the next one starts once it's in. A second tap takes it back.
-    else queueStart(queuedStartRef.current ? null : 'tap');
+    // The last clip is still saving: the next one starts once it's in.
+    else queueStart('tap');
   }
 
   function startHoldRecording() {
+    // A queued start already shows as recording: this hold only drag-zooms, as over a live take.
+    if (queuedStartRef.current) return;
     if (!isRecordingRef.current) {
       holdInitiatedRef.current = true;
       recordingPromiseRef.current = startRecording();
-    } else if (stopRequestedRef.current && !queuedStartRef.current) {
+    } else if (stopRequestedRef.current) {
       queueStart('hold');
     }
   }
@@ -782,7 +788,6 @@ export function useRecorder(initialDraftId?: string) {
     recordStartedAt,
     recordStoppedAt,
     startQueued,
-    recordingLive,
     recordingShownNow,
     cameraReady,
     isImporting,
