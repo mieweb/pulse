@@ -55,6 +55,7 @@ export function RecordButton({
   gesture,
   holdActive,
   pressed,
+  recordingShown,
   isRecording,
   cameraReady,
   dragging,
@@ -62,6 +63,9 @@ export function RecordButton({
   gesture: ComposedGesture;
   holdActive: SharedValue<boolean>;
   pressed: SharedValue<boolean>;
+  /** What the button shows, flipped by the gestures on the UI thread (see recorder.tsx). */
+  recordingShown: SharedValue<boolean>;
+  /** The take as the recorder has it; the button follows it whenever it changes. */
   isRecording: boolean;
   cameraReady: boolean;
   dragging: boolean;
@@ -91,8 +95,15 @@ export function RecordButton({
     },
   );
   useEffect(() => {
-    recording.set(withTiming(isRecording ? 1 : 0, { duration: MORPH_MS, easing: EaseOut }));
-  }, [isRecording, recording]);
+    recordingShown.set(isRecording);
+  }, [isRecording, recordingShown]);
+  useAnimatedReaction(
+    () => recordingShown.get(),
+    (on, prev) => {
+      if (on !== prev)
+        recording.set(withTiming(on ? 1 : 0, { duration: MORPH_MS, easing: EaseOut }));
+    },
+  );
 
   const ringStyle = useAnimatedStyle(() => ({
     transform: [{ scale: 1 + (HOLD_RING_SCALE - 1) * hold.get() }],

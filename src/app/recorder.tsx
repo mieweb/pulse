@@ -1,9 +1,9 @@
 import { type Href, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useAnimatedReaction } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Camera,
@@ -37,13 +37,12 @@ import { useRecorder } from '@/features/recorder/use-recorder';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
-import { useRecordingTimer } from '@/features/recorder/use-recording-timer';
+import { RecordingTimer } from '@/features/recorder/recording-timer';
 import { setClipQueuePaused } from '@/features/transcription/clip-queue';
 import { useClipTranscription } from '@/features/transcription/use-clip-transcription';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
-import { formatDuration } from '@/utils/format';
 import { muteHaptics } from '@/utils/haptics';
 import { closeToHome } from '@/utils/navigation';
 
@@ -126,6 +125,10 @@ export default function RecorderScreen() {
     segments,
     isRecording,
     recordStartedAt,
+    recordStoppedAt,
+    startQueued,
+    recordingLive,
+    recordingShownNow,
     cameraReady,
     prefsReady,
     facing,
@@ -151,10 +154,6 @@ export default function RecorderScreen() {
     deleteSegment,
     reorderSegments,
   } = useRecorder(draftIdParam);
-
-  // Top running timer: always the live draft total — saved clips plus wall-clock while
-  // recording.
-  const totalMs = useRecordingTimer(segments, recordStartedAt);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
@@ -378,20 +377,32 @@ export default function RecorderScreen() {
     isRecording,
   });
 
-  // Re-assert the recording session config right before capture starts — cheap insurance
+  // Re-assert the recording session config right before a take starts — cheap insurance
   // against anything else (another expo-video player, a system event) having flipped the
   // session category since the last acquire. No-op when the config is already correct.
-  // Awaited so the session is `.playAndRecord` BEFORE the recorder attaches the mic input
-  // (acquire never throws and completes in single-digit ms, so stop-taps aren't delayed).
-  const reacquireThen = useCallback(
-    (action: () => void) => async () => {
-      if (!muted && !callActive) await acquireFocus();
-      action();
-    },
-    [muted, callActive, acquireFocus],
-  );
+  // Awaited so the session is `.playAndRecord` BEFORE the recorder attaches the mic input. Only
+  // a start waits for it: on Android it takes 20–90 ms, which a stop tap would feel.
+  // What the record button shows, on the UI thread: the gestures flip it as the finger decides,
+  // so the button answers in that frame however busy JS is; after each request the recorder
+  // writes back what it actually did (a start it refused, a hold dropped below), and the button
+  // follows the take's own state too (see RecordButton).
+  const recordingShown = useSharedValue(false);
 
-  // Hold-to-record needs more than reacquireThen: acquire() is awaited, and the gesture's
+  const onToggle = useCallback(async () => {
+    if (!recordingLive() && !muted && !callActive) await acquireFocus();
+    toggleRecording();
+    recordingShown.set(recordingShownNow());
+  }, [
+    recordingLive,
+    toggleRecording,
+    recordingShownNow,
+    recordingShown,
+    muted,
+    callActive,
+    acquireFocus,
+  ]);
+
+  // Hold-to-record needs more than onToggle: acquire() is awaited, and the gesture's
   // release reaches JS straight away via scheduleOnRN — a quick press-release could run onHoldEnd
   // BEFORE the delayed startHoldRecording() (holdInitiatedRef still false, so nothing to
   // stop), and the start would then fire AFTER the gesture ended, leaving an unheld
@@ -402,11 +413,13 @@ export default function RecorderScreen() {
     const seq = ++holdSeqRef.current;
     if (!muted && !callActive) await acquireFocus();
     if (seq === holdSeqRef.current) startHoldRecording();
-  }, [muted, callActive, acquireFocus, startHoldRecording]);
+    recordingShown.set(recordingShownNow());
+  }, [muted, callActive, acquireFocus, startHoldRecording, recordingShownNow, recordingShown]);
   const onHoldEnd = useCallback(() => {
     holdSeqRef.current++;
     endHoldRecording();
-  }, [endHoldRecording]);
+    recordingShown.set(recordingShownNow());
+  }, [endHoldRecording, recordingShownNow, recordingShown]);
 
   const {
     zoomSv,
@@ -418,7 +431,8 @@ export default function RecorderScreen() {
     resetZoom,
     setZoomTo,
   } = useRecorderGestures({
-    onToggle: reacquireThen(toggleRecording),
+    onToggle,
+    recordingShown,
     onHoldStart,
     onHoldEnd,
     onFocus,
@@ -601,11 +615,13 @@ export default function RecorderScreen() {
           </View>
           {/* The running total, on glass over the live camera. */}
           <GlassPill style={styles.timerPill}>
-            <Text key={textSizeKey} style={styles.timerText} maxFontSizeMultiplier={1.3}>
-              {/* Floored like a playhead while recording, so it doesn't tick to the next
-                    second half a second early; at rest it rounds, like the draft's total on Home. */}
-              {formatDuration(totalMs, { pad: true, floor: recordStartedAt != null })}
-            </Text>
+            <RecordingTimer
+              key={textSizeKey}
+              style={styles.timerText}
+              segments={segments}
+              startedAt={recordStartedAt}
+              stoppedAt={recordStoppedAt}
+            />
           </GlassPill>
           {/* On to the export screen once there's a clip; the sides share the width equally so
               the timer stays centred either way. */}
@@ -656,7 +672,10 @@ export default function RecorderScreen() {
               gesture={buttonGesture}
               holdActive={holdActive}
               pressed={pressed}
-              isRecording={isRecording}
+              recordingShown={recordingShown}
+              // The take as the user sees it: over once its stop is asked for (the clip may still be
+              // saving), and on as soon as a start is queued behind that save.
+              isRecording={(isRecording && recordStoppedAt == null) || startQueued}
               cameraReady={cameraReady}
               dragging={dragging}
             />

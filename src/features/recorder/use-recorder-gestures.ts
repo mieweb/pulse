@@ -3,7 +3,12 @@
 /* eslint-disable react-hooks/refs */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
-import { ReduceMotion, useSharedValue, withTiming } from 'react-native-reanimated';
+import {
+  ReduceMotion,
+  type SharedValue,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { haptics } from '@/utils/haptics';
@@ -24,6 +29,7 @@ export function useRecorderGestures({
   onHoldStart,
   onHoldEnd,
   onFocus,
+  recordingShown,
   enabled,
   neutralZoom,
   minZoom,
@@ -33,6 +39,9 @@ export function useRecorderGestures({
   onHoldStart: () => void;
   onHoldEnd: () => void;
   onFocus: (x: number, y: number) => void;
+  /** What the record button shows. The gestures flip it in the frame the finger decides, before
+   * JS has acted; the recorder then sets it to what it actually did (see recorder.tsx). */
+  recordingShown: SharedValue<boolean>;
   enabled: boolean;
   /** The default/neutral zoom factor (the 1x wide lens) — opening value and flip reset target. */
   neutralZoom: number;
@@ -52,6 +61,8 @@ export function useRecorderGestures({
   const dragBase = useSharedValue(0);
   const pinchBase = useSharedValue(0);
   const holdActive = useSharedValue(false);
+  // The hold started a take (rather than drag-zooming one a tap started), so its release ends it.
+  const holdStartsTake = useSharedValue(false);
   // A finger is down on the record button and no hold has taken over yet — the button's
   // touch-down feedback (taps only act on release, so this is the only immediate response).
   const pressed = useSharedValue(false);
@@ -110,6 +121,8 @@ export function useRecorderGestures({
         // The hold's own scale takes over from the press, in the same frame as its haptic.
         pressed.set(false);
         holdActive.set(true);
+        holdStartsTake.set(!recordingShown.get());
+        recordingShown.set(true);
         dragBase.set(zoomSv.get());
         scheduleOnRN(fireHoldStart);
       })
@@ -122,6 +135,7 @@ export function useRecorderGestures({
         // Fires on END and CANCELLED alike (unmount, navigation) — the stop always lands.
         if (holdActive.get()) {
           holdActive.set(false);
+          if (holdStartsTake.get()) recordingShown.set(false);
           scheduleOnRN(fireHoldEnd);
         }
       });
@@ -130,7 +144,9 @@ export function useRecorderGestures({
       .enabled(enabled)
       .maxDuration(HOLD_MS) // a completed hold can never also fire the toggle
       .onEnd((_e, success) => {
-        if (success) scheduleOnRN(fireToggle);
+        if (!success) return;
+        recordingShown.set(!recordingShown.get());
+        scheduleOnRN(fireToggle);
       });
 
     // Two-finger pinch on the preview surface, mapped multiplicatively onto the zoom factor.
@@ -169,6 +185,8 @@ export function useRecorderGestures({
     dragBase,
     pinchBase,
     holdActive,
+    holdStartsTake,
+    recordingShown,
     pressed,
     minSv,
     maxSv,
