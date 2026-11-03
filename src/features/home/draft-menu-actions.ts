@@ -9,6 +9,7 @@ export type DraftMenuProps = {
   /** The draft's live watch link, from the card (`null` if it has none). */
   watchLink: WatchLink | null;
   onRename: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
   /** Sits right after the card's link button: a narrower left hit area keeps taps off it. */
   besidePill?: boolean;
@@ -20,6 +21,7 @@ export function draftMenuActions({
   uploading,
   watchLink,
   onRename,
+  onDuplicate,
   onDelete,
 }: DraftMenuProps): MenuAction[] {
   // An uploaded draft whose card offers Share (a link safe to share) also gets Watch here; one
@@ -46,6 +48,7 @@ export function draftMenuActions({
         ]
       : []),
     { key: 'rename', label: 'Rename', icon: 'pencil', onPress: onRename },
+    { key: 'duplicate', label: 'Duplicate', icon: 'doc.on.doc', onPress: onDuplicate },
     { key: 'delete', label: 'Delete', icon: 'trash', destructive: true, onPress: onDelete },
   ];
 }

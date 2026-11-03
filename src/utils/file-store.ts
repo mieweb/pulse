@@ -159,6 +159,20 @@ export async function readRelBytes(relPath: string): Promise<Uint8Array | null> 
   return file.bytes();
 }
 
+/**
+ * Copy a stored file to another relative path, creating its folder; false when the source is
+ * missing.
+ */
+export async function copyRelFile(fromRel: string, toRel: string): Promise<boolean> {
+  const src = new File(absolutize(fromRel));
+  if (!src.exists) return false;
+  const dest = new File(absolutize(toRel));
+  dest.parentDirectory.create({ intermediates: true, idempotent: true });
+  if (dest.exists) dest.delete();
+  await src.copy(dest);
+  return true;
+}
+
 /** Write an imported clip's bytes as the draft's pristine original; returns its relative path. */
 export function writeOriginalBytes(draftId: string, segmentId: string, bytes: Uint8Array): string {
   segmentDest(draftId, segmentId).write(bytes);

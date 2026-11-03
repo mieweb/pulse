@@ -23,12 +23,13 @@ export async function adoptMergedCaptionEdit(draftId: string): Promise<void> {
   if (!row) return;
   const clips = (await segmentsForDraft(draftId)).filter((s) => effMs(s) > 0);
   const edits = new Map<string, string>();
-  // Written as the clips' signature by versions up to 2.2.4, and with the merge version in front
-  // (mergedSignature) by builds of the pulse-editor migration: either means the same clips.
+  // Written as the clips' signature by versions up to 2.2.4, and with merge version 2 in front
+  // (mergedSignature) by builds of the pulse-editor migration, the last to write these rows:
+  // either means the same clips.
   const signature = segmentSignature(clips);
   if (
     row.editedLines &&
-    (row.signature === signature || row.signature === mergedSignature(clips))
+    (row.signature === signature || row.signature === mergedSignature(clips, 2))
   ) {
     // Each edited line was a caption the person shaped (split, merged): its first word starts a
     // sentence, so the captions keep those boxes rather than being regrouped by length.
