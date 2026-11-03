@@ -7,9 +7,9 @@ import Animated, { useAnimatedReaction } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Camera,
+  type CameraDevice,
   type Constraint,
-  type PhysicalDeviceType,
-  useCameraDevice,
+  useCameraDevices,
 } from 'react-native-vision-camera';
 import { scheduleOnRN } from 'react-native-worklets';
 
@@ -47,9 +47,61 @@ import { formatDuration } from '@/utils/format';
 import { muteHaptics } from '@/utils/haptics';
 import { closeToHome } from '@/utils/navigation';
 
-// Ask for the full multi-camera device on the back so 0.5x / 1x / Tele are all reachable via
-// zoom; the front falls back to its single wide lens automatically.
-const PHYSICAL_DEVICES: PhysicalDeviceType[] = ['ultra-wide-angle', 'wide-angle', 'telephoto'];
+/**
+ * Lens chips from each lens's focal length, for Android, where CameraX names every lens
+ * "unknown": a lens's stop is its 35 mm-equivalent focal length over the main lens's (the
+ * camera's own), e.g. a Galaxy S24 Ultra's 13.6 / 22.3 / 61 / 112.7 mm → 0.6x · 1x · 3x · 5x.
+ * Android reports raw millimetres, which don't compare across sensors, so this relies on
+ * patches/react-native-vision-camera (35 mm-equivalent). A chip zooms to its rounded stop, where
+ * phones switch to that lens; the widest to `minZoom`. Null when the phone reports fewer than two
+ * lenses with focal lengths or no main lens: the zoom-range fallback below takes over.
+ */
+function focalLengthPresets(device: CameraDevice): LensPreset[] | null {
+  const main = device.focalLength;
+  const focals = device.physicalDevices
+    .map((d) => d.focalLength)
+    .filter((f): f is number => f != null && f > 0)
+    .sort((a, b) => a - b);
+  if (main == null || main <= 0 || focals.length < 2) return null;
+  const presets: LensPreset[] = [];
+  for (const focal of focals) {
+    const ratio = focal / main;
+    if (ratio < 0.95) {
+      // Reachable only if the zoom range goes that wide.
+      if (device.minZoom > ratio + 0.1) continue;
+      presets.push({ label: `${device.minZoom.toFixed(1)}x`, zoom: device.minZoom });
+    } else if (ratio <= 1.05) {
+      presets.push({ label: DEFAULT_LENS_LABEL, zoom: 1 });
+    } else {
+      const stop = Math.round(ratio);
+      if (stop > device.maxZoom) continue;
+      presets.push({ label: `${stop}x`, zoom: stop });
+    }
+  }
+  const unique = presets.filter((p, i) => presets.findIndex((q) => q.label === p.label) === i);
+  return unique.length >= 2 && unique.some((p) => p.label === DEFAULT_LENS_LABEL) ? unique : null;
+}
+
+/**
+ * The camera for a side: the one with the most lenses (so 0.5x / 1x / Tele are all reachable by
+ * zoom), then the widest zoom range. Not VisionCamera's own pick: it scores each lens against the
+ * types asked for and takes a point off for any other type, and CameraX reports every lens as
+ * "unknown". A Galaxy S24 Ultra lists its 4-lens back camera (0.6–10×) and its ultra-wide alone
+ * (1–8×), and the ultra-wide won (-4 vs 0): every recording on the ultra-wide, with no lens chips.
+ */
+function pickCamera(devices: CameraDevice[], position: 'front' | 'back'): CameraDevice | undefined {
+  return devices
+    .filter((d) => d.position === position)
+    .reduce<CameraDevice | undefined>((best, d) => {
+      if (!best) return d;
+      if (d.physicalDevices.length !== best.physicalDevices.length) {
+        return d.physicalDevices.length > best.physicalDevices.length ? d : best;
+      }
+      if (d.minZoom !== best.minZoom) return d.minZoom < best.minZoom ? d : best;
+      return d.maxZoom > best.maxZoom ? d : best;
+    }, undefined);
+}
+
 // Upper zoom cap (factor). Devices expose 100x+ of mostly-unusable digital zoom; cap so the
 // drag/pinch range stays useful. Tunable on-device.
 const MAX_ZOOM_FACTOR = 16;
@@ -258,7 +310,8 @@ export default function RecorderScreen() {
     [reportMicPriorityError, muted, callActive, acquireFocus],
   );
 
-  const device = useCameraDevice(facing, { physicalDevices: PHYSICAL_DEVICES });
+  const devices = useCameraDevices();
+  const device = useMemo(() => pickCamera(devices, facing), [devices, facing]);
 
   // Lens chips are zoom presets on the (possibly multi-camera) device. Each physical lens
   // engages at a zoom boundary: the widest lens at `minZoom`, every subsequent lens at the
@@ -276,6 +329,8 @@ export default function RecorderScreen() {
     ] as const;
     const present = order.filter((o) => types.has(o.type));
     if (present.length === 0) {
+      const byFocal = focalLengthPresets(device);
+      if (byFocal) return { lensPresets: byFocal, neutralZoom: 1 };
       // Android: CameraX regularly reports no per-lens metadata even on multi-camera phones
       // (physicalDevices comes back empty), so derive presets from the logical zoom bounds
       // instead: a sub-1 minZoom means an ultra-wide is fused into the logical camera, and any
@@ -296,7 +351,15 @@ export default function RecorderScreen() {
     }));
     // The camera opens at (and flips back to) the 1x wide lens when present, else the widest.
     const neutral = presets.find((p) => p.label === DEFAULT_LENS_LABEL)?.zoom ?? device.minZoom;
-    return { lensPresets: presets, neutralZoom: neutral };
+    // With the wide lens there, the other chips say their stop relative to it, as the Camera app
+    // does: 0.5x, and the telephoto's 2x / 3x / 4x / 5x by model instead of "Tele".
+    const wide = presets.some((p) => p.label === DEFAULT_LENS_LABEL) ? neutral : null;
+    const labelled = presets.map((p) => {
+      if (wide == null || p.label === DEFAULT_LENS_LABEL) return p;
+      const stop = p.zoom / wide;
+      return { ...p, label: stop < 1 ? `${stop.toFixed(1)}x` : `${Math.round(stop)}x` };
+    });
+    return { lensPresets: labelled, neutralZoom: neutral };
   }, [device]);
 
   // Pinned 1080p output + 30fps so every recorded clip is format-uniform (fast-path merge).
