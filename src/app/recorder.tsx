@@ -350,12 +350,13 @@ export default function RecorderScreen() {
     // The camera opens at (and flips back to) the 1x wide lens when present, else the widest.
     const neutral = presets.find((p) => p.label === DEFAULT_LENS_LABEL)?.zoom ?? device.minZoom;
     // With the wide lens there, the other chips say their stop relative to it, as the Camera app
-    // does: 0.5x, and the telephoto's 2x / 3x / 4x / 5x by model instead of "Tele".
+    // does: 0.5x, and the telephoto's 2x / 2.5x / 3x / 4x / 5x by model instead of "Tele" (to a
+    // tenth, so an iPhone 12 Pro Max's 2.5x telephoto doesn't read 3x).
     const wide = presets.some((p) => p.label === DEFAULT_LENS_LABEL) ? neutral : null;
     const labelled = presets.map((p) => {
       if (wide == null || p.label === DEFAULT_LENS_LABEL) return p;
-      const stop = p.zoom / wide;
-      return { ...p, label: stop < 1 ? `${stop.toFixed(1)}x` : `${Math.round(stop)}x` };
+      const stop = Math.round((p.zoom / wide) * 10) / 10;
+      return { ...p, label: `${Number.isInteger(stop) ? stop : stop.toFixed(1)}x` };
     });
     return { lensPresets: labelled, neutralZoom: neutral };
   }, [device]);
