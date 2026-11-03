@@ -14,9 +14,10 @@ export const REELS_TARGET = {
 /**
  * Bump whenever REELS_TARGET, the merge engine or any other merge setting changes, so a persisted
  * export encoded under the old settings stops matching and an app update never serves a stale
- * encode. 2: pulse-editor's merge replaced react-native-video-trim's.
+ * encode. 2: pulse-editor's merge replaced react-native-video-trim's. 3: iOS renders a clip
+ * trimmed at its start instead of hiding its head in an edit list, which Firefox ignored.
  */
-export const MERGE_VERSION = 2;
+export const MERGE_VERSION = 3;
 
 /**
  * Content key of a draft's merged export: the merge settings version + the ordered effective
