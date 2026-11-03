@@ -724,8 +724,11 @@ export function useRecorder(initialDraftId?: string) {
   }
 
   function endHoldRecording() {
-    if (holdInitiatedRef.current) stopRecording();
-    else if (queuedStartRef.current === 'hold') queueStart(null);
+    // A hold queued behind a saving clip and released before it began is taken back. Checked
+    // first: the clip still saving may be a hold's own, and `holdInitiatedRef` stays set until
+    // it's in, so that check alone would leave the queued take to start after the release.
+    if (queuedStartRef.current === 'hold') queueStart(null);
+    else if (holdInitiatedRef.current) stopRecording();
   }
 
   function flipCamera() {

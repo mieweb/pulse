@@ -179,20 +179,26 @@ export async function addSegmentCover(
   originalFilename: string,
 ): Promise<void> {
   const video = absolutize(originalFilename);
-  const thumbRel = thumbRelPath(draftId, segmentId);
-  const ok = await generateThumbnailFile(video, absolutize(thumbRel)).catch(() => false);
+  // Takes a revision like `saveEdit` and `resetEdit`: an edit or reset asked for while this cover
+  // renders owns the clip's cover from then on. Its own revision-stamped file, as an edit's
+  // cover, never the pristine path a reset writes, so dropping it can't take a reset's cover.
+  const rev = coverRev();
+  latestEditRev.set(segmentId, rev);
+  const coverRel = editCoverRelPath(draftId, segmentId, rev);
+  const ok = await generateThumbnailFile(video, absolutize(coverRel)).catch(() => false);
   const applied =
     ok &&
+    latestEditRev.get(segmentId) === rev &&
     db
       .update(segments)
-      .set({ thumbnail: thumbRel })
+      .set({ thumbnail: coverRel })
       .where(
         and(eq(segments.id, segmentId), isNull(segments.thumbnail), isNull(segments.editState)),
       )
       .returning({ id: segments.id })
       .all().length > 0;
   if (applied) return;
-  if (ok) deleteSegmentFile(thumbRel);
+  if (ok) deleteSegmentFile(coverRel);
   coverFailed(video);
 }
 
