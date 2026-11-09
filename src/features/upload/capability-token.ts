@@ -10,6 +10,11 @@
 
 export type CapabilityClaims = {
   artifactId: string;
+  /**
+   * The place this upload is for, when the host named one: its opaque key (1–200 chars), signed
+   * with the rest. The only place a link's `ref` is read from (see deep-link.ts).
+   */
+  ref?: string;
   iat: number;
   exp: number;
   kid: string;
@@ -18,12 +23,7 @@ export type CapabilityClaims = {
 
 const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-/**
- * Decodes base64url to a byte string. Claims are JSON of UUIDs/URLs/numbers
- * (ASCII-only by construction in `issueCapabilityToken`), so a byte-for-byte
- * `String.fromCharCode` reconstruction is sufficient — no UTF-8 multibyte
- * handling needed for this specific payload shape.
- */
+/** Decodes base64url to a byte string (one char per byte; see `utf8`). */
 function base64UrlDecode(input: string): string | null {
   const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
   let buffer = 0;
@@ -42,11 +42,26 @@ function base64UrlDecode(input: string): string | null {
   return output;
 }
 
+/**
+ * A byte string (from `base64UrlDecode`) read as UTF-8, which a host's `ref` may need; `null` when
+ * it isn't valid UTF-8.
+ */
+function utf8(bytes: string): string | null {
+  try {
+    return decodeURIComponent(
+      Array.from(bytes, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join(''),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** Returns `null` for an opaque/non-conforming token rather than throwing — see module doc. */
 export function decodeCapabilityClaims(token: string): CapabilityClaims | null {
   const dot = token.indexOf('.');
   if (dot < 0) return null;
-  const payload = base64UrlDecode(token.slice(0, dot));
+  const bytes = base64UrlDecode(token.slice(0, dot));
+  const payload = bytes === null ? null : utf8(bytes);
   if (!payload) return null;
   let claims: Partial<CapabilityClaims>;
   try {
@@ -63,8 +78,13 @@ export function decodeCapabilityClaims(token: string): CapabilityClaims | null {
   ) {
     return null;
   }
-  return claims as CapabilityClaims;
+  // A `ref` that isn't a usable key reads as none: the token is then a plain upload's.
+  const { ref, ...rest } = claims;
+  const named = typeof ref === 'string' && ref.length >= 1 && ref.length <= MAX_REF_LENGTH;
+  return (named ? { ...rest, ref } : rest) as CapabilityClaims;
 }
+
+const MAX_REF_LENGTH = 200;
 
 /**
  * Whether `claims.exp` has passed, with `bufferMs` of safety margin so we

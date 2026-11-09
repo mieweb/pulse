@@ -28,6 +28,20 @@ describe('decodeCapabilityClaims', () => {
     expect(decodeCapabilityClaims(fakeToken(VALID_CLAIMS))).toEqual(VALID_CLAIMS);
   });
 
+  it('reads the place the upload is for from a `ref` claim, non-ASCII included', () => {
+    for (const ref of ['u1:huddle:t1', 'équipe:☕', 'r'.repeat(200)]) {
+      expect(decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ref }))?.ref).toBe(ref);
+    }
+  });
+
+  it('reads no place from a `ref` that isn’t a string of 1 to 200 characters', () => {
+    for (const ref of ['', 'r'.repeat(201), 7, null, { id: 'r1' }]) {
+      const claims = decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ref }));
+      // Still the token it was, for its expiry: only the place is unread.
+      expect(claims).toEqual(VALID_CLAIMS);
+    }
+  });
+
   it('returns null for a token with no dot separator', () => {
     expect(decodeCapabilityClaims('not-a-token')).toBeNull();
   });

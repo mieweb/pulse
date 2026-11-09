@@ -1,3 +1,5 @@
+import { decodeCapabilityClaims } from './capability-token';
+
 // Bump when the pairing link shape changes incompatibly — a client that
 // doesn't recognize `v` refuses the link outright instead of misparsing it.
 const SUPPORTED_LINK_VERSION = '1';
@@ -15,7 +17,32 @@ export type UploadDeepLink = {
    */
   server: string;
   token: string | null;
+  /** Set when the link's token names the place its upload is for; absent on a plain link. */
+  place?: LinkPlace;
 };
+
+/**
+ * The place a link's upload is for. `ref` is the host's opaque key for the place, read from the
+ * token's signed `ref` claim (the URL has no such param). The names and the return URL are the
+ * link's own params: unsigned display hints.
+ */
+export type LinkPlace = {
+  /** Pulse matches destinations and drafts on `(server, ref)`. */
+  ref: string;
+  /** What the host calls the place ("Team · Huddle"), ≤ 60 chars; `null` when not given. */
+  label: string | null;
+  /** The name for a new draft made from this link ("Huddle update"), ≤ 80 chars; `null` = none. */
+  name: string | null;
+  /** The host app's name ("TimeHuddle"), ≤ 30 chars. */
+  app: string | null;
+  /** The host page to go back to after the upload (https, or http for a private/dev origin). */
+  returnUrl: string | null;
+};
+
+/** Display caps for a link's host-supplied names (longer ones are cut, not refused). */
+const MAX_LABEL_LENGTH = 60;
+const MAX_NAME_LENGTH = 80;
+const MAX_APP_LENGTH = 30;
 
 export type DeepLinkResult =
   | { ok: true; link: UploadDeepLink }
@@ -40,6 +67,24 @@ function isPrivateDevOrigin(url: URL): boolean {
     /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/.test(host) || // RFC 6598, 100.64.0.0/10
     /^169\.254\.\d+\.\d+$/.test(host) // link-local
   );
+}
+
+/** An https URL, or an http one on a private/dev origin; `null` for anything else. */
+function parseAllowedUrl(raw: string | null): URL | null {
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  return url.protocol === 'https:' || isPrivateDevOrigin(url) ? url : null;
+}
+
+/** A host-supplied display name, trimmed and capped; empty is `null`. */
+function displayName(raw: string | null, max: number): string | null {
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed.slice(0, max) : null;
 }
 
 /** Path of the https pairing link on the link host (#252). */
@@ -69,9 +114,10 @@ export function pairingLinkParams(url: string, linkHost?: string | null): string
 
 /**
  * Parse and validate an upload pairing link, in either form `pairingLinkParams` takes. Rejects
- * anything the app can't safely act on — an unrecognized version, a malformed artifactId, or a
+ * anything the app can't safely act on — an unrecognized version, a malformed artifactId, a
  * server origin that isn't HTTPS (except the explicit localhost/private-IP dev allowance) —
- * rather than guessing.
+ * rather than guessing. A token with a `ref` claim makes it a link for that place (`place`), with
+ * the link's naming hints; without one it is a plain one-use upload, exactly as before.
  */
 export function parseUploadDeepLink(url: string, linkHost?: string | null): DeepLinkResult {
   const query = pairingLinkParams(url, linkHost);
@@ -91,21 +137,35 @@ export function parseUploadDeepLink(url: string, linkHost?: string | null): Deep
   }
 
   const rawServer = param('server');
-  if (!rawServer) return { ok: false, reason: 'invalid-link' };
-  let parsedServer: URL;
-  try {
-    parsedServer = new URL(rawServer);
-  } catch {
-    return { ok: false, reason: 'invalid-link' };
-  }
-  if (parsedServer.protocol !== 'https:' && !isPrivateDevOrigin(parsedServer)) {
-    return { ok: false, reason: 'invalid-link' };
-  }
+  if (!rawServer || !parseAllowedUrl(rawServer)) return { ok: false, reason: 'invalid-link' };
   // Keep the full base URL (origin + path prefix), trailing slash stripped —
   // collapsing to just `.origin` would silently drop the prefix the operator
   // mounted pulsevault at, breaking every subsequent request.
   const server = rawServer.replace(/\/$/, '');
+  const token = param('token');
 
   // Any other param (e.g. `uploadUnit` from an older server) is ignored, not rejected (PROTOCOL §3).
-  return { ok: true, link: { artifactId, server, token: param('token') } };
+  // The place this upload is for is read from the token's signed `ref` claim, never from the URL:
+  // it decides which draft the recorder opens on. Without one (an older server, an opaque token,
+  // no token) the link is a plain one-use upload, and its naming hints are ignored.
+  const ref = token ? decodeCapabilityClaims(token)?.ref : undefined;
+  if (!ref) return { ok: true, link: { artifactId, server, token } };
+
+  const returnUrl = param('return');
+  return {
+    ok: true,
+    link: {
+      artifactId,
+      server,
+      token,
+      place: {
+        ref,
+        label: displayName(param('label'), MAX_LABEL_LENGTH),
+        name: displayName(param('name'), MAX_NAME_LENGTH),
+        app: displayName(param('app'), MAX_APP_LENGTH),
+        // An unusable return URL is dropped, not a reason to refuse the link.
+        returnUrl: parseAllowedUrl(returnUrl) ? returnUrl : null,
+      },
+    },
+  };
 }
