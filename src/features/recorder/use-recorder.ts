@@ -21,6 +21,7 @@ import {
   createDraft,
   deleteDraft,
   deleteSegment,
+  type DraftContext,
   expectSegmentCover,
   reorderSegments,
   segmentsForDraft,
@@ -74,7 +75,14 @@ function discard(uri: string) {
   } catch {}
 }
 
-export function useRecorder(initialDraftId?: string) {
+/**
+ * `newDraft`: what a draft this recorder creates starts with — a link's `name` as its name (if
+ * it has one) and the link's place as its context. Read once, like `initialDraftId`.
+ */
+export function useRecorder(
+  initialDraftId?: string,
+  newDraft?: { name: string | null; context: DraftContext | null },
+) {
   const cameraRef = useRef<CameraRef>(null);
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
   const [isRecording, setIsRecording] = useState(false);
@@ -357,7 +365,7 @@ export function useRecorder(initialDraftId?: string) {
   // Reuses the current draft, or lazily creates one on the first clip/import of the session.
   async function ensureDraft(): Promise<string> {
     if (draftId) return draftId;
-    const id = await createDraft();
+    const id = await createDraft(newDraft);
     sessionDraftId.current = id;
     setDraftId(id);
     return id;

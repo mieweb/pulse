@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { ProgressRing } from '@/components/progress-ring';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, MaxTextScale, Radius, Spacing } from '@/constants/theme';
+import { draftDisplayName } from '@/db/drafts';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
 import type { WatchLink } from '@/features/upload/upload-manager';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
@@ -31,6 +32,8 @@ type Props = {
   /** Persisted upload status, so the card can show its own upload state on the cover. */
   uploadStatus?: 'uploading' | 'uploaded' | null;
   name: string | null;
+  /** The label of the destination it was recorded for: what an unnamed draft is called. */
+  contextLabel?: string | null;
   /** Relative path of the draft's first clip; the cover frame's legacy runtime fallback. */
   firstSegmentFilename?: string | null;
   /** Relative path of the first clip's persisted jpeg thumbnail (preferred cover frame). */
@@ -62,6 +65,7 @@ export function DraftCard({
   id,
   uploadStatus,
   name,
+  contextLabel = null,
   firstSegmentFilename,
   firstSegmentThumbnail,
   firstSegmentEditState,
@@ -150,7 +154,7 @@ export function DraftCard({
           />
         ) : (
           <ThemedText type="headline" numberOfLines={1}>
-            {name || 'Untitled'}
+            {draftDisplayName(name, contextLabel)}
           </ThemedText>
         )}
         {/* Two lines, so a narrow card (an uploaded draft's link button beside ⋯, larger text)

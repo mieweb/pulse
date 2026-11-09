@@ -33,6 +33,7 @@ import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
+import { registerRecorder } from '@/features/recorder/recorder-presence';
 import { useRecorder } from '@/features/recorder/use-recorder';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
@@ -116,7 +117,24 @@ export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
   const textSizeKey = useTextSizeKey();
-  const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
+  // A link for a place opens the recorder with that place (`context*`): a draft made here is
+  // recorded for it, and named with the link's `name`, if it has one (see `openRecorder` in the
+  // upload provider).
+  const {
+    draftId: draftIdParam,
+    contextServer,
+    contextRef,
+    draftName,
+  } = useLocalSearchParams<{
+    draftId?: string;
+    contextServer?: string;
+    contextRef?: string;
+    draftName?: string;
+  }>();
+  const [newDraft] = useState(() => ({
+    name: draftName ?? null,
+    context: contextServer && contextRef ? { server: contextServer, ref: contextRef } : null,
+  }));
   const permissions = useRecorderPermissions();
   const {
     cameraRef,
@@ -152,7 +170,15 @@ export default function RecorderScreen() {
     cycleStabilization,
     deleteSegment,
     reorderSegments,
-  } = useRecorder(draftIdParam);
+  } = useRecorder(draftIdParam, newDraft);
+
+  // Navigation from outside (a link opening its place's recorder) finalizes an in-flight take
+  // first, as Close does, and waits for this screen to unmount before mounting another camera.
+  const finalizeRef = useRef(finalizeRecording);
+  useEffect(() => {
+    finalizeRef.current = finalizeRecording;
+  });
+  useEffect(() => registerRecorder(() => finalizeRef.current()), []);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
@@ -528,7 +554,8 @@ export default function RecorderScreen() {
   const cameraActive = !audioHandoff && focused && (appActive || isRecording) && !recovering;
 
   // Close: finalize any in-flight clip (saving it into the draft) before navigating home, so the
-  // segment isn't lost when the camera unmounts.
+  // segment isn't lost when the camera unmounts. (Hooks above the early returns register the same
+  // finalize for navigation from outside, see `registerRecorder`.)
   const handleClose = () => void finalizeRecording().then(closeToHome);
 
   return (

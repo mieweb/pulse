@@ -311,6 +311,7 @@ export default function HomeScreen() {
                 id={item.id}
                 uploadStatus={item.uploadStatus}
                 name={name}
+                contextLabel={item.contextLabel}
                 firstSegmentFilename={item.firstSegmentFilename}
                 firstSegmentThumbnail={item.firstSegmentThumbnail}
                 firstSegmentEditState={item.firstSegmentEditState}

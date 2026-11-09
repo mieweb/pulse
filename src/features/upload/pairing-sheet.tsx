@@ -13,7 +13,11 @@ import { useTheme } from '@/hooks/use-theme';
 import { hasNonAsciiHost } from '@/utils/format';
 import { tallSheetFits } from '@/utils/sheet-fit';
 
-import { type PairingRequest, usePairingSheet } from './upload-deep-link-provider';
+import {
+  type PairingRequest,
+  pairingSheetPresence,
+  usePairingSheet,
+} from './upload-deep-link-provider';
 
 const BUTTON_HEIGHT = 50;
 
@@ -65,6 +69,8 @@ export function PairingSheet() {
     },
     [],
   );
+  // Mounted until its closing animation ends: a link's recorder waits for that.
+  useEffect(() => pairingSheetPresence.enter(), []);
   const answer = (action: () => void) => () => {
     answered.current = true;
     action();
