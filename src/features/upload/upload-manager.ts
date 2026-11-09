@@ -7,7 +7,7 @@ import {
   burnUploadPairing,
   getDraftName,
   getUploadedDraftIds,
-  getUploadingDraftIds,
+  getUploadingDrafts,
   markUploaded,
   setUploadDestination,
 } from '@/db/drafts';
@@ -50,16 +50,34 @@ import { requestViewLink } from './view-link';
 
 /** Every failure spends the link, so the way to try again is a new one. */
 const NEW_LINK = 'scan a new link to try again.';
+/** A place's link is kept until its upload succeeds: after a failure, Upload uses it again. */
+const TRY_AGAIN = 'tap Upload to try again.';
 
-/** Failures that need more than a new link say so themselves, and are shown as-is. */
-const STOPPED_MESSAGE = {
-  expired: `Upload link expired — ${NEW_LINK}`,
-  'version-too-old':
-    'This server needs a newer version of Pulse — update the app, then scan a new link.',
-  'version-too-new':
-    'This server hasn’t been updated for this version of Pulse yet — scan a new link once it is.',
-  'video-missing': 'The video is no longer available — reopen the draft, then scan a new link.',
-} as const;
+type StopReason = 'expired' | 'version-too-old' | 'version-too-new' | 'video-missing';
+
+/**
+ * Failures that need more than a new link say so themselves, and are shown as-is. `kept`: the
+ * upload's link is a place's, which a failure doesn't spend, so Upload is the retry (unless the
+ * link itself ran out).
+ */
+function stoppedMessage(reason: StopReason, kept = false): string {
+  const retry = kept ? 'tap Upload again' : 'scan a new link';
+  switch (reason) {
+    case 'expired':
+      return `Upload link expired — ${kept ? 'open its link again to upload.' : NEW_LINK}`;
+    case 'version-too-old':
+      return `This server needs a newer version of Pulse — update the app, then ${retry}.`;
+    case 'version-too-new':
+      return `This server hasn’t been updated for this version of Pulse yet — ${retry} once it is.`;
+    case 'video-missing':
+      return `The video is no longer available — reopen the draft, then ${retry}.`;
+  }
+}
+
+/** Whether the session's link is a place's, kept in the pool until the upload succeeds. */
+function kept(session: UploadSession): boolean {
+  return !!session.keptDestinationId;
+}
 
 /** Names the step a failure happened in, after the reason. */
 const PHASE_NAME: Record<UploadPhase, string> = {
@@ -76,7 +94,7 @@ const VIEW_LINK_TIMEOUT_MS = 15_000;
 /** Where a run writes its captions, beat manifest and generated thumbnail before uploading them. */
 const TEMP_DIR_NAME = 'uploads';
 
-/** A failure whose message is the whole toast (see `STOPPED_MESSAGE`). */
+/** A failure whose message is the whole toast (see `stoppedMessage`). */
 class UploadStoppedError extends Error {
   constructor(message: string) {
     super(message);
@@ -219,7 +237,7 @@ class BackgroundUploadManager {
   private readonly announcements = new Map<string, UploadAnnouncement>();
   private announcementSeq = 0;
   /** Drafts with a claim in flight, so a double tap uploads once — and a cancel mid-claim sticks. */
-  private readonly claiming = new Map<string, { cancelled: boolean }>();
+  private readonly claiming = new Map<string, { cancelled: boolean; artifactId: string }>();
   private running = false;
   /** The launch check — nothing claims or uploads until it has settled. */
   private launch: Promise<void> | null = null;
@@ -269,20 +287,21 @@ class BackgroundUploadManager {
    * then the reason and the step it happened in. Reads the live state for the step, so it must
    * run BEFORE the state resets.
    */
-  private failureMessage(draftId: string, err: unknown): string {
+  private failureMessage(draftId: string, err: unknown, kept: boolean): string {
+    const again = kept ? TRY_AGAIN : NEW_LINK;
     if (err instanceof UploadStoppedError) return err.message;
     // 426 Upgrade Required mid-upload: the server was upgraded past this app (PROTOCOL.md §7.2).
     if (err instanceof TusUploadError && err.statusCode === 426) {
-      return STOPPED_MESSAGE['version-too-old'];
+      return stoppedMessage('version-too-old', kept);
     }
     // Only a short, plain reason reaches the toast: a server's body or a native error (an NSURL
     // domain string, a Java stack) means nothing there, so it's dropped, and the toast keeps just
     // the instruction. `fail` logs the full error, with the step, for Debug logs.
     const reason = userMessage(err, '', 'upload');
-    if (!reason) return `Upload failed — ${NEW_LINK}`;
+    if (!reason) return `Upload failed — ${again}`;
     const live = this.live.get(draftId);
     const detail = live?.status === 'uploading' ? `${PHASE_NAME[live.phase]}: ${reason}` : reason;
-    return `Upload failed — ${NEW_LINK} (${detail})`;
+    return `Upload failed — ${again} (${detail})`;
   }
 
   // ---- public API ----
@@ -314,13 +333,18 @@ class BackgroundUploadManager {
     try {
       // Claims wait for this check, so nothing in this process is running any of these.
       let interrupted = 0;
-      for (const draftId of await getUploadingDraftIds()) {
-        if (await burnUploadPairing(draftId)) interrupted++;
+      // Whether every one's link is still in the pool (a place's), so Upload can use it again.
+      let allRetryable = true;
+      for (const { id, retryable } of await getUploadingDrafts()) {
+        if (await burnUploadPairing(id)) {
+          interrupted++;
+          allRetryable &&= retryable;
+        }
       }
       if (interrupted > 0) {
         uploadLog.warn(`launch: ${interrupted} upload(s) stopped when the app did; unpaired`);
         const what = interrupted === 1 ? 'An upload' : `${interrupted} uploads`;
-        this.showToast?.(`${what} didn’t finish — ${NEW_LINK}`, 'error');
+        this.showToast?.(`${what} didn’t finish — ${allRetryable ? TRY_AGAIN : NEW_LINK}`, 'error');
         // The launch may be in the background (iOS relaunches the app for a finished transfer).
         void uploadNotify.failed();
       }
@@ -359,6 +383,10 @@ class BackgroundUploadManager {
    * `uploading` draft the launch check fails cleanly. The pool delete is the arbiter
    * when two drafts claim one link — the loser unpairs itself. A double tap on the
    * same draft is ignored.
+   *
+   * `keep`: the destination is a place's (its link named one). Its row stays in the pool until
+   * the upload succeeds, so a failed or cancelled upload can be tried again while the link lives;
+   * with no delete to arbitrate, a second draft can't claim it while it's uploading.
    */
   async claim(params: {
     draftId: string;
@@ -366,10 +394,15 @@ class BackgroundUploadManager {
     destination: Destination;
     segments: UploadSession['segments'];
     merged: UploadSession['merged'];
+    keep?: boolean;
   }): Promise<void> {
-    const { draftId, destinationId, destination, segments, merged } = params;
+    const { draftId, destinationId, destination, segments, merged, keep = false } = params;
     if (this.claiming.has(draftId) || this.getDraftState(draftId).status !== 'idle') return;
-    const pending = { cancelled: false };
+    if (keep && this.inUse(destination.artifactId)) {
+      this.showToast?.('That link is uploading another draft — wait for it to finish.', 'error');
+      return;
+    }
+    const pending = { cancelled: false, artifactId: destination.artifactId };
     this.claiming.set(draftId, pending);
     // The captions now, as the export screen shows them (see UploadSession.captions).
     const captions = await getDraftCaptions(draftId).catch((e: unknown) => {
@@ -383,14 +416,25 @@ class BackgroundUploadManager {
     try {
       await this.launch;
       await setUploadDestination(draftId, destination);
-      if (!(await deleteDestination(destinationId))) {
+      if (!keep && !(await deleteDestination(destinationId))) {
         uploadLog.warn(`${draftLabel(draftId)}: another draft used that link first`);
         await burnUploadPairing(draftId, destination.artifactId);
         return;
       }
-      // Cancelled (from Home's ⋯ menu) after the pairing landed: the cancel unpaired it already.
-      if (pending.cancelled) return;
-      this.enqueue({ draftId, destination, segments, merged, captions });
+      // Cancelled (from Home's ⋯ menu) while this was starting: unpair it here too, since a cancel
+      // that ran before the pairing landed found nothing to unpair.
+      if (pending.cancelled) {
+        await burnUploadPairing(draftId, destination.artifactId);
+        return;
+      }
+      this.enqueue({
+        draftId,
+        destination,
+        segments,
+        merged,
+        captions,
+        ...(keep ? { keptDestinationId: destinationId } : {}),
+      });
     } catch (err) {
       // The pairing or the pool write failed: undo the pairing (if it landed) rather than leave
       // the draft locked with nothing uploading it.
@@ -402,13 +446,28 @@ class BackgroundUploadManager {
     }
   }
 
+  /** Whether a claim or an upload is running under that link's artifact. */
+  private inUse(artifactId: string): boolean {
+    const using = (s: { artifactId: string }) => s.artifactId === artifactId;
+    return (
+      [...this.claiming.values()].some(using) ||
+      [...this.sessions.values()].some((session) => using(session.destination))
+    );
+  }
+
   private enqueue(session: UploadSession): void {
     const { draftId, destination } = session;
     if (this.sessions.has(draftId)) return;
     // Dead on arrival — the link expired between picking it and tapping Upload.
     if (isTokenExpired(destination.token, Date.now())) {
       uploadLog.warn(`${draftLabel(draftId)}: the link expired before the upload started`);
-      void this.fail(draftId, destination, new UploadStoppedError(STOPPED_MESSAGE.expired), []);
+      void this.fail(
+        draftId,
+        destination,
+        new UploadStoppedError(stoppedMessage('expired', kept(session))),
+        [],
+        kept(session),
+      );
       return;
     }
     this.sessions.set(draftId, session);
@@ -502,8 +561,9 @@ class BackgroundUploadManager {
     destination: Destination,
     err: unknown,
     created: readonly string[],
+    kept = false,
   ): Promise<void> {
-    const message = this.failureMessage(draftId, err);
+    const message = this.failureMessage(draftId, err, kept);
     const live = this.live.get(draftId);
     const step = live?.status === 'uploading' ? PHASE_NAME[live.phase] : 'Starting';
     uploadLog.warn(
@@ -539,7 +599,7 @@ class BackgroundUploadManager {
             : compat.reason),
       );
       if (!compat.ok && compat.reason !== 'unreachable') {
-        throw new UploadStoppedError(STOPPED_MESSAGE[compat.reason]);
+        throw new UploadStoppedError(stoppedMessage(compat.reason, kept(session)));
       }
       await this.uploadPulse(run);
       // Recorded as uploaded the moment the bytes are in — nothing (a view link) comes first.
@@ -550,6 +610,13 @@ class BackgroundUploadManager {
         if (!controller.signal.aborted) this.setLive(draftId, IDLE);
         void discard(run.created, destination.token);
         return;
+      }
+      // A place's link, kept this far so a failure could be retried, is spent now. Only while its
+      // row still holds this upload: the place may have been given a newer link since.
+      if (session.keptDestinationId) {
+        await deleteDestination(session.keptDestinationId, destination.artifactId).catch(
+          () => false,
+        );
       }
       // Watch / Share link: the draft's Share button on Home, while the link works.
       const direct: WatchLink = {
@@ -573,7 +640,7 @@ class BackgroundUploadManager {
     } catch (err) {
       // A cancel aborted this run and owns its cleanup.
       if (controller.signal.aborted) return;
-      await this.fail(draftId, destination, err, run.created);
+      await this.fail(draftId, destination, err, run.created, kept(session));
     } finally {
       for (const file of run.temps) {
         try {
@@ -652,7 +719,7 @@ class BackgroundUploadManager {
     // Re-checked before every artifact (not just at the start of a run) — a token fine at the
     // start can go stale partway through a session.
     if (isTokenExpired(destination.token, Date.now())) {
-      throw new UploadStoppedError(STOPPED_MESSAGE.expired);
+      throw new UploadStoppedError(stoppedMessage('expired', kept(run.session)));
     }
     await uploadViaTus({
       server: destination.server,
@@ -699,7 +766,9 @@ class BackgroundUploadManager {
     const draftName = await getDraftName(draftId);
     // Backstop: the persisted export lives in the draft dir (safe from cache sweeps) and the draft
     // is locked while uploading, so a missing file means something outside the app removed it.
-    if (!file.exists) throw new UploadStoppedError(STOPPED_MESSAGE['video-missing']);
+    if (!file.exists) {
+      throw new UploadStoppedError(stoppedMessage('video-missing', kept(run.session)));
+    }
     const hashStarted = Date.now();
     const checksum = await md5Checksum(file);
     const videoBytes = file.size ?? 0;

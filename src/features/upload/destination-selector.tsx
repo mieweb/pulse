@@ -48,7 +48,7 @@ export function DestinationSelector({
             }}
             accessibilityRole="radio"
             accessibilityState={{ selected }}
-            accessibilityLabel={`Upload to ${hostOf(d.server)}, ${d.expiryLabel}`}
+            accessibilityLabel={`Upload to ${d.label ?? hostOf(d.server)}, ${d.expiryLabel}`}
             style={({ pressed }) => [
               styles.chip,
               {
@@ -59,7 +59,7 @@ export function DestinationSelector({
               selected && styles.chipSelected,
               pressed && styles.pressed,
             ]}>
-            <DestinationLabel server={d.server} size="chip" />
+            <DestinationLabel server={d.server} label={d.label} app={d.app} size="chip" />
             <ThemedText type="caption2" themeColor="textSecondary">
               {d.expiryLabel}
             </ThemedText>

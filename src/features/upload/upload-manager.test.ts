@@ -44,8 +44,11 @@ jest.mock('@/db/drafts', () => {
       state.log.push(`burn:${draftId}`);
       return true;
     }),
-    getUploadingDraftIds: jest.fn(async () =>
-      [...state.status].filter(([, s]) => s === 'uploading').map(([id]) => id),
+    // `retryable`: its link is still in the pool, as a place's is (the tests name those `place-…`).
+    getUploadingDrafts: jest.fn(async () =>
+      [...state.status]
+        .filter(([, s]) => s === 'uploading')
+        .map(([id]) => ({ id, retryable: id.startsWith('place-') })),
     ),
     getUploadedDraftIds: jest.fn(async () =>
       [...state.status].filter(([, s]) => s === 'uploaded').map(([id]) => id),
@@ -58,8 +61,8 @@ jest.mock('@/db/destinations', () => {
   const state = { pool: new Set<string>(), log: [] as string[] };
   return {
     __state: state,
-    deleteDestination: jest.fn(async (id: string) => {
-      state.log.push(`pool-delete:${id}`);
+    deleteDestination: jest.fn(async (id: string, artifactId?: string) => {
+      state.log.push(`pool-delete:${id}${artifactId ? `:${artifactId}` : ''}`);
       return state.pool.delete(id);
     }),
   };
@@ -312,9 +315,11 @@ function videoHangsUntilAborted() {
   tusWith(
     (opts) =>
       new Promise<void>((_, reject) => {
-        opts.signal.addEventListener('abort', () =>
-          reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
-        );
+        const abort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+        // Already aborted (cancelled before the video's turn): reject at once, as a real upload
+        // does, rather than hold up the drain for the tests that follow.
+        if (opts.signal.aborted) abort();
+        else opts.signal.addEventListener('abort', abort);
       }),
   );
 }
@@ -901,5 +906,105 @@ describe('view links', () => {
     expect(uploads.getWatchLink('v4')).toBeNull();
     expect(secure.links.has('v4')).toBe(false);
     await uploads.cancel('v4');
+  });
+});
+
+describe('a place’s destination', () => {
+  /** Claim the place's row `destId` for a draft: kept in the pool until the upload succeeds. */
+  const claimPlace = (draftId: string, destId = `dest-${draftId}`) => {
+    pool.pool.add(destId);
+    return uploads.claim({
+      draftId,
+      destinationId: destId,
+      destination: { server: SERVER, token: 'tok', artifactId: `art-${destId}` },
+      segments: [],
+      merged: { path: `/drafts/${draftId}/export.mp4`, durationMs: 1000 },
+      keep: true,
+    });
+  };
+
+  it('stays in the pool while its upload runs, and is removed once it succeeds', async () => {
+    videoHangsUntilAborted();
+    await claimPlace('p1');
+    await eventually(() => videoCalls().length > 0);
+    expect(pool.pool.has('dest-p1')).toBe(true);
+    await uploads.cancel('p1');
+
+    tusWith();
+    await claimPlace('p1');
+    await eventually(() => db.status.get('p1') === 'uploaded');
+    await eventually(() => !pool.pool.has('dest-p1'));
+
+    // Removed only while the row still holds this upload's link.
+    expect(pool.log).toEqual(['pool-delete:dest-p1:art-dest-p1']);
+  });
+
+  it('is kept by a failed upload, which says to tap Upload again', async () => {
+    tusWith(() => {
+      throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });
+    });
+
+    await claimPlace('p2');
+    await eventually(() => mockToast.mock.calls.length > 0);
+
+    expect(mockToast.mock.calls[0][0]).toMatch(/^Upload failed — tap Upload to try again/);
+    expect(db.status.get('p2')).toBeNull();
+    expect(pool.pool.has('dest-p2')).toBe(true);
+    expect(pool.log).toEqual([]);
+  });
+
+  it('is kept by a cancelled upload', async () => {
+    videoHangsUntilAborted();
+    await claimPlace('p3');
+    await eventually(() => videoCalls().length > 0);
+
+    await uploads.cancel('p3');
+
+    expect(db.status.get('p3')).toBeNull();
+    expect(pool.pool.has('dest-p3')).toBe(true);
+  });
+
+  it('can’t be claimed by a second draft while it is uploading', async () => {
+    videoHangsUntilAborted();
+    await claimPlace('p4', 'shared-place');
+    await eventually(() => videoCalls().length > 0);
+
+    await claimPlace('p5', 'shared-place');
+
+    expect(mockToast).toHaveBeenCalledWith(
+      'That link is uploading another draft — wait for it to finish.',
+    );
+    expect(db.status.get('p5') ?? null).toBeNull();
+    expect(videoCalls()).toHaveLength(1);
+    await uploads.cancel('p4');
+  });
+
+  it('says to open its link again when the link has expired', async () => {
+    mockIsTokenExpired.mockReturnValueOnce(true);
+
+    await claimPlace('p6');
+    await eventually(() => mockToast.mock.calls.length > 0);
+
+    expect(mockToast).toHaveBeenCalledWith('Upload link expired — open its link again to upload.');
+    expect(db.status.get('p6')).toBeNull();
+  });
+});
+
+describe('a cancel around the claim', () => {
+  it('that lands before the pairing is written still leaves the draft unpaired', async () => {
+    // The cancel runs while the pairing is being written: it finds nothing to unpair yet.
+    const pair = jest.mocked(setUploadDestination).getMockImplementation()!;
+    jest.mocked(setUploadDestination).mockImplementationOnce(async (draftId, destination) => {
+      await uploads.cancel(draftId);
+      await pair(draftId, destination);
+    });
+    tusWith();
+
+    await claim('x1');
+
+    expect(db.log).toEqual(['pair:x1', 'burn:x1']);
+    expect(db.status.get('x1')).toBeNull();
+    expect(uploads.getDraftState('x1')).toEqual({ status: 'idle' });
+    expect(mockUploadViaTus).not.toHaveBeenCalled();
   });
 });

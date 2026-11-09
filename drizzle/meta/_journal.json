@@ -134,6 +134,13 @@
       "when": 1792200279199,
       "tag": "0018_caption_edits",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1794267575371,
+      "tag": "0019_link_places",
+      "breakpoints": true
     }
   ]
 }

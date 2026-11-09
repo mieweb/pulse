@@ -26,6 +26,11 @@ export type UploadSession = {
   /** The captions as composed when Upload was tapped (what the export screen showed), so a model
    * switch while the upload waits can't drop them; null if they couldn't be read then. */
   captions: { lines: CaptionLine[]; y: number | null } | null;
+  /**
+   * Set when the link named a place: its pool row, kept until this upload succeeds (then removed),
+   * so a failure doesn't spend the link and Upload is the retry.
+   */
+  keptDestinationId?: string;
 };
 
 export type UploadProgress = { bytesSent: number; totalBytes: number };

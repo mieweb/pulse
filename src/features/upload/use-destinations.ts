@@ -21,6 +21,12 @@ export type DestinationOption = {
   id: string;
   server: string;
   artifactId: string;
+  /** Set when the link named the place its upload is for: the host's key for that place. */
+  ref: string | null;
+  /** The link's names for the place and the host page to return to (links with a `ref` only). */
+  label: string | null;
+  app: string | null;
+  returnUrl: string | null;
   token: string | null;
   /** Millisecond `exp` for a decodable token, else `null` (tokenless = no known expiry). */
   expiresAtMs: number | null;
@@ -100,6 +106,10 @@ export function useDestinations() {
           id: r.id,
           server: r.server,
           artifactId: r.artifactId,
+          ref: r.ref,
+          label: r.label,
+          app: r.app,
+          returnUrl: r.returnUrl,
           token: r.token,
           expiresAtMs: expiresAtMs(r.token),
           expiryLabel: formatExpiry(r.token, now),

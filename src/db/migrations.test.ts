@@ -228,3 +228,53 @@ describe('0016_single_shot_uploads', () => {
     ).toBeUndefined();
   });
 });
+
+describe('0019_link_places', () => {
+  let db: DatabaseSync;
+
+  beforeEach(() => {
+    db = new DatabaseSync(':memory:');
+    applyMigrations(db, (f) => f < '0019');
+  });
+
+  it('leaves every existing destination and draft as it was, with no place', () => {
+    db.prepare(
+      `INSERT INTO upload_destinations (id, server, artifact_id, created_at) VALUES ('a', 'https://a.test', 'art-a', 111)`,
+    ).run();
+    db.prepare(`INSERT INTO drafts (id, name) VALUES ('d1', 'Old')`).run();
+
+    applyMigrations(db, (f) => f.startsWith('0019'));
+
+    expect(db.prepare('SELECT * FROM upload_destinations').all()).toEqual([
+      {
+        id: 'a',
+        server: 'https://a.test',
+        artifact_id: 'art-a',
+        ref: null,
+        label: null,
+        app: null,
+        return_url: null,
+        created_at: 111,
+      },
+    ]);
+    expect(db.prepare('SELECT name, context_server, context_ref FROM drafts').get()).toEqual({
+      name: 'Old',
+      context_server: null,
+      context_ref: null,
+    });
+  });
+
+  it('allows one destination per (server, ref), and any number without a ref', () => {
+    applyMigrations(db, (f) => f.startsWith('0019'));
+    const insert = db.prepare(
+      `INSERT INTO upload_destinations (id, server, artifact_id, ref) VALUES (?, ?, ?, ?)`,
+    );
+    insert.run('p1', 'https://a.test', 'art-1', 'r1');
+    insert.run('p2', 'https://a.test', 'art-2', 'r2');
+    insert.run('p3', 'https://b.test', 'art-3', 'r1');
+    expect(() => insert.run('p4', 'https://a.test', 'art-4', 'r1')).toThrow(/UNIQUE/);
+    // Plain links (ref NULL) never collide on the index.
+    insert.run('d1', 'https://a.test', 'art-5', null);
+    insert.run('d2', 'https://a.test', 'art-6', null);
+  });
+});

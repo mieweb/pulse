@@ -80,7 +80,7 @@ export function DestinationsFloat() {
           maxFontSizeMultiplier={1.6}
           style={styles.pillLabel}>
           {destinations.length === 1
-            ? hostOf(destinations[0].server)
+            ? (destinations[0].label ?? hostOf(destinations[0].server))
             : formatCount(destinations.length, 'destination', 'destinations')}
         </ThemedText>
       </Pressable>

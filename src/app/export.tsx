@@ -1,5 +1,6 @@
 import { useEvent } from 'expo';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
+import * as Linking from 'expo-linking';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -96,8 +97,11 @@ export default function ExportScreen() {
   // Uploading needs the video, so the Upload button waits for the merge. It only shows a spinner
   // while the merge runs — a failed merge has its own Retry above, so the button just stays disabled.
   const uploadReady = state.status === 'done';
-  // Host plus path, so two servers on one host ("…/team-a", "…/team-b") don't read the same.
-  const selectedHost = upload.selectedDestination ? hostOf(upload.selectedDestination.server) : '';
+  // Host plus path, so two servers on one host ("…/team-a", "…/team-b") don't read the same. A
+  // place's own label says it better.
+  const selectedHost = upload.selectedDestination
+    ? (upload.selectedDestination.label ?? hostOf(upload.selectedDestination.server))
+    : '';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
   const uState = upload.state;
@@ -114,6 +118,20 @@ export default function ExportScreen() {
   const justFinished = announcement && announcement.seq > seqAtOpen ? announcement : null;
   const finishedLink = useWatchLink(justFinished ? (draftId ?? null) : null);
   const finished = justFinished && finishedLink ? { ...justFinished, link: finishedLink } : null;
+  // The host page a place's link came from, to go back to once the upload is in.
+  const { returnTo } = upload;
+  const backToHost = returnTo && (
+    <PrimaryButton
+      // Names the page it opens: the app's name is the link's word, the host is where it goes.
+      label={
+        returnTo.app === returnTo.host
+          ? `Back to ${returnTo.host}`
+          : `Back to ${returnTo.app} · ${returnTo.host}`
+      }
+      icon="arrow.uturn.backward"
+      onPress={() => void Linking.openURL(returnTo.url).catch(() => {})}
+    />
+  );
   const close = useCallback(() => {
     if (!uploading) closeToHome();
     else if (router.canDismiss()) router.dismissAll();
@@ -147,24 +165,34 @@ export default function ExportScreen() {
   // The pool selector + claim button, shared by every non-uploading state — including a draft
   // that was already uploaded before (claiming re-pairs it and restarts cleanly, see `claim`),
   // so a destination paired after a finished upload is always reachable.
-  const selectorAndUpload = upload.destinations.length > 0 && (
+  const selectorAndUpload = (upload.destinations.length > 0 || upload.missingContext) && (
     <>
-      <DestinationSelector
-        destinations={upload.destinations}
-        selectedId={upload.selectedId}
-        onSelect={upload.setSelectedId}
-      />
-      {/* The section is already titled Upload: the icon and the destination say the rest.
-          Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
-      <PrimaryButton
-        label={state.status === 'merging' ? 'Preparing video…' : selectedHost || 'Upload'}
-        icon="icloud.and.arrow.up"
-        busy={state.status === 'merging'}
-        truncateMiddle={state.status !== 'merging'}
-        onPress={() => void upload.claim(upload.selectedId)}
-        disabled={!upload.selectedId || !uploadReady}
-        accessibilityLabel={selectedHost ? `Upload to ${selectedHost}` : 'Upload'}
-      />
+      {/* The draft's own destination is gone, and it never falls back to another one. */}
+      {upload.missingContext && !upload.selectedId && (
+        <ThemedText type="footnote" themeColor="textSecondary" accessibilityRole="text">
+          {`Open the link from ${upload.missingContext} again to upload.`}
+        </ThemedText>
+      )}
+      {upload.destinations.length > 0 && (
+        <>
+          <DestinationSelector
+            destinations={upload.destinations}
+            selectedId={upload.selectedId}
+            onSelect={upload.setSelectedId}
+          />
+          {/* The section is already titled Upload: the icon and the destination say the rest.
+              Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
+          <PrimaryButton
+            label={state.status === 'merging' ? 'Preparing video…' : selectedHost || 'Upload'}
+            icon="icloud.and.arrow.up"
+            busy={state.status === 'merging'}
+            truncateMiddle={state.status !== 'merging'}
+            onPress={() => void upload.claim(upload.selectedId)}
+            disabled={!upload.selectedId || !uploadReady}
+            accessibilityLabel={selectedHost ? `Upload to ${selectedHost}` : 'Upload'}
+          />
+        </>
+      )}
     </>
   );
 
@@ -299,7 +327,10 @@ export default function ExportScreen() {
             unpaired again, and scanning a new link is the retry. A previously-uploaded draft
             with nothing to pick shows no upload UI at all (§ post-upload UX — no persistent
             buttons). */}
-        {(upload.destinations.length > 0 || uState.status === 'uploading' || finished) && (
+        {(upload.destinations.length > 0 ||
+          upload.missingContext ||
+          uState.status === 'uploading' ||
+          finished) && (
           <View style={styles.uploadSection}>
             <SectionHeader title="Upload" />
 
@@ -327,24 +358,29 @@ export default function ExportScreen() {
             ) : finished ? (
               // Side by side in one 52pt row — the same space the Upload button took, so the
               // preview doesn't shrink when the upload finishes. The "link copied" toast
-              // covers what the old note under these buttons said.
-              <View style={styles.finishedRow}>
-                <PrimaryButton
-                  label="Watch"
-                  icon="play.fill"
-                  onPress={() => void watchUpload(finished.link.url)}
-                  style={styles.rowButton}
-                />
-                {/* Only a link that's safe to share — never one carrying the upload token. */}
-                {finished.link.shareable && (
+              // covers what the old note under these buttons said. An upload to the draft's own
+              // place adds "Back to <app>" above them, the step the person most likely wants next.
+              <View style={styles.finishedStack}>
+                {backToHost}
+                <View style={styles.finishedRow}>
                   <PrimaryButton
-                    variant="card"
-                    label="Share link"
-                    icon="square.and.arrow.up"
-                    onPress={() => void shareUploadLink(finished.link.url).catch(() => {})}
+                    variant={returnTo ? 'card' : 'filled'}
+                    label="Watch"
+                    icon="play.fill"
+                    onPress={() => void watchUpload(finished.link.url)}
                     style={styles.rowButton}
                   />
-                )}
+                  {/* Only a link that's safe to share — never one carrying the upload token. */}
+                  {finished.link.shareable && (
+                    <PrimaryButton
+                      variant="card"
+                      label="Share link"
+                      icon="square.and.arrow.up"
+                      onPress={() => void shareUploadLink(finished.link.url).catch(() => {})}
+                      style={styles.rowButton}
+                    />
+                  )}
+                </View>
               </View>
             ) : (
               selectorAndUpload
@@ -598,6 +634,7 @@ const styles = StyleSheet.create({
   uploadingLabel: { flex: 1, fontVariant: ['tabular-nums'] },
   pressed: { opacity: Opacity.pressed },
   pressedIcon: { opacity: Opacity.pressedGlyph },
+  finishedStack: { gap: Spacing.two },
   finishedRow: { flexDirection: 'row', gap: Spacing.two },
   rowButton: { flex: 1 },
 });

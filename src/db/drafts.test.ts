@@ -5,9 +5,12 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 // result; writes resolve empty and are recorded (with their `.set()` payload) so a test can
 // assert what a mutation did — or that it did nothing.
 const mockSelects: unknown[][] = [];
-const mockWrites: { op: string; set?: unknown }[] = [];
+const mockWrites: { op: string; set?: unknown; values?: unknown }[] = [];
 
-function mockChain(resolve: () => unknown, write?: { op: string; set?: unknown }): unknown {
+function mockChain(
+  resolve: () => unknown,
+  write?: { op: string; set?: unknown; values?: unknown },
+): unknown {
   const proxy: unknown = new Proxy(() => {}, {
     get(_target, prop) {
       if (prop === 'then') {
@@ -18,6 +21,7 @@ function mockChain(resolve: () => unknown, write?: { op: string; set?: unknown }
       if (prop === 'get') return () => (resolve() as unknown[])[0];
       return (...args: unknown[]) => {
         if (prop === 'set' && write) write.set = args[0];
+        if (prop === 'values' && write) write.values = args[0];
         return proxy;
       };
     },
@@ -64,7 +68,9 @@ import { generateThumbnailFile } from '@/utils/video';
 
 import {
   addSegment,
+  createDraft,
   deleteDraft,
+  draftDisplayName,
   deleteSegment,
   renameDraft,
   reorderSegments,
@@ -189,5 +195,34 @@ describe('edit state', () => {
       editedDurationMs: null,
       editState: null,
     });
+  });
+});
+
+describe('draft names', () => {
+  beforeEach(() => {
+    mockSelects.length = 0;
+    mockWrites.length = 0;
+  });
+
+  it('a draft from a link for a place takes the link’s name, or none, and remembers the place', async () => {
+    const context = { server: 'https://vault.example.org', ref: 'u1:huddle:t1' };
+    await createDraft({ name: 'Huddle update', context });
+    await createDraft({ name: null, context });
+    expect(mockWrites.map((w) => w.values)).toEqual([
+      {
+        id: 'uuid',
+        name: 'Huddle update',
+        contextServer: context.server,
+        contextRef: context.ref,
+      },
+      { id: 'uuid', name: null, contextServer: context.server, contextRef: context.ref },
+    ]);
+  });
+
+  it('shows a draft’s own name, else its destination’s label, else Untitled', () => {
+    expect(draftDisplayName('Huddle update', 'Team · Huddle')).toBe('Huddle update');
+    expect(draftDisplayName(null, 'Team · Huddle')).toBe('Team · Huddle');
+    expect(draftDisplayName('', 'Team · Huddle')).toBe('Team · Huddle');
+    expect(draftDisplayName(null, null)).toBe('Untitled');
   });
 });
