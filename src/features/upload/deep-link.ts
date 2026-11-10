@@ -176,45 +176,28 @@ export function pairingLinkParams(url: string, linkHost?: string | null): string
 }
 
 /**
- * A link's parameters, decoded as PROTOCOL.md §3 says: `application/x-www-form-urlencoded` in
- * UTF-8 — `name=value` pairs joined by `&`, a `+` for a space, the rest percent-encoded. The
- * first value of a name counts. A pair that isn't valid percent-encoded UTF-8 is no parameter at
- * all (a link can be written by anyone, and a stray `%` must not be an error).
- *
- * Decoded here rather than by `URLSearchParams`: React Native's cuts a value at its first `=`
- * and throws on a malformed escape.
+ * A token as a link may carry one: it is forwarded unchanged in a request header, so it is one
+ * or more visible ASCII characters. Anything else — empty, or with a space, a control character
+ * or a letter outside ASCII, which is what a damaged or wrongly encoded link leaves — can't be
+ * forwarded at all.
  */
-function formParams(query: string): Map<string, string> {
-  const params = new Map<string, string>();
-  const decode = (part: string) => decodeURIComponent(part.replace(/\+/g, ' '));
-  for (const pair of query.split('&')) {
-    if (!pair) continue;
-    const equals = pair.indexOf('=');
-    try {
-      const name = decode(equals < 0 ? pair : pair.slice(0, equals));
-      const value = equals < 0 ? '' : decode(pair.slice(equals + 1));
-      if (!params.has(name)) params.set(name, value);
-    } catch {
-      // Not a parameter.
-    }
-  }
-  return params;
-}
+const USABLE_TOKEN = /^[\x21-\x7e]+$/;
 
 /**
  * Parse and validate an upload pairing link, in either form `pairingLinkParams` takes. Rejects
  * anything the app can't safely act on — an unrecognized version, a malformed artifactId, a
- * server origin that isn't HTTPS (except the explicit localhost/private-IP dev allowance) —
- * rather than guessing. A token with a `ref` claim makes it a link for that place (`place`), with
+ * server origin that isn't HTTPS (except the explicit localhost/private-IP dev allowance), a
+ * token that can't be sent — rather than guessing. A token with a `ref` claim makes it a link for that place (`place`), with
  * the link's naming hints; without one it is a plain one-use upload, exactly as before.
  */
 export function parseUploadDeepLink(url: string, linkHost?: string | null): DeepLinkResult {
   const query = pairingLinkParams(url, linkHost);
   if (query === null) return { ok: false, reason: 'invalid-link' };
 
-  // The same parameter string, whichever form the link took.
-  const params = formParams(query);
-  const param = (key: string): string | null => params.get(key) ?? null;
+  // The same parameter string, whichever form the link took: `application/x-www-form-urlencoded`
+  // (PROTOCOL.md §3), which `URLSearchParams` decodes. The first value of a name counts.
+  const params = new URLSearchParams(query);
+  const param = (key: string): string | null => params.get(key);
 
   if (param('v') !== SUPPORTED_LINK_VERSION) {
     return { ok: false, reason: 'unsupported-version' };
@@ -231,7 +214,11 @@ export function parseUploadDeepLink(url: string, linkHost?: string | null): Deep
   // collapsing to just `.origin` would silently drop the prefix the operator
   // mounted pulsevault at, breaking every subsequent request.
   const server = rawServer.replace(/\/$/, '');
+
+  // A link that has a token it can't use is damaged: it is never paired as if it had none,
+  // to spend its upload on a refusal.
   const token = param('token');
+  if (token !== null && !USABLE_TOKEN.test(token)) return { ok: false, reason: 'invalid-link' };
 
   // Any other param (e.g. `uploadUnit` from an older server) is ignored, not rejected (PROTOCOL §3).
   // The place this upload is for is read from the token's signed `ref` claim, never from the URL:

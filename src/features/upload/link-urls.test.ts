@@ -5,19 +5,24 @@ import { hasNonAsciiHost, hostOf } from '@/utils/format';
 import { parseUploadDeepLink, readReturnUrl } from './deep-link';
 
 /**
- * The URLs a link carries (`server`, `return`) are read by the platform's `URL`. In the app that
- * is `whatwg-url-minimum`, which Expo installs as the global (expo/src/winter/runtime.native.ts);
- * under Jest it is Node's. Both are WHATWG parsers; Node's also does IDNA, and is the oracle.
+ * A link's parameters are decoded by the platform's `URLSearchParams`, and the URLs among them
+ * (`server`, `return`) read by its `URL`. In the app both are `whatwg-url-minimum`'s, which Expo
+ * installs as the globals (expo/src/winter/runtime.native.ts); under Jest they are Node's. Both
+ * are WHATWG implementations; Node's also does IDNA, and is the oracle.
  *
  * Every check here runs under each of the two, over a corpus of hostile shapes, and compares
  * with the rule the released app applies (`mainAccepts`, main's check word for word): this
  * branch accepts nothing that rule refuses, and the host it shows is the host the parser reads.
  */
 const NodeURL = globalThis.URL;
-const { URL: AppURL } = jest.requireActual<{ URL: typeof URL }>('whatwg-url-minimum');
-const PARSERS: [string, typeof URL][] = [
-  ['Node’s URL (the oracle)', NodeURL],
-  ['whatwg-url-minimum (the app’s URL)', AppURL],
+const NodeURLSearchParams = globalThis.URLSearchParams;
+const { URL: AppURL, URLSearchParams: AppURLSearchParams } = jest.requireActual<{
+  URL: typeof URL;
+  URLSearchParams: typeof URLSearchParams;
+}>('whatwg-url-minimum');
+const PARSERS: [string, typeof URL, typeof URLSearchParams][] = [
+  ['Node’s URL (the oracle)', NodeURL, NodeURLSearchParams],
+  ['whatwg-url-minimum (the app’s URL)', AppURL, AppURLSearchParams],
 ];
 
 const cp = String.fromCodePoint;
@@ -223,12 +228,43 @@ function accepted(raw: string): string | null {
   return result.ok ? result.link.server : null;
 }
 
-describe.each(PARSERS)('a link’s URLs, read by %s', (_name, Parser) => {
+describe.each(PARSERS)('a link’s URLs, read by %s', (_name, Parser, Params) => {
   beforeAll(() => {
     globalThis.URL = Parser;
+    globalThis.URLSearchParams = Params;
   });
   afterAll(() => {
     globalThis.URL = NodeURL;
+    globalThis.URLSearchParams = NodeURLSearchParams;
+  });
+
+  it('decodes a link’s parameters as form-urlencoded, without ever failing', () => {
+    const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const parse = (params: string) =>
+      parseUploadDeepLink(`pulsecam://?v=1&artifactId=${id}&${params}`);
+    // A value keeps its `=` signs and a stray `%`; a `+` is a space; the first value counts.
+    expect(parse('server=https://vault.example.org/pv?a=b&token=abc=def%zz')).toEqual({
+      ok: true,
+      link: { artifactId: id, server: 'https://vault.example.org/pv?a=b', token: 'abc=def%zz' },
+    });
+    expect(
+      parse('server=https%3A%2F%2Fvault.example.org&server=https://other.example.org'),
+    ).toEqual({
+      ok: true,
+      link: { artifactId: id, server: 'https://vault.example.org', token: null },
+    });
+    expect(parse('server=+https://vault.example.org')).toEqual({
+      ok: false,
+      reason: 'invalid-link',
+    });
+    expect(parse('server=%ZZ&server=https://other.example.org')).toEqual({
+      ok: false,
+      reason: 'invalid-link',
+    });
+    expect(parse('server=https://vault.example.org&token=a+b')).toEqual({
+      ok: false,
+      reason: 'invalid-link',
+    });
   });
 
   it('has a corpus worth the name', () => {

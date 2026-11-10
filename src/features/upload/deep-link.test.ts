@@ -371,30 +371,59 @@ describe('parseUploadDeepLink: a link for a place', () => {
     });
   });
 
-  it('a hint that isn’t valid percent-encoded UTF-8 is absent, not an error', () => {
-    for (const bad of ['%', '%ZZ', '100%', '%E0%A4%A', '%C3%28', '%FF']) {
-      expect(placeOf(link(FOR_HUDDLE, `&label=${bad}&name=Update`))).toMatchObject({
-        label: null,
-        name: 'Update',
-      });
-    }
-  });
-
-  it('refuses a link whose required parameter can’t be decoded, without throwing', () => {
-    expect(
-      parseUploadDeepLink(
-        `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=https://vault.example.org/%ZZ`,
-      ),
-    ).toEqual({ ok: false, reason: 'invalid-link' });
+  it('keeps a stray percent sign as written: a malformed escape is no error', () => {
+    const label = (raw: string) => {
+      const place = placeOf(link(FOR_HUDDLE, `&label=${raw}&name=Update`));
+      return typeof place === 'object' ? [place.label, place.name] : place;
+    };
+    expect(label('100%')).toEqual(['100%', 'Update']);
+    expect(label('%ZZ')).toEqual(['%ZZ', 'Update']);
+    expect(label('50%25+off')).toEqual(['50% off', 'Update']);
+    // Bytes that aren't UTF-8 decode to the replacement character, as form decoding says.
+    expect(label('a%FFb')).toEqual([`a${String.fromCodePoint(0xfffd)}b`, 'Update']);
     expect(parseUploadDeepLink('pulsecam://?%=1&v=%')).toEqual({
       ok: false,
       reason: 'unsupported-version',
     });
   });
 
-  it('takes the first value of a parameter given twice', () => {
+  it('refuses a link whose token can’t be sent, rather than pairing it without one', () => {
+    const withToken = (token: string) =>
+      parseUploadDeepLink(
+        `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=${SERVER}&token=${token}`,
+      );
+    for (const token of [
+      '',
+      'abc+def',
+      'abc%20def',
+      'abc%0D%0AX-Other:%201',
+      'abc%FF',
+      'abc%C3%A9',
+    ]) {
+      expect(withToken(token)).toEqual({ ok: false, reason: 'invalid-link' });
+    }
+    // A token of another shape is still a token: kept exactly, stray percent sign and all.
+    for (const token of ['opaque', 'abc=def==', 'abc%zz.def', 'a.b.c']) {
+      expect(withToken(token)).toMatchObject({ ok: true, link: { token } });
+    }
+  });
+
+  it('takes the first value of a parameter given twice, usable or not', () => {
     expect(placeOf(link(FOR_HUDDLE, '&label=First&label=Second'))).toMatchObject({
       label: 'First',
+    });
+    for (const first of ['%ZZ', '', 'http://public.example.org']) {
+      expect(
+        parseUploadDeepLink(
+          `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=${first}&server=https://other.example.org`,
+        ),
+      ).toEqual({ ok: false, reason: 'invalid-link' });
+    }
+    expect(
+      parseUploadDeepLink(`pulsecam://?v=2&v=1&artifactId=${ARTIFACT_ID}&server=${SERVER}`),
+    ).toEqual({
+      ok: false,
+      reason: 'unsupported-version',
     });
   });
 
