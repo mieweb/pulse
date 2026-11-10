@@ -24,22 +24,57 @@ const VALID_CLAIMS = {
 };
 
 describe('decodeCapabilityClaims', () => {
-  it('decodes a well-formed token', () => {
-    expect(decodeCapabilityClaims(fakeToken(VALID_CLAIMS))).toEqual(VALID_CLAIMS);
+  it('reads the expiry of a well-formed token, and nothing else', () => {
+    expect(decodeCapabilityClaims(fakeToken(VALID_CLAIMS))).toEqual({ exp: VALID_CLAIMS.exp });
+    // Whatever else the server put in it is the server's (PROTOCOL.md §5.6).
+    expect(
+      decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ctx: { userId: 'u1' }, use: 'view' })),
+    ).toEqual({ exp: VALID_CLAIMS.exp });
   });
 
   it('reads the place the upload is for from a `ref` claim, non-ASCII included', () => {
-    for (const ref of ['u1:huddle:t1', 'équipe:☕', 'r'.repeat(200)]) {
-      expect(decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ref }))?.ref).toBe(ref);
+    for (const ref of ['u1:huddle:t1', 'équipe:☕', 'r'.repeat(200), '😀'.repeat(200)]) {
+      expect(decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ref }))).toEqual({
+        exp: VALID_CLAIMS.exp,
+        ref,
+      });
     }
   });
 
   it('reads no place from a `ref` that isn’t a string of 1 to 200 characters', () => {
-    for (const ref of ['', 'r'.repeat(201), 7, null, { id: 'r1' }]) {
+    for (const ref of ['', 'r'.repeat(201), '😀'.repeat(201), 7, null, { id: 'r1' }, ['r1']]) {
       const claims = decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ref }));
       // Still the token it was, for its expiry: only the place is unread.
-      expect(claims).toEqual(VALID_CLAIMS);
+      expect(claims).toEqual({ exp: VALID_CLAIMS.exp });
     }
+  });
+
+  it('reads the claims from the part before the first dot only', () => {
+    const [payload] = fakeToken({ ...VALID_CLAIMS, ref: 'real' }).split('.');
+    const [forged] = fakeToken({ ...VALID_CLAIMS, ref: 'forged' }).split('.');
+    expect(decodeCapabilityClaims(`${payload}.${forged}.sig`)?.ref).toBe('real');
+  });
+
+  it('reads nothing from claims that are not base64url without padding', () => {
+    const json = JSON.stringify({ ...VALID_CLAIMS, ref: 'r1??>>' });
+    const plain = Buffer.from(json, 'utf8').toString('base64');
+    // The test is only a test if plain base64 differs here: `+`, `/` or `=`.
+    expect(plain).toMatch(/[+/=]/);
+    expect(decodeCapabilityClaims(`${plain}.sig`)).toBeNull();
+    const [payload] = fakeToken(VALID_CLAIMS).split('.');
+    expect(decodeCapabilityClaims(`${payload}=.sig`)).toBeNull();
+    // A length no base64 encoding produces.
+    expect(decodeCapabilityClaims('abcde.sig')).toBeNull();
+  });
+
+  it('reads nothing from claims that are not the UTF-8 text of one JSON object', () => {
+    const encoded = (bytes: Buffer | string) => `${Buffer.from(bytes).toString('base64url')}.sig`;
+    for (const text of ['null', '[]', '"exp"', '7', 'true', '']) {
+      expect(decodeCapabilityClaims(encoded(text))).toBeNull();
+    }
+    // Latin-1 bytes: valid JSON to a byte-for-byte reader, but not UTF-8.
+    const latin1 = Buffer.from(JSON.stringify({ ...VALID_CLAIMS, ref: 'équipe' }), 'latin1');
+    expect(decodeCapabilityClaims(encoded(latin1))).toBeNull();
   });
 
   it('returns null for a token with no dot separator', () => {
@@ -66,15 +101,21 @@ describe('decodeCapabilityClaims', () => {
 
 describe('isClaimsExpired', () => {
   it('is false well before expiry', () => {
-    expect(isClaimsExpired(VALID_CLAIMS, 10_000, VALID_CLAIMS.exp * 1000 - 60_000)).toBe(false);
+    expect(
+      isClaimsExpired({ exp: VALID_CLAIMS.exp }, 10_000, VALID_CLAIMS.exp * 1000 - 60_000),
+    ).toBe(false);
   });
 
   it('is true once past expiry', () => {
-    expect(isClaimsExpired(VALID_CLAIMS, 10_000, VALID_CLAIMS.exp * 1000 + 1)).toBe(true);
+    expect(isClaimsExpired({ exp: VALID_CLAIMS.exp }, 10_000, VALID_CLAIMS.exp * 1000 + 1)).toBe(
+      true,
+    );
   });
 
   it('is true inside the safety buffer even though exp has not technically passed', () => {
-    expect(isClaimsExpired(VALID_CLAIMS, 10_000, VALID_CLAIMS.exp * 1000 - 5_000)).toBe(true);
+    expect(
+      isClaimsExpired({ exp: VALID_CLAIMS.exp }, 10_000, VALID_CLAIMS.exp * 1000 - 5_000),
+    ).toBe(true);
   });
 });
 
