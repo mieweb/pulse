@@ -119,13 +119,14 @@ describe('parseUploadDeepLink: the server a link names', () => {
       `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=${encodeURIComponent(server)}`,
     );
 
-  it('holds the rule to the host requests go to, not one hidden after an @ in the path', () => {
-    // Plain http to a public host, dressed as a private address or localhost.
+  it('holds the plain-http rule to the host, wherever else an address appears in the URL', () => {
+    // Plain http to a public host, with a private address or localhost in its path or query.
     for (const server of [
       'http://evil.example/a@192.168.1.1',
       'http://evil.example/a@localhost',
       'http://evil.example?x@10.0.0.1',
       'http://evil.example#@127.0.0.1',
+      'http://192.168.1.1@evil.example/',
     ]) {
       expect(linkTo(server)).toEqual({ ok: false, reason: 'invalid-link' });
     }
@@ -134,12 +135,25 @@ describe('parseUploadDeepLink: the server a link names', () => {
     expect(linkTo('http://localhost:3000').ok).toBe(true);
   });
 
-  it('refuses a server URL whose host two parsers could read differently', () => {
+  it('takes an address only as the parser writes one: a name that resembles one is no address', () => {
+    for (const server of ['http://10.0.0.256', 'http://10.1.1.999', 'http://192.168.1.300']) {
+      expect(linkTo(server)).toEqual({ ok: false, reason: 'invalid-link' });
+    }
+  });
+
+  it('refuses a server URL with whitespace, a control character or a backslash', () => {
     const cp = String.fromCodePoint;
     for (const server of [
+      // The parser reads a backslash as a slash; the string requests are built from keeps it.
       `https://good.example.org${cp(0x5c)}@evil.example/`,
+      // It drops tabs and line breaks, and spaces at the ends.
+      `https://good.example.org${cp(0x09)}.evil.example/`,
+      `https://good.example.org/pulsevault${cp(0x0a)}`,
+      ' https://good.example.org',
       'https://good.example.org /pulsevault',
-      'https://',
+      // Escaped, a control character is decoded into the host, where it can't be seen.
+      'https://%7fgood.example.org/',
+      'https://good.example.org%20/',
     ]) {
       expect(linkTo(server)).toEqual({ ok: false, reason: 'invalid-link' });
     }
@@ -313,14 +327,14 @@ describe('parseUploadDeepLink: a link for a place', () => {
     expect(returning(base + '😀'.repeat(512 - base.length))).not.toBeNull();
   });
 
-  it('ignores a return URL whose host two parsers could read differently', () => {
+  it('ignores a return URL with whitespace, a control character or a backslash, like a server', () => {
     const cp = String.fromCodePoint;
     for (const url of [
       `https://good.example.org${cp(0x5c)}@evil.example/`,
       'https://good.example.org%2f@evil.example/',
       'https://good.example.org /page',
       `https://good.example.org/${cp(0x0a)}page`,
-      'https:///evil.example',
+      'https://%7fgood.example.org/page',
       'https://',
     ]) {
       expect(readReturnUrl(url)).toBeNull();

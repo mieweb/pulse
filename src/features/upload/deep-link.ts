@@ -1,6 +1,5 @@
 import { cleanDisplayText, codePointLength, cutToFit } from '@/utils/display-text';
 import { DRAFT_NAME_MAX_LENGTH } from '@/utils/draft-name';
-import { type HttpUrl, parseHttpUrl } from '@/utils/http-url';
 
 import { decodeCapabilityClaims } from './capability-token';
 
@@ -57,35 +56,63 @@ export type DeepLinkResult =
   | { ok: true; link: UploadDeepLink }
   | { ok: false; reason: 'unsupported-version' | 'invalid-link' };
 
+/** One part of a dotted address as the URL parser writes it: 0 to 255, no leading zero. */
+const OCTET = '(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)';
+const address = (start: string, rest: number) =>
+  new RegExp(`^${start}${`\\.${OCTET}`.repeat(rest)}$`);
+
+const PRIVATE_ADDRESSES = [
+  address('10', 3),
+  address('192\\.168', 2),
+  address('172\\.(?:1[6-9]|2\\d|3[01])', 2),
+  address('100\\.(?:6[4-9]|[7-9]\\d|1[01]\\d|12[0-7])', 2), // RFC 6598, 100.64.0.0/10
+  address('169\\.254', 2), // link-local
+];
+
 /**
  * Private/dev origins allowed over plain http — never extended beyond
  * non-globally-routable address space (RFC 1918 private ranges, RFC 6598
  * carrier-grade-NAT shared space used by some mesh routers/ISP setups, and
  * link-local) plus loopback/localhost. Never extended to a public IP or
- * domain just because it "looks internal."
+ * domain just because it "looks internal": the host has to be an address as the parser writes
+ * one, so a name that only resembles one (`10.0.0.08`) isn't.
  */
-function isPrivateDevOrigin(url: HttpUrl): boolean {
+function isPrivateDevOrigin(url: URL): boolean {
   if (url.protocol !== 'http:') return false;
   const host = url.hostname;
   return (
     host === 'localhost' ||
     host === '127.0.0.1' ||
-    /^10\.\d+\.\d+\.\d+$/.test(host) ||
-    /^192\.168\.\d+\.\d+$/.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(host) ||
-    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/.test(host) || // RFC 6598, 100.64.0.0/10
-    /^169\.254\.\d+\.\d+$/.test(host) // link-local
+    PRIVATE_ADDRESSES.some((range) => range.test(host))
   );
 }
 
 /**
- * An https URL, or an http one on a private/dev origin, with the host it really leads to
- * (`parseHttpUrl`: the rule is checked against that host, never one a URL only appears to
- * have); `null` for anything else.
+ * Characters a URL from a link may not have: whitespace, control characters and a backslash.
+ * The URL parser strips tabs, line breaks and spaces at the ends, and reads a backslash as `/`,
+ * before it reads the host; but the string Pulse keeps, and builds every request from, is the one
+ * the link carried. Refusing these keeps the host that is checked and shown the host of that
+ * very string, whichever parser reads it next (the system's, for a request or a browser). The
+ * rest of whitespace and the control characters go with them: none can be seen in a host.
  */
-function parseAllowedUrl(raw: string | null | undefined): HttpUrl | null {
-  const url = raw ? parseHttpUrl(raw) : null;
-  return url && (url.protocol === 'https:' || isPrivateDevOrigin(url)) ? url : null;
+const NOT_IN_A_LINK_URL = /[\s\\\p{Cc}]/u;
+
+/**
+ * An https URL, or an http one on a private/dev origin, as the platform's `URL` reads it; `null`
+ * for anything else. The rule is checked against the parsed host, and so is what is shown — which
+ * is why a host with an escaped space or control character (`%7f`), decoded where it can't be
+ * seen, is refused as well.
+ */
+function parseAllowedUrl(raw: string | null | undefined): URL | null {
+  if (!raw || NOT_IN_A_LINK_URL.test(raw)) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (NOT_IN_A_LINK_URL.test(url.host)) return null;
+  return url.protocol === 'https:' || isPrivateDevOrigin(url) ? url : null;
 }
 
 /** A place's `label` as shown: one clean line of at most 60 characters, or `null`. */
@@ -114,19 +141,13 @@ function draftName(raw: string | null): string | null {
  * it opens: at most 512 characters, `https://` (or `http://` to a private/dev origin, as `server`),
  * and no username or password — `https://app.example.org@evil.example/` reads as the first host
  * and opens the second. `null` for anything else, which is then ignored.
- *
- * The host shown must be the host opened, so a URL two parsers could read differently is refused
- * too (`parseHttpUrl`), as is anything but letters, digits and `.-_:[]` in its host (non-ASCII
- * letters pass, and the caller flags them). A URL built by PulseVault's `buildUploadLink` is
- * normalized and has none of these.
  */
 export function readReturnUrl(
   raw: string | null | undefined,
 ): { url: string; host: string } | null {
   if (!raw || codePointLength(raw) > MAX_RETURN_URL_LENGTH) return null;
   const url = parseAllowedUrl(raw);
-  if (!url || url.credentials) return null;
-  if (!/^[a-z0-9.\-_:[\]\u{80}-\u{10FFFF}]+$/u.test(url.host)) return null;
+  if (!url || url.username !== '' || url.password !== '') return null;
   return { url: raw, host: url.host };
 }
 
@@ -140,8 +161,7 @@ export const PAIRING_LINK_PATH = '/pulse/open';
  * - `https://<linkHost>/pulse/open#<params>`: the Universal Link / App Link form (#252). The
  *   parameters ride in the fragment, so the link host never receives the token.
  *
- * Parsed by hand (not via expo-linking or `URL`) so this stays a dependency-free pure function —
- * React Native's `URL` cuts `hash` at the first `/`, which an unencoded `server=https://…` has.
+ * Parsed by hand (not via expo-linking) so this stays a dependency-free pure function.
  */
 export function pairingLinkParams(url: string, linkHost?: string | null): string | null {
   if (url.startsWith('pulsecam://')) {
