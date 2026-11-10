@@ -39,10 +39,18 @@ describe('graphemes', () => {
       '日本語のテキスト',
       'العربية نص',
       `e${ZWJ}x`,
+      // Thai and Lao: the vowel sign AM stays with its consonant, like any vowel or tone mark.
+      `${cp(0xe01, 0xe33)}${cp(0xe19, 0xe49, 0xe33)} ${cp(0xe04, 0xe33)}`,
+      `${cp(0xe99, 0xec9, 0xeb3)} ${cp(0xe81, 0xeb3)}`,
       '',
     ]) {
       expect(graphemes(text)).toEqual(reference(text));
     }
+  });
+
+  it('never cuts a Thai name between a consonant and its vowel', () => {
+    const nam = cp(0xe19, 0xe49, 0xe33); // "water": consonant, tone mark, vowel sign AM
+    expect(cutToFit(nam + nam, (candidate) => Array.from(candidate).length <= 5)).toBe(nam);
   });
 });
 
@@ -68,6 +76,23 @@ describe('cleanDisplayText', () => {
     for (const blank of [null, undefined, '', '   ', '\n', cp(0x200b), cp(0x202e) + cp(0xfeff)]) {
       expect(cleanDisplayText(blank, 60)).toBeNull();
     }
+    // What shows as nothing without being a space or a format character: a variation selector
+    // or accents with no letter, the Hangul fillers, the blank Braille pattern.
+    for (const blank of [
+      cp(0xfe0f),
+      cp(0x301, 0x301),
+      cp(0x3164, 0x115f, 0x1160, 0xffa0),
+      cp(0x2800),
+      ` ${cp(0x2800)} ${cp(0xfe0f)} `,
+    ]) {
+      expect(cleanDisplayText(blank, 60)).toBeNull();
+    }
+    // With something to see, the same characters stay where they were.
+    expect(cleanDisplayText(`${cp(0x2764, 0xfe0f)} e${cp(0x301)}`, 60)).toBe(
+      `${cp(0x2764, 0xfe0f)} e${cp(0x301)}`,
+    );
+    // Blank once cut, as the builder treats it: one character of 500 accents is none of 60.
+    expect(cleanDisplayText(`a${cp(0x301).repeat(500)}`, 60)).toBeNull();
   });
 
   it('cleans exactly the characters the protocol names', () => {

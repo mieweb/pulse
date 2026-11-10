@@ -12,8 +12,9 @@ export function codePointLength(text: string): number {
 }
 
 // What attaches to the character before it: combining and spacing marks, variation selectors,
-// skin tones, tag characters, and the joiner of an emoji sequence.
-const EXTENDS = /^[\p{Grapheme_Extend}\p{Mc}\p{Emoji_Modifier}\u{200D}]$/u;
+// skin tones, tag characters, and the joiner of an emoji sequence. The Thai and Lao vowel sign AM
+// (U+0E33, U+0EB3) is a spacing mark to a grapheme cluster though a letter by category.
+const EXTENDS = /^[\p{Grapheme_Extend}\p{Mc}\p{Emoji_Modifier}\u{200D}\u{0E33}\u{0EB3}]$/u;
 const PICTOGRAPH = /^\p{Extended_Pictographic}$/u;
 const REGIONAL_INDICATOR = /^\p{Regional_Indicator}$/u;
 const ZERO_WIDTH_JOINER = '\u{200D}';
@@ -41,8 +42,9 @@ function hangulJoins(before: string, after: string): boolean {
  * The text as the characters a person sees: an emoji sequence (a family, a flag, a skin tone), a
  * letter with its accents or a Hangul syllable is one, however many code points it takes. The
  * rules of Unicode's grapheme clusters (UAX #29) that matter for cutting a name, written out
- * because Hermes has no `Intl.Segmenter`. Where it differs from the full rules (a few Indic
- * conjuncts), it cuts between whole code points all the same.
+ * because Hermes has no `Intl.Segmenter`. Where it differs from the full rules (Indic conjuncts,
+ * the few characters that attach to the one after them), it cuts between whole code points all
+ * the same.
  */
 export function graphemes(text: string): string[] {
   const clusters: string[] = [];
@@ -85,8 +87,14 @@ export function cutToFit(text: string, fits: (candidate: string) => boolean): st
   return cut;
 }
 
-/** Nothing a person can see: only spaces and invisible formatting characters. */
-const BLANK = /^[\s\p{Cf}]*$/u;
+/**
+ * Nothing a person can see: only spaces, invisible formatting characters (Cf, and the rest of
+ * what Unicode says to render as nothing: variation selectors, the Hangul fillers), marks with no
+ * letter to sit on, and the blank Braille pattern. PulseVault's builder drops a hint of spaces and
+ * format characters; what else shows as nothing is the client's to decide, and a label that does
+ * falls back to the host like one that was never given.
+ */
+const BLANK = /^[\s\p{Cf}\p{M}\p{Default_Ignorable_Code_Point}\u{2800}]*$/u;
 
 /**
  * A host-supplied name as one line of plain text, at most `max` characters (code points), or
