@@ -12,11 +12,11 @@ import { CardShadow, Opacity, Radius, Spacing, type ThemeColor } from '@/constan
 import { useToast } from '@/features/toast/toast-provider';
 import { useTextScale } from '@/hooks/use-text-scale';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { hostOf } from '@/utils/format';
 import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
 
 import { DestinationLabel } from './destination-label';
+import { destinationSpokenName } from './destination-options';
 import { type DestinationOption, useDestinations } from './use-destinations';
 
 /**
@@ -203,7 +203,7 @@ function DestinationRow({
         onPress={onRemove}
         hitSlop={8}
         accessibilityRole="button"
-        accessibilityLabel={`Remove ${hostOf(server)}`}
+        accessibilityLabel={`Remove ${destinationSpokenName({ server, label })}`}
         style={({ pressed }) => [styles.delete, pressed && styles.pressed]}>
         <Icon name="trash" size={20} tintColor={theme.accent} />
       </Pressable>
