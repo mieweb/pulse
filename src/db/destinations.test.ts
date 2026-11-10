@@ -196,6 +196,26 @@ describe('a place’s destination', () => {
     expect((await order()).length).toBe(3);
   });
 
+  it('is the same place only when ref and server are equal exactly (PROTOCOL.md §5.6)', async () => {
+    const cp = String.fromCodePoint;
+    const rows = [
+      await addDestination(upload('art-1'), place('Ticket:42')),
+      // No case folding, and no Unicode normalization: "é" in one code point or in two.
+      await addDestination(upload('art-2'), place('ticket:42')),
+      await addDestination(upload('art-3'), place(cp(0xe9))),
+      await addDestination(upload('art-4'), place(`e${cp(0x301)}`)),
+      // Nor of the server: its case, its port and its path are compared as written.
+      await addDestination(upload('art-5', { server: SERVER.toUpperCase() }), place('Ticket:42')),
+      await addDestination(
+        upload('art-6', { server: SERVER.replace('.test', '.test:443') }),
+        place('Ticket:42'),
+      ),
+    ];
+    expect(new Set(rows).size).toBe(6);
+    // The same ref on the same server is the one row.
+    expect(await addDestination(upload('art-7'), place('Ticket:42'))).toBe(rows[0]);
+  });
+
   it('moves to the front of the pool when its place gets a newer link', async () => {
     const old = await addDestination(upload('art-1'), place('old'));
     const plain = await addDestination(upload('art-2'));

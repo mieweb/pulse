@@ -187,6 +187,27 @@ describe('parseUploadDeepLink: a link for a place', () => {
     return result.ok ? result.link.place : 'refused';
   };
 
+  it('names a place by its server and ref as written: one trailing slash off the server, no more', () => {
+    const at = (server: string, ref = 'Ticket:42') => {
+      const result = parseUploadDeepLink(
+        `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=${encodeURIComponent(server)}&token=${uploadToken({ ref })}`,
+      );
+      return result.ok ? [result.link.server, result.link.place?.ref] : null;
+    };
+    const server = 'https://vault.example.org/pulsevault';
+    expect(at(server)).toEqual([server, 'Ticket:42']);
+    expect(at(`${server}/`)).toEqual([server, 'Ticket:42']);
+    // One slash, not every one; and no folding of the host's case, its port or the key.
+    expect(at(`${server}//`)).toEqual([`${server}/`, 'Ticket:42']);
+    expect(at('https://VAULT.example.org/pulsevault')?.[0]).toBe(
+      'https://VAULT.example.org/pulsevault',
+    );
+    expect(at('https://vault.example.org:443/pulsevault')?.[0]).toBe(
+      'https://vault.example.org:443/pulsevault',
+    );
+    expect(at(server, 'ticket:42')).toEqual([server, 'ticket:42']);
+  });
+
   it('reads the place from the token’s ref claim, with the link’s hints', () => {
     const result = parseUploadDeepLink(
       link(
