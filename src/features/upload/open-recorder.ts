@@ -37,10 +37,26 @@ const samePlace = (a: DraftContext | null, b: DraftContext) =>
   a !== null && a.server === b.server && a.ref === b.ref;
 
 /**
+ * Longest a link waits for the take in progress and pending edits to be saved, and the place's
+ * draft found. A save never takes this long; one that hasn't settled by then is stuck.
+ */
+export const SAVE_TIMEOUT_MS = 10_000;
+
+/** `work`, or a rejection once `ms` have passed without it settling. */
+function within<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`not done after ${ms} ms`)), ms);
+    const settle = () => clearTimeout(timer);
+    work.then(resolve, reject).finally(settle);
+  });
+}
+
+/**
  * Open the recorder for a link's place. First the pairing sheet finishes closing and any recorder
  * saves the take in progress (as its Close does) and edits land; only then is the place's open
  * draft looked for, so a take the running recorder was still recording for it is found rather
- * than doubled by a second draft.
+ * than doubled by a second draft. A save that never settles (`SAVE_TIMEOUT_MS`) fails this link's
+ * recorder, with whatever is on screen left as it is, rather than hold up every link after it.
  *
  * If the recorder on screen is already the one the link asks for — on that draft, or opened for
  * that place with nothing recorded yet — it stays as it is: no second camera start for a link
@@ -51,10 +67,15 @@ const samePlace = (a: DraftContext | null, b: DraftContext) =>
  */
 export async function showRecorder(target: RecorderTarget, deps: OpenRecorderDeps): Promise<void> {
   await deps.sheetGone();
-  await deps.finalizeRecorders();
-  await deps.flushDraftWrites();
   const context: DraftContext = { server: target.server, ref: target.ref };
-  const draftId = await deps.findOpenDraft(context);
+  const draftId = await within(
+    (async () => {
+      await deps.finalizeRecorders();
+      await deps.flushDraftWrites();
+      return deps.findOpenDraft(context);
+    })(),
+    SAVE_TIMEOUT_MS,
+  );
   const onScreen = deps.recorderOnScreen();
   const alreadyThere =
     onScreen !== null &&

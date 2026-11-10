@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { DraftContext } from '@/db/drafts';
 import {
@@ -12,6 +12,7 @@ import {
   createRecorderOpener,
   type OpenRecorderDeps,
   type RecorderTarget,
+  SAVE_TIMEOUT_MS,
   showRecorder,
 } from './open-recorder';
 
@@ -198,5 +199,33 @@ describe('createRecorderOpener', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.failures()).toBe(1);
     expect(h.pushed).toEqual([null]);
+  });
+
+  describe('when a take never finishes saving', () => {
+    beforeEach(() => void jest.useFakeTimers());
+    afterEach(() => void jest.useRealTimers());
+
+    it('gives up on that link, touches nothing on screen, and still opens the next', async () => {
+      let stuck = true;
+      const h = harness({
+        canDismiss: () => true,
+        finalizeRecorders: () => (stuck ? new Promise(() => {}) : Promise.resolve()),
+      });
+      const open = createRecorderOpener(h.deps);
+      open(h.target('first'));
+      await jest.advanceTimersByTimeAsync(SAVE_TIMEOUT_MS - 1);
+      expect(h.failures()).toBe(0);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(h.failures()).toBe(1);
+      // The recorder whose take is unsaved is not dismissed, and no second one is pushed.
+      expect(h.calls).not.toContain('dismiss');
+      expect(h.pushed).toEqual([]);
+
+      stuck = false;
+      open(h.target('second'));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(h.pushed).toEqual([null]);
+      expect(h.opened).toEqual([null]);
+    });
   });
 });
