@@ -2,12 +2,12 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { type RefObject, useCallback, useMemo, useState } from 'react';
 
 import { getDestination } from '@/db/destinations';
-import { draftContextQuery } from '@/db/drafts';
+import { draftPlaceQuery } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
-import { hostOf } from '@/utils/format';
 
-import { isTokenExpired } from './capability-token';
-import { type DestinationOption, useDestinations } from './use-destinations';
+import { isSpentLink } from './destination-options';
+import { returnToFor, uploadChoice } from './upload-choice';
+import { useDestinations, usePlaceLabels } from './use-destinations';
 import { uploads } from './upload-manager';
 import { useDraftUploadState } from './use-uploads';
 
@@ -17,7 +17,8 @@ import { useDraftUploadState } from './use-uploads';
  * draft and start uploading, in one tap) and `cancel`. It hands the actual
  * upload to the module-scope `uploads` manager (see `upload-manager.ts`):
  * leaving the screen doesn't abort the upload. There is no retry: a failed
- * upload unpairs the draft, and scanning a new link is the retry. A finished
+ * upload unpairs the draft, and a new link is the retry — for a draft recorded
+ * for a place, the place's link opened again (`reopen`). A finished
  * upload's Watch / Copy link live in the draft's ⋯ menu on Home.
  *
  * `state` is the manager's LIVE per-draft state (uploading, this session only)
@@ -31,40 +32,29 @@ export function useUpload(
   mergedRef: RefObject<{ path: string; durationMs: number } | null>,
 ) {
   // The device-wide pool of paired-but-unconsumed destinations (non-expired only).
-  const { destinations: pool } = useDestinations();
+  const { destinations: pool, ready: poolReady } = useDestinations();
+  const placeLabels = usePlaceLabels();
 
   // The place the draft was recorded for (a link that names one opened its recorder), if any.
   // No row yet = still loading: nothing is preselected until it's known.
-  const { data: contextRows } = useLiveQuery(draftContextQuery(draftId), [draftId]);
-  const context = contextRows[0];
-  const hasContext = !!(context?.server && context.ref);
-  const ownDestination = hasContext
-    ? (pool.find((d) => d.server === context.server && d.ref === context.ref) ?? null)
-    : null;
-  // The draft's own destination first, then the pool's order.
-  const destinations = useMemo(
-    () => (ownDestination ? [ownDestination, ...pool.filter((d) => d !== ownDestination)] : pool),
-    [pool, ownDestination],
-  );
-  // A draft recorded for a place never falls back to another destination: with its own gone
-  // (expired, removed), the person opens the place's link again, named by its label while the
-  // expired row is still kept for it, else by host. Not once it's uploaded: the destination is
-  // gone because the upload went through.
-  const missingContext =
-    hasContext && !ownDestination && context.uploadStatus !== 'uploaded'
-      ? (context.label ?? hostOf(context.server!))
-      : null;
+  const { data: draftRows } = useLiveQuery(draftPlaceQuery(draftId), [draftId]);
+  const draft = draftRows[0];
 
   // Which pool destination the user has picked to upload to, while it's still in the pool. Until
   // they pick: the draft's own destination if it has a place, else the most-recent non-expired one
-  // — derived, so the draft's place still wins when it loads after the pool.
+  // — derived (see `uploadChoice`), so the draft's place still wins when it loads after the pool.
   const [pickedId, setSelectedId] = useState<string | null>(null);
-  const defaultId = !context
-    ? null
-    : hasContext
-      ? (ownDestination?.id ?? null)
-      : (destinations[0]?.id ?? null);
-  const selectedId = pickedId && destinations.some((d) => d.id === pickedId) ? pickedId : defaultId;
+  const { destinations, selectedId, reopen } = useMemo(
+    () =>
+      uploadChoice({
+        draft,
+        pool,
+        poolReady,
+        placeLabel: draft ? placeLabels(draft.server, draft.ref) : null,
+        pickedId,
+      }),
+    [draft, pool, poolReady, placeLabels, pickedId],
+  );
   const selectedDestination = useMemo(
     () => destinations.find((d) => d.id === selectedId) ?? null,
     [destinations, selectedId],
@@ -78,11 +68,7 @@ export function useUpload(
     void uploads.cancel(draftId);
   }, [draftId]);
 
-  // The destination the last Upload tap used, for what follows a finished upload ("Back to …").
-  const [claimed, setClaimed] = useState<DestinationOption | null>(null);
-
-  // Spends the chosen pool destination on this draft and starts uploading in the same tap (a
-  // place's destination is kept until the upload succeeds, see `uploads.claim`).
+  // Spends the chosen pool destination on this draft and starts uploading in the same tap.
   const claim = useCallback(
     async (destinationId: string | null) => {
       const option = destinationId
@@ -98,35 +84,24 @@ export function useUpload(
         token: option.token,
         artifactId: option.artifactId,
       }));
-      if (!destination || isTokenExpired(destination.token, Date.now())) return;
-      setClaimed(option);
+      if (!destination || isSpentLink(option.ref, destination.token, Date.now())) return;
       await uploads.claim({
         draftId,
         destinationId: option.id,
         destination,
         segments,
         merged,
-        keep: option.ref !== null,
+        // The host page to go back to once it's in: the row is gone from here on, so the
+        // upload carries it.
+        returnTo: returnToFor(draft, option),
       });
     },
-    [destinations, draftId, segments, mergedRef],
+    [destinations, draft, draftId, segments, mergedRef],
   );
-
-  // The host page to go back to after an upload ("Back to <app>"): the return URL of the
-  // destination this screen just uploaded to, and only when that is the draft's own place (the
-  // same server AND ref) — a host's return page is for the place its link was opened from.
-  const returnUrl =
-    claimed && hasContext && claimed.server === context.server && claimed.ref === context.ref
-      ? claimed.returnUrl
-      : null;
-  const returnTo = returnUrl
-    ? { url: returnUrl, app: claimed?.app ?? hostOf(returnUrl), host: hostOf(returnUrl) }
-    : null;
 
   return {
     state,
-    missingContext,
-    returnTo,
+    reopen,
     destinations,
     selectedId,
     setSelectedId,

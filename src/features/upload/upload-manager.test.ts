@@ -44,11 +44,8 @@ jest.mock('@/db/drafts', () => {
       state.log.push(`burn:${draftId}`);
       return true;
     }),
-    // `retryable`: its link is still in the pool, as a place's is (the tests name those `place-…`).
-    getUploadingDrafts: jest.fn(async () =>
-      [...state.status]
-        .filter(([, s]) => s === 'uploading')
-        .map(([id]) => ({ id, retryable: id.startsWith('place-') })),
+    getUploadingDraftIds: jest.fn(async () =>
+      [...state.status].filter(([, s]) => s === 'uploading').map(([id]) => id),
     ),
     getUploadedDraftIds: jest.fn(async () =>
       [...state.status].filter(([, s]) => s === 'uploaded').map(([id]) => id),
@@ -61,8 +58,8 @@ jest.mock('@/db/destinations', () => {
   const state = { pool: new Set<string>(), log: [] as string[] };
   return {
     __state: state,
-    deleteDestination: jest.fn(async (id: string, artifactId?: string) => {
-      state.log.push(`pool-delete:${id}${artifactId ? `:${artifactId}` : ''}`);
+    deleteDestination: jest.fn(async (id: string) => {
+      state.log.push(`pool-delete:${id}`);
       return state.pool.delete(id);
     }),
   };
@@ -909,87 +906,6 @@ describe('view links', () => {
   });
 });
 
-describe('a place’s destination', () => {
-  /** Claim the place's row `destId` for a draft: kept in the pool until the upload succeeds. */
-  const claimPlace = (draftId: string, destId = `dest-${draftId}`) => {
-    pool.pool.add(destId);
-    return uploads.claim({
-      draftId,
-      destinationId: destId,
-      destination: { server: SERVER, token: 'tok', artifactId: `art-${destId}` },
-      segments: [],
-      merged: { path: `/drafts/${draftId}/export.mp4`, durationMs: 1000 },
-      keep: true,
-    });
-  };
-
-  it('stays in the pool while its upload runs, and is removed once it succeeds', async () => {
-    videoHangsUntilAborted();
-    await claimPlace('p1');
-    await eventually(() => videoCalls().length > 0);
-    expect(pool.pool.has('dest-p1')).toBe(true);
-    await uploads.cancel('p1');
-
-    tusWith();
-    await claimPlace('p1');
-    await eventually(() => db.status.get('p1') === 'uploaded');
-    await eventually(() => !pool.pool.has('dest-p1'));
-
-    // Removed only while the row still holds this upload's link.
-    expect(pool.log).toEqual(['pool-delete:dest-p1:art-dest-p1']);
-  });
-
-  it('is kept by a failed upload, which says to tap Upload again', async () => {
-    tusWith(() => {
-      throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });
-    });
-
-    await claimPlace('p2');
-    await eventually(() => mockToast.mock.calls.length > 0);
-
-    expect(mockToast.mock.calls[0][0]).toMatch(/^Upload failed — tap Upload to try again/);
-    expect(db.status.get('p2')).toBeNull();
-    expect(pool.pool.has('dest-p2')).toBe(true);
-    expect(pool.log).toEqual([]);
-  });
-
-  it('is kept by a cancelled upload', async () => {
-    videoHangsUntilAborted();
-    await claimPlace('p3');
-    await eventually(() => videoCalls().length > 0);
-
-    await uploads.cancel('p3');
-
-    expect(db.status.get('p3')).toBeNull();
-    expect(pool.pool.has('dest-p3')).toBe(true);
-  });
-
-  it('can’t be claimed by a second draft while it is uploading', async () => {
-    videoHangsUntilAborted();
-    await claimPlace('p4', 'shared-place');
-    await eventually(() => videoCalls().length > 0);
-
-    await claimPlace('p5', 'shared-place');
-
-    expect(mockToast).toHaveBeenCalledWith(
-      'That link is uploading another draft — wait for it to finish.',
-    );
-    expect(db.status.get('p5') ?? null).toBeNull();
-    expect(videoCalls()).toHaveLength(1);
-    await uploads.cancel('p4');
-  });
-
-  it('says to open its link again when the link has expired', async () => {
-    mockIsTokenExpired.mockReturnValueOnce(true);
-
-    await claimPlace('p6');
-    await eventually(() => mockToast.mock.calls.length > 0);
-
-    expect(mockToast).toHaveBeenCalledWith('Upload link expired — open its link again to upload.');
-    expect(db.status.get('p6')).toBeNull();
-  });
-});
-
 describe('a cancel around the claim', () => {
   it('that lands before the pairing is written still leaves the draft unpaired', async () => {
     // The cancel runs while the pairing is being written: it finds nothing to unpair yet.
@@ -1006,5 +922,62 @@ describe('a cancel around the claim', () => {
     expect(db.status.get('x1')).toBeNull();
     expect(uploads.getDraftState('x1')).toEqual({ status: 'idle' });
     expect(mockUploadViaTus).not.toHaveBeenCalled();
+  });
+});
+
+describe('the way back to the host', () => {
+  const RETURN = { url: 'https://timehuddle.example.org/app/huddle?team=t1', app: 'TimeHuddle' };
+  const claimFrom = (draftId: string, returnTo?: typeof RETURN | null) => {
+    pool.pool.add(`dest-${draftId}`);
+    return uploads.claim({
+      draftId,
+      destinationId: `dest-${draftId}`,
+      destination: { server: SERVER, token: 'tok', artifactId: `art-${draftId}` },
+      segments: [],
+      merged: { path: `/drafts/${draftId}/export.mp4`, durationMs: 1000 },
+      ...(returnTo === undefined ? {} : { returnTo }),
+    });
+  };
+
+  it('rides the upload from the claim to its finish, though the row is spent at the claim', async () => {
+    tusWith();
+    const before = Date.now();
+    await claimFrom('back1', RETURN);
+    // A place's link is used up when its upload starts, like any other.
+    expect(pool.pool.has('dest-back1')).toBe(false);
+    await eventually(() => uploads.getAnnouncement('back1') !== null);
+
+    const announcement = uploads.getAnnouncement('back1')!;
+    expect(announcement.returnTo).toEqual(RETURN);
+    expect(announcement.at).toBeGreaterThanOrEqual(before);
+  });
+
+  it('is none for an upload whose link carried none', async () => {
+    tusWith();
+    await claimFrom('back2');
+    await eventually(() => uploads.getAnnouncement('back2') !== null);
+    expect(uploads.getAnnouncement('back2')!.returnTo).toBeNull();
+  });
+
+  it('is the newest upload’s: a second upload without one clears the first’s', async () => {
+    tusWith();
+    await claimFrom('back3', RETURN);
+    await eventually(() => uploads.getAnnouncement('back3') !== null);
+    const first = uploads.getAnnouncement('back3')!.seq;
+
+    tusWith();
+    await claimFrom('back3', null);
+    await eventually(() => (uploads.getAnnouncement('back3')?.seq ?? 0) > first);
+    expect(uploads.getAnnouncement('back3')!.returnTo).toBeNull();
+  });
+
+  it('is not offered after a failed upload', async () => {
+    tusWith(() => {
+      throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });
+    });
+    await claimFrom('back4', RETURN);
+    await eventually(() => db.log.includes('burn:back4'));
+    expect(uploads.getAnnouncement('back4')).toBeNull();
+    expect(db.status.get('back4')).toBeNull();
   });
 });

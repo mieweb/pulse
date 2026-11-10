@@ -23,8 +23,9 @@ export const drafts = sqliteTable('drafts', {
   uploadArtifactId: text('upload_artifact_id'),
   uploadStatus: text('upload_status', { enum: ['uploading', 'uploaded'] }).$type<UploadStatus>(),
   // The place the draft was recorded for, when a link that names one (`ref`) opened its recorder:
-  // that link's server and `ref`, which match the place's row in `upload_destinations`. Its export
-  // screen uploads there; a later link for the same place reopens the draft. Null otherwise.
+  // that link's server and `ref`, which match the place's row in `upload_destinations` while it
+  // has one. Its export screen uploads there; a later link for the same place reopens the draft
+  // while it is unsent. Null otherwise.
   contextServer: text('context_server'),
   contextRef: text('context_ref'),
   // The persisted merged export at `drafts/{id}/export.mp4` (see `exportRelPath`): the
@@ -161,8 +162,8 @@ export const settings = sqliteTable('settings', {
  * specific draft is being/has been sent), this is a device-wide list any draft can pick from
  * at upload time. Each row is single-use — its server-minted `artifactId` anchors exactly one
  * upload, so the row is deleted the moment a draft claims it (or the user deletes it).
- * A row whose link named a place (`ref`) is that place's one row: a newer link for the place
- * replaces its artifact, and it is kept until its upload succeeds (so a failed one can be retried).
+ * A row whose link named a place (`ref`) is that place's one row until it is claimed: a newer link
+ * for the place replaces its artifact.
  * The bearer token is NOT stored here (live capability credential) — it lives in
  * expo-secure-store keyed by `id`, not in this plaintext-at-rest table.
  */

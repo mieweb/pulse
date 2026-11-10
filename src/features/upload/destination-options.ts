@@ -1,3 +1,5 @@
+import { hostOf } from '@/utils/format';
+
 import { expiresAtMs, formatExpiry, isTokenExpired } from './capability-token';
 import { cleanApp, cleanLabel, readReturnUrl } from './deep-link';
 
@@ -72,4 +74,33 @@ export function destinationOptions(
         expiryLabel: formatExpiry(r.token, nowMs),
       }))
   );
+}
+
+/**
+ * What each place in the pool is called: a lookup from a draft's place (`contextServer`,
+ * `contextRef`) to its row's label. Every row counts, whether or not its link still works — an
+ * expired row is kept for exactly this while a draft recorded for it is unsent. `null` for a
+ * draft with no place, or whose place has no row (it was claimed) or no label.
+ */
+export function placeLabelLookup(
+  rows: readonly Pick<DestinationRow, 'server' | 'ref' | 'label'>[],
+): (server: string | null, ref: string | null) => string | null {
+  const labels = new Map<string, string>();
+  for (const row of rows) {
+    const label = row.ref === null ? null : cleanLabel(row.label);
+    if (label !== null) labels.set(JSON.stringify([row.server, row.ref]), label);
+  }
+  return (server, ref) =>
+    server !== null && ref !== null ? (labels.get(JSON.stringify([server, ref])) ?? null) : null;
+}
+
+/**
+ * A destination as a screen reader says it. A place's label is the link's own word for it, not
+ * the server's, so the host is always said with it: where the video goes is the host.
+ */
+export function destinationSpokenName(
+  destination: Pick<DestinationOption, 'server' | 'label'>,
+): string {
+  const host = hostOf(destination.server);
+  return destination.label ? `${destination.label} on ${host}` : host;
 }

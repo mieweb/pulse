@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  backToHost,
   linkExpiredToast,
   linkRefusedToast,
   openLinkAgain,
@@ -49,5 +50,63 @@ describe('link messages', () => {
       'vault.example.org didn’t accept it. Open the link from vault.example.org again to upload.',
     );
     expect(recorderFailedToast(HOST).message).toContain(HOST);
+  });
+});
+
+describe('backToHost', () => {
+  const cp = String.fromCodePoint;
+
+  it('says the app’s name and always the host the button opens', () => {
+    expect(
+      backToHost({ url: 'https://timehuddle.example.org/app?team=t1', app: 'TimeHuddle' }),
+    ).toEqual({
+      url: 'https://timehuddle.example.org/app?team=t1',
+      label: 'Back to TimeHuddle · timehuddle.example.org',
+      unusualHost: false,
+    });
+    expect(backToHost({ url: 'https://timehuddle.example.org/', app: null })?.label).toBe(
+      'Back to timehuddle.example.org',
+    );
+    // An app name that is only the host again isn't said twice.
+    expect(
+      backToHost({ url: 'https://timehuddle.example.org/', app: 'TimeHuddle.example.org' })?.label,
+    ).toBe('Back to timehuddle.example.org');
+  });
+
+  it('ends on the host whatever the app is called, and never loses the end of a long host', () => {
+    const spoof = backToHost({
+      url: 'https://evil.example/',
+      app: 'TimeHuddle · timehuddle.com',
+    })!;
+    expect(spoof.label.endsWith(' · evil.example')).toBe(true);
+
+    const longHost = `timehuddle.com.${'a'.repeat(60)}.evil.example`;
+    const long = backToHost({ url: `https://${longHost}/`, app: 'TimeHuddle' })!;
+    // Shortened in the middle: the registrable domain at its end stays.
+    expect(long.label.endsWith('.evil.example')).toBe(true);
+    expect(long.label.length).toBeLessThan(`Back to TimeHuddle · ${longHost}`.length);
+  });
+
+  it('cleans the app’s name: no text-direction character can reorder the host after it', () => {
+    const back = backToHost({ url: 'https://evil.example/', app: `TimeHuddle${cp(0x202e)}` })!;
+    expect(back.label).toBe('Back to TimeHuddle · evil.example');
+  });
+
+  it('flags a host that could pass for another name', () => {
+    expect(
+      backToHost({ url: `https://timehuddl${cp(0x435)}.example/`, app: null })?.unusualHost,
+    ).toBe(true);
+    expect(backToHost({ url: 'https://xn--timehuddl-8ya.example/', app: null })?.unusualHost).toBe(
+      true,
+    );
+  });
+
+  it('offers nothing for no return URL, or one Pulse must ignore', () => {
+    expect(backToHost(null)).toBeNull();
+    expect(
+      backToHost({ url: 'https://timehuddle.example.org@evil.example/', app: 'TimeHuddle' }),
+    ).toBeNull();
+    expect(backToHost({ url: 'http://evil.example/', app: null })).toBeNull();
+    expect(backToHost({ url: `https://host.example/${'p'.repeat(600)}`, app: null })).toBeNull();
   });
 });

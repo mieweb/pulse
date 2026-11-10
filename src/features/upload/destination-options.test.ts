@@ -1,6 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { type DestinationRow, destinationOptions, isSpentLink } from './destination-options';
+import {
+  type DestinationRow,
+  destinationOptions,
+  destinationSpokenName,
+  isSpentLink,
+  placeLabelLookup,
+} from './destination-options';
 
 const NOW = 1_700_000_000_000;
 
@@ -69,5 +75,57 @@ describe('destinationOptions', () => {
       NOW,
     );
     expect(option).toMatchObject({ label: 'Team Huddle', app: null, returnUrl: null });
+  });
+});
+
+describe('placeLabelLookup', () => {
+  const SERVER = 'https://vault.example.org/pulsevault';
+
+  it('finds a place’s label by server and key, exactly', () => {
+    const labels = placeLabelLookup([
+      row('a', { ref: 'ticket%3A12', label: 'Ticket 12' }),
+      row('b', { ref: 'huddle', label: 'Team · Huddle' }),
+    ]);
+    expect(labels(SERVER, 'ticket%3A12')).toBe('Ticket 12');
+    expect(labels(SERVER, 'huddle')).toBe('Team · Huddle');
+    expect(labels(SERVER, 'ticket:12')).toBeNull();
+    expect(labels('https://other.example.org', 'huddle')).toBeNull();
+  });
+
+  it('has none for a draft with no place, a place with no row, or a row with no label', () => {
+    const labels = placeLabelLookup([row('a', { ref: 'r1', label: null }), row('plain')]);
+    expect(labels(null, null)).toBeNull();
+    expect(labels(SERVER, null)).toBeNull();
+    expect(labels(SERVER, 'r1')).toBeNull();
+    expect(labels(SERVER, 'claimed-and-gone')).toBeNull();
+  });
+
+  it('follows the rows it is given: added, relabelled, removed', () => {
+    const before = placeLabelLookup([]);
+    const added = placeLabelLookup([row('a', { ref: 'r1', label: 'Huddle' })]);
+    const relabelled = placeLabelLookup([row('a', { ref: 'r1', label: 'Team · Huddle' })]);
+    const removed = placeLabelLookup([]);
+    expect([before, added, relabelled, removed].map((labels) => labels(SERVER, 'r1'))).toEqual([
+      null,
+      'Huddle',
+      'Team · Huddle',
+      null,
+    ]);
+  });
+
+  it('cleans a label before it titles a draft', () => {
+    const cp = String.fromCodePoint;
+    const labels = placeLabelLookup([row('a', { ref: 'r1', label: `Hud${cp(0x202e)}dle\n` })]);
+    expect(labels(SERVER, 'r1')).toBe('Huddle');
+  });
+});
+
+describe('destinationSpokenName', () => {
+  it('always says the host, with the place’s label when it has one', () => {
+    const server = 'https://vault.example.org/pulsevault';
+    expect(destinationSpokenName({ server, label: null })).toBe('vault.example.org');
+    expect(destinationSpokenName({ server, label: 'Team · Huddle' })).toBe(
+      'Team · Huddle on vault.example.org',
+    );
   });
 });

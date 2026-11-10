@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, type SQL, sql } from 'drizzle-orm';
 
 import { db } from './client';
 import { drafts, uploadDestinations } from './schema';
@@ -9,9 +9,8 @@ import { deleteDestinationToken, getDestinationToken, setDestinationToken } from
  * A server the device has paired with (via a `pulsecam://` deep link) but no draft has
  * consumed yet. Device-wide, not per-draft — unlike `drafts.upload*` (drafts.ts), this
  * lives independently of any one draft so the user can pick *which* draft to send, and to
- * *which* destination, at upload time. A plain link's destination is single-use: a draft
- * claiming it for an upload, or the user deleting it, removes it here. A place's is kept until
- * its upload succeeds (see `DestinationPlace`).
+ * *which* destination, at upload time. A destination is single-use: a draft claiming it for
+ * an upload, or the user deleting it, removes it here.
  */
 export type PairedDestination = {
   server: string;
@@ -21,8 +20,9 @@ export type PairedDestination = {
 
 /**
  * What a link says about the place its upload is for (its hints, see deep-link.ts). `ref` is the
- * host's key for the place: there is one destination per `(server, ref)`, a newer link for the
- * place replaces the older one's upload, and the row is kept until its upload succeeds.
+ * host's key for the place: until a draft claims it there is one destination per `(server, ref)`,
+ * and a newer link for the place replaces the older one's upload. Claimed, the row is gone like
+ * any other; the next link for the place makes a new one.
  */
 export type DestinationPlace = {
   ref: string;
@@ -66,10 +66,9 @@ function oneAtATime<T>(run: () => Promise<T>): Promise<T> {
  * Add a paired destination to the pool. Deduped by `(server, artifactId)` — re-scanning the
  * same link (same server-minted artifact) refreshes that row's token in place instead of
  * piling up duplicates. A link that names its `place` is deduped by `(server, ref)` instead: the
- * place keeps its one row (and so its drafts), which takes this link's upload, token and hints and
- * moves to the front of the pool — unless an upload is running on the link it has, or that link
- * is the newer of the two (`supersedes`), which is then left alone. Returns the row id (existing
- * or freshly minted).
+ * place keeps its one row, which takes this link's upload, token and hints and moves to the front
+ * of the pool — unless the link it has is the newer of the two (`supersedes`), which is then left
+ * alone. Returns the row id (existing or freshly minted).
  *
  * `supersedes`: whether this link replaces the one the place's row holds, given that one's stored
  * token (`null` when it has none). A link opened again, or an older one opened late (a stale tab,
@@ -112,14 +111,9 @@ async function upsertPlace(
   supersedes: (storedToken: string | null) => boolean,
 ): Promise<string> {
   const [match] = await db
-    .select({
-      id: uploadDestinations.id,
-      // Whether a draft is uploading under the link this row holds now.
-      uploading: sql<number>`exists (select 1 from ${drafts} where ${drafts.uploadStatus} = 'uploading' and ${drafts.uploadArtifactId} = ${uploadDestinations.artifactId})`,
-    })
+    .select({ id: uploadDestinations.id })
     .from(uploadDestinations)
     .where(and(eq(uploadDestinations.server, dest.server), eq(uploadDestinations.ref, place.ref)));
-  if (match?.uploading) return match.id;
   if (match && !supersedes(await getDestinationToken(match.id))) return match.id;
   const id = match?.id ?? Crypto.randomUUID();
   const link = { artifactId: dest.artifactId, ...place };
@@ -157,25 +151,20 @@ export async function getDestination(id: string): Promise<PairedDestination | nu
 /**
  * Remove a destination from the pool (claimed by an upload, or deleted by the user). Returns
  * whether this call removed it — when two drafts claim the same link, only one gets `true`.
- * `artifactId`: only while the row still holds that link's upload (a place's row may have taken a
- * newer link since).
  */
-export async function deleteDestination(id: string, artifactId?: string): Promise<boolean> {
-  return removeWhere(
-    id,
-    artifactId === undefined ? undefined : eq(uploadDestinations.artifactId, artifactId),
-  );
+export async function deleteDestination(id: string): Promise<boolean> {
+  const removed = await removeRow(id);
+  // Best-effort: once the row is gone the link is spent, whatever happens to its token.
+  await deleteDestinationToken(id).catch(() => {});
+  return removed;
 }
 
-async function removeWhere(id: string, condition?: ReturnType<typeof and>): Promise<boolean> {
+async function removeRow(id: string, condition?: SQL): Promise<boolean> {
   const rows = await db
     .delete(uploadDestinations)
     .where(and(eq(uploadDestinations.id, id), condition))
     .returning({ id: uploadDestinations.id });
-  if (rows.length === 0) return false;
-  // Best-effort: once the row is gone the link is spent, whatever happens to its token.
-  await deleteDestinationToken(id).catch(() => {});
-  return true;
+  return rows.length > 0;
 }
 
 /** A draft recorded for this row's place that hasn't been uploaded yet. */
@@ -183,9 +172,9 @@ const hasUnsentDraft = sql`exists (select 1 from ${drafts} where ${drafts.contex
 
 /**
  * The expiry sweep's delete: removes the row only if its token, read again now, is still
- * `expired` (see `oneAtATime`). A place's row stays while a draft recorded for it is unsent, so
- * that draft keeps the place's name (and says which link to open again); the next link for the
- * place revives the row. Returns whether it removed it.
+ * `expired` (see `oneAtATime`). A place's unclaimed row stays while a draft recorded for it is
+ * unsent, so that draft keeps the place's label on Home; the next link for the place revives the
+ * row. Returns whether it removed it.
  */
 export function deleteDestinationIfExpired(
   id: string,
@@ -193,6 +182,10 @@ export function deleteDestinationIfExpired(
 ): Promise<boolean> {
   return oneAtATime(async () => {
     const token = await getDestinationToken(id);
-    return expired(token) ? removeWhere(id, sql`not ${hasUnsentDraft}`) : false;
+    if (!expired(token)) return false;
+    // A row that stays keeps its token: the next link for the place is compared with it.
+    if (!(await removeRow(id, sql`not ${hasUnsentDraft}`))) return false;
+    await deleteDestinationToken(id).catch(() => {});
+    return true;
   });
 }

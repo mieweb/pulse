@@ -27,11 +27,16 @@ export type UploadSession = {
    * switch while the upload waits can't drop them; null if they couldn't be read then. */
   captions: { lines: CaptionLine[]; y: number | null } | null;
   /**
-   * Set when the link named a place: its pool row, kept until this upload succeeds (then removed),
-   * so a failure doesn't spend the link and Upload is the retry.
+   * The host page to offer as the way back once this upload is in ("Back to …"), when the draft
+   * was uploaded to its own place and that place's link carried one. Carried here because the
+   * destination row is gone from the moment it is claimed, and the person may leave the upload
+   * screen and come back while it runs.
    */
-  keptDestinationId?: string;
+  returnTo?: ReturnTo | null;
 };
+
+/** A place link's way back: its `return` URL (as `readReturnUrl` accepts it) and `app` name. */
+export type ReturnTo = { url: string; app: string | null };
 
 export type UploadProgress = { bytesSent: number; totalBytes: number };
 

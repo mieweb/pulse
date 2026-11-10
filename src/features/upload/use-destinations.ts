@@ -10,7 +10,12 @@ import { getDestinationToken } from '@/db/secure-token';
 import { useNow } from '@/hooks/use-now';
 
 import { EXPIRY_CHECK_INTERVAL_MS } from './capability-token';
-import { type DestinationOption, destinationOptions, isSpentLink } from './destination-options';
+import {
+  type DestinationOption,
+  destinationOptions,
+  isSpentLink,
+  placeLabelLookup,
+} from './destination-options';
 
 export type { DestinationOption };
 
@@ -42,7 +47,8 @@ function subscribeTokens(listener: () => void) {
  * and a token that lapses while the user is just sitting on screen drops out on its own.
  *
  * Consumed by both the home float (view/delete) and the export selector (select-and-upload), so
- * both surfaces agree on exactly which destinations are live.
+ * both surfaces agree on exactly which destinations are live. `ready` says whether `destinations`
+ * is the pool as it stands, or still loading.
  */
 export function useDestinations() {
   const { data: rows, updatedAt } = useLiveQuery(destinationsQuery);
@@ -106,4 +112,13 @@ export function useDestinations() {
   }, [rows, tokens, now]);
 
   return { destinations, ready, deleteDestination };
+}
+
+/**
+ * What each place in the pool is called (`placeLabelLookup`), live: it follows the pool's rows, so
+ * a draft's title changes the moment its place's row is added, relabelled or removed.
+ */
+export function usePlaceLabels(): (server: string | null, ref: string | null) => string | null {
+  const { data: rows } = useLiveQuery(destinationsQuery);
+  return useMemo(() => placeLabelLookup(rows), [rows]);
 }

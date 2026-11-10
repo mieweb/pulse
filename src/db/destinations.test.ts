@@ -206,16 +206,6 @@ describe('a place’s destination', () => {
     expect(await order()).toEqual([old, plain]);
   });
 
-  it('is left alone by a newer link while an upload is running on the one it holds', async () => {
-    const id = await addDestination(upload('art-1'), place('r1'));
-    insertDraft('d1', 'r1', 'uploading', 'art-1');
-
-    expect(await addDestination(upload('art-2'), place('r1', { label: 'Newer' }))).toBe(id);
-
-    expect(await destinationsQuery).toMatchObject([{ id, artifactId: 'art-1', label: 'Label r1' }]);
-    expect(mockTokens.get(id)).toBe('token-art-1');
-  });
-
   it('is left alone by a link that doesn’t supersede the one it holds', async () => {
     const id = await addDestination(upload('art-2'), place('r1', { label: 'Newer' }));
     const asked: (string | null)[] = [];
@@ -277,16 +267,18 @@ describe('a place’s destination', () => {
     expect(await getDestination(first.id)).toEqual({ ...upload('art-9'), token: null });
   });
 
-  it('after its upload, is removed only while it still holds that upload’s link', async () => {
+  it('is used up by a claim like any other, and the place’s next link makes a new row', async () => {
     const id = await addDestination(upload('art-1'), place('r1'));
-    await addDestination(upload('art-2'), place('r1'));
-
-    // The finished upload was art-1's; the row has a newer link now, which stays.
-    expect(await deleteDestination(id, 'art-1')).toBe(false);
-    expect(mockTokens.get(id)).toBe('token-art-2');
-    expect(await deleteDestination(id, 'art-2')).toBe(true);
-    expect(await order()).toEqual([]);
+    // A draft claims it: the upload is running under art-1, and the row is gone.
+    insertDraft('d1', 'r1', 'uploading', 'art-1');
+    expect(await deleteDestination(id)).toBe(true);
     expect(mockTokens.has(id)).toBe(false);
+
+    // A link for the same place while that upload runs is a fresh row, for the next draft.
+    const next = await addDestination(upload('art-2'), place('r1'));
+    expect(next).not.toBe(id);
+    expect(await destinationsQuery).toMatchObject([{ id: next, artifactId: 'art-2', ref: 'r1' }]);
+    expect(await getDestination(next)).toEqual(upload('art-2'));
   });
 
   it('expired, stays while a draft recorded for it is unsent, keeping its token', async () => {

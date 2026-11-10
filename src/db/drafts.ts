@@ -16,7 +16,7 @@ import { parseCaptionEdit } from './captions';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
 import type { Draft, Segment } from './schema';
-import { clipTranscripts, drafts, segments, uploadDestinations } from './schema';
+import { clipTranscripts, drafts, segments } from './schema';
 import { deleteSavedLink } from './secure-token';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
@@ -29,9 +29,6 @@ type NewSegment = {
   durationMs: number;
   thumbnail?: string | null;
 };
-
-/** The label of the destination for a draft's place (`drafts.contextServer` + `contextRef`). */
-const contextLabel = sql`(select label from ${uploadDestinations} where ${uploadDestinations.server} = ${drafts.contextServer} and ${uploadDestinations.ref} = ${drafts.contextRef})`;
 
 /** One row per draft with its segment count, trim-aware duration, and cover clip. */
 export const draftListQuery = db
@@ -55,9 +52,11 @@ export const draftListQuery = db
     firstSegmentEditState: sql<
       string | null
     >`(select case when edited_filename is null then edit_state end from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
-    // The label of the place it was recorded for, read here and never stored: what an unnamed
-    // draft is called (see `draftDisplayName`). Null once that place's destination is gone.
-    contextLabel: sql<string | null>`${contextLabel}`,
+    // The place it was recorded for, if a link opened its recorder (see `drafts.contextServer`).
+    // An unnamed draft is called by that place's label while the place's destination is in the
+    // pool: read live from the pool by whoever shows it (`usePlaceLabels`), never stored here.
+    contextServer: drafts.contextServer,
+    contextRef: drafts.contextRef,
   })
   .from(drafts)
   .leftJoin(segments, eq(segments.draftId, drafts.id))
@@ -66,10 +65,11 @@ export const draftListQuery = db
 
 /**
  * What a draft is called where it's shown: its own name, else the label of the place it was
- * recorded for (`contextLabel`), else "Untitled". Uploads send only its own name (`getDraftName`).
+ * recorded for while that place's destination is in the pool (`placeLabel`), else "Untitled".
+ * Uploads send only its own name (`getDraftName`).
  */
-export function draftDisplayName(name: string | null, contextLabel: string | null): string {
-  return name || contextLabel || 'Untitled';
+export function draftDisplayName(name: string | null, placeLabel: string | null): string {
+  return name || placeLabel || 'Untitled';
 }
 
 /** Every draft's clips (what the editor's caches keep). */
@@ -125,15 +125,15 @@ export async function createDraft(
 }
 
 /**
- * The draft's place (null columns when it has none), that place's label while its destination is
- * in the pool, and whether the draft is uploaded: live, for the export screen.
+ * The draft's place (null columns when it has none), its own name and whether it is uploading or
+ * uploaded: live, for the export screen.
  */
-export function draftContextQuery(draftId: string) {
+export function draftPlaceQuery(draftId: string) {
   return db
     .select({
       server: drafts.contextServer,
       ref: drafts.contextRef,
-      label: sql<string | null>`${contextLabel}`,
+      name: drafts.name,
       uploadStatus: drafts.uploadStatus,
     })
     .from(drafts)
@@ -143,7 +143,8 @@ export function draftContextQuery(draftId: string) {
 /**
  * The draft a link for a place reopens: the newest one recorded for that place that hasn't been
  * uploaded (or started uploading) and has a clip — an empty one is about to be dropped by the
- * recorder that made it. `null` when there's none, and the link starts a new one.
+ * recorder that made it. A draft whose upload failed or was cancelled is unsent again, so the
+ * place's next link comes back to it. `null` when there's none, and the link starts a new one.
  */
 export async function findOpenDraftForContext(context: DraftContext): Promise<string | null> {
   const [row] = await db
@@ -689,20 +690,13 @@ export async function getUploadedDraftIds(): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
-/**
- * Drafts marked `uploading` — at launch, the uploads a killed app never finished. `retryable`: the
- * link it was uploading under is still in the pool (a place's, kept until its upload succeeds), so
- * Upload can use it again.
- */
-export async function getUploadingDrafts(): Promise<{ id: string; retryable: boolean }[]> {
+/** Drafts marked `uploading` — at launch, the uploads a killed app never finished. */
+export async function getUploadingDraftIds(): Promise<string[]> {
   const rows = await db
-    .select({
-      id: drafts.id,
-      retryable: sql<number>`exists (select 1 from ${uploadDestinations} where ${uploadDestinations.artifactId} = ${drafts.uploadArtifactId})`,
-    })
+    .select({ id: drafts.id })
     .from(drafts)
     .where(eq(drafts.uploadStatus, 'uploading'));
-  return rows.map((r) => ({ id: r.id, retryable: !!r.retryable }));
+  return rows.map((r) => r.id);
 }
 
 // Draft transfer (.pulse export/import) ----------------------------------------------------

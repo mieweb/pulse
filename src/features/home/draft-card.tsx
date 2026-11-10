@@ -22,8 +22,9 @@ type Props = {
   /** Persisted upload status, so the card can show its own upload state on the cover. */
   uploadStatus?: 'uploading' | 'uploaded' | null;
   name: string | null;
-  /** The label of the destination it was recorded for: what an unnamed draft is called. */
-  contextLabel?: string | null;
+  /** The label of the place it was recorded for, while that place's destination is in the pool:
+   * what an unnamed draft is called. */
+  placeLabel?: string | null;
   /** Relative path of the draft's first clip; the cover frame's legacy runtime fallback. */
   firstSegmentFilename?: string | null;
   /** Relative path of the first clip's persisted jpeg thumbnail (preferred cover frame). */
@@ -55,7 +56,7 @@ export function DraftCard({
   id,
   uploadStatus,
   name,
-  contextLabel = null,
+  placeLabel = null,
   firstSegmentFilename,
   firstSegmentThumbnail,
   firstSegmentEditState,
@@ -144,7 +145,7 @@ export function DraftCard({
           />
         ) : (
           <ThemedText type="headline" numberOfLines={1}>
-            {draftDisplayName(name, contextLabel)}
+            {draftDisplayName(name, placeLabel)}
           </ThemedText>
         )}
         {/* Two lines, so a narrow card (an uploaded draft's link button beside ⋯, larger text)
