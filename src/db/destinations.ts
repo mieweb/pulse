@@ -21,7 +21,7 @@ export type PairedDestination = {
 /**
  * What a link says about the place its upload is for (its hints, see deep-link.ts). `ref` is the
  * host's key for the place: until a draft claims it there is one destination per `(server, ref)`,
- * and a newer link for the place replaces the older one's upload. Claimed, the row is gone like
+ * and a newer link for the place, once its server has accepted it, replaces the older one's upload. Claimed, the row is gone like
  * any other; the next link for the place makes a new one.
  */
 export type DestinationPlace = {
@@ -65,21 +65,22 @@ function oneAtATime<T>(run: () => Promise<T>): Promise<T> {
 /**
  * Add a paired destination to the pool. Deduped by `(server, artifactId)` — re-scanning the
  * same link (same server-minted artifact) refreshes that row's token in place instead of
- * piling up duplicates. A link that names its `place` is deduped by `(server, ref)` instead: the
+ * piling up duplicates. A link that names its `place` is deduped by `(server, ref)` instead, both
+ * compared exactly as PROTOCOL.md §5.6 says (the link's `server` has lost one trailing `/`): the
  * place keeps its one row, which takes this link's upload, token and hints and moves to the front
- * of the pool — unless the link it has is the newer of the two (`supersedes`), which is then left
- * alone. Returns the row id (existing or freshly minted).
+ * of the pool — unless the link doesn't take over from the one the row holds (`takesOver`), which
+ * is then left alone. Returns the row id (existing or freshly minted).
  *
- * `supersedes`: whether this link replaces the one the place's row holds, given that one's stored
- * token (`null` when it has none). A link opened again, or an older one opened late (a stale tab,
- * a replayed launch), must not take the place of a newer one.
+ * `takesOver`: whether this link replaces the one the place's row holds, given that one's stored
+ * token (`null` when it has none); see `takesOver` in capability-token.ts. An older link opened
+ * late, or one the server hasn't accepted, must not take the place of the link a place holds.
  */
 export function addDestination(
   dest: PairedDestination,
   place?: DestinationPlace,
-  supersedes: (storedToken: string | null) => boolean = () => true,
+  takesOver: (storedToken: string | null) => boolean = () => true,
 ): Promise<string> {
-  return oneAtATime(() => (place ? upsertPlace(dest, place, supersedes) : insertOrRefresh(dest)));
+  return oneAtATime(() => (place ? upsertPlace(dest, place, takesOver) : insertOrRefresh(dest)));
 }
 
 async function insertOrRefresh(dest: PairedDestination): Promise<string> {
@@ -108,13 +109,13 @@ async function insertOrRefresh(dest: PairedDestination): Promise<string> {
 async function upsertPlace(
   dest: PairedDestination,
   place: DestinationPlace,
-  supersedes: (storedToken: string | null) => boolean,
+  takesOver: (storedToken: string | null) => boolean,
 ): Promise<string> {
   const [match] = await db
     .select({ id: uploadDestinations.id })
     .from(uploadDestinations)
     .where(and(eq(uploadDestinations.server, dest.server), eq(uploadDestinations.ref, place.ref)));
-  if (match && !supersedes(await getDestinationToken(match.id))) return match.id;
+  if (match && !takesOver(await getDestinationToken(match.id))) return match.id;
   const id = match?.id ?? Crypto.randomUUID();
   const link = { artifactId: dest.artifactId, ...place };
   // The row and its token live in two stores, so the two writes can't be one. The token goes

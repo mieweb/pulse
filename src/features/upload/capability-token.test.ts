@@ -3,10 +3,10 @@ import { describe, expect, it } from '@jest/globals';
 import {
   decodeCapabilityClaims,
   EXPIRY_BUFFER_MS,
-  expiresLater,
   formatExpiry,
   isClaimsExpired,
   isTokenExpired,
+  takesOver,
 } from './capability-token';
 
 // Mirrors `issueCapabilityToken` in pulsevault-mieweb/src/lib/capability-token.ts without
@@ -183,30 +183,50 @@ describe('formatExpiry', () => {
   });
 });
 
-describe('expiresLater', () => {
+describe('takesOver (PROTOCOL.md §5.6)', () => {
+  // Seconds since the epoch; `NOW` is before every expiry unless a test says otherwise.
+  const NOW = 500_000;
   const expiring = (exp: number) => fakeToken({ ...VALID_CLAIMS, exp });
+  const accepted = (token: string | null) => ({ token, accepted: true });
+  const unconfirmed = (token: string | null) => ({ token, accepted: false });
 
-  it('is a newer link: one that stops working later than the stored one', () => {
-    expect(expiresLater(expiring(2000), expiring(1000))).toBe(true);
-    expect(expiresLater(expiring(1000), expiring(2000))).toBe(false);
-    // The same link again is not newer.
-    expect(expiresLater(expiring(1000), expiring(1000))).toBe(false);
+  it('newer: the accepted link whose token expires later takes over', () => {
+    expect(takesOver(accepted(expiring(2000)), expiring(1000), NOW)).toBe(true);
+    expect(takesOver(accepted(expiring(1000)), expiring(2000), NOW)).toBe(false);
   });
 
-  it('always replaces a stored token that is gone or can’t be read', () => {
-    expect(expiresLater(expiring(1000), null)).toBe(true);
-    expect(expiresLater(expiring(1000), 'opaque')).toBe(true);
-    expect(expiresLater(null, null)).toBe(true);
+  it('newer: of two that expire in the same second, the one received last', () => {
+    expect(takesOver(accepted(expiring(1000)), expiring(1000), NOW)).toBe(true);
   });
 
-  it('never lets a link that can’t be read replace one that can', () => {
-    expect(expiresLater('opaque', expiring(1000))).toBe(false);
-    expect(expiresLater(null, expiring(1000))).toBe(false);
-  });
-
-  it('reads the order from exp alone, whatever iat says', () => {
+  it('newer: exp alone orders two links, whatever iat says', () => {
     const issuedLaterExpiresSooner = fakeToken({ ...VALID_CLAIMS, iat: 9000, exp: 1000 });
     const issuedSoonerExpiresLater = fakeToken({ ...VALID_CLAIMS, iat: 1, exp: 2000 });
-    expect(expiresLater(issuedLaterExpiresSooner, issuedSoonerExpiresLater)).toBe(false);
+    expect(takesOver(accepted(issuedLaterExpiresSooner), issuedSoonerExpiresLater, NOW)).toBe(
+      false,
+    );
+  });
+
+  it('unconfirmed: never replaces the link a place holds, however much newer', () => {
+    expect(takesOver(unconfirmed(expiring(9000)), expiring(1000), NOW)).toBe(false);
+    expect(takesOver(unconfirmed(expiring(1000)), expiring(1000), NOW)).toBe(false);
+  });
+
+  it('unconfirmed: becomes the link of a place that holds none', () => {
+    // No token at all, or one Pulse can't read: the row holds no link.
+    expect(takesOver(unconfirmed(expiring(1000)), null, NOW)).toBe(true);
+    expect(takesOver(unconfirmed(expiring(1000)), 'opaque', NOW)).toBe(true);
+    // The held link's token has expired, by its `exp`: to the second, with no margin.
+    expect(takesOver(unconfirmed(expiring(2000)), expiring(1000), 1000 * 1000)).toBe(true);
+    expect(takesOver(unconfirmed(expiring(2000)), expiring(1000), 1000 * 1000 - 1)).toBe(false);
+  });
+
+  it('a place whose link has expired takes an accepted link too, even an older one', () => {
+    expect(takesOver(accepted(expiring(900)), expiring(1000), 1000 * 1000)).toBe(true);
+  });
+
+  it('a link that can’t be read never replaces one that can', () => {
+    expect(takesOver(accepted('opaque'), expiring(1000), NOW)).toBe(false);
+    expect(takesOver(accepted(null), expiring(1000), NOW)).toBe(false);
   });
 });

@@ -11,19 +11,18 @@ function answering(status: number) {
 }
 
 describe('checkToken', () => {
-  it('asks the status route with the token unchanged, in the header and the query', async () => {
+  it('asks the status route for the link’s upload, the token unchanged and in the header only', async () => {
     const fetchImpl = answering(200);
     await checkToken({ server: SERVER, artifactId: ARTIFACT_ID, token: TOKEN, fetchImpl });
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe(
-      `${SERVER}/artifacts/${ARTIFACT_ID}/status?token=${encodeURIComponent(TOKEN)}`,
-    );
+    // Never in the URL, which is what servers and proxies log.
+    expect(url).toBe(`${SERVER}/artifacts/${ARTIFACT_ID}/status`);
     expect(init).toMatchObject({ method: 'GET', redirect: 'manual' });
     expect((init?.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
     expect((init?.headers as Record<string, string>)['Pulse-Client']).toMatch(/^Pulse\//);
   });
 
-  it('reads the answer: accepted, refused, or nothing either way', async () => {
+  it('reads the answer as PROTOCOL.md §5.6 does: 200 accepted, 401/403 refused, the rest unknown', async () => {
     const check = (status: number) =>
       checkToken({
         server: SERVER,
@@ -34,8 +33,9 @@ describe('checkToken', () => {
     expect(await check(200)).toBe('accepted');
     expect(await check(401)).toBe('refused');
     expect(await check(403)).toBe('refused');
-    // No status route, an outdated-client answer, a redirect, a server error: not a verdict.
-    for (const status of [404, 405, 426, 302, 0, 500, 503])
+    // No status route, an outdated-client answer, a redirect, a server error, another success:
+    // not a verdict, and never accepted.
+    for (const status of [404, 405, 426, 302, 0, 500, 503, 429, 201, 204, 206])
       expect(await check(status)).toBe('unknown');
   });
 

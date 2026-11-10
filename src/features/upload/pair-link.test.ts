@@ -144,11 +144,11 @@ describe('pairLink', () => {
         calls.push(`token:${link.token === forPlace().token ? 'unchanged' : 'changed'}`);
         return over.check ?? 'accepted';
       },
-      save: async (link) => {
-        calls.push(`save:${link.artifactId}`);
+      save: async (link, accepted) => {
+        calls.push(`save:${link.artifactId}:${accepted ? 'accepted' : 'unconfirmed'}`);
       },
-      remember: async (artifactId) => {
-        calls.push(`remember:${artifactId}`);
+      remember: async (artifactId, outcome) => {
+        calls.push(`remember:${artifactId}:${outcome}`);
       },
       ...over,
     };
@@ -158,45 +158,74 @@ describe('pairLink', () => {
   it('pairs a plain link as before: the server check, then the pool, and nothing else', async () => {
     const { all, calls } = deps();
     expect(await pairLink(plain(), all)).toEqual({ ok: true });
-    expect(calls).toEqual(['capabilities', 'save:art-plain']);
+    expect(calls).toEqual(['capabilities', 'save:art-plain:unconfirmed']);
   });
 
-  it('asks the server to accept a place link’s token before the place takes the link', async () => {
+  it('accepted: asks the server about a place link’s token, unchanged, and stores it as accepted', async () => {
     const { all, calls } = deps();
     expect(await pairLink(forPlace(), all)).toEqual({ ok: true });
     expect(calls).toEqual([
       'capabilities',
       'token:unchanged',
-      'save:art-place',
-      'remember:art-place',
+      'save:art-place:accepted',
+      'remember:art-place:paired',
     ]);
   });
 
-  it('a link the server refuses never touches the place’s row, and is not asked about again', async () => {
+  it('asks both questions at once: the recorder waits for the slower, not for their sum', async () => {
+    const order: string[] = [];
+    let answerCapabilities: (result: CapabilitiesResult) => void = () => {};
+    const { all } = deps({
+      checkCapabilities: () => {
+        order.push('capabilities asked');
+        return new Promise((resolve) => (answerCapabilities = resolve));
+      },
+      checkToken: async () => {
+        order.push('token asked');
+        return 'accepted';
+      },
+    });
+    const pairing = pairLink(forPlace(), all);
+    await Promise.resolve();
+    expect(order).toEqual(['capabilities asked', 'token asked']);
+    answerCapabilities(COMPATIBLE);
+    expect(await pairing).toEqual({ ok: true });
+  });
+
+  it('refused: the link is dropped, the place’s row untouched, and the refusal remembered', async () => {
     const { all, calls } = deps({ check: 'refused' });
     expect(await pairLink(forPlace(), all)).toEqual({ ok: false, reason: 'refused' });
-    expect(calls).toEqual(['capabilities', 'token:unchanged', 'remember:art-place']);
+    expect(calls).toEqual(['capabilities', 'token:unchanged', 'remember:art-place:refused']);
   });
 
-  it('a server that can’t say (no status route) doesn’t block the pairing', async () => {
-    const { all, calls } = deps({ check: 'unknown' });
-    expect(await pairLink(forPlace(), all)).toEqual({ ok: true });
-    expect(calls).toContain('save:art-place');
-  });
+  it('unknown: never stored as accepted, whether the server can’t say or gives no answer', async () => {
+    const noRoute = deps({ check: 'unknown' });
+    expect(await pairLink(forPlace(), noRoute.all)).toEqual({ ok: true });
+    expect(noRoute.calls).toContain('save:art-place:unconfirmed');
 
-  it('stores nothing when the server can’t be reached, for either request', async () => {
-    const down = deps({ checkCapabilities: async () => ({ ok: false, reason: 'unreachable' }) });
-    expect(await pairLink(forPlace(), down.all)).toEqual({ ok: false, reason: 'unreachable' });
-    expect(down.calls).toEqual([]);
-
-    const dropped = deps({
+    const noAnswer = deps({
       checkToken: async () => {
         throw new Error('network');
       },
     });
-    expect(await pairLink(forPlace(), dropped.all)).toEqual({ ok: false, reason: 'unreachable' });
-    // Not remembered: the person can open it again.
-    expect(dropped.calls).toEqual(['capabilities']);
+    expect(await pairLink(forPlace(), noAnswer.all)).toEqual({ ok: true });
+    expect(noAnswer.calls).toEqual([
+      'capabilities',
+      'save:art-place:unconfirmed',
+      'remember:art-place:paired',
+    ]);
+  });
+
+  it('stores nothing when the server can’t be reached, whatever it made of the token', async () => {
+    for (const check of ['accepted', 'refused', 'unknown'] as const) {
+      const down = deps({
+        check,
+        checkCapabilities: async () => ({ ok: false, reason: 'unreachable' }),
+      });
+      expect(await pairLink(forPlace(), down.all)).toEqual({ ok: false, reason: 'unreachable' });
+      // Not remembered either: the person can open it again.
+      expect(down.calls).toEqual(['token:unchanged']);
+    }
   });
 
   it('says so when the server and the app don’t speak a common protocol', async () => {

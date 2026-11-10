@@ -206,7 +206,7 @@ describe('a place’s destination', () => {
     expect(await order()).toEqual([old, plain]);
   });
 
-  it('is left alone by a link that doesn’t supersede the one it holds', async () => {
+  it('is left alone by a link that doesn’t take over from the one it holds', async () => {
     const id = await addDestination(upload('art-2'), place('r1', { label: 'Newer' }));
     const asked: (string | null)[] = [];
     const older = (stored: string | null) => {
@@ -214,7 +214,8 @@ describe('a place’s destination', () => {
       return false;
     };
 
-    // An older link for the place, opened late: the place keeps the newer one, whole.
+    // An older link for the place opened late, or one its server hasn't accepted: the place
+    // keeps the link it holds, whole.
     expect(await addDestination(upload('art-1'), place('r1', { label: 'Older' }), older)).toBe(id);
 
     expect(asked).toEqual(['token-art-2']);
@@ -256,7 +257,7 @@ describe('a place’s destination', () => {
     // The row has the new upload and no token: it isn't offered until the link is opened again.
     expect(await getDestination(id)).toEqual({ ...upload('art-2'), token: null });
 
-    // Opening the link again completes it, whatever `supersedes` would say of a stored token.
+    // Opening the link again completes it, whatever `takesOver` would say of a stored token.
     await addDestination(upload('art-2'), place('r1'), (stored) => stored === null);
     expect(await getDestination(id)).toEqual(upload('art-2'));
 

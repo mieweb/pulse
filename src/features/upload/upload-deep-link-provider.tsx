@@ -27,7 +27,7 @@ import { hostOf, shortHost } from '@/utils/format';
 import { createPresence } from '@/utils/presence';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
-import { expiresAtMs, expiresLater } from './capability-token';
+import { expiresAtMs, takesOver } from './capability-token';
 import { checkDeferredPairing } from './deferred-pairing';
 import { pairingLinkParams, parseUploadDeepLink, type UploadDeepLink } from './deep-link';
 import { rememberHandledLink, wasLinkHandled } from './handled-links';
@@ -206,7 +206,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
         checkCapabilities,
         checkToken: (asked) =>
           checkToken({ server: asked.server, artifactId: asked.artifactId, token: asked.token }),
-        save: (paired) =>
+        save: (paired, accepted) =>
           addDestination(
             { server: paired.server, token: paired.token, artifactId: paired.artifactId },
             paired.place && {
@@ -215,8 +215,9 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
               app: paired.place.app,
               returnUrl: paired.place.returnUrl,
             },
-            // An older link for the place, opened late, never takes the place of a newer one.
-            (stored) => expiresLater(paired.token, stored),
+            // Only a link its server accepted, and the newer of the two, replaces the link the
+            // place holds; a place that holds none takes any (PROTOCOL.md §5.6).
+            (stored) => takesOver({ token: paired.token, accepted }, stored, Date.now()),
           ),
         remember: rememberHandledLink,
       })

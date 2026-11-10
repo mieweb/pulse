@@ -68,44 +68,49 @@ export type PairResult = { ok: true } | { ok: false; reason: PairFailure };
 
 export type PairDeps = {
   checkCapabilities(server: string): Promise<CapabilitiesResult>;
-  /** Whether the server accepts the link's token (`checkToken`); rejects when it can't be asked. */
+  /** What the server makes of the link's token (`checkToken`); rejects when it gives no answer. */
   checkToken(link: UploadDeepLink & { token: string }): Promise<TokenCheck>;
-  /** Store the link's destination in the pool. */
-  save(link: UploadDeepLink): Promise<unknown>;
-  /** Remember a link for a place as dealt with (`rememberHandledLink`). */
-  remember(artifactId: string): Promise<void>;
+  /**
+   * Store the link's destination in the pool. `accepted`: the server took the link's token, so
+   * the link may take over from the one its place holds (`takesOver`).
+   */
+  save(link: UploadDeepLink, accepted: boolean): Promise<unknown>;
+  /** Remember what a link for a place came to (`rememberHandledLink`). */
+  remember(artifactId: string, outcome: 'paired' | 'refused'): Promise<void>;
 };
 
 /**
  * Pair a link whose server the person has confirmed: check the server speaks this app's protocol,
- * and store the destination. A link for a place does one thing more first: the place it names is
- * read from a token Pulse can't verify, so the server is asked whether it accepts that token, and
- * only then does the link take over what the place has (PROTOCOL.md §5.6) — a forged link is
- * refused here, and the place keeps its real one. A server that can't answer that question
- * (`unknown`) doesn't block the pairing: its first upload settles it.
+ * and store the destination. For a link that names a place the server is also asked whether it
+ * accepts the link's token (PROTOCOL.md §5.6), since the place is read from a token Pulse can't
+ * verify:
+ * - `accepted`: the link may take over from the one the place holds, if it is the newer;
+ * - `refused`: the link is dropped, and the place keeps what it has;
+ * - `unknown` (no status route, a server error, no answer): never treated as accepted. The link
+ *   becomes the link of a place that holds none; a place that holds one keeps it, and is opened
+ *   as it is.
+ *
+ * The two requests go out together, both to the server the person confirmed, so the recorder
+ * waits for the slower one and not for their sum.
  */
 export async function pairLink(link: UploadDeepLink, deps: PairDeps): Promise<PairResult> {
-  const capabilities = await deps.checkCapabilities(link.server);
-  if (!capabilities.ok) return { ok: false, reason: capabilities.reason };
   const { place, token } = link;
-  if (place && token) {
-    let check: TokenCheck;
-    try {
-      check = await deps.checkToken({ ...link, token });
-    } catch {
-      return { ok: false, reason: 'unreachable' };
-    }
-    if (check === 'refused') {
-      // Dealt with for good: the same link handed back at a later launch stays quiet.
-      await deps.remember(link.artifactId).catch(() => {});
-      return { ok: false, reason: 'refused' };
-    }
+  const [capabilities, check] = await Promise.all([
+    deps.checkCapabilities(link.server),
+    place && token
+      ? deps.checkToken({ ...link, token }).catch((): TokenCheck => 'unknown')
+      : ('unknown' as const),
+  ]);
+  if (!capabilities.ok) return { ok: false, reason: capabilities.reason };
+  if (check === 'refused') {
+    await deps.remember(link.artifactId, 'refused').catch(() => {});
+    return { ok: false, reason: 'refused' };
   }
   try {
-    await deps.save(link);
+    await deps.save(link, check === 'accepted');
   } catch {
     return { ok: false, reason: 'not-saved' };
   }
-  if (place) await deps.remember(link.artifactId).catch(() => {});
+  if (place) await deps.remember(link.artifactId, 'paired').catch(() => {});
   return { ok: true };
 }

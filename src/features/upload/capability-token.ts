@@ -154,16 +154,26 @@ export function expiresAtMs(token: string | null): number | null {
 }
 
 /**
- * Whether the link with `token` is newer than the one whose token is `stored`: it stops working
- * later. Told from `exp`, which with `ref` is all a client reads from a token (PROTOCOL.md §5.6).
- * A stored token that is gone or can't be read is always replaced; a link that can't be read
- * never replaces one that can.
+ * Whether a link takes over from the one its place holds (PROTOCOL.md §5.6). `stored` is the held
+ * link's token, `null` when the place's row has none; `accepted` says the server took this link's
+ * token (the status request answered 200).
+ * - A place that holds no link takes any: no token Pulse can read, or one whose `exp` has passed.
+ * - Otherwise only an accepted link takes over. Until then its `ref` is unconfirmed — it is what
+ *   the link says, not what the server signed — and never replaces the link a place holds.
+ * - And only a newer one: its token expires later, or in the same second, in which case the link
+ *   received last wins. `exp` and `ref` are all a client reads from a token, so nothing else
+ *   orders two links.
  */
-export function expiresLater(token: string | null, stored: string | null): boolean {
+export function takesOver(
+  link: { token: string | null; accepted: boolean },
+  stored: string | null,
+  nowMs: number,
+): boolean {
   const storedExp = expiresAtMs(stored);
-  if (storedExp === null) return true;
-  const exp = expiresAtMs(token);
-  return exp !== null && exp > storedExp;
+  if (storedExp === null || nowMs >= storedExp) return true;
+  if (!link.accepted) return false;
+  const exp = expiresAtMs(link.token);
+  return exp !== null && exp >= storedExp;
 }
 
 const HOUR_MS = 3_600_000;
