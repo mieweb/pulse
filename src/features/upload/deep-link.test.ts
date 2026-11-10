@@ -113,6 +113,39 @@ describe('parseUploadDeepLink', () => {
   });
 });
 
+describe('parseUploadDeepLink: the server a link names', () => {
+  const linkTo = (server: string) =>
+    parseUploadDeepLink(
+      `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=${encodeURIComponent(server)}`,
+    );
+
+  it('holds the rule to the host requests go to, not one hidden after an @ in the path', () => {
+    // Plain http to a public host, dressed as a private address or localhost.
+    for (const server of [
+      'http://evil.example/a@192.168.1.1',
+      'http://evil.example/a@localhost',
+      'http://evil.example?x@10.0.0.1',
+      'http://evil.example#@127.0.0.1',
+    ]) {
+      expect(linkTo(server)).toEqual({ ok: false, reason: 'invalid-link' });
+    }
+    // The real thing still pairs.
+    expect(linkTo('http://192.168.1.1:3000/pulsevault').ok).toBe(true);
+    expect(linkTo('http://localhost:3000').ok).toBe(true);
+  });
+
+  it('refuses a server URL whose host two parsers could read differently', () => {
+    const cp = String.fromCodePoint;
+    for (const server of [
+      `https://good.example.org${cp(0x5c)}@evil.example/`,
+      'https://good.example.org /pulsevault',
+      'https://',
+    ]) {
+      expect(linkTo(server)).toEqual({ ok: false, reason: 'invalid-link' });
+    }
+  });
+});
+
 /** An upload token as PulseVault shapes one (unsigned here: the app never verifies). */
 function uploadToken(claims: Record<string, unknown> = {}): string {
   const payload = Buffer.from(

@@ -1,5 +1,6 @@
 import { cleanDisplayText, codePointLength, cutToFit } from '@/utils/display-text';
 import { DRAFT_NAME_MAX_LENGTH } from '@/utils/draft-name';
+import { type HttpUrl, parseHttpUrl } from '@/utils/http-url';
 
 import { decodeCapabilityClaims } from './capability-token';
 
@@ -63,7 +64,7 @@ export type DeepLinkResult =
  * link-local) plus loopback/localhost. Never extended to a public IP or
  * domain just because it "looks internal."
  */
-function isPrivateDevOrigin(url: URL): boolean {
+function isPrivateDevOrigin(url: HttpUrl): boolean {
   if (url.protocol !== 'http:') return false;
   const host = url.hostname;
   return (
@@ -77,16 +78,14 @@ function isPrivateDevOrigin(url: URL): boolean {
   );
 }
 
-/** An https URL, or an http one on a private/dev origin; `null` for anything else. */
-function parseAllowedUrl(raw: string | null): URL | null {
-  if (!raw) return null;
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return null;
-  }
-  return url.protocol === 'https:' || isPrivateDevOrigin(url) ? url : null;
+/**
+ * An https URL, or an http one on a private/dev origin, with the host it really leads to
+ * (`parseHttpUrl`: the rule is checked against that host, never one a URL only appears to
+ * have); `null` for anything else.
+ */
+function parseAllowedUrl(raw: string | null | undefined): HttpUrl | null {
+  const url = raw ? parseHttpUrl(raw) : null;
+  return url && (url.protocol === 'https:' || isPrivateDevOrigin(url)) ? url : null;
 }
 
 /** A place's `label` as shown: one clean line of at most 60 characters, or `null`. */
@@ -110,9 +109,6 @@ function draftName(raw: string | null): string | null {
   return cutToFit(name, (candidate) => candidate.length <= DRAFT_NAME_MAX_LENGTH).trim() || null;
 }
 
-/** A URL's authority (`host[:port]`) when it is plain enough for every parser to agree on it. */
-const RETURN_URL_AUTHORITY = /^https?:\/\/([^/?#]+)/i;
-
 /**
  * A link's `return` URL when Pulse may offer it as the way back (PROTOCOL.md §3.1), with the host
  * it opens: at most 512 characters, `https://` (or `http://` to a private/dev origin, as `server`),
@@ -120,20 +116,18 @@ const RETURN_URL_AUTHORITY = /^https?:\/\/([^/?#]+)/i;
  * and opens the second. `null` for anything else, which is then ignored.
  *
  * The host shown must be the host opened, so a URL two parsers could read differently is refused
- * too: one with spaces, control characters or backslashes, or anything but letters, digits,
- * `.-_:[]` (and non-ASCII letters, which the caller flags) in its authority. A URL built by
- * PulseVault's `buildUploadLink` is normalized and has none of these.
+ * too (`parseHttpUrl`), as is anything but letters, digits and `.-_:[]` in its host (non-ASCII
+ * letters pass, and the caller flags them). A URL built by PulseVault's `buildUploadLink` is
+ * normalized and has none of these.
  */
 export function readReturnUrl(
   raw: string | null | undefined,
 ): { url: string; host: string } | null {
   if (!raw || codePointLength(raw) > MAX_RETURN_URL_LENGTH) return null;
-  if (/[\s\\\p{Cc}]/u.test(raw)) return null;
-  const authority = RETURN_URL_AUTHORITY.exec(raw)?.[1];
-  if (!authority || !/^[A-Za-z0-9.\-_:[\]\u{80}-\u{10FFFF}]+$/u.test(authority)) return null;
   const url = parseAllowedUrl(raw);
-  if (!url || url.username || url.password) return null;
-  return { url: raw, host: authority.toLowerCase() };
+  if (!url || url.credentials) return null;
+  if (!/^[a-z0-9.\-_:[\]\u{80}-\u{10FFFF}]+$/u.test(url.host)) return null;
+  return { url: raw, host: url.host };
 }
 
 /** Path of the https pairing link on the link host (#252). */

@@ -1,3 +1,5 @@
+import { parseHttpUrl } from './http-url';
+
 /**
  * Milliseconds → "m:ss", or "h:mm:ss" from an hour up (72000 → "1:12", 4_325_000 → "1:12:05").
  * `pad` zero-pads the minutes under an hour ("00:07"); `floor` truncates instead of rounding
@@ -32,13 +34,12 @@ export function formatClipCount(count: number): string {
   return formatCount(count, 'clip', 'clips');
 }
 
-/** A server URL → its host for display (e.g. "vault.example.org"); the raw string if unparseable. */
+/**
+ * A server URL → its host for display (e.g. "vault.example.org"); the raw string if unparseable.
+ * The host requests to it really go to (see `parseHttpUrl`): it is what a person is asked to trust.
+ */
 export function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
+  return parseHttpUrl(url)?.host ?? url;
 }
 
 /**
