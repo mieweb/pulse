@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   decodeCapabilityClaims,
   EXPIRY_BUFFER_MS,
+  expiresLater,
   formatExpiry,
   isClaimsExpired,
   isTokenExpired,
@@ -155,5 +156,33 @@ describe('formatExpiry', () => {
     expect(formatExpiry(token, expMs - 5 * 60_000)).toBe('Expires in 4m');
     // 20s out, minus the 10s buffer → "Expires in 10s".
     expect(formatExpiry(token, expMs - 20_000)).toBe('Expires in 10s');
+  });
+});
+
+describe('expiresLater', () => {
+  const expiring = (exp: number) => fakeToken({ ...VALID_CLAIMS, exp });
+
+  it('is a newer link: one that stops working later than the stored one', () => {
+    expect(expiresLater(expiring(2000), expiring(1000))).toBe(true);
+    expect(expiresLater(expiring(1000), expiring(2000))).toBe(false);
+    // The same link again is not newer.
+    expect(expiresLater(expiring(1000), expiring(1000))).toBe(false);
+  });
+
+  it('always replaces a stored token that is gone or can’t be read', () => {
+    expect(expiresLater(expiring(1000), null)).toBe(true);
+    expect(expiresLater(expiring(1000), 'opaque')).toBe(true);
+    expect(expiresLater(null, null)).toBe(true);
+  });
+
+  it('never lets a link that can’t be read replace one that can', () => {
+    expect(expiresLater('opaque', expiring(1000))).toBe(false);
+    expect(expiresLater(null, expiring(1000))).toBe(false);
+  });
+
+  it('reads the order from exp alone, whatever iat says', () => {
+    const issuedLaterExpiresSooner = fakeToken({ ...VALID_CLAIMS, iat: 9000, exp: 1000 });
+    const issuedSoonerExpiresLater = fakeToken({ ...VALID_CLAIMS, iat: 1, exp: 2000 });
+    expect(expiresLater(issuedLaterExpiresSooner, issuedSoonerExpiresLater)).toBe(false);
   });
 });

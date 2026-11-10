@@ -144,6 +144,19 @@ export function expiresAtMs(token: string | null): number | null {
   return claims ? claims.exp * 1000 : null;
 }
 
+/**
+ * Whether the link with `token` is newer than the one whose token is `stored`: it stops working
+ * later. Told from `exp`, which with `ref` is all a client reads from a token (PROTOCOL.md §5.6).
+ * A stored token that is gone or can't be read is always replaced; a link that can't be read
+ * never replaces one that can.
+ */
+export function expiresLater(token: string | null, stored: string | null): boolean {
+  const storedExp = expiresAtMs(stored);
+  if (storedExp === null) return true;
+  const exp = expiresAtMs(token);
+  return exp !== null && exp > storedExp;
+}
+
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 

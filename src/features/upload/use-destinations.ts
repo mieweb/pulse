@@ -9,30 +9,10 @@ import {
 import { getDestinationToken } from '@/db/secure-token';
 import { useNow } from '@/hooks/use-now';
 
-import {
-  EXPIRY_CHECK_INTERVAL_MS,
-  expiresAtMs,
-  formatExpiry,
-  isTokenExpired,
-} from './capability-token';
+import { EXPIRY_CHECK_INTERVAL_MS } from './capability-token';
+import { type DestinationOption, destinationOptions, isSpentLink } from './destination-options';
 
-/** One non-expired destination in the pool, ready to render (host/expiry) or upload to. */
-export type DestinationOption = {
-  id: string;
-  server: string;
-  artifactId: string;
-  /** Set when the link named the place its upload is for: the host's key for that place. */
-  ref: string | null;
-  /** The link's names for the place and the host page to return to (links with a `ref` only). */
-  label: string | null;
-  app: string | null;
-  returnUrl: string | null;
-  token: string | null;
-  /** Millisecond `exp` for a decodable token, else `null` (tokenless = no known expiry). */
-  expiresAtMs: number | null;
-  /** Preformatted expiry label ("No expiry" / "Expires in 4m" / …), so views don't read the clock. */
-  expiryLabel: string;
-};
+export type { DestinationOption };
 
 /**
  * Bumped when a pairing rewrites the token of a row that already existed (the same link again
@@ -65,7 +45,7 @@ function subscribeTokens(listener: () => void) {
  * both surfaces agree on exactly which destinations are live.
  */
 export function useDestinations() {
-  const { data: rows } = useLiveQuery(destinationsQuery);
+  const { data: rows, updatedAt } = useLiveQuery(destinationsQuery);
   // Reactive wall-clock so expiry filtering/labels re-evaluate as time passes, even without a DB
   // write — a token can lapse while the user just sits on the screen.
   const now = useNow(EXPIRY_CHECK_INTERVAL_MS);
@@ -74,7 +54,12 @@ export function useDestinations() {
   // Tokens live in secure-store keyed by row id; load them into a map keyed on id. Re-fires only
   // when the set of ids changes or a pairing rewrote a token (`version`), not on every render.
   const idsKey = useMemo(() => rows.map((r) => r.id).join(','), [rows]);
-  const [tokens, setTokens] = useState<Record<string, string | null>>({});
+  const loadKey = `${idsKey}|${version}`;
+  const [loaded, setLoaded] = useState<{ key: string; tokens: Record<string, string | null> }>({
+    key: '',
+    tokens: {},
+  });
+  const tokens = loaded.tokens;
   useEffect(() => {
     let cancelled = false;
     const ids = idsKey ? idsKey.split(',') : [];
@@ -87,50 +72,38 @@ export function useDestinations() {
         ),
       ),
     ).then((entries) => {
-      if (!cancelled) setTokens(Object.fromEntries(entries.flat()));
+      if (!cancelled) setLoaded({ key: loadKey, tokens: Object.fromEntries(entries.flat()) });
     });
     return () => {
       cancelled = true;
     };
-  }, [idsKey, version]);
+    // `loadKey` is `idsKey` and `version` together.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadKey]);
+  // Whether `destinations` is the pool as it stands: the rows have been read and the tokens of
+  // exactly these rows loaded. Until then an empty list means "not known yet", not "none".
+  const ready = updatedAt !== undefined && loaded.key === loadKey;
 
   const destinations: DestinationOption[] = useMemo(
-    () =>
-      rows
-        // Only once its token has loaded: before that it would read as a tokenless link, and
-        // uploading with it would spend the link on a certain 401.
-        .filter((r) => r.id in tokens)
-        .map((r) => ({ ...r, token: tokens[r.id] ?? null }))
-        .filter((r) => !isTokenExpired(r.token, now))
-        .map((r) => ({
-          id: r.id,
-          server: r.server,
-          artifactId: r.artifactId,
-          ref: r.ref,
-          label: r.label,
-          app: r.app,
-          returnUrl: r.returnUrl,
-          token: r.token,
-          expiresAtMs: expiresAtMs(r.token),
-          expiryLabel: formatExpiry(r.token, now),
-        })),
+    () => destinationOptions(rows, tokens, now),
     // `now` intentionally in deps so an expiry that passes between ticks re-filters the list.
     [rows, tokens, now],
   );
 
-  // Garbage-collect rows whose token has actually lapsed so they don't linger as dead state.
-  // Only acts on tokens we've loaded and can decode as expired (never on "unknown").
+  // Garbage-collect rows whose link is spent (its token lapsed, or a place's row left without
+  // one) so they don't linger as dead state. Only acts on tokens we've loaded and can decode as
+  // expired (never on "unknown").
   useEffect(() => {
     for (const r of rows) {
       const token = tokens[r.id];
-      if (token !== undefined && isTokenExpired(token, now)) {
+      if (token !== undefined && isSpentLink(r.ref, token, now)) {
         // Decided again from the stored token when it runs: a re-pair may have refreshed it.
-        void deleteDestinationIfExpired(r.id, (stored) => isTokenExpired(stored, Date.now())).catch(
-          () => {},
-        );
+        void deleteDestinationIfExpired(r.id, (stored) =>
+          isSpentLink(r.ref, stored, Date.now()),
+        ).catch(() => {});
       }
     }
   }, [rows, tokens, now]);
 
-  return { destinations, deleteDestination };
+  return { destinations, ready, deleteDestination };
 }

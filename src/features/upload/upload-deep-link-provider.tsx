@@ -22,6 +22,7 @@ import { hostOf, shortHost } from '@/utils/format';
 import { createPresence } from '@/utils/presence';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
+import { expiresLater } from './capability-token';
 import { checkDeferredPairing } from './deferred-pairing';
 import { pairingLinkParams, parseUploadDeepLink, type UploadDeepLink } from './deep-link';
 import { LINK_HOST } from './link-host';
@@ -226,6 +227,8 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
               app: place.app,
               returnUrl: place.returnUrl,
             },
+            // An older link for the place, opened late, never takes the place of a newer one.
+            (stored) => expiresLater(link.token, stored),
           );
           // The same link (or place) again keeps its row id: open screens reload its fresh token.
           reloadDestinationTokens();

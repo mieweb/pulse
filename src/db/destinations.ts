@@ -9,8 +9,9 @@ import { deleteDestinationToken, getDestinationToken, setDestinationToken } from
  * A server the device has paired with (via a `pulsecam://` deep link) but no draft has
  * consumed yet. Device-wide, not per-draft — unlike `drafts.upload*` (drafts.ts), this
  * lives independently of any one draft so the user can pick *which* draft to send, and to
- * *which* destination, at upload time. A destination is single-use: a draft claiming it for
- * an upload, or the user deleting it, removes it here.
+ * *which* destination, at upload time. A plain link's destination is single-use: a draft
+ * claiming it for an upload, or the user deleting it, removes it here. A place's is kept until
+ * its upload succeeds (see `DestinationPlace`).
  */
 export type PairedDestination = {
   server: string;
@@ -66,11 +67,20 @@ function oneAtATime<T>(run: () => Promise<T>): Promise<T> {
  * same link (same server-minted artifact) refreshes that row's token in place instead of
  * piling up duplicates. A link that names its `place` is deduped by `(server, ref)` instead: the
  * place keeps its one row (and so its drafts), which takes this link's upload, token and hints and
- * moves to the front of the pool — unless an upload is running on the link it has, which is then
- * left alone. Returns the row id (existing or freshly minted).
+ * moves to the front of the pool — unless an upload is running on the link it has, or that link
+ * is the newer of the two (`supersedes`), which is then left alone. Returns the row id (existing
+ * or freshly minted).
+ *
+ * `supersedes`: whether this link replaces the one the place's row holds, given that one's stored
+ * token (`null` when it has none). A link opened again, or an older one opened late (a stale tab,
+ * a replayed launch), must not take the place of a newer one.
  */
-export function addDestination(dest: PairedDestination, place?: DestinationPlace): Promise<string> {
-  return oneAtATime(() => (place ? upsertPlace(dest, place) : insertOrRefresh(dest)));
+export function addDestination(
+  dest: PairedDestination,
+  place?: DestinationPlace,
+  supersedes: (storedToken: string | null) => boolean = () => true,
+): Promise<string> {
+  return oneAtATime(() => (place ? upsertPlace(dest, place, supersedes) : insertOrRefresh(dest)));
 }
 
 async function insertOrRefresh(dest: PairedDestination): Promise<string> {
@@ -96,7 +106,11 @@ async function insertOrRefresh(dest: PairedDestination): Promise<string> {
   return id;
 }
 
-async function upsertPlace(dest: PairedDestination, place: DestinationPlace): Promise<string> {
+async function upsertPlace(
+  dest: PairedDestination,
+  place: DestinationPlace,
+  supersedes: (storedToken: string | null) => boolean,
+): Promise<string> {
   const [match] = await db
     .select({
       id: uploadDestinations.id,
@@ -106,9 +120,15 @@ async function upsertPlace(dest: PairedDestination, place: DestinationPlace): Pr
     .from(uploadDestinations)
     .where(and(eq(uploadDestinations.server, dest.server), eq(uploadDestinations.ref, place.ref)));
   if (match?.uploading) return match.id;
+  if (match && !supersedes(await getDestinationToken(match.id))) return match.id;
   const id = match?.id ?? Crypto.randomUUID();
   const link = { artifactId: dest.artifactId, ...place };
+  // The row and its token live in two stores, so the two writes can't be one. The token goes
+  // last, and the old one is cleared first: stopped anywhere in between, the row has no token
+  // (and isn't offered, see `useDestinations`) rather than a new upload id with the old link's
+  // token, which the server would refuse every time. Opening the link again completes it.
   if (match) {
+    await setDestinationToken(id, null);
     await db
       .update(uploadDestinations)
       .set({ ...link, createdAt: sql`(unixepoch('subsec') * 1000)` })

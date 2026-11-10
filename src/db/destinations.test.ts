@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 // The real queries against the real schema: an in-memory SQLite with every migration applied,
-// behind drizzle's proxy driver. Only secure-store (the passes) is a stand-in.
+// behind drizzle's proxy driver. Only secure-store (the links' tokens) is a stand-in.
 jest.mock('./client', () => {
   const { readdirSync, readFileSync } = jest.requireActual<typeof import('node:fs')>('node:fs');
   const { join } = jest.requireActual<typeof import('node:path')>('node:path');
@@ -24,6 +24,7 @@ jest.mock('./client', () => {
     const statement = sqlite.prepare(sql);
     if (method === 'run') {
       statement.run(...params);
+      if (/^(insert into|update) "upload_destinations"/i.test(sql)) mockWrites.push('row');
       return { rows: [] };
     }
     const rows = statement.all(...params).map((row) => Object.values(row));
@@ -31,10 +32,24 @@ jest.mock('./client', () => {
   });
   return { db, sqlite };
 });
-const mockTokens = new Map<string, string | null>();
+const mockTokens = new Map<string, string>();
+/** Every token write and row write, in order, to check which lands first. */
+const mockWrites: string[] = [];
+/** Set to make the next write of a token (not a clear) fail, as a full or locked keychain would. */
+const mockFailure = { nextTokenWrite: false };
 jest.mock('./secure-token', () => ({
   getDestinationToken: async (id: string) => mockTokens.get(id) ?? null,
   setDestinationToken: async (id: string, token: string | null) => {
+    if (token === null) {
+      mockWrites.push('token:clear');
+      mockTokens.delete(id);
+      return;
+    }
+    if (mockFailure.nextTokenWrite) {
+      mockFailure.nextTokenWrite = false;
+      throw new Error('secure-store write failed');
+    }
+    mockWrites.push(`token:${token}`);
     mockTokens.set(id, token);
   },
   deleteDestinationToken: async (id: string) => {
@@ -89,6 +104,8 @@ const insertDraft = (id: string, ref: string, status: string | null, artifactId?
 beforeEach(() => {
   sqlite.exec('DELETE FROM upload_destinations; DELETE FROM drafts;');
   mockTokens.clear();
+  mockWrites.length = 0;
+  mockFailure.nextTokenWrite = false;
 });
 
 describe('a plain link’s destination', () => {
@@ -197,6 +214,67 @@ describe('a place’s destination', () => {
 
     expect(await destinationsQuery).toMatchObject([{ id, artifactId: 'art-1', label: 'Label r1' }]);
     expect(mockTokens.get(id)).toBe('token-art-1');
+  });
+
+  it('is left alone by a link that doesn’t supersede the one it holds', async () => {
+    const id = await addDestination(upload('art-2'), place('r1', { label: 'Newer' }));
+    const asked: (string | null)[] = [];
+    const older = (stored: string | null) => {
+      asked.push(stored);
+      return false;
+    };
+
+    // An older link for the place, opened late: the place keeps the newer one, whole.
+    expect(await addDestination(upload('art-1'), place('r1', { label: 'Older' }), older)).toBe(id);
+
+    expect(asked).toEqual(['token-art-2']);
+    expect(await destinationsQuery).toMatchObject([{ id, artifactId: 'art-2', label: 'Newer' }]);
+    expect(mockTokens.get(id)).toBe('token-art-2');
+  });
+
+  it('takes any link when it holds no token to compare with, and a first link always', async () => {
+    const asked: (string | null)[] = [];
+    const never = (stored: string | null) => {
+      asked.push(stored);
+      return stored === null;
+    };
+    const id = await addDestination(upload('art-1'), place('r1'), never);
+    expect(asked).toEqual([]);
+
+    mockTokens.delete(id);
+    await addDestination(upload('art-2'), place('r1'), never);
+    expect(asked).toEqual([null]);
+    expect(await getDestination(id)).toEqual(upload('art-2'));
+  });
+
+  it('clears the old token before the row takes the new upload, and writes the new token last', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+    expect(mockWrites).toEqual(['row', 'token:token-art-1']);
+    mockWrites.length = 0;
+
+    await addDestination(upload('art-2'), place('r1'));
+    expect(mockWrites).toEqual(['token:clear', 'row', 'token:token-art-2']);
+    expect(await getDestination(id)).toEqual(upload('art-2'));
+  });
+
+  it('stopped before its token is written, never holds a new upload with the old token', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+
+    mockFailure.nextTokenWrite = true;
+    await expect(addDestination(upload('art-2'), place('r1'))).rejects.toThrow();
+
+    // The row has the new upload and no token: it isn't offered until the link is opened again.
+    expect(await getDestination(id)).toEqual({ ...upload('art-2'), token: null });
+
+    // Opening the link again completes it, whatever `supersedes` would say of a stored token.
+    await addDestination(upload('art-2'), place('r1'), (stored) => stored === null);
+    expect(await getDestination(id)).toEqual(upload('art-2'));
+
+    // The same for a place's first link: a row, then its token.
+    mockFailure.nextTokenWrite = true;
+    await expect(addDestination(upload('art-9'), place('r9'))).rejects.toThrow();
+    const [first] = (await destinationsQuery).filter((row) => row.ref === 'r9');
+    expect(await getDestination(first.id)).toEqual({ ...upload('art-9'), token: null });
   });
 
   it('after its upload, is removed only while it still holds that upload’s link', async () => {
