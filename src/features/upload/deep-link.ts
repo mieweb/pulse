@@ -162,6 +162,32 @@ export function pairingLinkParams(url: string, linkHost?: string | null): string
 }
 
 /**
+ * A link's parameters, decoded as PROTOCOL.md §3 says: `application/x-www-form-urlencoded` in
+ * UTF-8 — `name=value` pairs joined by `&`, a `+` for a space, the rest percent-encoded. The
+ * first value of a name counts. A pair that isn't valid percent-encoded UTF-8 is no parameter at
+ * all (a link can be written by anyone, and a stray `%` must not be an error).
+ *
+ * Decoded here rather than by `URLSearchParams`: React Native's cuts a value at its first `=`
+ * and throws on a malformed escape.
+ */
+function formParams(query: string): Map<string, string> {
+  const params = new Map<string, string>();
+  const decode = (part: string) => decodeURIComponent(part.replace(/\+/g, ' '));
+  for (const pair of query.split('&')) {
+    if (!pair) continue;
+    const equals = pair.indexOf('=');
+    try {
+      const name = decode(equals < 0 ? pair : pair.slice(0, equals));
+      const value = equals < 0 ? '' : decode(pair.slice(equals + 1));
+      if (!params.has(name)) params.set(name, value);
+    } catch {
+      // Not a parameter.
+    }
+  }
+  return params;
+}
+
+/**
  * Parse and validate an upload pairing link, in either form `pairingLinkParams` takes. Rejects
  * anything the app can't safely act on — an unrecognized version, a malformed artifactId, a
  * server origin that isn't HTTPS (except the explicit localhost/private-IP dev allowance) —
@@ -172,9 +198,9 @@ export function parseUploadDeepLink(url: string, linkHost?: string | null): Deep
   const query = pairingLinkParams(url, linkHost);
   if (query === null) return { ok: false, reason: 'invalid-link' };
 
-  // An ordinary query string `URLSearchParams` handles regardless of the link's form.
-  const params = new URLSearchParams(query);
-  const param = (key: string): string | null => params.get(key);
+  // The same parameter string, whichever form the link took.
+  const params = formParams(query);
+  const param = (key: string): string | null => params.get(key) ?? null;
 
   if (param('v') !== SUPPORTED_LINK_VERSION) {
     return { ok: false, reason: 'unsupported-version' };

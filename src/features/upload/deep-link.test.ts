@@ -310,6 +310,47 @@ describe('parseUploadDeepLink: a link for a place', () => {
     expect(placeOf(link(uploadToken({ ref: '😀'.repeat(201) })))).toBeUndefined();
   });
 
+  it('decodes parameters as form-urlencoded UTF-8: a plus is a space, a value keeps its equals signs', () => {
+    const result = parseUploadDeepLink(
+      link(
+        FOR_HUDDLE,
+        '&label=Team+%C2%B7+Huddle&name=a%2Bb+c&return=https://host.example.org/app?team=t1',
+      ),
+    );
+    expect(result.ok && result.link.place).toMatchObject({
+      label: 'Team · Huddle',
+      name: 'a+b c',
+      returnUrl: 'https://host.example.org/app?team=t1',
+    });
+  });
+
+  it('a hint that isn’t valid percent-encoded UTF-8 is absent, not an error', () => {
+    for (const bad of ['%', '%ZZ', '100%', '%E0%A4%A', '%C3%28', '%FF']) {
+      expect(placeOf(link(FOR_HUDDLE, `&label=${bad}&name=Update`))).toMatchObject({
+        label: null,
+        name: 'Update',
+      });
+    }
+  });
+
+  it('refuses a link whose required parameter can’t be decoded, without throwing', () => {
+    expect(
+      parseUploadDeepLink(
+        `pulsecam://?v=1&artifactId=${ARTIFACT_ID}&server=https://vault.example.org/%ZZ`,
+      ),
+    ).toEqual({ ok: false, reason: 'invalid-link' });
+    expect(parseUploadDeepLink('pulsecam://?%=1&v=%')).toEqual({
+      ok: false,
+      reason: 'unsupported-version',
+    });
+  });
+
+  it('takes the first value of a parameter given twice', () => {
+    expect(placeOf(link(FOR_HUDDLE, '&label=First&label=Second'))).toMatchObject({
+      label: 'First',
+    });
+  });
+
   it('reads the same from the https link form', () => {
     const result = parseUploadDeepLink(
       `https://links.example.org/pulse/open#v=1&artifactId=${ARTIFACT_ID}&server=${SERVER}&token=${FOR_HUDDLE}&label=Huddle`,
