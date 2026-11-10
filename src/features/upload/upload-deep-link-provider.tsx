@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 
 import { addDestination } from '@/db/destinations';
 import { findOpenDraftForContext } from '@/db/drafts';
@@ -316,7 +316,13 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
         return;
       }
       const { link } = result;
-      void screenLink(link, { launch, nowMs: Date.now(), wasHandled: wasLinkHandled })
+      void screenLink(link, {
+        // Only Android hands an old launch link back (a relaunch from Recents gets the intent
+        // that first started the app). Elsewhere a launch link is always the person's own tap.
+        launch: launch && Platform.OS === 'android',
+        nowMs: Date.now(),
+        wasHandled: wasLinkHandled,
+      })
         .then((screened) => {
           // An old launch link the system handed back: not the person's doing, so nothing shows.
           if (screened === 'replayed') return;
