@@ -971,6 +971,21 @@ describe('the way back to the host', () => {
     expect(uploads.getAnnouncement('back3')!.returnTo).toBeNull();
   });
 
+  it('goes when the draft is uploaded again, whatever comes of that upload', async () => {
+    tusWith();
+    await claimFrom('back5', RETURN);
+    await eventually(() => uploads.getAnnouncement('back5') !== null);
+    expect(uploads.getAnnouncement('back5')!.returnTo).toEqual(RETURN);
+
+    tusWith(() => {
+      throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });
+    });
+    await claimFrom('back5', RETURN);
+    await eventually(() => db.log.filter((entry) => entry === 'burn:back5').length > 0);
+    // The earlier upload still stands, but its way back isn't offered for this one.
+    expect(uploads.getAnnouncement('back5')!.returnTo).toBeNull();
+  });
+
   it('is not offered after a failed upload', async () => {
     tusWith(() => {
       throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });

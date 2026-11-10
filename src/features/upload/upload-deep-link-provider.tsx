@@ -124,12 +124,15 @@ const openRecorder = createRecorderOpener({
  * server's origin (TOFU) before anything is fetched from it. Confirming adds the destination to
  * the device-wide pool (db/destinations.ts) and toasts — it does NOT pick a draft. Any draft (a
  * fresh recording or an existing one) can select it later from its export screen, and several
- * servers can be paired at once. A one-use destination (one server-minted artifactId) drops out
- * of the pool once a draft claims it or the user deletes it. A link that names the place its
- * upload is for (`ref`, deep-link.ts) does more: the place keeps one destination, which takes
- * this link's upload once its server has accepted the link's token, and the recorder opens for it
- * — on the place's open draft, or a new one named with the link's `name`. Such a link is refused
- * when it has already expired, and ignored when it is an old launch link handed to the app again.
+ * servers can be paired at once. Each destination is single-use (one server-minted artifactId)
+ * and drops out of the pool once a draft claims it or the user deletes it.
+ *
+ * A link that names the place its upload is for (`ref`, deep-link.ts) does more. It is refused
+ * when it has already expired, and ignored when it is an old launch link handed to the app again
+ * (`screenLink`). Its server is asked to accept its token before it takes over what the place has
+ * (`pairLink`): until a draft claims it the place has one destination, which a newer link
+ * replaces. And the recorder opens for it — on the place's unsent draft, or a new one named with
+ * the link's `name` (`showRecorder`).
  *
  * On the first launch after a store install it also picks up the link the `/pulse/open` page
  * handed over (deferred-pairing.ts): Android's install referrer goes through the same

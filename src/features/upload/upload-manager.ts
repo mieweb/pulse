@@ -426,8 +426,10 @@ class BackgroundUploadManager {
       return;
     }
     this.sessions.set(draftId, session);
-    // A new upload replaces the draft's previous one.
+    // A new upload replaces the draft's previous one: its link, and its way back to the host.
     this.watchLinks.delete(draftId);
+    const previous = this.announcements.get(draftId);
+    if (previous?.returnTo) this.announcements.set(draftId, { ...previous, returnTo: null });
     void deleteSavedLink(draftId).catch(() => {});
     // Ask for notification permission now — a foreground moment (the user just tapped Upload) — so
     // the background completion/failure banner can fire later without prompting mid-upload.
