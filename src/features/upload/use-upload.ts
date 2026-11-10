@@ -77,23 +77,20 @@ export function useUpload(
       const merged = mergedRef.current;
       if (!option || !merged) return;
       // The stored link, not the list's copy: a re-pair may have refreshed its token (or, for a
-      // place, replaced its upload) a moment ago, before this screen's reload
+      // place, replaced its upload and its way back) a moment ago, before this screen's reload
       // (`reloadDestinationTokens`) landed. The copy only if it can't be read.
-      const destination = await getDestination(option.id).catch(() => ({
-        server: option.server,
-        token: option.token,
-        artifactId: option.artifactId,
-      }));
-      if (!destination || isSpentLink(option.ref, destination.token, Date.now())) return;
+      const stored = await getDestination(option.id).catch(() => option);
+      if (!stored || isSpentLink(stored.ref, stored.token, Date.now())) return;
+      const { server, token, artifactId } = stored;
       await uploads.claim({
         draftId,
         destinationId: option.id,
-        destination,
+        destination: { server, token, artifactId },
         segments,
         merged,
-        // The host page to go back to once it's in: the row is gone from here on, so the
-        // upload carries it.
-        returnTo: returnToFor(draft, option),
+        // The host page to go back to once it's in, from the same link: the row is gone from
+        // here on, so the upload carries it.
+        returnTo: returnToFor(draft, stored),
       });
     },
     [destinations, draft, draftId, segments, mergedRef],

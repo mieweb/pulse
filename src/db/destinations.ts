@@ -174,18 +174,29 @@ export function placeHoldsLink(dest: PairedDestination, ref: string): Promise<bo
 }
 
 /**
- * Fetch one destination (row + secure-stored token); `null` if it's gone. Read in turn with
- * pairing, so never between a re-pair's two writes: never one link's upload id with another's token.
+ * A destination as stored: its link, and for a place's link the place and the way back it carried
+ * (all `null` for a plain link).
  */
-export function getDestination(id: string): Promise<PairedDestination | null> {
+export type StoredDestination = PairedDestination &
+  Pick<DestinationPlace, 'app' | 'returnUrl'> & { ref: string | null };
+
+/**
+ * Fetch one destination (row + secure-stored token); `null` if it's gone. Read in turn with
+ * pairing, so never between a re-pair's two writes: the upload id, the token and the way back are
+ * all the same link's.
+ */
+export function getDestination(id: string): Promise<StoredDestination | null> {
   return oneAtATime(() => readDestination(id));
 }
 
-async function readDestination(id: string): Promise<PairedDestination | null> {
+async function readDestination(id: string): Promise<StoredDestination | null> {
   const rows = await db
     .select({
       server: uploadDestinations.server,
       artifactId: uploadDestinations.artifactId,
+      ref: uploadDestinations.ref,
+      app: uploadDestinations.app,
+      returnUrl: uploadDestinations.returnUrl,
     })
     .from(uploadDestinations)
     .where(eq(uploadDestinations.id, id));

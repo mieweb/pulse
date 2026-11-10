@@ -150,4 +150,15 @@ describe('returnToFor', () => {
   it('is none when the place’s link carried no return URL', () => {
     expect(returnToFor(draftFor(), { ...own, returnUrl: null })).toBeNull();
   });
+
+  it('reads a row as stored as the pool does: a return URL it refuses is none, an app name cleaned', () => {
+    expect(returnToFor(draftFor(), { ...own, returnUrl: 'javascript:alert(1)' })).toBeNull();
+    expect(
+      returnToFor(draftFor(), { ...own, returnUrl: 'https://user:pw@host.example.org/' }),
+    ).toBeNull();
+    expect(returnToFor(draftFor(), { ...own, app: 'Time\nHuddle' })).toEqual({
+      url: RETURN,
+      app: 'Time Huddle',
+    });
+  });
 });

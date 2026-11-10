@@ -124,7 +124,12 @@ describe('a plain link’s destination', () => {
         returnUrl: null,
       },
     ]);
-    expect(await getDestination(id)).toEqual(upload('art-1'));
+    expect(await getDestination(id)).toEqual({
+      ...upload('art-1'),
+      ref: null,
+      app: null,
+      returnUrl: null,
+    });
   });
 
   it('the same link again refreshes its row’s token instead of adding one', async () => {
@@ -184,7 +189,13 @@ describe('a place’s destination', () => {
     expect(await destinationsQuery).toMatchObject([
       { id, artifactId: 'art-2', label: 'Renamed', returnUrl: null },
     ]);
-    expect(await getDestination(id)).toEqual(upload('art-2'));
+    // Read as one link: its upload, its token and its way back.
+    expect(await getDestination(id)).toEqual({
+      ...upload('art-2'),
+      ref: 'r1',
+      app: 'TimeHuddle',
+      returnUrl: null,
+    });
   });
 
   it('is one row per ref, and per server', async () => {
@@ -256,7 +267,7 @@ describe('a place’s destination', () => {
     mockTokens.delete(id);
     await addDestination(upload('art-2'), place('r1'), never);
     expect(asked).toEqual([null]);
-    expect(await getDestination(id)).toEqual(upload('art-2'));
+    expect(await getDestination(id)).toMatchObject(upload('art-2'));
   });
 
   it('clears the old token before the row takes the new upload, and writes the new token last', async () => {
@@ -266,7 +277,7 @@ describe('a place’s destination', () => {
 
     await addDestination(upload('art-2'), place('r1'));
     expect(mockWrites).toEqual(['token:clear', 'row', 'token:token-art-2']);
-    expect(await getDestination(id)).toEqual(upload('art-2'));
+    expect(await getDestination(id)).toMatchObject(upload('art-2'));
   });
 
   it('stopped before its token is written, never holds a new upload with the old token', async () => {
@@ -276,17 +287,17 @@ describe('a place’s destination', () => {
     await expect(addDestination(upload('art-2'), place('r1'))).rejects.toThrow();
 
     // The row has the new upload and no token: it isn't offered until the link is opened again.
-    expect(await getDestination(id)).toEqual({ ...upload('art-2'), token: null });
+    expect(await getDestination(id)).toMatchObject({ ...upload('art-2'), token: null });
 
     // Opening the link again completes it, whatever `takesOver` would say of a stored token.
     await addDestination(upload('art-2'), place('r1'), (stored) => stored === null);
-    expect(await getDestination(id)).toEqual(upload('art-2'));
+    expect(await getDestination(id)).toMatchObject(upload('art-2'));
 
     // The same for a place's first link: a row, then its token.
     mockFailure.nextTokenWrite = true;
     await expect(addDestination(upload('art-9'), place('r9'))).rejects.toThrow();
     const [first] = (await destinationsQuery).filter((row) => row.ref === 'r9');
-    expect(await getDestination(first.id)).toEqual({ ...upload('art-9'), token: null });
+    expect(await getDestination(first.id)).toMatchObject({ ...upload('art-9'), token: null });
   });
 
   it('takes the place of the same upload paired as a plain link before an upgrade', async () => {
@@ -338,7 +349,7 @@ describe('a place’s destination', () => {
     const pairing = addDestination(upload('art-2'), place('r1'));
     const read = getDestination(id);
 
-    expect(await read).toEqual(upload('art-2'));
+    expect(await read).toMatchObject(upload('art-2'));
     await pairing;
   });
 
@@ -349,7 +360,7 @@ describe('a place’s destination', () => {
     // A newer link replaced it after the read: the claim leaves it for the next upload.
     await addDestination(upload('art-2'), place('r1'));
     expect(await deleteDestination(id, read!)).toBe(false);
-    expect(await getDestination(id)).toEqual(upload('art-2'));
+    expect(await getDestination(id)).toMatchObject(upload('art-2'));
 
     // The link it holds is spent, once.
     expect(await deleteDestination(id, upload('art-2'))).toBe(true);
@@ -368,7 +379,7 @@ describe('a place’s destination', () => {
     const next = await addDestination(upload('art-2'), place('r1'));
     expect(next).not.toBe(id);
     expect(await destinationsQuery).toMatchObject([{ id: next, artifactId: 'art-2', ref: 'r1' }]);
-    expect(await getDestination(next)).toEqual(upload('art-2'));
+    expect(await getDestination(next)).toMatchObject(upload('art-2'));
   });
 
   it('expired, stays while a draft recorded for it is unsent, keeping its token', async () => {

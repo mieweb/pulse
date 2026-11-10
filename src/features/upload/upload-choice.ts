@@ -1,5 +1,6 @@
 import { hostOf, shortHost } from '@/utils/format';
 
+import { cleanApp, readReturnUrl } from './deep-link';
 import type { DestinationOption } from './destination-options';
 import { openNewLink } from './link-messages';
 import type { ReturnTo } from './types';
@@ -73,13 +74,15 @@ export function uploadChoice(args: {
 /**
  * The way back to offer after uploading `draft` to `destination`: the destination's return URL,
  * and only when it is the draft's own place (the same server AND ref) — a host's return page is
- * for the place its link was opened from, not for whatever was uploaded to it.
+ * for the place its link was opened from, not for whatever was uploaded to it. The URL and app
+ * name are read as the pool reads them (`destinationOptions`), so a row as stored will do.
  */
 export function returnToFor(
   draft: DraftPlace | undefined,
   destination: Pick<DestinationOption, 'server' | 'ref' | 'returnUrl' | 'app'>,
 ): ReturnTo | null {
-  if (!draft?.server || !draft.ref || !destination.returnUrl) return null;
+  if (!draft?.server || !draft.ref) return null;
   if (destination.server !== draft.server || destination.ref !== draft.ref) return null;
-  return { url: destination.returnUrl, app: destination.app };
+  const url = readReturnUrl(destination.returnUrl)?.url;
+  return url ? { url, app: cleanApp(destination.app) } : null;
 }
