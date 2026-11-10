@@ -135,6 +135,27 @@ async function upsertPlace(
   return id;
 }
 
+/**
+ * Whether the row of the place `ref` on `dest.server` holds this very link: the same upload and
+ * the same token. Opening such a link again has nothing to pair. Asked in turn with pairing, so
+ * it never reads a row between its two writes.
+ */
+export function placeHoldsLink(dest: PairedDestination, ref: string): Promise<boolean> {
+  return oneAtATime(async () => {
+    const [row] = await db
+      .select({ id: uploadDestinations.id })
+      .from(uploadDestinations)
+      .where(
+        and(
+          eq(uploadDestinations.server, dest.server),
+          eq(uploadDestinations.ref, ref),
+          eq(uploadDestinations.artifactId, dest.artifactId),
+        ),
+      );
+    return !!row && dest.token !== null && (await getDestinationToken(row.id)) === dest.token;
+  });
+}
+
 /** Fetch one destination (row + secure-stored token); `null` if it's gone. */
 export async function getDestination(id: string): Promise<PairedDestination | null> {
   const rows = await db

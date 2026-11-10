@@ -36,22 +36,41 @@ export function createLinkGate(now: () => number = Date.now) {
 }
 
 /**
- * Whether a link is worth asking about at all, before anyone is asked to confirm its server:
- * - `replayed`: the link the app was launched with (`launch`) is one already dealt with — the
- *   system handing an old launch link back (Android, a relaunch from Recents). Dropped silently.
- * - `expired`: its token's `exp` has passed on this device's clock; it can't upload anything, so
+ * What to do with a link for a place before anyone is asked to confirm its server:
+ * - `expired`: its token's `exp` has passed on this device's clock. It can't upload anything, so
  *   it is refused with its own message rather than paired and opened as if it worked.
+ * - `held`: the place already holds this very link (the same upload, the same token). There is
+ *   nothing to pair and nobody to ask: its recorder opens at once, offline included.
+ * - `replayed` / `refused`: only for the link the app was launched with, where the system hands an
+ *   old one back (`launch`: Android, a relaunch after the process died gets the intent that first
+ *   started the app). One Pulse already paired, and no longer holds, has had its upload used (or
+ *   was replaced, or removed): it is dropped silently, never paired a second time. One its
+ *   server refused is said to be refused again, without asking.
+ * - `ok`: go on to confirm its server and pair it.
+ *
+ * Pulse can't tell the system handing a launch link back from the person tapping the same link
+ * again while the app isn't running. So both get the same answer: the recorder for a link the
+ * place holds, the message for an expired or refused one, and nothing for one that was used.
+ *
  * A plain link is always `ok`: it is handled exactly as before.
  */
 export async function screenLink(
   link: UploadDeepLink,
-  opts: { launch: boolean; nowMs: number; wasHandled(artifactId: string): Promise<boolean> },
-): Promise<'ok' | 'replayed' | 'expired'> {
+  opts: {
+    launch: boolean;
+    nowMs: number;
+    /** Whether the place's row holds this very link (`placeHoldsLink`). */
+    holds(link: UploadDeepLink): Promise<boolean>;
+    /** What a link Pulse dealt with before came to (`handledLinkOutcome`). */
+    outcome(artifactId: string): Promise<'paired' | 'refused' | null>;
+  },
+): Promise<'ok' | 'expired' | 'held' | 'replayed' | 'refused'> {
   if (!link.place) return 'ok';
-  if (opts.launch && (await opts.wasHandled(link.artifactId).catch(() => false))) {
-    return 'replayed';
-  }
-  return isTokenExpired(link.token, opts.nowMs) ? 'expired' : 'ok';
+  if (isTokenExpired(link.token, opts.nowMs)) return 'expired';
+  if (await opts.holds(link).catch(() => false)) return 'held';
+  if (!opts.launch) return 'ok';
+  const outcome = await opts.outcome(link.artifactId).catch(() => null);
+  return outcome === 'paired' ? 'replayed' : (outcome ?? 'ok');
 }
 
 export type PairFailure =

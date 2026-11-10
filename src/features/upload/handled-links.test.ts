@@ -9,23 +9,42 @@ jest.mock('@/db/settings', () => ({
 }));
 
 /* eslint-disable import/first -- the mock above must be registered before this loads */
-import { parseHandled, rememberHandledLink, wasLinkHandled, withHandled } from './handled-links';
+import {
+  handledLinkOutcome,
+  parseHandled,
+  rememberHandledLink,
+  withHandled,
+} from './handled-links';
 /* eslint-enable import/first */
 
 beforeEach(() => mockStore.clear());
 
 describe('handled links', () => {
-  it('remembers a link’s upload id, as a later launch reads it', async () => {
-    expect(await wasLinkHandled('art-1')).toBe(false);
-    await rememberHandledLink('art-1');
-    expect(await wasLinkHandled('art-1')).toBe(true);
-    expect(await wasLinkHandled('art-2')).toBe(false);
+  it('remembers what a link’s upload id came to, as a later launch reads it', async () => {
+    expect(await handledLinkOutcome('art-1')).toBeNull();
+    await rememberHandledLink('art-1', 'paired');
+    await rememberHandledLink('art-2', 'refused');
+    expect(await handledLinkOutcome('art-1')).toBe('paired');
+    expect(await handledLinkOutcome('art-2')).toBe('refused');
+    expect(await handledLinkOutcome('art-3')).toBeNull();
     // What a new process finds: the settings row, nothing in memory.
+    expect(parseHandled([...mockStore.values()][0])).toEqual(['art-1', 'refused:art-2']);
+  });
+
+  it('keeps one outcome per link: the last one', async () => {
+    await rememberHandledLink('art-1', 'refused');
+    await rememberHandledLink('art-1', 'paired');
+    expect(await handledLinkOutcome('art-1')).toBe('paired');
     expect(parseHandled([...mockStore.values()][0])).toEqual(['art-1']);
   });
 
+  it('reads the ids an earlier build stored as paired', async () => {
+    mockStore.set('pairing.handledLinks', JSON.stringify(['old-1', 'old-2']));
+    expect(await handledLinkOutcome('old-2')).toBe('paired');
+  });
+
   it('keeps every id when several are remembered at once', async () => {
-    await Promise.all(['a', 'b', 'c'].map((id) => rememberHandledLink(id)));
+    await Promise.all(['a', 'b', 'c'].map((id) => rememberHandledLink(id, 'paired')));
     expect(parseHandled([...mockStore.values()][0])).toEqual(['a', 'b', 'c']);
   });
 
@@ -49,8 +68,8 @@ describe('handled links', () => {
     setSetting.mockImplementationOnce(async () => {
       throw new Error('disk full');
     });
-    await expect(rememberHandledLink('lost')).rejects.toThrow();
-    await rememberHandledLink('kept');
-    expect(await wasLinkHandled('kept')).toBe(true);
+    await expect(rememberHandledLink('lost', 'paired')).rejects.toThrow();
+    await rememberHandledLink('kept', 'paired');
+    expect(await handledLinkOutcome('kept')).toBe('paired');
   });
 });

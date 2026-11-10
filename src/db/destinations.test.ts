@@ -69,6 +69,7 @@ import {
   deleteDestinationIfExpired,
   destinationsQuery,
   getDestination,
+  placeHoldsLink,
 } from './destinations';
 /* eslint-enable import/first */
 
@@ -266,6 +267,22 @@ describe('a place’s destination', () => {
     await expect(addDestination(upload('art-9'), place('r9'))).rejects.toThrow();
     const [first] = (await destinationsQuery).filter((row) => row.ref === 'r9');
     expect(await getDestination(first.id)).toEqual({ ...upload('art-9'), token: null });
+  });
+
+  it('holds a link only as that very link: the same upload and the same token', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+    expect(await placeHoldsLink(upload('art-1'), 'r1')).toBe(true);
+    // Another upload, another token, another place or another server is another link.
+    expect(await placeHoldsLink(upload('art-2'), 'r1')).toBe(false);
+    expect(await placeHoldsLink(upload('art-1', { token: 'changed' }), 'r1')).toBe(false);
+    expect(await placeHoldsLink(upload('art-1'), 'r2')).toBe(false);
+    expect(await placeHoldsLink(upload('art-1', { server: `${SERVER}/` }), 'r1')).toBe(false);
+    // A row cut short between its two writes holds nothing; nor does a place once claimed.
+    mockTokens.delete(id);
+    expect(await placeHoldsLink(upload('art-1'), 'r1')).toBe(false);
+    expect(await placeHoldsLink(upload('art-1', { token: null }), 'r1')).toBe(false);
+    await deleteDestination(id);
+    expect(await placeHoldsLink(upload('art-1'), 'r1')).toBe(false);
   });
 
   it('is used up by a claim like any other, and the place’s next link makes a new row', async () => {

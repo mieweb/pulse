@@ -22,6 +22,15 @@ export function openLinkAgainClause(from: { label?: string | null; host: string 
 type ToastText = { title: string; message: string };
 
 /**
+ * A link for a place is being checked with its server, which the recorder waits for (the server
+ * is asked whether it speaks this app's protocol and accepts the link, at most a few seconds).
+ * Says so, and with which server.
+ */
+export function placeCheckingToast(from: { label?: string | null; host: string }): ToastText {
+  return { title: from.label ?? 'Opening the link', message: `Checking with ${from.host}…` };
+}
+
+/**
  * A link for a place was paired and its recorder is up. The place's label is the link's own word
  * for it and isn't signed, and no sheet asked about a trusted server: so the toast always says
  * which server the video goes to.

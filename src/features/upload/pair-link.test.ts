@@ -86,44 +86,58 @@ describe('createLinkGate', () => {
 });
 
 describe('screenLink', () => {
-  const never = async () => false;
-  const always = async () => true;
+  type Options = Parameters<typeof screenLink>[1];
+  const screen = (link: UploadDeepLink, over: Partial<Options> = {}) =>
+    screenLink(link, {
+      launch: false,
+      nowMs: NOW,
+      holds: async () => false,
+      outcome: async () => null,
+      ...over,
+    });
+  const expired = forPlace({ token: token(NOW - 1000, 'r1') });
+  const held = { holds: async () => true };
+  const paired = { outcome: async () => 'paired' as const };
+  const refused = { outcome: async () => 'refused' as const };
 
   it('refuses a link for a place whose token has expired on this device', async () => {
-    const expired = forPlace({ token: token(NOW - 1000, 'r1') });
-    expect(await screenLink(expired, { launch: false, nowMs: NOW, wasHandled: never })).toBe(
-      'expired',
-    );
-    expect(await screenLink(forPlace(), { launch: false, nowMs: NOW, wasHandled: never })).toBe(
-      'ok',
-    );
+    expect(await screen(expired)).toBe('expired');
+    expect(await screen(forPlace())).toBe('ok');
   });
 
-  it('drops a launch link that was already dealt with, before anything else', async () => {
-    const opts = { launch: true, nowMs: NOW, wasHandled: always };
-    expect(await screenLink(forPlace(), opts)).toBe('replayed');
-    // Silent even when it has since expired: no “expired” toast at every relaunch.
-    expect(await screenLink(forPlace({ token: token(NOW - 1000, 'r1') }), opts)).toBe('replayed');
+  it('opens a link the place already holds without pairing it again, launch or not', async () => {
+    expect(await screen(forPlace(), held)).toBe('held');
+    expect(await screen(forPlace(), { ...held, ...paired, launch: true })).toBe('held');
+    // Not one that has expired, even if its row is still there.
+    expect(await screen(expired, held)).toBe('expired');
   });
 
-  it('acts on an already-handled link opened while the app runs: that is the person, not the system', async () => {
-    expect(await screenLink(forPlace(), { launch: false, nowMs: NOW, wasHandled: always })).toBe(
-      'ok',
-    );
+  it('never pairs a launch link a second time: one whose upload was used is dropped silently', async () => {
+    expect(await screen(forPlace(), { ...paired, launch: true })).toBe('replayed');
   });
 
-  it('takes a launch link when the handled list can’t be read', async () => {
+  it('says what a launch link came to, when it has something to say', async () => {
+    // A tap on the same link while the app isn't running looks the same as the system handing
+    // the launch link back: both are told it expired, or that its server refused it.
+    expect(await screen(expired, { ...paired, launch: true })).toBe('expired');
+    expect(await screen(forPlace(), { ...refused, launch: true })).toBe('refused');
+  });
+
+  it('pairs an already-handled link opened while the app runs: that is the person, not the system', async () => {
+    expect(await screen(forPlace(), paired)).toBe('ok');
+    expect(await screen(forPlace(), refused)).toBe('ok');
+  });
+
+  it('takes a launch link when the row or the handled list can’t be read', async () => {
     const broken = async () => {
       throw new Error('db closed');
     };
-    expect(await screenLink(forPlace(), { launch: true, nowMs: NOW, wasHandled: broken })).toBe(
-      'ok',
-    );
+    expect(await screen(forPlace(), { launch: true, holds: broken, outcome: broken })).toBe('ok');
   });
 
   it('leaves a plain link exactly as it was: never screened', async () => {
-    const expired = plain({ token: token(NOW - 1000) });
-    expect(await screenLink(expired, { launch: true, nowMs: NOW, wasHandled: always })).toBe('ok');
+    const stale = plain({ token: token(NOW - 1000) });
+    expect(await screen(stale, { ...held, ...paired, launch: true })).toBe('ok');
   });
 });
 

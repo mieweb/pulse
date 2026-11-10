@@ -6,6 +6,7 @@ import {
   linkRefusedToast,
   openLinkAgain,
   openLinkAgainClause,
+  placeCheckingToast,
   placeOpenedToast,
   recorderFailedToast,
 } from './link-messages';
@@ -26,6 +27,17 @@ describe('link messages', () => {
     expect(linkExpiredToast({ label: 'Team · Huddle', host: HOST }).message).toBe(
       openLinkAgain({ label: 'Team · Huddle', host: HOST }),
     );
+  });
+
+  it('says which server is being asked while a place’s recorder waits for it', () => {
+    expect(placeCheckingToast({ label: 'Team · Huddle', host: HOST })).toEqual({
+      title: 'Team · Huddle',
+      message: 'Checking with vault.example.org…',
+    });
+    expect(placeCheckingToast({ label: null, host: HOST })).toEqual({
+      title: 'Opening the link',
+      message: 'Checking with vault.example.org…',
+    });
   });
 
   it('always names the server a place’s video goes to, whatever the link calls the place', () => {
