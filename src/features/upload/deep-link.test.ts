@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { parseUploadDeepLink } from './deep-link';
+import { parseUploadDeepLink, readReturnUrl } from './deep-link';
 
 const ARTIFACT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
@@ -206,16 +206,53 @@ describe('parseUploadDeepLink: a link for a place', () => {
         link(FOR_HUDDLE, `&label=${'L'.repeat(80)}&name=${'N'.repeat(100)}&app=${'A'.repeat(40)}`),
       ),
     ).toMatchObject({ label: 'L'.repeat(60), name: 'N'.repeat(40), app: 'A'.repeat(30) });
-    // A name cut inside an emoji drops the half that's left.
-    expect(
-      placeOf(link(FOR_HUDDLE, `&name=${encodeURIComponent('N'.repeat(39) + '😀')}`)),
-    ).toMatchObject({ name: 'N'.repeat(39) });
     expect(
       placeOf(link(FOR_HUDDLE, `&label=%20%20&name=${encodeURIComponent('  Huddle update ')}`)),
     ).toMatchObject({ label: null, name: 'Huddle update' });
   });
 
-  it('keeps an https return URL (or http on a private origin) and drops any other', () => {
+  it('counts a hint in code points, and cuts it at a whole character', () => {
+    const hint = (key: string, value: string) => {
+      const place = placeOf(link(FOR_HUDDLE, `&${key}=${encodeURIComponent(value)}`));
+      return typeof place === 'object' ? place[key as 'label' | 'name' | 'app'] : place;
+    };
+    // Sixty emoji are sixty characters, though 120 UTF-16 units.
+    expect(hint('label', '😀'.repeat(61))).toBe('😀'.repeat(60));
+    expect(hint('app', '😀'.repeat(31))).toBe('😀'.repeat(30));
+    // A family is one character to a person and seven code points: it stays whole or goes.
+    const family = ['👨', '👩', '👧', '👦'].join(String.fromCodePoint(0x200d));
+    expect(hint('label', 'L'.repeat(55) + family)).toBe('L'.repeat(55));
+    expect(hint('label', 'L'.repeat(53) + family)).toBe('L'.repeat(53) + family);
+    // So does a flag, a skin tone and a letter with its accent.
+    expect(hint('app', 'A'.repeat(29) + '🇫🇷')).toBe('A'.repeat(29));
+    expect(hint('app', 'A'.repeat(29) + '👍🏽')).toBe('A'.repeat(29));
+    expect(hint('app', 'A'.repeat(29) + 'e' + String.fromCodePoint(0x301))).toBe('A'.repeat(29));
+    // A draft's name takes 40 UTF-16 units: the link's name is cut to that, whole characters too.
+    expect(hint('name', 'N'.repeat(39) + '😀')).toBe('N'.repeat(39));
+    expect(hint('name', '😀'.repeat(50))).toBe('😀'.repeat(20));
+  });
+
+  it('shows a hint as one clean line: no control or text-direction characters', () => {
+    const cp = String.fromCodePoint;
+    const hint = (value: string) => {
+      const place = placeOf(link(FOR_HUDDLE, `&label=${encodeURIComponent(value)}`));
+      return typeof place === 'object' ? place.label : place;
+    };
+    // Control characters and line breaks, the Unicode line separators included, become one space.
+    expect(hint(`Team\r\n\tHuddle${cp(0x2028)}${cp(0x2029)}today${cp(0x85)}x`)).toBe(
+      'Team Huddle today x',
+    );
+    // Text-direction characters, which can reorder what is shown after them, are dropped.
+    for (const bidi of [0x202e, 0x202d, 0x2066, 0x2067, 0x2069, 0x200e, 0x200f, 0x61c]) {
+      expect(hint(`Team${cp(bidi)} Huddle`)).toBe('Team Huddle');
+    }
+    // Nothing a person can see is no label at all.
+    for (const blank of [' ', '\n\n', cp(0x202e), cp(0x200b) + cp(0xfeff), `\t${cp(0x2066)} `]) {
+      expect(hint(blank)).toBeNull();
+    }
+  });
+
+  it('keeps an https return URL (or http on a private origin) and ignores any other', () => {
     const returning = (url: string) => {
       const place = placeOf(link(FOR_HUDDLE, `&return=${encodeURIComponent(url)}`));
       return typeof place === 'object' ? place.returnUrl : place;
@@ -224,6 +261,53 @@ describe('parseUploadDeepLink: a link for a place', () => {
     expect(returning('http://localhost:3000/app')).toBe('http://localhost:3000/app');
     expect(returning('http://host.example.org/page')).toBeNull();
     expect(returning('javascript:alert(1)')).toBeNull();
+    expect(returning('pulsecam://?v=1')).toBeNull();
+  });
+
+  it('ignores a return URL with a username or password, or longer than 512 characters', () => {
+    const returning = (url: string) => {
+      const place = placeOf(link(FOR_HUDDLE, `&return=${encodeURIComponent(url)}`));
+      return typeof place === 'object' ? place.returnUrl : place;
+    };
+    // Reads as the first host, opens the second.
+    expect(returning('https://timehuddle.example.org@evil.example/')).toBeNull();
+    expect(returning('https://user:secret@host.example.org/page')).toBeNull();
+    expect(returning('https://:secret@host.example.org/page')).toBeNull();
+    const base = 'https://host.example.org/';
+    expect(returning(base + 'p'.repeat(512 - base.length))).toHaveLength(512);
+    expect(returning(base + 'p'.repeat(513 - base.length))).toBeNull();
+    // 512 characters are code points: an emoji in the path is one.
+    expect(returning(base + '😀'.repeat(512 - base.length))).not.toBeNull();
+  });
+
+  it('ignores a return URL whose host two parsers could read differently', () => {
+    const cp = String.fromCodePoint;
+    for (const url of [
+      `https://good.example.org${cp(0x5c)}@evil.example/`,
+      'https://good.example.org%2f@evil.example/',
+      'https://good.example.org /page',
+      `https://good.example.org/${cp(0x0a)}page`,
+      'https:///evil.example',
+      'https://',
+    ]) {
+      expect(readReturnUrl(url)).toBeNull();
+    }
+  });
+
+  it('says which host a return URL opens', () => {
+    expect(readReturnUrl('https://TimeHuddle.Example.org:8443/app?x=1#top')).toEqual({
+      url: 'https://TimeHuddle.Example.org:8443/app?x=1#top',
+      host: 'timehuddle.example.org:8443',
+    });
+    expect(readReturnUrl(null)).toBeNull();
+    expect(readReturnUrl('')).toBeNull();
+  });
+
+  it('reads a place’s key of 1 to 200 code points, whatever its characters', () => {
+    for (const ref of ['a%2Fb:c/d', '😀'.repeat(200), 'é'.repeat(200)]) {
+      expect(placeOf(link(uploadToken({ ref })))).toMatchObject({ ref });
+    }
+    expect(placeOf(link(uploadToken({ ref: '😀'.repeat(201) })))).toBeUndefined();
   });
 
   it('reads the same from the https link form', () => {

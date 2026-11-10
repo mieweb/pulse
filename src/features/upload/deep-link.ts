@@ -1,4 +1,5 @@
-import { DRAFT_NAME_MAX_LENGTH, dropSplitSurrogate } from '@/utils/draft-name';
+import { cleanDisplayText, codePointLength, cutToFit } from '@/utils/display-text';
+import { DRAFT_NAME_MAX_LENGTH } from '@/utils/draft-name';
 
 import { decodeCapabilityClaims } from './capability-token';
 
@@ -24,26 +25,32 @@ export type UploadDeepLink = {
 };
 
 /**
- * The place a link's upload is for. `ref` is the host's opaque key for the place, read from the
- * token's signed `ref` claim (the URL has no such param). The names and the return URL are the
- * link's own params: unsigned display hints.
+ * The place a link's upload is for (PROTOCOL.md §3.1). `ref` is the host's opaque key for the
+ * place, read from the token's `ref` claim (the URL has no such param). The names and the return
+ * URL are the link's own params: unsigned text from whoever built the link, cleaned for display
+ * (`cleanDisplayText`) and never deciding where anything is uploaded.
  */
 export type LinkPlace = {
   /** Pulse matches destinations and drafts on `(server, ref)`. */
   ref: string;
-  /** What the host calls the place ("Team · Huddle"), ≤ 60 chars; `null` when not given. */
+  /** What the host calls the place ("Team · Huddle"), ≤ 60 characters; `null` when not given. */
   label: string | null;
-  /** The name for a new draft made from this link ("Huddle update"), ≤ 80 chars; `null` = none. */
+  /**
+   * The name for a new draft made from this link ("Huddle update"): the link's `name` (≤ 80
+   * characters), cut to what a draft's name takes. `null` = none.
+   */
   name: string | null;
-  /** The host app's name ("TimeHuddle"), ≤ 30 chars. */
+  /** The host app's name ("TimeHuddle"), ≤ 30 characters. */
   app: string | null;
-  /** The host page to go back to after the upload (https, or http for a private/dev origin). */
+  /** The host page to go back to after the upload, as `readReturnUrl` accepts it. */
   returnUrl: string | null;
 };
 
-/** Display caps for a link's host-supplied names (longer ones are cut, not refused). */
+/** Caps on a link's hints (PROTOCOL.md §3.1), in characters: Unicode code points. */
 const MAX_LABEL_LENGTH = 60;
+const MAX_NAME_LENGTH = 80;
 const MAX_APP_LENGTH = 30;
+const MAX_RETURN_URL_LENGTH = 512;
 
 export type DeepLinkResult =
   | { ok: true; link: UploadDeepLink }
@@ -82,16 +89,51 @@ function parseAllowedUrl(raw: string | null): URL | null {
   return url.protocol === 'https:' || isPrivateDevOrigin(url) ? url : null;
 }
 
-/** A host-supplied display name, trimmed and capped; empty is `null`. */
-function displayName(raw: string | null, max: number): string | null {
-  const trimmed = raw?.trim();
-  return trimmed ? trimmed.slice(0, max) : null;
+/** A place's `label` as shown: one clean line of at most 60 characters, or `null`. */
+export function cleanLabel(raw: string | null | undefined): string | null {
+  return cleanDisplayText(raw, MAX_LABEL_LENGTH);
 }
 
-/** A link's `name` as a draft can carry it: trimmed and cut to a draft name's own limit. */
+/** The host app's name as shown: one clean line of at most 30 characters, or `null`. */
+export function cleanApp(raw: string | null | undefined): string | null {
+  return cleanDisplayText(raw, MAX_APP_LENGTH);
+}
+
+/**
+ * A link's `name` as a draft can carry it: cleaned and cut like the other hints (80 characters),
+ * then to a draft name's own limit, which a text field counts in UTF-16 units. Both cuts fall
+ * between whole characters, never through an emoji or an accent.
+ */
 function draftName(raw: string | null): string | null {
-  const cut = displayName(raw, DRAFT_NAME_MAX_LENGTH);
-  return cut ? dropSplitSurrogate(cut).trim() || null : null;
+  const name = cleanDisplayText(raw, MAX_NAME_LENGTH);
+  if (!name) return null;
+  return cutToFit(name, (candidate) => candidate.length <= DRAFT_NAME_MAX_LENGTH).trim() || null;
+}
+
+/** A URL's authority (`host[:port]`) when it is plain enough for every parser to agree on it. */
+const RETURN_URL_AUTHORITY = /^https?:\/\/([^/?#]+)/i;
+
+/**
+ * A link's `return` URL when Pulse may offer it as the way back (PROTOCOL.md §3.1), with the host
+ * it opens: at most 512 characters, `https://` (or `http://` to a private/dev origin, as `server`),
+ * and no username or password — `https://app.example.org@evil.example/` reads as the first host
+ * and opens the second. `null` for anything else, which is then ignored.
+ *
+ * The host shown must be the host opened, so a URL two parsers could read differently is refused
+ * too: one with spaces, control characters or backslashes, or anything but letters, digits,
+ * `.-_:[]` (and non-ASCII letters, which the caller flags) in its authority. A URL built by
+ * PulseVault's `buildUploadLink` is normalized and has none of these.
+ */
+export function readReturnUrl(
+  raw: string | null | undefined,
+): { url: string; host: string } | null {
+  if (!raw || codePointLength(raw) > MAX_RETURN_URL_LENGTH) return null;
+  if (/[\s\\\p{Cc}]/u.test(raw)) return null;
+  const authority = RETURN_URL_AUTHORITY.exec(raw)?.[1];
+  if (!authority || !/^[A-Za-z0-9.\-_:[\]\u{80}-\u{10FFFF}]+$/u.test(authority)) return null;
+  const url = parseAllowedUrl(raw);
+  if (!url || url.username || url.password) return null;
+  return { url: raw, host: authority.toLowerCase() };
 }
 
 /** Path of the https pairing link on the link host (#252). */
@@ -158,7 +200,6 @@ export function parseUploadDeepLink(url: string, linkHost?: string | null): Deep
   const ref = token ? decodeCapabilityClaims(token)?.ref : undefined;
   if (!ref) return { ok: true, link: { artifactId, server, token } };
 
-  const returnUrl = param('return');
   return {
     ok: true,
     link: {
@@ -167,12 +208,11 @@ export function parseUploadDeepLink(url: string, linkHost?: string | null): Deep
       token,
       place: {
         ref,
-        label: displayName(param('label'), MAX_LABEL_LENGTH),
-        // A link may send up to 80 characters; a draft's name takes fewer, so it is cut to that.
+        label: cleanLabel(param('label')),
         name: draftName(param('name')),
-        app: displayName(param('app'), MAX_APP_LENGTH),
-        // An unusable return URL is dropped, not a reason to refuse the link.
-        returnUrl: parseAllowedUrl(returnUrl) ? returnUrl : null,
+        app: cleanApp(param('app')),
+        // An unusable return URL is ignored, not a reason to refuse the link.
+        returnUrl: readReturnUrl(param('return'))?.url ?? null,
       },
     },
   };
