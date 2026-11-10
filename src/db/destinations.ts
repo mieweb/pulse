@@ -173,8 +173,15 @@ export function placeHoldsLink(dest: PairedDestination, ref: string): Promise<bo
   });
 }
 
-/** Fetch one destination (row + secure-stored token); `null` if it's gone. */
-export async function getDestination(id: string): Promise<PairedDestination | null> {
+/**
+ * Fetch one destination (row + secure-stored token); `null` if it's gone. Read in turn with
+ * pairing, so never between a re-pair's two writes: never one link's upload id with another's token.
+ */
+export function getDestination(id: string): Promise<PairedDestination | null> {
+  return oneAtATime(() => readDestination(id));
+}
+
+async function readDestination(id: string): Promise<PairedDestination | null> {
   const rows = await db
     .select({
       server: uploadDestinations.server,
@@ -190,8 +197,24 @@ export async function getDestination(id: string): Promise<PairedDestination | nu
 /**
  * Remove a destination from the pool (claimed by an upload, or deleted by the user). Returns
  * whether this call removed it — when two drafts claim the same link, only one gets `true`.
+ *
+ * `link`, for an upload's claim: the link the upload read (`getDestination`). The row is removed
+ * only while it still holds that very link, decided in turn with pairing — a newer link that
+ * replaced it since is left for the next upload, not spent on this one.
  */
-export async function deleteDestination(id: string): Promise<boolean> {
+export function deleteDestination(id: string, link?: PairedDestination): Promise<boolean> {
+  if (!link) return removeDestination(id);
+  return oneAtATime(async () => {
+    const stored = await readDestination(id);
+    const holds =
+      stored?.server === link.server &&
+      stored.artifactId === link.artifactId &&
+      stored.token === link.token;
+    return holds && removeDestination(id);
+  });
+}
+
+async function removeDestination(id: string): Promise<boolean> {
   const removed = await removeRow(id);
   // Best-effort: once the row is gone the link is spent, whatever happens to its token.
   await deleteDestinationToken(id).catch(() => {});

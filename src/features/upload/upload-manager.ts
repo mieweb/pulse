@@ -393,8 +393,12 @@ class BackgroundUploadManager {
     try {
       await this.launch;
       await setUploadDestination(draftId, destination);
-      if (!(await deleteDestination(destinationId))) {
-        uploadLog.warn(`${draftLabel(draftId)}: another draft used that link first`);
+      // Spent only while the row still holds the link this upload read: a newer link for the
+      // place that replaced it meanwhile is left for the next upload.
+      if (!(await deleteDestination(destinationId, destination))) {
+        uploadLog.warn(
+          `${draftLabel(draftId)}: another draft used that link first, or it was replaced`,
+        );
         await burnUploadPairing(draftId, destination.artifactId);
         return;
       }

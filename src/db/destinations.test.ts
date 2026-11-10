@@ -330,6 +330,33 @@ describe('a place’s destination', () => {
     expect(await placeHoldsLink(upload('art-1'), 'r1')).toBe(false);
   });
 
+  it('is read in turn with a pairing, never between its writes', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+
+    // A newer link replaces the place's link while the upload screen reads it: the read is the
+    // whole of one link or the other, never the old upload id with the new token.
+    const pairing = addDestination(upload('art-2'), place('r1'));
+    const read = getDestination(id);
+
+    expect(await read).toEqual(upload('art-2'));
+    await pairing;
+  });
+
+  it('is spent by an upload’s claim only while it still holds the link that upload read', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+    const read = await getDestination(id);
+
+    // A newer link replaced it after the read: the claim leaves it for the next upload.
+    await addDestination(upload('art-2'), place('r1'));
+    expect(await deleteDestination(id, read!)).toBe(false);
+    expect(await getDestination(id)).toEqual(upload('art-2'));
+
+    // The link it holds is spent, once.
+    expect(await deleteDestination(id, upload('art-2'))).toBe(true);
+    expect(await deleteDestination(id, upload('art-2'))).toBe(false);
+    expect(mockTokens.has(id)).toBe(false);
+  });
+
   it('is used up by a claim like any other, and the place’s next link makes a new row', async () => {
     const id = await addDestination(upload('art-1'), place('r1'));
     // A draft claims it: the upload is running under art-1, and the row is gone.

@@ -493,6 +493,12 @@ describe('upload', () => {
     const [spent] = jest.mocked(deleteDestination).mock.invocationCallOrder.slice(-1);
     expect(paired).toBeLessThan(spent);
     expect(pool.log).toEqual(['pool-delete:dest-d1']);
+    // Spent only while the row still holds the link this upload read.
+    expect(deleteDestination).toHaveBeenLastCalledWith('dest-d1', {
+      server: SERVER,
+      token: 'tok',
+      artifactId: 'art-dest-d1',
+    });
     expect(pool.pool.has('dest-d1')).toBe(false);
     // Captions, manifest, thumbnail — each a fresh artifactId related to the video — then the video.
     const calls = mockUploadViaTus.mock.calls.map(([o]) => o);
