@@ -205,7 +205,11 @@ describe('parseUploadDeepLink: a link for a place', () => {
       placeOf(
         link(FOR_HUDDLE, `&label=${'L'.repeat(80)}&name=${'N'.repeat(100)}&app=${'A'.repeat(40)}`),
       ),
-    ).toMatchObject({ label: 'L'.repeat(60), name: 'N'.repeat(80), app: 'A'.repeat(30) });
+    ).toMatchObject({ label: 'L'.repeat(60), name: 'N'.repeat(40), app: 'A'.repeat(30) });
+    // A name cut inside an emoji drops the half that's left.
+    expect(
+      placeOf(link(FOR_HUDDLE, `&name=${encodeURIComponent('N'.repeat(39) + '😀')}`)),
+    ).toMatchObject({ name: 'N'.repeat(39) });
     expect(
       placeOf(link(FOR_HUDDLE, `&label=%20%20&name=${encodeURIComponent('  Huddle update ')}`)),
     ).toMatchObject({ label: null, name: 'Huddle update' });

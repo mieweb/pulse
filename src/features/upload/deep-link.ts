@@ -1,3 +1,5 @@
+import { DRAFT_NAME_MAX_LENGTH, dropSplitSurrogate } from '@/utils/draft-name';
+
 import { decodeCapabilityClaims } from './capability-token';
 
 // Bump when the pairing link shape changes incompatibly — a client that
@@ -41,7 +43,6 @@ export type LinkPlace = {
 
 /** Display caps for a link's host-supplied names (longer ones are cut, not refused). */
 const MAX_LABEL_LENGTH = 60;
-const MAX_NAME_LENGTH = 80;
 const MAX_APP_LENGTH = 30;
 
 export type DeepLinkResult =
@@ -85,6 +86,12 @@ function parseAllowedUrl(raw: string | null): URL | null {
 function displayName(raw: string | null, max: number): string | null {
   const trimmed = raw?.trim();
   return trimmed ? trimmed.slice(0, max) : null;
+}
+
+/** A link's `name` as a draft can carry it: trimmed and cut to a draft name's own limit. */
+function draftName(raw: string | null): string | null {
+  const cut = displayName(raw, DRAFT_NAME_MAX_LENGTH);
+  return cut ? dropSplitSurrogate(cut).trim() || null : null;
 }
 
 /** Path of the https pairing link on the link host (#252). */
@@ -161,7 +168,8 @@ export function parseUploadDeepLink(url: string, linkHost?: string | null): Deep
       place: {
         ref,
         label: displayName(param('label'), MAX_LABEL_LENGTH),
-        name: displayName(param('name'), MAX_NAME_LENGTH),
+        // A link may send up to 80 characters; a draft's name takes fewer, so it is cut to that.
+        name: draftName(param('name')),
         app: displayName(param('app'), MAX_APP_LENGTH),
         // An unusable return URL is dropped, not a reason to refuse the link.
         returnUrl: parseAllowedUrl(returnUrl) ? returnUrl : null,

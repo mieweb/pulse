@@ -13,19 +13,9 @@ import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
 import { useTheme } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
+import { DRAFT_NAME_MAX_LENGTH, dropSplitSurrogate } from '@/utils/draft-name';
 import { formatClipCount, formatDuration } from '@/utils/format';
 import { formatRelativeDate } from '@/utils/relative-date';
-
-const NAME_MAX_LENGTH = 40;
-
-/**
- * `maxLength` counts UTF-16 units, so a name typed or pasted up to the limit can end on the first
- * half of an emoji's surrogate pair. That lone half isn't valid text (it shows as "�"), so it's
- * dropped rather than saved.
- */
-function dropSplitSurrogate(text: string): string {
-  return text.replace(/[\uD800-\uDBFF]$/, '');
-}
 
 type Props = {
   id: string;
@@ -145,7 +135,7 @@ export function DraftCard({
             placeholderTextColor={theme.textSecondary}
             autoFocus
             selectTextOnFocus
-            maxLength={NAME_MAX_LENGTH}
+            maxLength={DRAFT_NAME_MAX_LENGTH}
             // The name it replaces stops at the app's text ceiling; so does the field.
             maxFontSizeMultiplier={MaxTextScale}
             returnKeyType="done"
