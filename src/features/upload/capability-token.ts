@@ -64,11 +64,18 @@ function utf8(bytes: string): string | null {
 
 const MAX_REF_LENGTH = 200;
 
-/** A usable `ref` claim: a string of 1 to 200 characters (code points). Any other reads as none. */
+/** Half of a surrogate pair on its own: with the `u` flag a whole pair is one character. */
+const UNPAIRED_SURROGATE = /\p{Cs}/u;
+
+/**
+ * A usable `ref` claim: a string of 1 to 200 characters (code points) with no unpaired surrogate,
+ * so every client reads the same key from it. Any other reads as none.
+ */
 function isRef(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value !== '' &&
+    !UNPAIRED_SURROGATE.test(value) &&
     // A code point is one or two UTF-16 units, so only a string between the two needs counting.
     (value.length <= MAX_REF_LENGTH ||
       (value.length <= 2 * MAX_REF_LENGTH && codePointLength(value) <= MAX_REF_LENGTH))
@@ -80,7 +87,9 @@ function isRef(value: unknown): value is string {
  * the first `.`, base64url without padding, the UTF-8 text of one JSON object. Returns `null` —
  * a credential Pulse can't read: no known expiry, no place — for any other token rather than
  * throwing (see the module doc), and for one whose claims lack any of `artifactId`, `iat`, `exp`,
- * `kid` and `issuer`, the form a server that wants its claims read issues.
+ * `kid` and `issuer`, the form a server that wants its claims read issues. `exp` has to be a whole
+ * number of seconds: a token without one has no `ref` either (a place's links are ordered by it),
+ * and `1e400`, which JSON reads as infinity, is no expiry at all.
  */
 export function decodeCapabilityClaims(token: string): ReadableClaims | null {
   const dot = token.indexOf('.');
@@ -99,14 +108,14 @@ export function decodeCapabilityClaims(token: string): ReadableClaims | null {
   if (
     typeof artifactId !== 'string' ||
     typeof iat !== 'number' ||
-    typeof exp !== 'number' ||
+    !Number.isSafeInteger(exp) ||
     typeof kid !== 'string' ||
     typeof issuer !== 'string'
   ) {
     return null;
   }
   // A `ref` that isn't a usable key reads as none: the token is then a plain upload's.
-  return isRef(ref) ? { exp, ref } : { exp };
+  return isRef(ref) ? { exp: exp as number, ref } : { exp: exp as number };
 }
 
 /**

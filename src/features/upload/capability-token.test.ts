@@ -50,6 +50,30 @@ describe('decodeCapabilityClaims', () => {
     }
   });
 
+  it('reads no place from a `ref` with an unpaired surrogate', () => {
+    // `JSON.parse` gives half a pair from an escape; no two clients would decode the same key.
+    for (const escaped of ['a\\ud83d', '\\udc00a', 'a\\ud83d\\ud83d\\ude00']) {
+      const json = JSON.stringify({ ...VALID_CLAIMS, ref: 'REF' }).replace('REF', escaped);
+      const token = `${Buffer.from(json, 'utf8').toString('base64url')}.sig`;
+      expect(decodeCapabilityClaims(token)).toEqual({ exp: VALID_CLAIMS.exp });
+    }
+  });
+
+  it('reads nothing, and so no place, from a token whose exp isn’t a whole number', () => {
+    for (const exp of ['4102444800', null, true, 1.5, '1e400', '-1e400']) {
+      const json = JSON.stringify({ ...VALID_CLAIMS, ref: 'r1', exp: 'EXP' }).replace(
+        '"EXP"',
+        // As written in the JSON: `1e400` reads as infinity.
+        typeof exp === 'string' && /e/.test(exp) ? exp : JSON.stringify(exp),
+      );
+      const token = `${Buffer.from(json, 'utf8').toString('base64url')}.sig`;
+      expect(decodeCapabilityClaims(token)).toBeNull();
+      // A credential Pulse can't read: no known expiry, never "expired".
+      expect(isTokenExpired(token, Date.now())).toBe(false);
+      expect(formatExpiry(token, Date.now())).toBe('No expiry');
+    }
+  });
+
   it('reads the claims from the part before the first dot only', () => {
     const [payload] = fakeToken({ ...VALID_CLAIMS, ref: 'real' }).split('.');
     const [forged] = fakeToken({ ...VALID_CLAIMS, ref: 'forged' }).split('.');
