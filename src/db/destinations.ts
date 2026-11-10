@@ -89,9 +89,13 @@ async function insertOrRefresh(dest: PairedDestination): Promise<string> {
     artifactId: dest.artifactId,
   };
   const existing = await db
-    .select({ id: uploadDestinations.id })
+    .select({ id: uploadDestinations.id, ref: uploadDestinations.ref })
     .from(uploadDestinations)
     .where(eq(uploadDestinations.artifactId, dest.artifactId));
+  // A place's row for the same upload is left as it is: only a link its server accepted replaces
+  // the token a place holds (`upsertPlace`), and a plain link is never asked.
+  const placeRow = existing.find((row) => row.ref !== null);
+  if (placeRow) return placeRow.id;
   const match = existing.find(() => true); // artifactId is server-unique in practice
   const id = match?.id ?? Crypto.randomUUID();
   if (match) {

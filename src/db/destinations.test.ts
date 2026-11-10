@@ -301,6 +301,19 @@ describe('a place’s destination', () => {
     expect(mockTokens.get(id)).toBe('token-art-1');
   });
 
+  it('is left as it is by a plain link for the same upload', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+    mockWrites.length = 0;
+
+    // The same upload id with a token Pulse can't read a place from (opaque, or altered): it was
+    // never accepted, so it neither replaces the place's token nor becomes a second row.
+    expect(await addDestination(upload('art-1', { token: 'opaque' }))).toBe(id);
+
+    expect(mockWrites).toEqual([]);
+    expect(await destinationsQuery).toMatchObject([{ id, artifactId: 'art-1', ref: 'r1' }]);
+    expect(mockTokens.get(id)).toBe('token-art-1');
+  });
+
   it('holds a link only as that very link: the same upload and the same token', async () => {
     const id = await addDestination(upload('art-1'), place('r1'));
     expect(await placeHoldsLink(upload('art-1'), 'r1')).toBe(true);
