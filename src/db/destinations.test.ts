@@ -269,6 +269,18 @@ describe('a place’s destination', () => {
     expect(await getDestination(first.id)).toEqual({ ...upload('art-9'), token: null });
   });
 
+  it('takes the place of the same upload paired as a plain link before an upgrade', async () => {
+    // What the released app stored for this link: no place.
+    const before = await addDestination(upload('art-1'));
+    const other = await addDestination(upload('art-other'));
+
+    const id = await addDestination(upload('art-1'), place('r1'));
+
+    expect((await order()).sort()).toEqual([id, other].sort());
+    expect(mockTokens.has(before)).toBe(false);
+    expect(mockTokens.get(id)).toBe('token-art-1');
+  });
+
   it('holds a link only as that very link: the same upload and the same token', async () => {
     const id = await addDestination(upload('art-1'), place('r1'));
     expect(await placeHoldsLink(upload('art-1'), 'r1')).toBe(true);

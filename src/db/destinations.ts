@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { and, desc, eq, type SQL, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, type SQL, sql } from 'drizzle-orm';
 
 import { db } from './client';
 import { drafts, uploadDestinations } from './schema';
@@ -132,6 +132,19 @@ async function upsertPlace(
     await db.insert(uploadDestinations).values({ id, server: dest.server, ...link });
   }
   await setDestinationToken(id, dest.token);
+  // The same upload paired as a plain link, by a build that didn't read places yet: the place's
+  // row is that link now, and two rows for one upload would offer it twice.
+  const plain = await db
+    .delete(uploadDestinations)
+    .where(
+      and(
+        eq(uploadDestinations.server, dest.server),
+        eq(uploadDestinations.artifactId, dest.artifactId),
+        isNull(uploadDestinations.ref),
+      ),
+    )
+    .returning({ id: uploadDestinations.id });
+  for (const row of plain) await deleteDestinationToken(row.id).catch(() => {});
   return id;
 }
 
