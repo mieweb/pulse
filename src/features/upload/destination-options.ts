@@ -45,6 +45,18 @@ export function isSpentLink(ref: string | null, token: string | null, nowMs: num
 }
 
 /**
+ * What `useDestinations` loads the pool's tokens for: each row as the link it holds. It changes
+ * when a row is added or removed, and when a place's row takes a newer link in place (the same
+ * id, a new upload and time) — so a replacement whose new token was never written, which leaves
+ * the row with none, is read again rather than served the old link's token from the cache.
+ */
+export function tokensKey(
+  rows: readonly (Pick<DestinationRow, 'id' | 'artifactId'> & { createdAt: number })[],
+): string {
+  return JSON.stringify(rows.map((r) => [r.id, r.artifactId, r.createdAt]));
+}
+
+/**
  * The pool as the app offers it: the rows whose token has loaded (`tokens`, by row id) and whose
  * link still works, in the rows' order. A row's names and return URL are cleaned again here, so
  * what is shown is safe whatever version of the app stored it.

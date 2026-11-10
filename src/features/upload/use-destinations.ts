@@ -15,15 +15,16 @@ import {
   destinationOptions,
   isSpentLink,
   placeLabelLookup,
+  tokensKey,
 } from './destination-options';
 
 export type { DestinationOption };
 
 /**
  * Bumped when a pairing rewrites the token of a row that already existed (the same link again
- * keeps its row id). Each `useDestinations` loads tokens only when its set of row ids changes, so
- * without this a screen already open would keep the row's old token; a bump makes every one
- * reload them from secure-store.
+ * keeps its row id). Each `useDestinations` loads tokens only when its rows change (`tokensKey`),
+ * which a plain link's refreshed token doesn't, so without this a screen already open would keep
+ * the row's old token; a bump makes every one reload them from secure-store.
  */
 let tokensVersion = 0;
 const tokensListeners = new Set<() => void>();
@@ -58,9 +59,10 @@ export function useDestinations() {
   const version = useSyncExternalStore(subscribeTokens, () => tokensVersion);
 
   // Tokens live in secure-store keyed by row id; load them into a map keyed on id. Re-fires only
-  // when the set of ids changes or a pairing rewrote a token (`version`), not on every render.
-  const idsKey = useMemo(() => rows.map((r) => r.id).join(','), [rows]);
-  const loadKey = `${idsKey}|${version}`;
+  // when a row is added, removed or takes a newer link (`tokensKey`) or a pairing rewrote a token
+  // (`version`), not on every render.
+  const rowsKey = useMemo(() => tokensKey(rows), [rows]);
+  const loadKey = `${rowsKey}|${version}`;
   const [loaded, setLoaded] = useState<{ key: string; tokens: Record<string, string | null> }>({
     key: '',
     tokens: {},
@@ -68,7 +70,7 @@ export function useDestinations() {
   const tokens = loaded.tokens;
   useEffect(() => {
     let cancelled = false;
-    const ids = idsKey ? idsKey.split(',') : [];
+    const ids = rows.map((r) => r.id);
     // Each row on its own: a token that can't be read hides that row, not the whole pool.
     void Promise.all(
       ids.map((id) =>
@@ -83,7 +85,7 @@ export function useDestinations() {
     return () => {
       cancelled = true;
     };
-    // `loadKey` is `idsKey` and `version` together.
+    // `loadKey` stands for `rows` (`tokensKey`) and `version` together.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadKey]);
   // Whether `destinations` is the pool as it stands: the rows have been read and the tokens of

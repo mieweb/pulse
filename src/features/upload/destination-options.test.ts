@@ -6,6 +6,7 @@ import {
   destinationSpokenName,
   isSpentLink,
   placeLabelLookup,
+  tokensKey,
 } from './destination-options';
 
 const NOW = 1_700_000_000_000;
@@ -75,6 +76,25 @@ describe('destinationOptions', () => {
       NOW,
     );
     expect(option).toMatchObject({ label: 'Team Huddle', app: null, returnUrl: null });
+  });
+});
+
+describe('tokensKey', () => {
+  const stored = (id: string, artifactId: string, createdAt: number) => ({
+    ...row(id, { artifactId }),
+    createdAt,
+  });
+
+  it('changes when a place’s row takes a newer link in place, so its token is read again', () => {
+    const before = tokensKey([stored('a', 'art-1', 100), stored('b', 'art-2', 50)]);
+
+    // The same rows, read again: the cached tokens stand.
+    expect(tokensKey([stored('a', 'art-1', 100), stored('b', 'art-2', 50)])).toBe(before);
+    // Row `a` took a newer link: a new upload id, or the same one with a new token (a new time).
+    expect(tokensKey([stored('a', 'art-3', 200), stored('b', 'art-2', 50)])).not.toBe(before);
+    expect(tokensKey([stored('a', 'art-1', 200), stored('b', 'art-2', 50)])).not.toBe(before);
+    // A row added or removed.
+    expect(tokensKey([stored('a', 'art-1', 100)])).not.toBe(before);
   });
 });
 
