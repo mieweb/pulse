@@ -4,19 +4,15 @@ import { cleanApp, readReturnUrl } from './deep-link';
 import type { ReturnTo } from './types';
 
 /**
- * The one way Pulse says a link has to be opened again (it expired, or its destination is gone):
- * by the place's label when it has one, else by the server's host.
+ * The one way Pulse says a place needs a new link (its link expired, was refused, or was used up
+ * by an upload that started): by the place's label when it has one, else by the server's host.
+ * "A new link", as the upload manager's own messages say: a link is one upload, so the one that
+ * was opened before won't do.
  */
-export function openLinkAgain(from: { label?: string | null; host: string }): string {
+export function openNewLink(from: { label?: string | null; host: string }): string {
   return from.label
-    ? `Open the link for ${from.label} again to upload.`
-    : `Open the link from ${from.host} again to upload.`;
-}
-
-/** The same, to follow a dash in a one-line message ("Upload link expired — open the link…"). */
-export function openLinkAgainClause(from: { label?: string | null; host: string }): string {
-  const sentence = openLinkAgain(from);
-  return sentence.charAt(0).toLowerCase() + sentence.slice(1);
+    ? `Open a new link for ${from.label} to upload.`
+    : `Open a new link from ${from.host} to upload.`;
 }
 
 type ToastText = { title: string; message: string };
@@ -53,14 +49,14 @@ export function placeOpenedToast(opts: {
 
 /** A link for a place whose token had already expired when it was opened. */
 export function linkExpiredToast(from: { label?: string | null; host: string }): ToastText {
-  return { title: 'This link has expired', message: openLinkAgain(from) };
+  return { title: 'This link has expired', message: openNewLink(from) };
 }
 
 /** A link for a place whose server didn't accept its token. */
 export function linkRefusedToast(from: { label?: string | null; host: string }): ToastText {
   return {
     title: 'Couldn’t use this link',
-    message: `${from.host} didn’t accept it. ${openLinkAgain(from)}`,
+    message: `${from.host} didn’t accept it. ${openNewLink(from)}`,
   };
 }
 

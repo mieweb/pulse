@@ -344,7 +344,7 @@ export default function ExportScreen() {
             `state.status === 'done'`. Shown while there's something actionable: destinations to
             pick, or a run in flight. A failed upload is a toast, not UI here — the draft is
             unpaired again, and a new link is the retry (for a draft recorded for a place, the
-            line that says to open its link again). A previously-uploaded draft with nothing to
+            line that says to open a new link for it). A previously-uploaded draft with nothing to
             pick shows no upload UI at all (§ post-upload UX — no persistent buttons), but for
             the way back to the host its upload just came from. */}
         {(upload.destinations.length > 0 ||

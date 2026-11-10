@@ -1,7 +1,7 @@
 import { hostOf, shortHost } from '@/utils/format';
 
 import type { DestinationOption } from './destination-options';
-import { openLinkAgain } from './link-messages';
+import { openNewLink } from './link-messages';
 import type { ReturnTo } from './types';
 
 /** What the export screen knows of the draft (`draftPlaceQuery`): its place, if it has one. */
@@ -32,14 +32,14 @@ export type UploadChoice = {
  *
  * A draft recorded for a place (a link that named one opened its recorder) uploads to that
  * place's destination, preselected. It never falls back to another one by itself: with its own
- * gone, nothing is selected and the screen says to open the place's link again — named by the
+ * gone, nothing is selected and the screen says to open a new link for the place — named by the
  * draft's own name, else by the place's label while its expired row is still in the pool
  * (`placeLabel`), else by the server's host. The person can still pick another destination.
  *
  * Any other draft defaults to the newest destination, as it always has.
  *
  * Nothing is decided before it is known: no default until the draft has loaded (`draft`
- * undefined), and no "open the link again" until the pool has (`poolReady`) — an empty pool that
+ * undefined), and no "open a new link" until the pool has (`poolReady`) — an empty pool that
  * is only still loading isn't a missing link.
  */
 export function uploadChoice(args: {
@@ -62,7 +62,7 @@ export function uploadChoice(args: {
   // Only an unsent draft: uploading, its link was just claimed; uploaded, it needs none.
   const reopen =
     place && poolReady && !ownDestination && draft?.uploadStatus == null
-      ? openLinkAgain({
+      ? openNewLink({
           label: draft?.name || placeLabel,
           host: shortHost(hostOf(place.server)),
         })

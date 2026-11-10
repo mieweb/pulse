@@ -50,16 +50,16 @@ import type {
 import { requestViewLink } from './view-link';
 
 /** Every failure spends the link, so the way to try again is a new one. */
-const NEW_LINK = 'scan a new link to try again.';
+const NEW_LINK = 'open a new link to try again.';
 
 /** Failures that need more than a new link say so themselves, and are shown as-is. */
 const STOPPED_MESSAGE = {
   expired: `Upload link expired — ${NEW_LINK}`,
   'version-too-old':
-    'This server needs a newer version of Pulse — update the app, then scan a new link.',
+    'This server needs a newer version of Pulse — update the app, then open a new link.',
   'version-too-new':
-    'This server hasn’t been updated for this version of Pulse yet — scan a new link once it is.',
-  'video-missing': 'The video is no longer available — reopen the draft, then scan a new link.',
+    'This server hasn’t been updated for this version of Pulse yet — open a new link once it is.',
+  'video-missing': 'The video is no longer available — reopen the draft, then open a new link.',
 } as const;
 
 /** Names the step a failure happened in, after the reason. */

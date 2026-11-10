@@ -4,8 +4,7 @@ import {
   backToHost,
   linkExpiredToast,
   linkRefusedToast,
-  openLinkAgain,
-  openLinkAgainClause,
+  openNewLink,
   placeCheckingToast,
   placeOpenedToast,
   recorderFailedToast,
@@ -14,18 +13,15 @@ import {
 const HOST = 'vault.example.org';
 
 describe('link messages', () => {
-  it('says to open a link again in one way, by the place’s label or else the host', () => {
-    expect(openLinkAgain({ label: 'Team · Huddle', host: HOST })).toBe(
-      'Open the link for Team · Huddle again to upload.',
+  it('asks for a new link in one way, by the place’s label or else the host', () => {
+    expect(openNewLink({ label: 'Team · Huddle', host: HOST })).toBe(
+      'Open a new link for Team · Huddle to upload.',
     );
-    expect(openLinkAgain({ label: null, host: HOST })).toBe(
-      'Open the link from vault.example.org again to upload.',
-    );
-    expect(openLinkAgainClause({ host: HOST })).toBe(
-      'open the link from vault.example.org again to upload.',
+    expect(openNewLink({ label: null, host: HOST })).toBe(
+      'Open a new link from vault.example.org to upload.',
     );
     expect(linkExpiredToast({ label: 'Team · Huddle', host: HOST }).message).toBe(
-      openLinkAgain({ label: 'Team · Huddle', host: HOST }),
+      openNewLink({ label: 'Team · Huddle', host: HOST }),
     );
   });
 
@@ -59,7 +55,7 @@ describe('link messages', () => {
 
   it('names the host that refused a link, and where a video still goes when the recorder didn’t open', () => {
     expect(linkRefusedToast({ label: null, host: HOST }).message).toBe(
-      'vault.example.org didn’t accept it. Open the link from vault.example.org again to upload.',
+      'vault.example.org didn’t accept it. Open a new link from vault.example.org to upload.',
     );
     expect(recorderFailedToast(HOST).message).toContain(HOST);
   });

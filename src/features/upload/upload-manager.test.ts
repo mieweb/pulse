@@ -397,7 +397,7 @@ describe('launch check', () => {
     expect(db.log.indexOf('burn:killed')).toBeLessThan(db.log.indexOf('pair:live'));
     expect(db.log).not.toContain('burn:live');
     expect(mockToast).toHaveBeenCalledWith(
-      'An upload didn’t finish — scan a new link to try again.',
+      'An upload didn’t finish — open a new link to try again.',
     );
     // And a notification, for a launch in the background (a no-op in the foreground).
     expect(mockNotifyFailed).toHaveBeenCalled();
@@ -546,7 +546,7 @@ describe('upload', () => {
     expect(uploads.getWatchLink('d2')).toBeNull();
     // The instruction first (the toast shows two lines), then the reason and the step.
     expect(mockToast).toHaveBeenCalledWith(
-      'Upload failed — scan a new link to try again. (Video: Rejected)',
+      'Upload failed — open a new link to try again. (Video: Rejected)',
     );
     // Scoped to its own link, so it can never unpair a newer claim.
     expect(jest.mocked(burnUploadPairing)).toHaveBeenCalledWith('d2', 'art-dest-d2');
@@ -568,7 +568,7 @@ describe('upload', () => {
 
     expect(mockUploadViaTus).not.toHaveBeenCalled();
     expect(db.status.get('d3')).toBeNull();
-    expect(mockToast).toHaveBeenCalledWith('Upload link expired — scan a new link to try again.');
+    expect(mockToast).toHaveBeenCalledWith('Upload link expired — open a new link to try again.');
     expect(uploads.getDraftState('d3').status).toBe('idle');
   });
 
@@ -582,7 +582,7 @@ describe('upload', () => {
 
     expect(mockUploadViaTus).not.toHaveBeenCalled();
     expect(mockToast).toHaveBeenCalledWith(
-      'This server needs a newer version of Pulse — update the app, then scan a new link.',
+      'This server needs a newer version of Pulse — update the app, then open a new link.',
     );
   });
 
@@ -597,7 +597,7 @@ describe('upload', () => {
     await eventually(() => db.log.includes('burn:d5'));
 
     expect(mockToast).toHaveBeenCalledWith(
-      'This server needs a newer version of Pulse — update the app, then scan a new link.',
+      'This server needs a newer version of Pulse — update the app, then open a new link.',
     );
   });
 

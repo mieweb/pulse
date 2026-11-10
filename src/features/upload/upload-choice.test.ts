@@ -47,7 +47,7 @@ describe('uploadChoice: a draft recorded for no place', () => {
     expect(choice.reopen).toBeNull();
   });
 
-  it('never says to open a link again, with an empty pool or a full one', () => {
+  it('never asks for a new link, with an empty pool or a full one', () => {
     expect(choose({}).reopen).toBeNull();
     expect(choose({ pool: [option('a')] }).reopen).toBeNull();
   });
@@ -77,7 +77,7 @@ describe('uploadChoice: a draft recorded for a place', () => {
   it('never falls back to another destination: nothing is selected, and it says what to do', () => {
     const choice = choose({ draft: draftFor(), pool: [option('newest'), option('other')] });
     expect(choice.selectedId).toBeNull();
-    expect(choice.reopen).toBe('Open the link from vault.example.org again to upload.');
+    expect(choice.reopen).toBe('Open a new link from vault.example.org to upload.');
     // The person can still pick one.
     expect(choose({ draft: draftFor(), pool: [option('a')], pickedId: 'a' }).selectedId).toBe('a');
   });
@@ -86,20 +86,18 @@ describe('uploadChoice: a draft recorded for a place', () => {
     const say = (draft: DraftPlace, placeLabel: string | null = null) =>
       choose({ draft, placeLabel }).reopen;
     expect(say(draftFor({ name: 'Huddle update' }), 'Team · Huddle')).toBe(
-      'Open the link for Huddle update again to upload.',
+      'Open a new link for Huddle update to upload.',
     );
     // Unnamed, while the place's expired row is still in the pool.
-    expect(say(draftFor(), 'Team · Huddle')).toBe(
-      'Open the link for Team · Huddle again to upload.',
-    );
+    expect(say(draftFor(), 'Team · Huddle')).toBe('Open a new link for Team · Huddle to upload.');
     // After a claim the row is gone: the host.
-    expect(say(draftFor())).toBe('Open the link from vault.example.org again to upload.');
+    expect(say(draftFor())).toBe('Open a new link from vault.example.org to upload.');
   });
 
   it('says it after a failed or cancelled upload, which leaves the draft unsent with its place', () => {
     // The row was spent at the claim; the draft is unpaired again.
     const choice = choose({ draft: draftFor({ name: 'Huddle update', uploadStatus: null }) });
-    expect(choice.reopen).toBe('Open the link for Huddle update again to upload.');
+    expect(choice.reopen).toBe('Open a new link for Huddle update to upload.');
     // A new link for the place: its fresh row is the draft's own again.
     const fresh = option('fresh', { ref: REF });
     const again = choose({ draft: draftFor({ name: 'Huddle update' }), pool: [fresh] });
