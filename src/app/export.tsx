@@ -135,11 +135,11 @@ export default function ExportScreen() {
       : null;
   const backButton = back && (
     <>
-      {/* Says where it leads: the host ends the label, and a cut at its start keeps all of it. */}
+      {/* Says where it leads: the host ends the label, which is never cut, only wrapped. */}
       <PrimaryButton
         label={back.label}
         icon="arrow.uturn.backward"
-        truncate="head"
+        truncate="never"
         onPress={() => void Linking.openURL(back.url).catch(() => {})}
       />
       {back.unusualHost && (

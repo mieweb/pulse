@@ -22,10 +22,11 @@ type Props = Omit<PressableProps, 'style' | 'children'> & {
   /** Shows a spinner in place of the icon; the button stays pressable unless `disabled`. */
   busy?: boolean;
   /**
-   * Keeps a long label on one line, cut in the middle or at its start (`head`), so its end (a
-   * server host) stays readable. `head` keeps all of the end whatever is cut.
+   * How a long label fits. Unset: up to two lines, cut at the end. `middle`: one line cut in the
+   * middle, so its end (a server host) stays readable. `never`: all of it, on as many lines as it
+   * takes (a label whose every character matters).
    */
-  truncate?: 'middle' | 'head';
+  truncate?: 'middle' | 'never';
   style?: StyleProp<ViewStyle>;
 };
 
@@ -81,13 +82,13 @@ function ButtonLabel({
 }: {
   children: ReactNode;
   color: string;
-  truncate: 'middle' | 'head' | undefined;
+  truncate: 'middle' | 'never' | undefined;
 }) {
   return (
     <ThemedText
       type="headline"
-      numberOfLines={truncate ? 1 : 2}
-      ellipsizeMode={truncate ?? 'tail'}
+      numberOfLines={truncate === 'never' ? undefined : truncate ? 1 : 2}
+      ellipsizeMode={truncate === 'middle' ? 'middle' : 'tail'}
       style={[styles.label, { color }]}>
       {children}
     </ThemedText>

@@ -71,9 +71,8 @@ export function recorderFailedToast(host: string): ToastText {
 /**
  * The "Back to …" button for a finished upload's way back, or `null` when there is none to offer.
  * The app's name is the link's own word and isn't signed; where the button leads is the URL's
- * host, so the host is always in the label and always at its end, which the button keeps when it
- * cuts the label at its start (and the host itself is shortened only by dropping subdomains: its
- * registrable domain and port are always whole, `shortHost`). `unusualHost`: the host has non-ASCII letters or their punycode, which
+ * host, so the host is always in the label and always at its end, and the button never cuts the
+ * label, only wraps it (the host itself is shortened only by dropping subdomains, `shortHost`). `unusualHost`: the host has non-ASCII letters or their punycode, which
  * can pass for another name — the screen says so beside the button, as the pairing sheet does.
  */
 export function backToHost(
