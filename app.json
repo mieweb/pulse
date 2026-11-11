@@ -105,7 +105,12 @@
       "expo-notifications",
       "./plugins/with-upload-foreground-service",
       "./plugins/with-broadcast-extension-name",
-      "react-native-nitro-screen-recorder",
+      [
+        "react-native-nitro-screen-recorder",
+        {
+          "iosAppGroupIdentifier": "group.com.mieweb.pulse"
+        }
+      ],
       "./plugins/with-release-signing"
     ],
     "experiments": {
