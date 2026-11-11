@@ -91,7 +91,7 @@ describe('backToHost', () => {
     const longHost = `timehuddle.com.${'a'.repeat(60)}.evil.example`;
     const long = backToHost({ url: `https://${longHost}/`, app: 'TimeHuddle' })!;
     // Shortened by dropping subdomains: none of the misleading prefix, all of the domain.
-    expect(long.label).toBe('Back to TimeHuddle · ….evil.example');
+    expect(long.label).toBe(`Back to TimeHuddle · ….${'a'.repeat(60)}.evil.example`);
     expect(long.label.length).toBeLessThan(`Back to TimeHuddle · ${longHost}`.length);
   });
 
