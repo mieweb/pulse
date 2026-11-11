@@ -2,7 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import type { CapabilitiesResult } from './capabilities';
 import type { UploadDeepLink } from './deep-link';
-import { createLinkGate, type PairDeps, pairLink, screenLink } from './pair-link';
+import { createLinkGate, createSaveOrder, type PairDeps, pairLink, screenLink } from './pair-link';
 import type { TokenCheck } from './token-check';
 
 const NOW = 1_700_000_000_000;
@@ -82,6 +82,64 @@ describe('createLinkGate', () => {
     expect(gate.admit(PLACE, true)).toBe(true);
     gate.release();
     expect(gate.admit(PLACE, true)).toBe(true);
+  });
+});
+
+describe('createSaveOrder', () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('saves links in the order received, whichever server answers first', async () => {
+    const order = createSaveOrder();
+    const saved: string[] = [];
+    const first = order.join();
+    const second = order.join();
+
+    // The second link's server answered first: its save waits for the first link to leave.
+    const secondSave = second.save(async () => saved.push('second'));
+    await tick();
+    expect(saved).toEqual([]);
+
+    await first.save(async () => saved.push('first'));
+    first.leave();
+    await secondSave;
+    expect(saved).toEqual(['first', 'second']);
+  });
+
+  it('lets the next link save once an earlier one comes to nothing', async () => {
+    const order = createSaveOrder();
+    const failed = order.join();
+    const next = order.join();
+    const saving = next.save(async () => 'saved');
+
+    failed.leave();
+    expect(await saving).toBe('saved');
+  });
+
+  it('keeps that order through pairing, however long each server takes', async () => {
+    const order = createSaveOrder();
+    const saved: string[] = [];
+    let answerFirst: (result: CapabilitiesResult) => void = () => {};
+    const pair = (link: UploadDeepLink, slow: boolean) => {
+      const turn = order.join();
+      return pairLink(link, {
+        checkCapabilities: () =>
+          slow
+            ? new Promise((resolve) => (answerFirst = resolve))
+            : Promise.resolve({ ok: true, protocol: 2, capabilities: {} } as CapabilitiesResult),
+        checkToken: async () => 'accepted',
+        save: (paired) => turn.save(async () => saved.push(paired.artifactId)),
+        remember: async () => {},
+      }).finally(turn.leave);
+    };
+
+    const first = pair({ ...forPlace(), artifactId: 'received-first' }, true);
+    const second = pair({ ...forPlace(), artifactId: 'received-second' }, false);
+    await tick();
+    expect(saved).toEqual([]);
+
+    answerFirst({ ok: true, protocol: 2, capabilities: {} } as CapabilitiesResult);
+    await Promise.all([first, second]);
+    expect(saved).toEqual(['received-first', 'received-second']);
   });
 });
 

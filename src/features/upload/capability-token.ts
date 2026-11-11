@@ -161,8 +161,8 @@ export function expiresAtMs(token: string | null): number | null {
  * - Otherwise only an accepted link takes over. Until then its `ref` is unconfirmed — it is what
  *   the link says, not what the server signed — and never replaces the link a place holds.
  * - And only a newer one: its token expires later, or in the same second, in which case the link
- *   received last wins. `exp` and `ref` are all a client reads from a token, so nothing else
- *   orders two links.
+ *   received last wins (links are saved in the order received, `createSaveOrder`). `exp` and `ref`
+ *   are all a client reads from a token, so nothing else orders two links.
  */
 export function takesOver(
   link: { token: string | null; accepted: boolean },

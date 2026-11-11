@@ -45,7 +45,7 @@ import {
   recorderFailedToast,
 } from './link-messages';
 import { createRecorderOpener, type RecorderTarget } from './open-recorder';
-import { createLinkGate, pairLink, screenLink } from './pair-link';
+import { createLinkGate, createSaveOrder, pairLink, screenLink } from './pair-link';
 import { checkToken } from './token-check';
 import { isTrustedServer, trustServer } from './trusted-servers';
 import { uploads } from './upload-manager';
@@ -162,6 +162,8 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   // Which deliveries of a link are acted on: not one reported twice at once, nor a plain link
   // opened again (its row may be spent).
   const [gate] = useState(() => createLinkGate());
+  // Links are stored in the order they arrive, though each pairing waits on its own server.
+  const [saveOrder] = useState(() => createSaveOrder());
   const { showToast } = useToast();
   const [request, setRequestState] = useState<PairingRequest | null>(null);
   // The current request for `closed`, which can run before this render's effects would update a
@@ -269,26 +271,31 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
         });
       }
       // Added to the device-wide pool (not a single slot) — any draft can pick it at upload
-      // time, and several servers can be paired at once. A place has one row there.
+      // time, and several servers can be paired at once. A place has one row there, which a
+      // newer link takes over: of two that expire in the same second, the one received last.
+      const turn = saveOrder.join();
       void pairLink(link, {
         checkCapabilities,
         checkToken: (asked) =>
           checkToken({ server: asked.server, artifactId: asked.artifactId, token: asked.token }),
         save: (paired, accepted) =>
-          addDestination(
-            { server: paired.server, token: paired.token, artifactId: paired.artifactId },
-            paired.place && {
-              ref: paired.place.ref,
-              label: paired.place.label,
-              app: paired.place.app,
-              returnUrl: paired.place.returnUrl,
-            },
-            // Only a link its server accepted, and the newer of the two, replaces the link the
-            // place holds; a place that holds none takes any (PROTOCOL.md §5.6).
-            (stored) => takesOver({ token: paired.token, accepted }, stored, Date.now()),
+          turn.save(() =>
+            addDestination(
+              { server: paired.server, token: paired.token, artifactId: paired.artifactId },
+              paired.place && {
+                ref: paired.place.ref,
+                label: paired.place.label,
+                app: paired.place.app,
+                returnUrl: paired.place.returnUrl,
+              },
+              // Only a link its server accepted, and the newer of the two, replaces the link the
+              // place holds; a place that holds none takes any (PROTOCOL.md §5.6).
+              (stored) => takesOver({ token: paired.token, accepted }, stored, Date.now()),
+            ),
           ),
         remember: rememberHandledLink,
       })
+        .finally(turn.leave)
         .then(async (result) => {
           if (!result.ok) {
             // The link came to nothing: the same one opened again, even at once, is a new try.
@@ -333,7 +340,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
           });
         });
     },
-    [gate, openPlace, showToast],
+    [gate, saveOrder, openPlace, showToast],
   );
 
   // A link in either form (`pulsecam://` or the https link): validate it, then ask the sheet to

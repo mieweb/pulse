@@ -36,6 +36,30 @@ export function createLinkGate(now: () => number = Date.now) {
 }
 
 /**
+ * Saves links in the order they were received: of two links for a place that expire in the same
+ * second, the newer is the one received last (PROTOCOL.md §5.6). Pairings run at once, each
+ * waiting on its own server's answers, so their saves would otherwise land in the order the
+ * servers answered.
+ *
+ * `join()` as a link is handed to pairing. Its `save` runs once every link that joined before it
+ * has left; `leave` is called when its own pairing has settled, saved or not.
+ */
+export function createSaveOrder() {
+  let last: Promise<void> = Promise.resolve();
+  return {
+    join() {
+      const before = last;
+      let leave: () => void = () => {};
+      last = new Promise<void>((resolve) => (leave = resolve));
+      return {
+        save: <T>(run: () => Promise<T>): Promise<T> => before.then(run),
+        leave,
+      };
+    },
+  };
+}
+
+/**
  * What to do with a link for a place before anyone is asked to confirm its server:
  * - `expired`: its token's `exp` has passed on this device's clock. It can't upload anything, so
  *   it is refused with its own message rather than paired and opened as if it worked.
