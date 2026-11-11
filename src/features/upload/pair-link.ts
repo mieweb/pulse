@@ -9,8 +9,9 @@ const DUPLICATE_URL_MS = 2000;
 /**
  * Decides which deliveries of a link are acted on. The system can report one opening twice (the
  * launch URL and a `url` event for it), so the same URL again within two seconds is dropped. A
- * plain link opened again later in the session is ignored too, as it always was: its row may be
- * spent. A link for a place is acted on every time: opening it again reopens the place's recorder.
+ * plain link opened again later in the session is ignored too, as it always was (its row may be
+ * spent), until another link of either kind comes between. A link for a place is acted on every
+ * time: opening it again reopens the place's recorder.
  *
  * `release()`: the link came to nothing (cancelled, couldn't connect, not saved), so the same one
  * opened again — even at once — is a new try.
@@ -23,7 +24,11 @@ export function createLinkGate(now: () => number = Date.now) {
       const at = now();
       if (last?.url === url && at - last.at < DUPLICATE_URL_MS) return false;
       last = { url, at };
-      if (forPlace) return true;
+      // Any other link between two openings of a plain link lets the second through, as before.
+      if (forPlace) {
+        handledPlain = null;
+        return true;
+      }
       if (url === handledPlain) return false;
       handledPlain = url;
       return true;

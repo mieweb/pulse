@@ -73,6 +73,16 @@ describe('createLinkGate', () => {
     expect(gate.admit(PLAIN, false)).toBe(true);
   });
 
+  it('takes a plain link again once a link for a place has come between', () => {
+    let now = 0;
+    const gate = createLinkGate(() => now);
+    expect(gate.admit(PLAIN, false)).toBe(true);
+    now = 60_000;
+    expect(gate.admit(PLACE, true)).toBe(true);
+    now = 120_000;
+    expect(gate.admit(PLAIN, false)).toBe(true);
+  });
+
   it('once released, takes the same link again at once', () => {
     const gate = createLinkGate(() => 0);
     expect(gate.admit(PLAIN, false)).toBe(true);
