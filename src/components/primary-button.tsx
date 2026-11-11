@@ -21,8 +21,11 @@ type Props = Omit<PressableProps, 'style' | 'children'> & {
   icon?: IconName;
   /** Shows a spinner in place of the icon; the button stays pressable unless `disabled`. */
   busy?: boolean;
-  /** Middle-truncates a long label (a server host) so its end stays readable. */
-  truncateMiddle?: boolean;
+  /**
+   * Keeps a long label on one line, cut in the middle or at its start (`head`), so its end (a
+   * server host) stays readable. `head` keeps all of the end whatever is cut.
+   */
+  truncate?: 'middle' | 'head';
   style?: StyleProp<ViewStyle>;
 };
 
@@ -36,7 +39,7 @@ export function PrimaryButton({
   variant = 'filled',
   icon,
   busy = false,
-  truncateMiddle = false,
+  truncate,
   disabled,
   style,
   ...rest
@@ -64,7 +67,7 @@ export function PrimaryButton({
       ) : (
         icon && <Icon name={icon} size={18} tintColor={color} scalesWithText />
       )}
-      <ButtonLabel color={color} truncateMiddle={truncateMiddle}>
+      <ButtonLabel color={color} truncate={truncate}>
         {label}
       </ButtonLabel>
     </Pressable>
@@ -74,17 +77,17 @@ export function PrimaryButton({
 function ButtonLabel({
   children,
   color,
-  truncateMiddle,
+  truncate,
 }: {
   children: ReactNode;
   color: string;
-  truncateMiddle: boolean;
+  truncate: 'middle' | 'head' | undefined;
 }) {
   return (
     <ThemedText
       type="headline"
-      numberOfLines={truncateMiddle ? 1 : 2}
-      ellipsizeMode={truncateMiddle ? 'middle' : 'tail'}
+      numberOfLines={truncate ? 1 : 2}
+      ellipsizeMode={truncate ?? 'tail'}
       style={[styles.label, { color }]}>
       {children}
     </ThemedText>

@@ -49,13 +49,23 @@ export function hasNonAsciiHost(host: string): boolean {
   return /[^\x00-\x7F]/.test(host);
 }
 
+/** A second-level label that, under a two-letter country code, is part of the public suffix. */
+const TWO_PART_SUFFIX = /^(?:ac|co|com|edu|gov|net|org)\.[a-z]{2}$/i;
+
 /**
- * A host shortened in the middle for a sentence (toast, alert), where layout can't truncate it:
- * keeps both ends, so the domain ("…mieweb.org") stays readable. Labels use
- * `numberOfLines={1} ellipsizeMode="middle"` instead.
+ * A host shortened for a sentence (toast, alert, the Back button), where layout can't truncate
+ * it. The registrable domain and the port are always kept whole: only subdomains before them are
+ * dropped, whole labels nearest the domain kept while they fit, so a long host can never show a
+ * misleading prefix ("timehuddle.com.…") or a cut domain. The registrable domain is the last two
+ * labels, or three under a two-part suffix such as `co.uk`. An IP address is never shortened.
  */
 export function shortHost(host: string, max = 32): string {
   if (host.length <= max) return host;
-  const tail = Math.ceil((max - 1) / 2);
-  return `${host.slice(0, max - 1 - tail)}…${host.slice(-tail)}`;
+  const [, name, port = ''] = /^(.*?)(:\d+)?$/.exec(host)!;
+  if (name.startsWith('[') || /^\d+(?:\.\d+){3}$/.test(name)) return host;
+  const labels = name.split('.');
+  const shown = (count: number) => `….${labels.slice(-count).join('.')}${port}`;
+  let kept = Math.min(labels.length, TWO_PART_SUFFIX.test(labels.slice(-2).join('.')) ? 3 : 2);
+  while (kept < labels.length - 1 && shown(kept + 1).length <= max) kept++;
+  return kept < labels.length ? shown(kept) : host;
 }
