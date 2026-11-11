@@ -50,7 +50,10 @@ export function createSaveOrder() {
     join() {
       const before = last;
       let leave: () => void = () => {};
-      last = new Promise<void>((resolve) => (leave = resolve));
+      const left = new Promise<void>((resolve) => (leave = resolve));
+      // A link's turn ends once it has left AND every link before it has: one that failed early
+      // never lets the links after it save ahead of a link still waiting before it.
+      last = Promise.all([before, left]).then(() => {});
       return {
         save: <T>(run: () => Promise<T>): Promise<T> => before.then(run),
         leave,

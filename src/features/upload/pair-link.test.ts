@@ -115,6 +115,26 @@ describe('createSaveOrder', () => {
     expect(await saving).toBe('saved');
   });
 
+  it('never lets a link save before one received earlier, though a link between them failed', async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const order = createSaveOrder();
+    const saved: string[] = [];
+    const first = order.join();
+    const failed = order.join();
+    const third = order.join();
+    const thirdSave = third.save(async () => saved.push('third'));
+
+    // The middle link comes to nothing while the first is still waiting on its server.
+    failed.leave();
+    await tick();
+    expect(saved).toEqual([]);
+
+    await first.save(async () => saved.push('first'));
+    first.leave();
+    await thirdSave;
+    expect(saved).toEqual(['first', 'third']);
+  });
+
   it('keeps that order through pairing, however long each server takes', async () => {
     const order = createSaveOrder();
     const saved: string[] = [];
