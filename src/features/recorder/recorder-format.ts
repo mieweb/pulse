@@ -35,6 +35,14 @@ export const DEFAULT_RECORDER_FORMAT: RecorderFormat =
 const isPositiveInt = (n: unknown): n is number =>
   typeof n === 'number' && Number.isInteger(n) && n > 0;
 
+/**
+ * The lowest sample rate the recorder's audio is learned at. A take whose mic was routed to a
+ * Bluetooth headset or held by a call or a screen recording can come out narrowband (8 or 16 kHz);
+ * learning that would conform every later import down to it and muffle its voice (seen on an
+ * iPhone 17 Pro Max: one 8 kHz take, then imports at 8 kHz / 16 kbps).
+ */
+const MIN_LEARNED_SAMPLE_RATE = 44100;
+
 /** A stored format, validated (anything unexpected → null, so a corrupt row can't steer imports). */
 export function parseRecorderFormat(raw: string | null): RecorderFormat | null {
   if (!raw) return null;
@@ -45,6 +53,8 @@ export function parseRecorderFormat(raw: string | null): RecorderFormat | null {
       !isPositiveInt(f.height) ||
       ![0, 90, 180, 270].includes(f.rotation as number) ||
       !isPositiveInt(f.audioSampleRate) ||
+      // A narrowband row learned before the floor: dropped, so imports use the default again.
+      f.audioSampleRate < MIN_LEARNED_SAMPLE_RATE ||
       !isPositiveInt(f.audioChannels)
     ) {
       return null;
@@ -59,7 +69,8 @@ export function parseRecorderFormat(raw: string | null): RecorderFormat | null {
 /**
  * The signature a finished recording shows, or null when it can't serve as the import target
  * (not H.264, not displaying the portrait canvas, not 30 fps, mirrored). A mic-off recording has
- * no audio track: the audio half stays whatever was known before.
+ * no audio track, and a narrowband one isn't the recorder's normal sound: in both the audio half
+ * stays whatever was known before.
  */
 export function recorderFormatFromProbe(
   { video, audio: track }: ProbeResult,
@@ -70,7 +81,10 @@ export function recorderFormatFromProbe(
   if (!isCanvasFormat(geometry)) return null;
   if (Math.round(video.fps) !== NORMALIZE_TARGET_FPS) return null;
   const audio =
-    track && track.codec === 'aac' && track.sampleRate > 0 && track.channels > 0
+    track &&
+    track.codec === 'aac' &&
+    track.sampleRate >= MIN_LEARNED_SAMPLE_RATE &&
+    track.channels > 0
       ? { audioSampleRate: track.sampleRate, audioChannels: track.channels }
       : { audioSampleRate: previous.audioSampleRate, audioChannels: previous.audioChannels };
   return { ...geometry, ...audio };
