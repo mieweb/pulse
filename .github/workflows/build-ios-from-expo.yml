@@ -82,10 +82,14 @@ jobs:
 
       # ── pod install + sign + archive + upload ─────────────────────────────
       - name: Build & upload iOS to TestFlight
-        uses: mieweb/actions/sign-archive-upload-ios@61db81e727847e112ae5af71a8c9b8bf62b1f4cb # v2.3.1
+        # TEMPORARY: mieweb/actions#23 (per-target extension signing). Re-pin to the release
+        # tag once it merges.
+        uses: priyamrmore/actions/sign-archive-upload-ios@ea5186265e3bb2d68099caeaf75b9d1e1e538ccf # mieweb/actions#23
         with:
           signing_mode:                  match
           app_identifier:                com.mieweb.pulse
+          # The screen recorder's broadcast upload extension: its own App ID and profile.
+          extension_identifiers:         com.mieweb.pulse.BroadcastExtension
           apple_team_id:                 ${{ secrets.APPLE_TEAM_ID }}
           match_git_basic_authorization: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
           match_password:                ${{ secrets.MATCH_PASSWORD }}
