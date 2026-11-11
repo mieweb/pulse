@@ -62,6 +62,9 @@ const COMPATIBILITY_URL = `https://mieweb.github.io/pulse/compatibility.html?app
   build.version,
 )}&protocol=${APP_PROTOCOL.min}-${APP_PROTOCOL.max}`;
 
+/** A new GitHub issue on the app's repo: Copy details or Share logs gives it the bug report. */
+const NEW_ISSUE_URL = 'https://github.com/mieweb/pulse/issues/new';
+
 /**
  * About (#155): version, build number, commit and build date — all injected at build time by
  * `app.config.ts` — plus this app's upload protocol, whether each paired server is compatible,
@@ -261,6 +264,19 @@ export default function AboutScreen() {
               <Icon name="square.and.arrow.up" size={18} tintColor={theme.accent} scalesWithText />
             )}
             <ThemedText themeColor="accent">Share logs</ThemedText>
+          </Pressable>
+          <Pressable
+            onPress={() => void Linking.openURL(NEW_ISSUE_URL)}
+            accessibilityRole="link"
+            accessibilityLabel="Report an issue"
+            accessibilityHint="Opens a new issue for Pulse on GitHub"
+            style={({ pressed }) => [
+              styles.inlineButton,
+              { borderTopColor: theme.border, borderTopWidth: StyleSheet.hairlineWidth },
+              pressed && { backgroundColor: theme.backgroundSelected },
+            ]}>
+            <Icon name="ladybug" size={18} tintColor={theme.accent} scalesWithText />
+            <ThemedText themeColor="accent">Report an issue</ThemedText>
           </Pressable>
         </Section>
       </SheetBody>
