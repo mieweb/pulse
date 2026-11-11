@@ -12,11 +12,11 @@ import { CardShadow, Opacity, Radius, Spacing, type ThemeColor } from '@/constan
 import { useToast } from '@/features/toast/toast-provider';
 import { useTextScale } from '@/hooks/use-text-scale';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { hostOf } from '@/utils/format';
 import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
 
 import { DestinationLabel } from './destination-label';
+import { destinationSpokenName } from './destination-options';
 import { type DestinationOption, useDestinations } from './use-destinations';
 
 /**
@@ -104,6 +104,8 @@ export function DestinationsSheet() {
     <DestinationRow
       key={d.id}
       server={d.server}
+      label={d.label}
+      app={d.app}
       expiryLabel={d.expiryLabel}
       compat={compatOf(d.server)}
       onRemove={() => remove([d])}
@@ -169,11 +171,15 @@ export function DestinationsSheet() {
 
 function DestinationRow({
   server,
+  label,
+  app,
   expiryLabel,
   compat,
   onRemove,
 }: {
   server: string;
+  label: string | null;
+  app: string | null;
   expiryLabel: string;
   compat: ServerCompat | undefined;
   onRemove: () => void;
@@ -184,7 +190,7 @@ function DestinationRow({
       {/* The home pill's glyph and color: the row is a server, not an alert. */}
       <Icon name="icloud.and.arrow.up" size={18} tintColor={theme.text} scalesWithText />
       <View style={styles.rowText}>
-        <DestinationLabel server={server} />
+        <DestinationLabel server={server} label={label} app={app} />
         {compat && compat.status !== 'compatible' && compat.status !== 'checking' ? (
           <RowProblem compat={compat} expiryLabel={expiryLabel} />
         ) : (
@@ -197,7 +203,7 @@ function DestinationRow({
         onPress={onRemove}
         hitSlop={8}
         accessibilityRole="button"
-        accessibilityLabel={`Remove ${hostOf(server)}`}
+        accessibilityLabel={`Remove ${destinationSpokenName({ server, label })}`}
         style={({ pressed }) => [styles.delete, pressed && styles.pressed]}>
         <Icon name="trash" size={20} tintColor={theme.accent} />
       </Pressable>

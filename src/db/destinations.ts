@@ -1,8 +1,8 @@
 import * as Crypto from 'expo-crypto';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull, type SQL, sql } from 'drizzle-orm';
 
 import { db } from './client';
-import { uploadDestinations } from './schema';
+import { drafts, uploadDestinations } from './schema';
 import { deleteDestinationToken, getDestinationToken, setDestinationToken } from './secure-token';
 
 /**
@@ -18,6 +18,19 @@ export type PairedDestination = {
   artifactId: string;
 };
 
+/**
+ * What a link says about the place its upload is for (its hints, see deep-link.ts). `ref` is the
+ * host's key for the place: until a draft claims it there is one destination per `(server, ref)`,
+ * and a newer link for the place, once its server has accepted it, replaces the older one's upload. Claimed, the row is gone like
+ * any other; the next link for the place makes a new one.
+ */
+export type DestinationPlace = {
+  ref: string;
+  label: string | null;
+  app: string | null;
+  returnUrl: string | null;
+};
+
 /** The non-secret portion, persisted in the `upload_destinations` table. The token (a live
  * bearer credential) lives in expo-secure-store instead — see `secure-token.ts`. */
 export type PairedDestinationMeta = Omit<PairedDestination, 'token'>;
@@ -28,6 +41,10 @@ export const destinationsQuery = db
     id: uploadDestinations.id,
     server: uploadDestinations.server,
     artifactId: uploadDestinations.artifactId,
+    ref: uploadDestinations.ref,
+    label: uploadDestinations.label,
+    app: uploadDestinations.app,
+    returnUrl: uploadDestinations.returnUrl,
     createdAt: uploadDestinations.createdAt,
   })
   .from(uploadDestinations)
@@ -48,10 +65,22 @@ function oneAtATime<T>(run: () => Promise<T>): Promise<T> {
 /**
  * Add a paired destination to the pool. Deduped by `(server, artifactId)` — re-scanning the
  * same link (same server-minted artifact) refreshes that row's token in place instead of
- * piling up duplicates. Returns the row id (existing or freshly minted).
+ * piling up duplicates. A link that names its `place` is deduped by `(server, ref)` instead, both
+ * compared exactly as PROTOCOL.md §5.6 says (the link's `server` has lost one trailing `/`): the
+ * place keeps its one row, which takes this link's upload, token and hints and moves to the front
+ * of the pool — unless the link doesn't take over from the one the row holds (`takesOver`), which
+ * is then left alone. Returns the row id (existing or freshly minted).
+ *
+ * `takesOver`: whether this link replaces the one the place's row holds, given that one's stored
+ * token (`null` when it has none); see `takesOver` in capability-token.ts. An older link opened
+ * late, or one the server hasn't accepted, must not take the place of the link a place holds.
  */
-export function addDestination(dest: PairedDestination): Promise<string> {
-  return oneAtATime(() => insertOrRefresh(dest));
+export function addDestination(
+  dest: PairedDestination,
+  place?: DestinationPlace,
+  takesOver: (storedToken: string | null) => boolean = () => true,
+): Promise<string> {
+  return oneAtATime(() => (place ? upsertPlace(dest, place, takesOver) : insertOrRefresh(dest)));
 }
 
 async function insertOrRefresh(dest: PairedDestination): Promise<string> {
@@ -60,9 +89,13 @@ async function insertOrRefresh(dest: PairedDestination): Promise<string> {
     artifactId: dest.artifactId,
   };
   const existing = await db
-    .select({ id: uploadDestinations.id })
+    .select({ id: uploadDestinations.id, ref: uploadDestinations.ref })
     .from(uploadDestinations)
     .where(eq(uploadDestinations.artifactId, dest.artifactId));
+  // A place's row for the same upload is left as it is: only a link its server accepted replaces
+  // the token a place holds (`upsertPlace`), and a plain link is never asked.
+  const placeRow = existing.find((row) => row.ref !== null);
+  if (placeRow) return placeRow.id;
   const match = existing.find(() => true); // artifactId is server-unique in practice
   const id = match?.id ?? Crypto.randomUUID();
   if (match) {
@@ -77,12 +110,93 @@ async function insertOrRefresh(dest: PairedDestination): Promise<string> {
   return id;
 }
 
-/** Fetch one destination (row + secure-stored token); `null` if it's gone. */
-export async function getDestination(id: string): Promise<PairedDestination | null> {
+async function upsertPlace(
+  dest: PairedDestination,
+  place: DestinationPlace,
+  takesOver: (storedToken: string | null) => boolean,
+): Promise<string> {
+  const [match] = await db
+    .select({ id: uploadDestinations.id })
+    .from(uploadDestinations)
+    .where(and(eq(uploadDestinations.server, dest.server), eq(uploadDestinations.ref, place.ref)));
+  if (match && !takesOver(await getDestinationToken(match.id))) return match.id;
+  const id = match?.id ?? Crypto.randomUUID();
+  const link = { artifactId: dest.artifactId, ...place };
+  // The row and its token live in two stores, so the two writes can't be one. The token goes
+  // last, and the old one is cleared first: stopped anywhere in between, the row has no token
+  // (and isn't offered, see `useDestinations`) rather than a new upload id with the old link's
+  // token, which the server would refuse every time. Opening the link again completes it.
+  if (match) {
+    await setDestinationToken(id, null);
+    await db
+      .update(uploadDestinations)
+      .set({ ...link, createdAt: sql`(unixepoch('subsec') * 1000)` })
+      .where(eq(uploadDestinations.id, id));
+  } else {
+    await db.insert(uploadDestinations).values({ id, server: dest.server, ...link });
+  }
+  await setDestinationToken(id, dest.token);
+  // The same upload paired as a plain link, by a build that didn't read places yet: the place's
+  // row is that link now, and two rows for one upload would offer it twice.
+  const plain = await db
+    .delete(uploadDestinations)
+    .where(
+      and(
+        eq(uploadDestinations.server, dest.server),
+        eq(uploadDestinations.artifactId, dest.artifactId),
+        isNull(uploadDestinations.ref),
+      ),
+    )
+    .returning({ id: uploadDestinations.id });
+  for (const row of plain) await deleteDestinationToken(row.id).catch(() => {});
+  return id;
+}
+
+/**
+ * Whether the row of the place `ref` on `dest.server` holds this very link: the same upload and
+ * the same token. Opening such a link again has nothing to pair. Asked in turn with pairing, so
+ * it never reads a row between its two writes.
+ */
+export function placeHoldsLink(dest: PairedDestination, ref: string): Promise<boolean> {
+  return oneAtATime(async () => {
+    const [row] = await db
+      .select({ id: uploadDestinations.id })
+      .from(uploadDestinations)
+      .where(
+        and(
+          eq(uploadDestinations.server, dest.server),
+          eq(uploadDestinations.ref, ref),
+          eq(uploadDestinations.artifactId, dest.artifactId),
+        ),
+      );
+    return !!row && dest.token !== null && (await getDestinationToken(row.id)) === dest.token;
+  });
+}
+
+/**
+ * A destination as stored: its link, and for a place's link the place and the way back it carried
+ * (all `null` for a plain link).
+ */
+export type StoredDestination = PairedDestination &
+  Pick<DestinationPlace, 'app' | 'returnUrl'> & { ref: string | null };
+
+/**
+ * Fetch one destination (row + secure-stored token); `null` if it's gone. Read in turn with
+ * pairing, so never between a re-pair's two writes: the upload id, the token and the way back are
+ * all the same link's.
+ */
+export function getDestination(id: string): Promise<StoredDestination | null> {
+  return oneAtATime(() => readDestination(id));
+}
+
+async function readDestination(id: string): Promise<StoredDestination | null> {
   const rows = await db
     .select({
       server: uploadDestinations.server,
       artifactId: uploadDestinations.artifactId,
+      ref: uploadDestinations.ref,
+      app: uploadDestinations.app,
+      returnUrl: uploadDestinations.returnUrl,
     })
     .from(uploadDestinations)
     .where(eq(uploadDestinations.id, id));
@@ -94,20 +208,46 @@ export async function getDestination(id: string): Promise<PairedDestination | nu
 /**
  * Remove a destination from the pool (claimed by an upload, or deleted by the user). Returns
  * whether this call removed it — when two drafts claim the same link, only one gets `true`.
+ *
+ * `link`, for an upload's claim: the link the upload read (`getDestination`). The row is removed
+ * only while it still holds that very link, decided in turn with pairing — a newer link that
+ * replaced it since is left for the next upload, not spent on this one.
  */
-export async function deleteDestination(id: string): Promise<boolean> {
-  const rows = await db
-    .delete(uploadDestinations)
-    .where(eq(uploadDestinations.id, id))
-    .returning({ id: uploadDestinations.id });
+export function deleteDestination(id: string, link?: PairedDestination): Promise<boolean> {
+  if (!link) return removeDestination(id);
+  return oneAtATime(async () => {
+    const stored = await readDestination(id);
+    const holds =
+      stored?.server === link.server &&
+      stored.artifactId === link.artifactId &&
+      stored.token === link.token;
+    return holds && removeDestination(id);
+  });
+}
+
+async function removeDestination(id: string): Promise<boolean> {
+  const removed = await removeRow(id);
   // Best-effort: once the row is gone the link is spent, whatever happens to its token.
   await deleteDestinationToken(id).catch(() => {});
+  return removed;
+}
+
+async function removeRow(id: string, condition?: SQL): Promise<boolean> {
+  const rows = await db
+    .delete(uploadDestinations)
+    .where(and(eq(uploadDestinations.id, id), condition))
+    .returning({ id: uploadDestinations.id });
   return rows.length > 0;
 }
 
+/** A draft recorded for this row's place that hasn't been uploaded yet. */
+const hasUnsentDraft = sql`exists (select 1 from ${drafts} where ${drafts.contextServer} = ${uploadDestinations.server} and ${drafts.contextRef} = ${uploadDestinations.ref} and ${drafts.uploadStatus} is not 'uploaded')`;
+
 /**
  * The expiry sweep's delete: removes the row only if its token, read again now, is still
- * `expired` (see `oneAtATime`). Returns whether it did.
+ * `expired` (see `oneAtATime`). A place's unclaimed row stays while a draft recorded for it is
+ * unsent, so that draft keeps the place's label on Home; the next link for the place revives the
+ * row. Returns whether it removed it.
  */
 export function deleteDestinationIfExpired(
   id: string,
@@ -115,6 +255,10 @@ export function deleteDestinationIfExpired(
 ): Promise<boolean> {
   return oneAtATime(async () => {
     const token = await getDestinationToken(id);
-    return expired(token) ? deleteDestination(id) : false;
+    if (!expired(token)) return false;
+    // A row that stays keeps its token: the next link for the place is compared with it.
+    if (!(await removeRow(id, sql`not ${hasUnsentDraft}`))) return false;
+    await deleteDestinationToken(id).catch(() => {});
+    return true;
   });
 }

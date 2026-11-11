@@ -6,6 +6,7 @@ import {
   formatExpiry,
   isClaimsExpired,
   isTokenExpired,
+  takesOver,
 } from './capability-token';
 
 // Mirrors `issueCapabilityToken` in pulsevault-mieweb/src/lib/capability-token.ts without
@@ -24,8 +25,81 @@ const VALID_CLAIMS = {
 };
 
 describe('decodeCapabilityClaims', () => {
-  it('decodes a well-formed token', () => {
-    expect(decodeCapabilityClaims(fakeToken(VALID_CLAIMS))).toEqual(VALID_CLAIMS);
+  it('reads the expiry of a well-formed token, and nothing else', () => {
+    expect(decodeCapabilityClaims(fakeToken(VALID_CLAIMS))).toEqual({ exp: VALID_CLAIMS.exp });
+    // Whatever else the server put in it is the server's (PROTOCOL.md §5.6).
+    expect(
+      decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ctx: { userId: 'u1' }, use: 'view' })),
+    ).toEqual({ exp: VALID_CLAIMS.exp });
+  });
+
+  it('reads the place the upload is for from a `ref` claim, non-ASCII included', () => {
+    for (const ref of ['u1:huddle:t1', 'équipe:☕', 'r'.repeat(200), '😀'.repeat(200)]) {
+      expect(decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ref }))).toEqual({
+        exp: VALID_CLAIMS.exp,
+        ref,
+      });
+    }
+  });
+
+  it('reads no place from a `ref` that isn’t a string of 1 to 200 characters', () => {
+    for (const ref of ['', 'r'.repeat(201), '😀'.repeat(201), 7, null, { id: 'r1' }, ['r1']]) {
+      const claims = decodeCapabilityClaims(fakeToken({ ...VALID_CLAIMS, ref }));
+      // Still the token it was, for its expiry: only the place is unread.
+      expect(claims).toEqual({ exp: VALID_CLAIMS.exp });
+    }
+  });
+
+  it('reads no place from a `ref` with an unpaired surrogate', () => {
+    // `JSON.parse` gives half a pair from an escape; no two clients would decode the same key.
+    for (const escaped of ['a\\ud83d', '\\udc00a', 'a\\ud83d\\ud83d\\ude00']) {
+      const json = JSON.stringify({ ...VALID_CLAIMS, ref: 'REF' }).replace('REF', escaped);
+      const token = `${Buffer.from(json, 'utf8').toString('base64url')}.sig`;
+      expect(decodeCapabilityClaims(token)).toEqual({ exp: VALID_CLAIMS.exp });
+    }
+  });
+
+  it('reads nothing, and so no place, from a token whose exp isn’t a whole number', () => {
+    for (const exp of ['4102444800', null, true, 1.5, '1e400', '-1e400']) {
+      const json = JSON.stringify({ ...VALID_CLAIMS, ref: 'r1', exp: 'EXP' }).replace(
+        '"EXP"',
+        // As written in the JSON: `1e400` reads as infinity.
+        typeof exp === 'string' && /e/.test(exp) ? exp : JSON.stringify(exp),
+      );
+      const token = `${Buffer.from(json, 'utf8').toString('base64url')}.sig`;
+      expect(decodeCapabilityClaims(token)).toBeNull();
+      // A credential Pulse can't read: no known expiry, never "expired".
+      expect(isTokenExpired(token, Date.now())).toBe(false);
+      expect(formatExpiry(token, Date.now())).toBe('No expiry');
+    }
+  });
+
+  it('reads the claims from the part before the first dot only', () => {
+    const [payload] = fakeToken({ ...VALID_CLAIMS, ref: 'real' }).split('.');
+    const [forged] = fakeToken({ ...VALID_CLAIMS, ref: 'forged' }).split('.');
+    expect(decodeCapabilityClaims(`${payload}.${forged}.sig`)?.ref).toBe('real');
+  });
+
+  it('reads nothing from claims that are not base64url without padding', () => {
+    const json = JSON.stringify({ ...VALID_CLAIMS, ref: 'r1??>>' });
+    const plain = Buffer.from(json, 'utf8').toString('base64');
+    // The test is only a test if plain base64 differs here: `+`, `/` or `=`.
+    expect(plain).toMatch(/[+/=]/);
+    expect(decodeCapabilityClaims(`${plain}.sig`)).toBeNull();
+    const [payload] = fakeToken(VALID_CLAIMS).split('.');
+    expect(decodeCapabilityClaims(`${payload}=.sig`)).toBeNull();
+    // A length no base64 encoding produces.
+    expect(decodeCapabilityClaims('abcde.sig')).toBeNull();
+  });
+
+  it('reads nothing from claims that are not the UTF-8 text of one JSON object', () => {
+    const encoded = (bytes: Buffer | string) => `${Buffer.from(bytes).toString('base64url')}.sig`;
+    for (const text of ['null', '[]', '"exp"', '7', 'true', '']) {
+      expect(decodeCapabilityClaims(encoded(text))).toBeNull();
+    }
+    // Latin-1 bytes: valid JSON to a byte-for-byte reader, but not UTF-8.
+    const latin1 = Buffer.from(JSON.stringify({ ...VALID_CLAIMS, ref: 'équipe' }), 'latin1');
+    expect(decodeCapabilityClaims(encoded(latin1))).toBeNull();
   });
 
   it('returns null for a token with no dot separator', () => {
@@ -52,15 +126,21 @@ describe('decodeCapabilityClaims', () => {
 
 describe('isClaimsExpired', () => {
   it('is false well before expiry', () => {
-    expect(isClaimsExpired(VALID_CLAIMS, 10_000, VALID_CLAIMS.exp * 1000 - 60_000)).toBe(false);
+    expect(
+      isClaimsExpired({ exp: VALID_CLAIMS.exp }, 10_000, VALID_CLAIMS.exp * 1000 - 60_000),
+    ).toBe(false);
   });
 
   it('is true once past expiry', () => {
-    expect(isClaimsExpired(VALID_CLAIMS, 10_000, VALID_CLAIMS.exp * 1000 + 1)).toBe(true);
+    expect(isClaimsExpired({ exp: VALID_CLAIMS.exp }, 10_000, VALID_CLAIMS.exp * 1000 + 1)).toBe(
+      true,
+    );
   });
 
   it('is true inside the safety buffer even though exp has not technically passed', () => {
-    expect(isClaimsExpired(VALID_CLAIMS, 10_000, VALID_CLAIMS.exp * 1000 - 5_000)).toBe(true);
+    expect(
+      isClaimsExpired({ exp: VALID_CLAIMS.exp }, 10_000, VALID_CLAIMS.exp * 1000 - 5_000),
+    ).toBe(true);
   });
 });
 
@@ -100,5 +180,53 @@ describe('formatExpiry', () => {
     expect(formatExpiry(token, expMs - 5 * 60_000)).toBe('Expires in 4m');
     // 20s out, minus the 10s buffer → "Expires in 10s".
     expect(formatExpiry(token, expMs - 20_000)).toBe('Expires in 10s');
+  });
+});
+
+describe('takesOver (PROTOCOL.md §5.6)', () => {
+  // Seconds since the epoch; `NOW` is before every expiry unless a test says otherwise.
+  const NOW = 500_000;
+  const expiring = (exp: number) => fakeToken({ ...VALID_CLAIMS, exp });
+  const accepted = (token: string | null) => ({ token, accepted: true });
+  const unconfirmed = (token: string | null) => ({ token, accepted: false });
+
+  it('newer: the accepted link whose token expires later takes over', () => {
+    expect(takesOver(accepted(expiring(2000)), expiring(1000), NOW)).toBe(true);
+    expect(takesOver(accepted(expiring(1000)), expiring(2000), NOW)).toBe(false);
+  });
+
+  it('newer: of two that expire in the same second, the one received last', () => {
+    expect(takesOver(accepted(expiring(1000)), expiring(1000), NOW)).toBe(true);
+  });
+
+  it('newer: exp alone orders two links, whatever iat says', () => {
+    const issuedLaterExpiresSooner = fakeToken({ ...VALID_CLAIMS, iat: 9000, exp: 1000 });
+    const issuedSoonerExpiresLater = fakeToken({ ...VALID_CLAIMS, iat: 1, exp: 2000 });
+    expect(takesOver(accepted(issuedLaterExpiresSooner), issuedSoonerExpiresLater, NOW)).toBe(
+      false,
+    );
+  });
+
+  it('unconfirmed: never replaces the link a place holds, however much newer', () => {
+    expect(takesOver(unconfirmed(expiring(9000)), expiring(1000), NOW)).toBe(false);
+    expect(takesOver(unconfirmed(expiring(1000)), expiring(1000), NOW)).toBe(false);
+  });
+
+  it('unconfirmed: becomes the link of a place that holds none', () => {
+    // No token at all, or one Pulse can't read: the row holds no link.
+    expect(takesOver(unconfirmed(expiring(1000)), null, NOW)).toBe(true);
+    expect(takesOver(unconfirmed(expiring(1000)), 'opaque', NOW)).toBe(true);
+    // The held link's token has expired, by its `exp`: to the second, with no margin.
+    expect(takesOver(unconfirmed(expiring(2000)), expiring(1000), 1000 * 1000)).toBe(true);
+    expect(takesOver(unconfirmed(expiring(2000)), expiring(1000), 1000 * 1000 - 1)).toBe(false);
+  });
+
+  it('a place whose link has expired takes an accepted link too, even an older one', () => {
+    expect(takesOver(accepted(expiring(900)), expiring(1000), 1000 * 1000)).toBe(true);
+  });
+
+  it('a link that can’t be read never replaces one that can', () => {
+    expect(takesOver(accepted('opaque'), expiring(1000), NOW)).toBe(false);
+    expect(takesOver(accepted(null), expiring(1000), NOW)).toBe(false);
   });
 });

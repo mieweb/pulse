@@ -33,6 +33,8 @@ import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
+import { peekRecorderPlace, takeRecorderPlace } from '@/features/recorder/link-place';
+import { type MountedRecorder, registerRecorder } from '@/features/recorder/recorder-presence';
 import { useRecorder } from '@/features/recorder/use-recorder';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
@@ -116,7 +118,23 @@ export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
   const textSizeKey = useTextSizeKey();
-  const { draftId: draftIdParam } = useLocalSearchParams<{ draftId?: string }>();
+  // A link for a place opens the recorder for that place: a draft made here is recorded for it,
+  // and named with the link's `name`, if it has one. The place comes from memory, never from the
+  // route (see `link-place.ts`): `forLink` only says this recorder was opened for a link. A
+  // recorder opened for a new draft takes a place still on offer too — the one a link paired
+  // during the welcome screen left for the first recording.
+  const { draftId: draftIdParam, forLink } = useLocalSearchParams<{
+    draftId?: string;
+    forLink?: string;
+  }>();
+  const [linkPlace] = useState(() => (forLink || !draftIdParam ? peekRecorderPlace() : null));
+  useEffect(() => {
+    if (linkPlace) takeRecorderPlace(linkPlace);
+  }, [linkPlace]);
+  const [newDraft] = useState(() => ({
+    name: linkPlace?.name ?? null,
+    context: linkPlace?.context ?? null,
+  }));
   const permissions = useRecorderPermissions();
   const {
     cameraRef,
@@ -152,7 +170,7 @@ export default function RecorderScreen() {
     cycleStabilization,
     deleteSegment,
     reorderSegments,
-  } = useRecorder(draftIdParam);
+  } = useRecorder(draftIdParam, newDraft);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
@@ -177,6 +195,30 @@ export default function RecorderScreen() {
     opening.current = true;
     void flushDraftWrites().then(() => router.push(href));
   };
+
+  // Navigation from outside (a link opening its place's recorder) finalizes an in-flight take
+  // first, as Close does, waits for this screen to unmount before mounting another camera, and
+  // leaves this recorder alone when it is already the one the link asks for. Read through a ref:
+  // registered once, it answers with the current render's values.
+  const mounted = useRef<MountedRecorder>(null);
+  useEffect(() => {
+    mounted.current = {
+      finalize: finalizeRecording,
+      place: () => newDraft.context,
+      draftId: () => draftId,
+      focused: () => focused,
+    };
+  });
+  useEffect(
+    () =>
+      registerRecorder({
+        finalize: () => mounted.current?.finalize() ?? Promise.resolve(),
+        place: () => mounted.current?.place() ?? null,
+        draftId: () => mounted.current?.draftId() ?? null,
+        focused: () => mounted.current?.focused() ?? false,
+      }),
+    [],
+  );
 
   // The clip bar's clips, held while another screen (the editor) covers the recorder: sortables
   // lays its grid out from measurements, and a reorder applied while the recorder's views were off
@@ -528,7 +570,8 @@ export default function RecorderScreen() {
   const cameraActive = !audioHandoff && focused && (appActive || isRecording) && !recovering;
 
   // Close: finalize any in-flight clip (saving it into the draft) before navigating home, so the
-  // segment isn't lost when the camera unmounts.
+  // segment isn't lost when the camera unmounts. (Hooks above the early returns register the same
+  // finalize for navigation from outside, see `registerRecorder`.)
   const handleClose = () => void finalizeRecording().then(closeToHome);
 
   return (

@@ -312,9 +312,11 @@ function videoHangsUntilAborted() {
   tusWith(
     (opts) =>
       new Promise<void>((_, reject) => {
-        opts.signal.addEventListener('abort', () =>
-          reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
-        );
+        const abort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+        // Already aborted (cancelled before the video's turn): reject at once, as a real upload
+        // does, rather than hold up the drain for the tests that follow.
+        if (opts.signal.aborted) abort();
+        else opts.signal.addEventListener('abort', abort);
       }),
   );
 }
@@ -395,7 +397,7 @@ describe('launch check', () => {
     expect(db.log.indexOf('burn:killed')).toBeLessThan(db.log.indexOf('pair:live'));
     expect(db.log).not.toContain('burn:live');
     expect(mockToast).toHaveBeenCalledWith(
-      'An upload didn’t finish — scan a new link to try again.',
+      'An upload didn’t finish — open a new link to try again.',
     );
     // And a notification, for a launch in the background (a no-op in the foreground).
     expect(mockNotifyFailed).toHaveBeenCalled();
@@ -491,6 +493,12 @@ describe('upload', () => {
     const [spent] = jest.mocked(deleteDestination).mock.invocationCallOrder.slice(-1);
     expect(paired).toBeLessThan(spent);
     expect(pool.log).toEqual(['pool-delete:dest-d1']);
+    // Spent only while the row still holds the link this upload read.
+    expect(deleteDestination).toHaveBeenLastCalledWith('dest-d1', {
+      server: SERVER,
+      token: 'tok',
+      artifactId: 'art-dest-d1',
+    });
     expect(pool.pool.has('dest-d1')).toBe(false);
     // Captions, manifest, thumbnail — each a fresh artifactId related to the video — then the video.
     const calls = mockUploadViaTus.mock.calls.map(([o]) => o);
@@ -544,7 +552,7 @@ describe('upload', () => {
     expect(uploads.getWatchLink('d2')).toBeNull();
     // The instruction first (the toast shows two lines), then the reason and the step.
     expect(mockToast).toHaveBeenCalledWith(
-      'Upload failed — scan a new link to try again. (Video: Rejected)',
+      'Upload failed — open a new link to try again. (Video: Rejected)',
     );
     // Scoped to its own link, so it can never unpair a newer claim.
     expect(jest.mocked(burnUploadPairing)).toHaveBeenCalledWith('d2', 'art-dest-d2');
@@ -566,7 +574,7 @@ describe('upload', () => {
 
     expect(mockUploadViaTus).not.toHaveBeenCalled();
     expect(db.status.get('d3')).toBeNull();
-    expect(mockToast).toHaveBeenCalledWith('Upload link expired — scan a new link to try again.');
+    expect(mockToast).toHaveBeenCalledWith('Upload link expired — open a new link to try again.');
     expect(uploads.getDraftState('d3').status).toBe('idle');
   });
 
@@ -580,7 +588,7 @@ describe('upload', () => {
 
     expect(mockUploadViaTus).not.toHaveBeenCalled();
     expect(mockToast).toHaveBeenCalledWith(
-      'This server needs a newer version of Pulse — update the app, then scan a new link.',
+      'This server needs a newer version of Pulse — update the app, then open a new link.',
     );
   });
 
@@ -595,7 +603,7 @@ describe('upload', () => {
     await eventually(() => db.log.includes('burn:d5'));
 
     expect(mockToast).toHaveBeenCalledWith(
-      'This server needs a newer version of Pulse — update the app, then scan a new link.',
+      'This server needs a newer version of Pulse — update the app, then open a new link.',
     );
   });
 
@@ -901,5 +909,122 @@ describe('view links', () => {
     expect(uploads.getWatchLink('v4')).toBeNull();
     expect(secure.links.has('v4')).toBe(false);
     await uploads.cancel('v4');
+  });
+});
+
+describe('a cancel around the claim', () => {
+  it('that lands before the pairing is written still leaves the draft unpaired', async () => {
+    // The cancel runs while the pairing is being written: it finds nothing to unpair yet.
+    const pair = jest.mocked(setUploadDestination).getMockImplementation()!;
+    jest.mocked(setUploadDestination).mockImplementationOnce(async (draftId, destination) => {
+      await uploads.cancel(draftId);
+      await pair(draftId, destination);
+    });
+    tusWith();
+
+    await claim('x1');
+
+    expect(db.log).toEqual(['pair:x1', 'burn:x1']);
+    expect(db.status.get('x1')).toBeNull();
+    expect(uploads.getDraftState('x1')).toEqual({ status: 'idle' });
+    expect(mockUploadViaTus).not.toHaveBeenCalled();
+  });
+});
+
+describe('the way back to the host', () => {
+  const RETURN = { url: 'https://timehuddle.example.org/app/huddle?team=t1', app: 'TimeHuddle' };
+  const claimFrom = (draftId: string, returnTo?: typeof RETURN | null) => {
+    pool.pool.add(`dest-${draftId}`);
+    return uploads.claim({
+      draftId,
+      destinationId: `dest-${draftId}`,
+      destination: { server: SERVER, token: 'tok', artifactId: `art-${draftId}` },
+      segments: [],
+      merged: { path: `/drafts/${draftId}/export.mp4`, durationMs: 1000 },
+      ...(returnTo === undefined ? {} : { returnTo }),
+    });
+  };
+
+  it('rides the upload from the claim to its finish, though the row is spent at the claim', async () => {
+    tusWith();
+    const before = Date.now();
+    await claimFrom('back1', RETURN);
+    // A place's link is used up when its upload starts, like any other.
+    expect(pool.pool.has('dest-back1')).toBe(false);
+    await eventually(() => uploads.getAnnouncement('back1') !== null);
+
+    const announcement = uploads.getAnnouncement('back1')!;
+    expect(announcement.returnTo).toEqual(RETURN);
+    expect(announcement.at).toBeGreaterThanOrEqual(before);
+  });
+
+  it('is none for an upload whose link carried none', async () => {
+    tusWith();
+    await claimFrom('back2');
+    await eventually(() => uploads.getAnnouncement('back2') !== null);
+    expect(uploads.getAnnouncement('back2')!.returnTo).toBeNull();
+  });
+
+  it('is the newest upload’s: a second upload without one clears the first’s', async () => {
+    tusWith();
+    await claimFrom('back3', RETURN);
+    await eventually(() => uploads.getAnnouncement('back3') !== null);
+    const first = uploads.getAnnouncement('back3')!.seq;
+
+    tusWith();
+    await claimFrom('back3', null);
+    await eventually(() => (uploads.getAnnouncement('back3')?.seq ?? 0) > first);
+    expect(uploads.getAnnouncement('back3')!.returnTo).toBeNull();
+  });
+
+  it('goes when the draft is uploaded again, whatever comes of that upload', async () => {
+    tusWith();
+    await claimFrom('back5', RETURN);
+    await eventually(() => uploads.getAnnouncement('back5') !== null);
+    expect(uploads.getAnnouncement('back5')!.returnTo).toEqual(RETURN);
+
+    tusWith(() => {
+      throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });
+    });
+    await claimFrom('back5', RETURN);
+    await eventually(() => db.log.filter((entry) => entry === 'burn:back5').length > 0);
+    // The earlier upload still stands, but its way back isn't offered for this one.
+    expect(uploads.getAnnouncement('back5')!.returnTo).toBeNull();
+  });
+
+  it('isn’t brought back by an earlier upload still waiting for its view link', async () => {
+    jest
+      .mocked(checkCapabilities)
+      .mockResolvedValueOnce({ ok: true, capabilities: { viewLinks: true } } as never);
+    let answerViewLink: (link: { url: string; expiresAt: number }) => void = () => {};
+    mockRequestViewLink.mockImplementationOnce(
+      () => new Promise((resolve) => (answerViewLink = resolve)),
+    );
+    tusWith();
+    await claimFrom('back6', RETURN);
+    await eventually(() => mockRequestViewLink.mock.calls.length > 0);
+
+    // The draft is uploaded again before the first upload's view link comes, and that one fails.
+    tusWith(() => {
+      throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });
+    });
+    await claimFrom('back6', null);
+    await eventually(() => db.log.includes('burn:back6'));
+
+    answerViewLink({ url: 'https://v/late', expiresAt: Date.now() + 60_000 });
+    await eventually(() => mockNotifyComplete.mock.calls.length > 0);
+    // The first upload still says it landed, but offers nothing for the draft as it is now.
+    expect(mockToast).toHaveBeenCalledWith('Uploaded');
+    expect(uploads.getAnnouncement('back6')).toBeNull();
+  });
+
+  it('is not offered after a failed upload', async () => {
+    tusWith(() => {
+      throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });
+    });
+    await claimFrom('back4', RETURN);
+    await eventually(() => db.log.includes('burn:back4'));
+    expect(uploads.getAnnouncement('back4')).toBeNull();
+    expect(db.status.get('back4')).toBeNull();
   });
 });

@@ -6,31 +6,25 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { ProgressRing } from '@/components/progress-ring';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, MaxTextScale, Radius, Spacing } from '@/constants/theme';
+import { draftDisplayName } from '@/db/drafts';
 import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
 import type { WatchLink } from '@/features/upload/upload-manager';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/use-uploads';
 import { uploadPhaseLabel } from '@/features/upload/phase-label';
 import { useTheme } from '@/hooks/use-theme';
 import { useThumbnail } from '@/hooks/use-thumbnail';
+import { DRAFT_NAME_MAX_LENGTH, dropSplitSurrogate } from '@/utils/draft-name';
 import { formatClipCount, formatDuration } from '@/utils/format';
 import { formatRelativeDate } from '@/utils/relative-date';
-
-const NAME_MAX_LENGTH = 40;
-
-/**
- * `maxLength` counts UTF-16 units, so a name typed or pasted up to the limit can end on the first
- * half of an emoji's surrogate pair. That lone half isn't valid text (it shows as "�"), so it's
- * dropped rather than saved.
- */
-function dropSplitSurrogate(text: string): string {
-  return text.replace(/[\uD800-\uDBFF]$/, '');
-}
 
 type Props = {
   id: string;
   /** Persisted upload status, so the card can show its own upload state on the cover. */
   uploadStatus?: 'uploading' | 'uploaded' | null;
   name: string | null;
+  /** The label of the place it was recorded for, while that place's destination is in the pool:
+   * what an unnamed draft is called. */
+  placeLabel?: string | null;
   /** Relative path of the draft's first clip; the cover frame's legacy runtime fallback. */
   firstSegmentFilename?: string | null;
   /** Relative path of the first clip's persisted jpeg thumbnail (preferred cover frame). */
@@ -62,6 +56,7 @@ export function DraftCard({
   id,
   uploadStatus,
   name,
+  placeLabel = null,
   firstSegmentFilename,
   firstSegmentThumbnail,
   firstSegmentEditState,
@@ -141,7 +136,7 @@ export function DraftCard({
             placeholderTextColor={theme.textSecondary}
             autoFocus
             selectTextOnFocus
-            maxLength={NAME_MAX_LENGTH}
+            maxLength={DRAFT_NAME_MAX_LENGTH}
             // The name it replaces stops at the app's text ceiling; so does the field.
             maxFontSizeMultiplier={MaxTextScale}
             returnKeyType="done"
@@ -150,7 +145,7 @@ export function DraftCard({
           />
         ) : (
           <ThemedText type="headline" numberOfLines={1}>
-            {name || 'Untitled'}
+            {draftDisplayName(name, placeLabel)}
           </ThemedText>
         )}
         {/* Two lines, so a narrow card (an uploaded draft's link button beside ⋯, larger text)

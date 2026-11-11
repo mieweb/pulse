@@ -22,6 +22,12 @@ export const drafts = sqliteTable('drafts', {
   // The link's bearer token isn't stored with the draft at all: the upload carries it in memory.
   uploadArtifactId: text('upload_artifact_id'),
   uploadStatus: text('upload_status', { enum: ['uploading', 'uploaded'] }).$type<UploadStatus>(),
+  // The place the draft was recorded for, when a link that names one (`ref`) opened its recorder:
+  // that link's server and `ref`, which match the place's row in `upload_destinations` while it
+  // has one. Its export screen uploads there; a later link for the same place reopens the draft
+  // while it is unsent. Null otherwise.
+  contextServer: text('context_server'),
+  contextRef: text('context_ref'),
   // The persisted merged export at `drafts/{id}/export.mp4` (see `exportRelPath`): the
   // `mergedSignature` of the clip set it was merged from, and its true duration (feeds the beat
   // manifest). Written only after the file is in place. Clip edits leave it alone: the export
@@ -156,15 +162,29 @@ export const settings = sqliteTable('settings', {
  * specific draft is being/has been sent), this is a device-wide list any draft can pick from
  * at upload time. Each row is single-use — its server-minted `artifactId` anchors exactly one
  * upload, so the row is deleted the moment a draft claims it (or the user deletes it).
+ * A row whose link named a place (`ref`) is that place's one row until it is claimed: a newer link
+ * for the place replaces its artifact.
  * The bearer token is NOT stored here (live capability credential) — it lives in
  * expo-secure-store keyed by `id`, not in this plaintext-at-rest table.
  */
-export const uploadDestinations = sqliteTable('upload_destinations', {
-  id: text('id').primaryKey(), // local uuid (Crypto.randomUUID), also the secure-store token key
-  server: text('server').notNull(),
-  artifactId: text('artifact_id').notNull(),
-  createdAt: integer('created_at').notNull().default(now),
-});
+export const uploadDestinations = sqliteTable(
+  'upload_destinations',
+  {
+    id: text('id').primaryKey(), // local uuid (Crypto.randomUUID), also the secure-store token key
+    server: text('server').notNull(),
+    artifactId: text('artifact_id').notNull(),
+    // The link's hints, when it named the place its upload is for: `ref` is the host's opaque key
+    // for the place (one row per server + ref), `label` / `app` name it, and `returnUrl` is the
+    // host page to go back to after the upload.
+    ref: text('ref'),
+    label: text('label'),
+    app: text('app'),
+    returnUrl: text('return_url'),
+    createdAt: integer('created_at').notNull().default(now),
+  },
+  // NULLs are distinct in a SQLite unique index, so rows without a place never collide.
+  (t) => [uniqueIndex('upload_destinations_server_ref_unique').on(t.server, t.ref)],
+);
 
 export type Draft = typeof drafts.$inferSelect;
 export type Segment = typeof segments.$inferSelect;

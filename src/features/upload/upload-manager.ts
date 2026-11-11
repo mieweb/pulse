@@ -42,6 +42,7 @@ import {
 import type {
   Destination,
   LiveUploadState,
+  ReturnTo,
   UploadPhase,
   UploadProgress,
   UploadSession,
@@ -49,16 +50,16 @@ import type {
 import { requestViewLink } from './view-link';
 
 /** Every failure spends the link, so the way to try again is a new one. */
-const NEW_LINK = 'scan a new link to try again.';
+const NEW_LINK = 'open a new link to try again.';
 
 /** Failures that need more than a new link say so themselves, and are shown as-is. */
 const STOPPED_MESSAGE = {
   expired: `Upload link expired — ${NEW_LINK}`,
   'version-too-old':
-    'This server needs a newer version of Pulse — update the app, then scan a new link.',
+    'This server needs a newer version of Pulse — update the app, then open a new link.',
   'version-too-new':
-    'This server hasn’t been updated for this version of Pulse yet — scan a new link once it is.',
-  'video-missing': 'The video is no longer available — reopen the draft, then scan a new link.',
+    'This server hasn’t been updated for this version of Pulse yet — open a new link once it is.',
+  'video-missing': 'The video is no longer available — reopen the draft, then open a new link.',
 } as const;
 
 /** Names the step a failure happened in, after the reason. */
@@ -103,9 +104,17 @@ export type WatchLink = {
 /**
  * A finished upload, once the user has been told (see `announceFinish`): `seq` orders them, so a
  * screen can tell one that happened while it was open from one before; `copied` says whether its
- * link went to the clipboard.
+ * link went to the clipboard. It also carries what the upload screen offers after it, however often
+ * that screen was left and opened again meanwhile.
  */
-export type UploadAnnouncement = { seq: number; copied: boolean };
+export type UploadAnnouncement = {
+  seq: number;
+  copied: boolean;
+  /** When it finished, in ms since the epoch. */
+  at: number;
+  /** The way back to the host the upload's link carried, if any (`UploadSession.returnTo`). */
+  returnTo: ReturnTo | null;
+};
 
 /** Whether `link` still opens at `now` (ms since the epoch). */
 export function isLinkLive(link: WatchLink | null, now: number): link is WatchLink {
@@ -366,8 +375,9 @@ class BackgroundUploadManager {
     destination: Destination;
     segments: UploadSession['segments'];
     merged: UploadSession['merged'];
+    returnTo?: UploadSession['returnTo'];
   }): Promise<void> {
-    const { draftId, destinationId, destination, segments, merged } = params;
+    const { draftId, destinationId, destination, segments, merged, returnTo = null } = params;
     if (this.claiming.has(draftId) || this.getDraftState(draftId).status !== 'idle') return;
     const pending = { cancelled: false };
     this.claiming.set(draftId, pending);
@@ -383,14 +393,22 @@ class BackgroundUploadManager {
     try {
       await this.launch;
       await setUploadDestination(draftId, destination);
-      if (!(await deleteDestination(destinationId))) {
-        uploadLog.warn(`${draftLabel(draftId)}: another draft used that link first`);
+      // Spent only while the row still holds the link this upload read: a newer link for the
+      // place that replaced it meanwhile is left for the next upload.
+      if (!(await deleteDestination(destinationId, destination))) {
+        uploadLog.warn(
+          `${draftLabel(draftId)}: another draft used that link first, or it was replaced`,
+        );
         await burnUploadPairing(draftId, destination.artifactId);
         return;
       }
-      // Cancelled (from Home's ⋯ menu) after the pairing landed: the cancel unpaired it already.
-      if (pending.cancelled) return;
-      this.enqueue({ draftId, destination, segments, merged, captions });
+      // Cancelled (from Home's ⋯ menu) while this was starting: unpair it here too, since a cancel
+      // that ran before the pairing landed found nothing to unpair.
+      if (pending.cancelled) {
+        await burnUploadPairing(draftId, destination.artifactId);
+        return;
+      }
+      this.enqueue({ draftId, destination, segments, merged, captions, returnTo });
     } catch (err) {
       // The pairing or the pool write failed: undo the pairing (if it landed) rather than leave
       // the draft locked with nothing uploading it.
@@ -412,8 +430,10 @@ class BackgroundUploadManager {
       return;
     }
     this.sessions.set(draftId, session);
-    // A new upload replaces the draft's previous one.
+    // A new upload replaces the draft's previous one: its link, and its way back to the host.
     this.watchLinks.delete(draftId);
+    const previous = this.announcements.get(draftId);
+    if (previous?.returnTo) this.announcements.set(draftId, { ...previous, returnTo: null });
     void deleteSavedLink(draftId).catch(() => {});
     // Ask for notification permission now — a foreground moment (the user just tapped Upload) — so
     // the background completion/failure banner can fire later without prompting mid-upload.
@@ -569,6 +589,7 @@ class BackgroundUploadManager {
         destination,
         direct,
         compat.ok && compat.capabilities.viewLinks === true,
+        { at: Date.now(), returnTo: session.returnTo ?? null },
       );
     } catch (err) {
       // A cancel aborted this run and owns its cleanup.
@@ -601,15 +622,18 @@ class BackgroundUploadManager {
     destination: Destination,
     direct: WatchLink,
     viewLinks: boolean,
+    finished: Pick<UploadAnnouncement, 'at' | 'returnTo'>,
   ): Promise<void> {
     const link = (viewLinks && (await this.shareableLink(draftId, destination, direct))) || direct;
-    // A newer upload of the draft took over meanwhile: still say this one landed, copy nothing.
-    const copied =
-      this.watchLinks.get(draftId) === link && link.shareable && (await copyToClipboard(link.url));
+    // A newer upload of the draft took over meanwhile: still say this one landed, but copy
+    // nothing, and leave what the upload screen offers (its way back) to the newer one.
+    const current = () => this.watchLinks.get(draftId) === link;
+    const copied = current() && link.shareable && (await copyToClipboard(link.url));
     uploadLog.info(`${draftLabel(draftId)}: link ${copied ? 'copied' : 'not copied'}`);
     this.showToast?.(copied ? 'Share link copied to clipboard' : 'Uploaded');
     void uploadNotify.complete(copied);
-    this.announcements.set(draftId, { seq: ++this.announcementSeq, copied });
+    if (!current()) return;
+    this.announcements.set(draftId, { seq: ++this.announcementSeq, copied, ...finished });
     this.emit();
   }
 

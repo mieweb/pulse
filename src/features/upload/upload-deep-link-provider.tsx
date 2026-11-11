@@ -1,4 +1,4 @@
-import { getInitialURL, useLinkingURL } from 'expo-linking';
+import { addEventListener, getInitialURL } from 'expo-linking';
 import { router, useRootNavigationState } from 'expo-router';
 import {
   createContext,
@@ -10,16 +10,43 @@ import {
   useRef,
   useState,
 } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 
-import { addDestination } from '@/db/destinations';
+import { addDestination, placeHoldsLink } from '@/db/destinations';
+import { findOpenDraftForContext } from '@/db/drafts';
+import { isOnboardingComplete } from '@/db/settings';
+import { flushDraftWrites } from '@/features/editor/draft-writes';
+import { offerRecorderPlace } from '@/features/recorder/link-place';
+import {
+  finalizeRecorders,
+  recorderOnScreen,
+  recordersGone,
+} from '@/features/recorder/recorder-presence';
 import { useToast } from '@/features/toast/toast-provider';
 import { hostOf, shortHost } from '@/utils/format';
+import { createPresence } from '@/utils/presence';
 
 import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
+import { expiresAtMs, takesOver } from './capability-token';
 import { checkDeferredPairing } from './deferred-pairing';
-import { pairingLinkParams, parseUploadDeepLink, type UploadDeepLink } from './deep-link';
+import {
+  type LinkPlace,
+  pairingLinkParams,
+  parseUploadDeepLink,
+  type UploadDeepLink,
+} from './deep-link';
+import { handledLinkOutcome, rememberHandledLink } from './handled-links';
 import { LINK_HOST } from './link-host';
+import {
+  linkExpiredToast,
+  linkRefusedToast,
+  placeCheckingToast,
+  placeOpenedToast,
+  recorderFailedToast,
+} from './link-messages';
+import { createRecorderOpener, type RecorderTarget } from './open-recorder';
+import { createLinkGate, createSaveOrder, pairLink, screenLink } from './pair-link';
+import { checkToken } from './token-check';
 import { isTrustedServer, trustServer } from './trusted-servers';
 import { uploads } from './upload-manager';
 import { reloadDestinationTokens } from './use-destinations';
@@ -62,6 +89,46 @@ export function usePairingSheet(): PairingSheet {
   return useContext(PairingSheetContext);
 }
 
+/** The pairing sheet (`/pair`) while mounted, which lasts until its closing animation ends. */
+export const pairingSheetPresence = createPresence();
+
+/** Longest a link's recorder waits for a closing screen; past it, it goes ahead. */
+const SCREEN_GONE_TIMEOUT_MS = 1500;
+
+/** How long the recorder a link pushes has to mount and take its place from memory. */
+const HANDOFF_MS = 5000;
+
+/** How long a place paired during the welcome screen waits for the first recording, at most. */
+const WELCOME_OFFER_MS = 30 * 60_000;
+
+/**
+ * How long "Checking with …" stays up unless an answer replaces it: a little past the longest the
+ * two requests it waits for can take (each gives up after 8 s, and they go out together).
+ */
+const CHECKING_TOAST_MS = 9000;
+
+/** A link for a place. */
+type PlaceLink = UploadDeepLink & { place: LinkPlace };
+
+/** Opens the recorder for a link's place, one link at a time (see `showRecorder`). */
+const openRecorder = createRecorderOpener({
+  sheetGone: () => pairingSheetPresence.whenGone(SCREEN_GONE_TIMEOUT_MS),
+  finalizeRecorders,
+  flushDraftWrites,
+  findOpenDraft: findOpenDraftForContext,
+  recorderOnScreen,
+  canDismiss: () => router.canDismiss(),
+  dismissAll: () => router.dismissAll(),
+  recordersGone: () => recordersGone(SCREEN_GONE_TIMEOUT_MS),
+  offerPlace: (place) => offerRecorderPlace(place, Date.now() + HANDOFF_MS),
+  // `forLink` only marks the recorder as a link's; its place is handed over in memory.
+  push: (draftId) =>
+    router.push({
+      pathname: '/recorder',
+      params: { ...(draftId ? { draftId } : {}), forLink: '1' },
+    }),
+});
+
 /**
  * Mounts the single global pairing-link listener (`pulsecam://` and the https link form, #252)
  * for the app's lifetime, matching `TranscriptionProvider`'s pattern — a provider rather than a
@@ -75,6 +142,15 @@ export function usePairingSheet(): PairingSheet {
  * servers can be paired at once. Each destination is single-use (one server-minted artifactId)
  * and drops out of the pool once a draft claims it or the user deletes it.
  *
+ * A link that names the place its upload is for (`ref`, deep-link.ts) does more. It is refused
+ * when it has already expired; one the place already holds opens its recorder at once, with
+ * nothing to pair; and an old launch link handed to the app again is never paired a second time
+ * (`screenLink`). Otherwise its server is asked to accept its token (`pairLink`): until a draft
+ * claims it the place has one destination, which only a newer link the server accepted replaces.
+ * And the recorder opens for it — on the place's unsent draft, or a new one named with the link's
+ * `name` (`showRecorder`). That waits for the server's answers, which a toast says; with no
+ * connection the link isn't paired and no recorder opens.
+ *
  * On the first launch after a store install it also picks up the link the `/pulse/open` page
  * handed over (deferred-pairing.ts): Android's install referrer goes through the same
  * confirmation; iOS shows the sheet's paste variant.
@@ -83,8 +159,11 @@ export function usePairingSheet(): PairingSheet {
  * and the toast an upload failure shows in the foreground.
  */
 export function UploadDeepLinkProvider({ children }: { children: React.ReactNode }) {
-  const url = useLinkingURL();
-  const handledUrl = useRef<string | null>(null);
+  // Which deliveries of a link are acted on: not one reported twice at once, nor a plain link
+  // opened again (its row may be spent).
+  const [gate] = useState(() => createLinkGate());
+  // Links are stored in the order they arrive, though each pairing waits on its own server.
+  const [saveOrder] = useState(() => createSaveOrder());
   const { showToast } = useToast();
   const [request, setRequestState] = useState<PairingRequest | null>(null);
   // The current request for `closed`, which can run before this render's effects would update a
@@ -98,6 +177,15 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   // Bumped when the sheet goes away while a newer request waits, so the effect below shows it.
   const [sheetGone, bumpSheetGone] = useReducer((n: number) => n + 1, 0);
   const navigationReady = !!useRootNavigationState()?.key;
+  // A place link's recorder, opened once the navigator can take it (see the effect below).
+  const recorderTarget = useRef<RecorderTarget | null>(null);
+  const [recorderAsked, askRecorder] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const target = recorderTarget.current;
+    if (!target || !navigationReady) return;
+    recorderTarget.current = null;
+    openRecorder(target);
+  }, [recorderAsked, navigationReady]);
 
   // At launch, fail the uploads a killed app never finished (see `prepareLaunch`); on every
   // foreground, poke the drain so an upload whose JS was suspended in the background carries on.
@@ -125,46 +213,126 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
     setRequest(null);
   }, [setRequest]);
 
+  // Open the recorder for a link's place: on the place's unsent draft, or a new one named by the
+  // link (`showRecorder`). Resolves whether it did. While the welcome screen is up it stays up,
+  // and the destination waits in the pool like any other — but the place waits too, for the first
+  // recording made after it (Continue goes straight to the recorder), while the link still works.
+  const openPlace = useCallback(
+    async (link: PlaceLink, trustNotSaved = false): Promise<boolean> => {
+      const { place } = link;
+      const host = shortHost(hostOf(link.server));
+      const opened = (draftId: string | null) =>
+        showToast({
+          kind: 'info',
+          ...placeOpenedToast({
+            label: place.label,
+            host,
+            draftOpen: draftId !== null,
+            trustNotSaved,
+          }),
+        });
+      if (await isOnboardingComplete().catch(() => true)) {
+        recorderTarget.current = {
+          server: link.server,
+          ref: place.ref,
+          name: place.name,
+          opened,
+          failed: () => showToast({ kind: 'error', ...recorderFailedToast(host) }),
+        };
+        askRecorder();
+        return true;
+      }
+      offerRecorderPlace(
+        {
+          context: { server: link.server, ref: place.ref },
+          name: place.name,
+          onTaken: () => opened(null),
+        },
+        Math.min(expiresAtMs(link.token) ?? Infinity, Date.now() + WELCOME_OFFER_MS),
+      );
+      return false;
+    },
+    [showToast],
+  );
+
   const addToPool = useCallback(
     // `trusted`: paired without the sheet. `trustNotSaved`: "Don't ask again" was ticked but
     // didn't save.
     (link: UploadDeepLink, trusted = false, trustNotSaved = false) => {
-      const host = hostOf(link.server);
-      checkCapabilities(link.server)
-        .then((capResult) => {
-          if (!capResult.ok) {
+      const host = shortHost(hostOf(link.server));
+      const { place } = link;
+      // A place's recorder waits for its server's answers, a few seconds at most on a slow
+      // connection: say so, and which server is being asked.
+      if (place) {
+        showToast({
+          kind: 'info',
+          duration: CHECKING_TOAST_MS,
+          ...placeCheckingToast({ label: place.label, host }),
+        });
+      }
+      // Added to the device-wide pool (not a single slot) — any draft can pick it at upload
+      // time, and several servers can be paired at once. A place has one row there, which a
+      // newer link takes over: of two that expire in the same second, the one received last.
+      const turn = saveOrder.join();
+      void pairLink(link, {
+        checkCapabilities,
+        checkToken: (asked) =>
+          checkToken({ server: asked.server, artifactId: asked.artifactId, token: asked.token }),
+        save: (paired, accepted) =>
+          turn.save(() =>
+            addDestination(
+              { server: paired.server, token: paired.token, artifactId: paired.artifactId },
+              paired.place && {
+                ref: paired.place.ref,
+                label: paired.place.label,
+                app: paired.place.app,
+                returnUrl: paired.place.returnUrl,
+              },
+              // Only a link its server accepted, and the newer of the two, replaces the link the
+              // place holds; a place that holds none takes any (PROTOCOL.md §5.6).
+              (stored) => takesOver({ token: paired.token, accepted }, stored, Date.now()),
+            ),
+          ),
+        remember: rememberHandledLink,
+      })
+        .finally(turn.leave)
+        .then(async (result) => {
+          if (!result.ok) {
+            // The link came to nothing: the same one opened again, even at once, is a new try.
+            gate.release();
+            if (result.reason === 'refused') {
+              showToast({ kind: 'error', ...linkRefusedToast({ label: place?.label, host }) });
+              return;
+            }
             showToast({
               kind: 'error',
               title: 'Couldn’t connect',
-              message: CAPABILITIES_REJECTION_MESSAGE[capResult.reason],
+              message:
+                CAPABILITIES_REJECTION_MESSAGE[
+                  result.reason === 'not-saved' ? 'unreachable' : result.reason
+                ],
             });
             return;
           }
-          // Added to the device-wide pool (not a single slot) — any draft can pick it at
-          // upload time, and several servers can be paired at once.
-          return addDestination({
-            server: link.server,
-            token: link.token,
-            artifactId: link.artifactId,
-          }).then(() => {
-            // The same link again keeps its row id: open screens reload its fresh token.
-            reloadDestinationTokens();
-            // A trusted server pairs without the sheet, so the toast says why nothing asked.
-            showToast({
-              kind: trusted ? 'info' : 'success',
-              title: `Connected to ${shortHost(host)}`,
-              message: trusted
-                ? 'You chose not to be asked for this server. Pick it when you upload.'
-                : trustNotSaved
-                  ? 'Pick it when you upload. Pulse couldn’t save “Don’t ask again”, so its next link asks first.'
-                  : 'Pick it when you upload.',
-            });
+          // The same link (or place) again keeps its row id: open screens reload its fresh token.
+          reloadDestinationTokens();
+          // A link for a place opens the recorder on it, whichever link the place now holds.
+          if (place && (await openPlace({ ...link, place }, trustNotSaved))) return;
+          // A trusted server pairs without the sheet, so the toast says why nothing asked.
+          showToast({
+            kind: trusted ? 'info' : 'success',
+            title: `Connected to ${host}`,
+            message: trusted
+              ? 'You chose not to be asked for this server. Pick it when you upload.'
+              : trustNotSaved
+                ? 'Pick it when you upload. Pulse couldn’t save “Don’t ask again”, so its next link asks first.'
+                : 'Pick it when you upload.',
           });
         })
         .catch(() => {
-          // Let the same link be retried — nothing was persisted, so silently swallowing this
-          // would leave the user stuck with no path forward but to restart the app.
-          handledUrl.current = null;
+          // Let the same link be retried — silently swallowing this would leave the user stuck
+          // with no path forward but to restart the app.
+          gate.release();
           showToast({
             kind: 'error',
             title: 'Couldn’t connect',
@@ -172,14 +340,14 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
           });
         });
     },
-    [showToast],
+    [gate, saveOrder, openPlace, showToast],
   );
 
   // A link in either form (`pulsecam://` or the https link): validate it, then ask the sheet to
   // confirm its server, unless the person ticked "Don't ask again" for it. Linking links and
-  // Android's install referrer share it.
+  // Android's install referrer share it. `launch`: it is the link the app was launched with.
   const confirmLink = useCallback(
-    (pairingUrl: string) => {
+    (pairingUrl: string, launch = false) => {
       const result = parseUploadDeepLink(pairingUrl, LINK_HOST);
       // Failures that leave nothing to decide are toasts; only the pairing itself asks (the sheet).
       if (!result.ok) {
@@ -191,45 +359,94 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
         return;
       }
       const { link } = result;
-      void isTrustedServer(link.server)
-        .catch(() => false)
-        .then((trusted) => {
-          if (trusted) addToPool(link, true);
-          else setRequest({ kind: 'confirm', link, host: hostOf(link.server) });
-        });
+      const { place } = link;
+      void screenLink(link, {
+        // Only Android hands an old launch link back (a relaunch after the process died gets the
+        // intent that first started the app). Elsewhere a launch link is the person's own tap.
+        launch: launch && Platform.OS === 'android',
+        nowMs: Date.now(),
+        holds: async () =>
+          !!place &&
+          placeHoldsLink(
+            { server: link.server, token: link.token, artifactId: link.artifactId },
+            place.ref,
+          ),
+        outcome: handledLinkOutcome,
+      })
+        .then((screened) => {
+          const from = { label: place?.label, host: shortHost(hostOf(link.server)) };
+          switch (screened) {
+            // A launch link whose upload was used, handed back: nothing to do, nothing to say.
+            case 'replayed':
+              return;
+            case 'expired':
+              return showToast({ kind: 'error', ...linkExpiredToast(from) });
+            case 'refused':
+              return showToast({ kind: 'error', ...linkRefusedToast(from) });
+            // The place holds this very link: nothing to pair, nobody to ask.
+            case 'held':
+              return place ? void openPlace({ ...link, place }) : undefined;
+            default:
+              return isTrustedServer(link.server)
+                .catch(() => false)
+                .then((trusted) => {
+                  if (trusted) addToPool(link, true);
+                  else setRequest({ kind: 'confirm', link, host: hostOf(link.server) });
+                });
+          }
+        })
+        .catch(() => {});
     },
-    [addToPool, setRequest, showToast],
+    [addToPool, openPlace, setRequest, showToast],
   );
 
-  useEffect(() => {
-    const params = url ? pairingLinkParams(url, LINK_HOST) : null;
-    if (!url || url === handledUrl.current || params === null) return;
-    handledUrl.current = url;
-    // Bare `pulsecam://` (Android's upload notification opens it) only brings the app forward.
-    if (params === '') return;
-    // Development only: `pulsecam://bench?...` opens the git-excluded bench screen (.devrun/), a
-    // route rather than a pairing link, which the parser would reject and toast on.
-    if (__DEV__ && url.startsWith('pulsecam://bench')) return;
+  const handleUrl = useCallback(
+    (url: string, launch = false) => {
+      const params = pairingLinkParams(url, LINK_HOST);
+      if (params === null) return;
+      // A link for a place opened again reopens that place's recorder. A plain link opened again
+      // in this session is ignored, as before (cancel or a failure clears that).
+      const parsed = parseUploadDeepLink(url, LINK_HOST);
+      if (!gate.admit(url, parsed.ok && !!parsed.link.place)) return;
+      // Bare `pulsecam://` (Android's upload notification opens it) only brings the app forward.
+      if (params === '') return;
+      // Development only: `pulsecam://bench?...` opens the git-excluded bench screen (.devrun/), a
+      // route rather than a pairing link, which the parser would reject and toast on.
+      if (__DEV__ && url.startsWith('pulsecam://bench')) return;
 
-    // `+native-intent` keeps the router on the current screen for both link forms, so the sheet
-    // opens over whatever is up (recorder, export, onboarding…) and closing it returns there.
-    confirmLink(url);
-  }, [url, confirmLink]);
+      // `+native-intent` keeps the router on the current screen for both link forms, so the sheet
+      // opens over whatever is up (recorder, export, onboarding…) and closing it returns there.
+      confirmLink(url, launch);
+    },
+    [confirmLink, gate],
+  );
 
-  // First launch after a store install: the pairing link the `/pulse/open` page handed over.
-  // Skipped when this launch came from a pairing link, which already carries the pairing. Asks
-  // for the launch URL itself: `useLinkingURL` resolves it asynchronously, so its first render
-  // can be null on a cold start from a link.
+  // Every link opened while the app runs, each time — the same URL again included, which a link
+  // for a place needs (`useLinkingURL` only reports a change).
   useEffect(() => {
+    const sub = addEventListener('url', ({ url }) => handleUrl(url));
+    return () => sub.remove();
+  }, [handleUrl]);
+
+  // The link the app was launched with, once. Then, on the first launch after a store install, the
+  // pairing link the `/pulse/open` page handed over — skipped when this launch came from a pairing
+  // link, which already carries the pairing.
+  const launchChecked = useRef(false);
+  useEffect(() => {
+    if (launchChecked.current) return;
+    launchChecked.current = true;
     void getInitialURL()
       .catch(() => null)
-      .then((initial) => checkDeferredPairing(!!initial && !!pairingLinkParams(initial, LINK_HOST)))
+      .then((initial) => {
+        if (initial) handleUrl(initial, true);
+        return checkDeferredPairing(!!initial && !!pairingLinkParams(initial, LINK_HOST));
+      })
       .then((found) => {
         if (found?.kind === 'link') confirmLink(found.url);
         if (found?.kind === 'pasteboard') setRequest({ kind: 'paste' });
       })
       .catch(() => {});
-  }, [confirmLink, setRequest]);
+  }, [handleUrl, confirmLink, setRequest]);
 
   const sheet = useMemo<PairingSheet>(
     () => ({
@@ -259,7 +476,7 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
       },
       cancel: () => {
         // Let the same link be scanned/opened again if the user changes their mind.
-        handledUrl.current = null;
+        gate.release();
         closeSheet();
       },
       closed: (shown) => {
@@ -270,11 +487,11 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
           bumpSheetGone();
           return;
         }
-        handledUrl.current = null;
+        gate.release();
         setRequest(null);
       },
     }),
-    [request, closeSheet, addToPool, setRequest, showToast],
+    [request, gate, closeSheet, addToPool, setRequest, showToast],
   );
 
   return <PairingSheetContext.Provider value={sheet}>{children}</PairingSheetContext.Provider>;

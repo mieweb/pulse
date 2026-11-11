@@ -1,38 +1,47 @@
 // Best-effort, client-side read of a pulsevault capability token's claims —
 // for UX only (showing "expires in 4m", hiding a dead upload button before
-// the user taps into a guaranteed-403). The server is the only authority on
-// validity; this never verifies the HMAC signature, just decodes the
-// unencrypted payload segment, exactly like reading a JWT's claims without
-// verifying it. A token that doesn't match `issueCapabilityToken`'s
-// `<base64url-json>.<signature>` shape (any other Pulse-compatible server is
-// free to use its own opaque scheme per the protocol) decodes to `null` —
-// callers must treat that as "validity unknown", not "expired".
+// the user taps into a guaranteed-403, opening the recorder on the place a
+// link is for). The server is the only authority on validity; this never
+// verifies the HMAC signature, just decodes the unencrypted payload segment,
+// exactly like reading a JWT's claims without verifying it. A token that
+// doesn't match `issueCapabilityToken`'s `<base64url-json>.<signature>` shape
+// (any other Pulse-compatible server is free to use its own opaque scheme per
+// the protocol) decodes to `null` — callers must treat that as "validity
+// unknown", not "expired".
 
-export type CapabilityClaims = {
-  artifactId: string;
-  iat: number;
-  exp: number;
-  kid: string;
-  issuer: string;
-};
-
-const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+import { codePointLength } from '@/utils/display-text';
 
 /**
- * Decodes base64url to a byte string. Claims are JSON of UUIDs/URLs/numbers
- * (ASCII-only by construction in `issueCapabilityToken`), so a byte-for-byte
- * `String.fromCharCode` reconstruction is sufficient — no UTF-8 multibyte
- * handling needed for this specific payload shape.
+ * The two claims a client may read from a token, and the only ones it acts on (PROTOCOL.md §5.6).
+ * Everything else in a token is the server's.
+ */
+export type ReadableClaims = {
+  /** When the link stops working, in seconds since the Unix epoch. The server decides. */
+  exp: number;
+  /**
+   * The place this upload is for, when the host named one: its opaque key (1–200 characters).
+   * The only place a link's `ref` is read from (see deep-link.ts). The client can't check that
+   * the server signed it; the server refuses a token whose `ref` was changed.
+   */
+  ref?: string;
+};
+
+const BASE64URL_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+/**
+ * Decodes base64url without padding (RFC 4648 §5) to a byte string (one char per byte; see
+ * `utf8`). `null` for anything else: padding, the `+` and `/` of plain base64, a length no
+ * encoding produces.
  */
 function base64UrlDecode(input: string): string | null {
-  const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
+  if (input.length % 4 === 1) return null;
   let buffer = 0;
   let bits = 0;
   let output = '';
-  for (const char of normalized) {
-    const value = BASE64_CHARS.indexOf(char);
+  for (const char of input) {
+    const value = BASE64URL_CHARS.indexOf(char);
     if (value === -1) return null;
-    buffer = (buffer << 6) | value;
+    buffer = ((buffer << 6) | value) & 0xffff;
     bits += 6;
     if (bits >= 8) {
       bits -= 8;
@@ -42,28 +51,71 @@ function base64UrlDecode(input: string): string | null {
   return output;
 }
 
-/** Returns `null` for an opaque/non-conforming token rather than throwing — see module doc. */
-export function decodeCapabilityClaims(token: string): CapabilityClaims | null {
-  const dot = token.indexOf('.');
-  if (dot < 0) return null;
-  const payload = base64UrlDecode(token.slice(0, dot));
-  if (!payload) return null;
-  let claims: Partial<CapabilityClaims>;
+/** A byte string (from `base64UrlDecode`) read as UTF-8; `null` when it isn't valid UTF-8. */
+function utf8(bytes: string): string | null {
   try {
-    claims = JSON.parse(payload);
+    return decodeURIComponent(
+      Array.from(bytes, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join(''),
+    );
   } catch {
     return null;
   }
+}
+
+const MAX_REF_LENGTH = 200;
+
+/** Half of a surrogate pair on its own: with the `u` flag a whole pair is one character. */
+const UNPAIRED_SURROGATE = /\p{Cs}/u;
+
+/**
+ * A usable `ref` claim: a string of 1 to 200 characters (code points) with no unpaired surrogate,
+ * so every client reads the same key from it. Any other reads as none.
+ */
+function isRef(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value !== '' &&
+    !UNPAIRED_SURROGATE.test(value) &&
+    // A code point is one or two UTF-16 units, so only a string between the two needs counting.
+    (value.length <= MAX_REF_LENGTH ||
+      (value.length <= 2 * MAX_REF_LENGTH && codePointLength(value) <= MAX_REF_LENGTH))
+  );
+}
+
+/**
+ * The claims a client reads from a token, as PROTOCOL.md §5.6 says to read them: the part before
+ * the first `.`, base64url without padding, the UTF-8 text of one JSON object. Returns `null` —
+ * a credential Pulse can't read: no known expiry, no place — for any other token rather than
+ * throwing (see the module doc), and for one whose claims lack any of `artifactId`, `iat`, `exp`,
+ * `kid` and `issuer`, the form a server that wants its claims read issues. `exp` has to be a whole
+ * number of seconds: a token without one has no `ref` either (a place's links are ordered by it),
+ * and `1e400`, which JSON reads as infinity, is no expiry at all.
+ */
+export function decodeCapabilityClaims(token: string): ReadableClaims | null {
+  const dot = token.indexOf('.');
+  if (dot < 0) return null;
+  const bytes = base64UrlDecode(token.slice(0, dot));
+  const text = bytes === null ? null : utf8(bytes);
+  if (!text) return null;
+  let claims: unknown;
+  try {
+    claims = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof claims !== 'object' || claims === null || Array.isArray(claims)) return null;
+  const { artifactId, iat, exp, kid, issuer, ref } = claims as Record<string, unknown>;
   if (
-    typeof claims.artifactId !== 'string' ||
-    typeof claims.iat !== 'number' ||
-    typeof claims.exp !== 'number' ||
-    typeof claims.kid !== 'string' ||
-    typeof claims.issuer !== 'string'
+    typeof artifactId !== 'string' ||
+    typeof iat !== 'number' ||
+    !Number.isSafeInteger(exp) ||
+    typeof kid !== 'string' ||
+    typeof issuer !== 'string'
   ) {
     return null;
   }
-  return claims as CapabilityClaims;
+  // A `ref` that isn't a usable key reads as none: the token is then a plain upload's.
+  return isRef(ref) ? { exp: exp as number, ref } : { exp: exp as number };
 }
 
 /**
@@ -71,11 +123,7 @@ export function decodeCapabilityClaims(token: string): CapabilityClaims | null {
  * stop offering an upload that would race the server's clock to a 403
  * rather than actually have time to send anything.
  */
-export function isClaimsExpired(
-  claims: CapabilityClaims,
-  bufferMs: number,
-  nowMs: number,
-): boolean {
+export function isClaimsExpired(claims: ReadableClaims, bufferMs: number, nowMs: number): boolean {
   return nowMs >= claims.exp * 1000 - bufferMs;
 }
 
@@ -103,6 +151,29 @@ export function expiresAtMs(token: string | null): number | null {
   if (!token) return null;
   const claims = decodeCapabilityClaims(token);
   return claims ? claims.exp * 1000 : null;
+}
+
+/**
+ * Whether a link takes over from the one its place holds (PROTOCOL.md §5.6). `stored` is the held
+ * link's token, `null` when the place's row has none; `accepted` says the server took this link's
+ * token (the status request answered 200).
+ * - A place that holds no link takes any: no token Pulse can read, or one whose `exp` has passed.
+ * - Otherwise only an accepted link takes over. Until then its `ref` is unconfirmed — it is what
+ *   the link says, not what the server signed — and never replaces the link a place holds.
+ * - And only a newer one: its token expires later, or in the same second, in which case the link
+ *   received last wins (links are saved in the order received, `createSaveOrder`). `exp` and `ref`
+ *   are all a client reads from a token, so nothing else orders two links.
+ */
+export function takesOver(
+  link: { token: string | null; accepted: boolean },
+  stored: string | null,
+  nowMs: number,
+): boolean {
+  const storedExp = expiresAtMs(stored);
+  if (storedExp === null || nowMs >= storedExp) return true;
+  if (!link.accepted) return false;
+  const exp = expiresAtMs(link.token);
+  return exp !== null && exp >= storedExp;
 }
 
 const HOUR_MS = 3_600_000;

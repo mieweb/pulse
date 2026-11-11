@@ -1,10 +1,13 @@
+import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { type RefObject, useCallback, useMemo, useState } from 'react';
 
+import { getDestination } from '@/db/destinations';
+import { draftPlaceQuery } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
-import { getDestinationToken } from '@/db/secure-token';
 
-import { isTokenExpired } from './capability-token';
-import { useDestinations } from './use-destinations';
+import { isSpentLink } from './destination-options';
+import { returnToFor, uploadChoice } from './upload-choice';
+import { useDestinations, usePlaceLabels } from './use-destinations';
 import { uploads } from './upload-manager';
 import { useDraftUploadState } from './use-uploads';
 
@@ -14,7 +17,8 @@ import { useDraftUploadState } from './use-uploads';
  * draft and start uploading, in one tap) and `cancel`. It hands the actual
  * upload to the module-scope `uploads` manager (see `upload-manager.ts`):
  * leaving the screen doesn't abort the upload. There is no retry: a failed
- * upload unpairs the draft, and scanning a new link is the retry. A finished
+ * upload unpairs the draft, and a new link is the retry — for a draft recorded
+ * for a place, the place's link opened again (`reopen`). A finished
  * upload's Watch / Copy link live in the draft's ⋯ menu on Home.
  *
  * `state` is the manager's LIVE per-draft state (uploading, this session only)
@@ -28,16 +32,29 @@ export function useUpload(
   mergedRef: RefObject<{ path: string; durationMs: number } | null>,
 ) {
   // The device-wide pool of paired-but-unconsumed destinations (non-expired only).
-  const { destinations } = useDestinations();
+  const { destinations: pool, ready: poolReady } = useDestinations();
+  const placeLabels = usePlaceLabels();
 
-  // Which pool destination the user has picked to upload to. Defaults to the most-recent
-  // non-expired one, reconciled during render (adjust-state-during-render) as the pool changes.
-  const [rawSelectedId, setSelectedId] = useState<string | null>(null);
-  const selectedId =
-    rawSelectedId && destinations.some((d) => d.id === rawSelectedId)
-      ? rawSelectedId
-      : (destinations[0]?.id ?? null);
-  if (selectedId !== rawSelectedId) setSelectedId(selectedId);
+  // The place the draft was recorded for (a link that names one opened its recorder), if any.
+  // No row yet = still loading: nothing is preselected until it's known.
+  const { data: draftRows } = useLiveQuery(draftPlaceQuery(draftId), [draftId]);
+  const draft = draftRows[0];
+
+  // Which pool destination the user has picked to upload to, while it's still in the pool. Until
+  // they pick: the draft's own destination if it has a place, else the most-recent non-expired one
+  // — derived (see `uploadChoice`), so the draft's place still wins when it loads after the pool.
+  const [pickedId, setSelectedId] = useState<string | null>(null);
+  const { destinations, selectedId, reopen } = useMemo(
+    () =>
+      uploadChoice({
+        draft,
+        pool,
+        poolReady,
+        placeLabel: draft ? placeLabels(draft.server, draft.ref) : null,
+        pickedId,
+      }),
+    [draft, pool, poolReady, placeLabels, pickedId],
+  );
   const selectedDestination = useMemo(
     () => destinations.find((d) => d.id === selectedId) ?? null,
     [destinations, selectedId],
@@ -59,23 +76,29 @@ export function useUpload(
         : null;
       const merged = mergedRef.current;
       if (!option || !merged) return;
-      // The stored token, not the list's copy: a re-pair may have refreshed it a moment ago, before
-      // this screen's reload (`reloadDestinationTokens`) landed. The copy only if it can't be read.
-      const token = await getDestinationToken(option.id).catch(() => option.token);
-      if (isTokenExpired(token, Date.now())) return;
+      // The stored link, not the list's copy: a re-pair may have refreshed its token (or, for a
+      // place, replaced its upload and its way back) a moment ago, before this screen's reload
+      // (`reloadDestinationTokens`) landed. The copy only if it can't be read.
+      const stored = await getDestination(option.id).catch(() => option);
+      if (!stored || isSpentLink(stored.ref, stored.token, Date.now())) return;
+      const { server, token, artifactId } = stored;
       await uploads.claim({
         draftId,
         destinationId: option.id,
-        destination: { server: option.server, token, artifactId: option.artifactId },
+        destination: { server, token, artifactId },
         segments,
         merged,
+        // The host page to go back to once it's in, from the same link: the row is gone from
+        // here on, so the upload carries it.
+        returnTo: returnToFor(draft, stored),
       });
     },
-    [destinations, draftId, segments, mergedRef],
+    [destinations, draft, draftId, segments, mergedRef],
   );
 
   return {
     state,
+    reopen,
     destinations,
     selectedId,
     setSelectedId,

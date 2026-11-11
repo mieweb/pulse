@@ -26,7 +26,17 @@ export type UploadSession = {
   /** The captions as composed when Upload was tapped (what the export screen showed), so a model
    * switch while the upload waits can't drop them; null if they couldn't be read then. */
   captions: { lines: CaptionLine[]; y: number | null } | null;
+  /**
+   * The host page to offer as the way back once this upload is in ("Back to …"), when the draft
+   * was uploaded to its own place and that place's link carried one. Carried here because the
+   * destination row is gone from the moment it is claimed, and the person may leave the upload
+   * screen and come back while it runs.
+   */
+  returnTo?: ReturnTo | null;
 };
+
+/** A place link's way back: its `return` URL (as `readReturnUrl` accepts it) and `app` name. */
+export type ReturnTo = { url: string; app: string | null };
 
 export type UploadProgress = { bytesSent: number; totalBytes: number };
 

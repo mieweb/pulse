@@ -18,6 +18,7 @@ import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redi
 import { useToast } from '@/features/toast/toast-provider';
 import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { DestinationsFloat } from '@/features/upload/destinations-float';
+import { usePlaceLabels } from '@/features/upload/use-destinations';
 import { useNow } from '@/hooks/use-now';
 import { useTheme, useThemeToggle } from '@/hooks/use-theme';
 import { formatCount } from '@/utils/format';
@@ -40,6 +41,8 @@ export default function HomeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { data: drafts } = useLiveQuery(draftListQuery);
+  // What an unnamed draft recorded for a place is called: that place's label, live from the pool.
+  const placeLabels = usePlaceLabels();
   // One clock for every card's date label, so "Just now" and "Today" move on (and roll over at
   // midnight) without a DB write.
   const now = useNow(DATE_LABEL_REFRESH_MS);
@@ -311,6 +314,7 @@ export default function HomeScreen() {
                 id={item.id}
                 uploadStatus={item.uploadStatus}
                 name={name}
+                placeLabel={placeLabels(item.contextServer, item.contextRef)}
                 firstSegmentFilename={item.firstSegmentFilename}
                 firstSegmentThumbnail={item.firstSegmentThumbnail}
                 firstSegmentEditState={item.firstSegmentEditState}

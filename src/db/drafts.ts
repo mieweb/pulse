@@ -52,11 +52,25 @@ export const draftListQuery = db
     firstSegmentEditState: sql<
       string | null
     >`(select case when edited_filename is null then edit_state end from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
+    // The place it was recorded for, if a link opened its recorder (see `drafts.contextServer`).
+    // An unnamed draft is called by that place's label while the place's destination is in the
+    // pool: read live from the pool by whoever shows it (`usePlaceLabels`), never stored here.
+    contextServer: drafts.contextServer,
+    contextRef: drafts.contextRef,
   })
   .from(drafts)
   .leftJoin(segments, eq(segments.draftId, drafts.id))
   .groupBy(drafts.id)
   .orderBy(desc(drafts.lastModified));
+
+/**
+ * What a draft is called where it's shown: its own name, else the label of the place it was
+ * recorded for while that place's destination is in the pool (`placeLabel`), else "Untitled".
+ * Uploads send only its own name (`getDraftName`).
+ */
+export function draftDisplayName(name: string | null, placeLabel: string | null): string {
+  return name || placeLabel || 'Untitled';
+}
 
 /** Every draft's clips (what the editor's caches keep). */
 export function allSegments() {
@@ -90,10 +104,63 @@ export async function getDraftName(draftId: string): Promise<string | undefined>
 /** Every segment in the library — drives the global background transcription engine. */
 // Mutations — each is a single-row write that autosaves the draft (§3).
 
-export async function createDraft(): Promise<string> {
+/** The place a draft is recorded for: a link's server and `ref` (see `drafts.contextServer`). */
+export type DraftContext = { server: string; ref: string };
+
+/**
+ * A new draft. Opened from a link that names a place, it is named with the link's `name` (or not
+ * at all) and remembers that place (`context`).
+ */
+export async function createDraft(
+  opts: { name?: string | null; context?: DraftContext | null } = {},
+): Promise<string> {
   const id = Crypto.randomUUID();
-  await db.insert(drafts).values({ id });
+  await db.insert(drafts).values({
+    id,
+    name: opts.name ?? null,
+    contextServer: opts.context?.server ?? null,
+    contextRef: opts.context?.ref ?? null,
+  });
   return id;
+}
+
+/**
+ * The draft's place (null columns when it has none), its own name and whether it is uploading or
+ * uploaded: live, for the export screen.
+ */
+export function draftPlaceQuery(draftId: string) {
+  return db
+    .select({
+      server: drafts.contextServer,
+      ref: drafts.contextRef,
+      name: drafts.name,
+      uploadStatus: drafts.uploadStatus,
+    })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+}
+
+/**
+ * The draft a link for a place reopens: the newest one recorded for that place that hasn't been
+ * uploaded (or started uploading) and has a clip — an empty one is about to be dropped by the
+ * recorder that made it. A draft whose upload failed or was cancelled is unsent again, so the
+ * place's next link comes back to it. `null` when there's none, and the link starts a new one.
+ */
+export async function findOpenDraftForContext(context: DraftContext): Promise<string | null> {
+  const [row] = await db
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(
+      and(
+        eq(drafts.contextServer, context.server),
+        eq(drafts.contextRef, context.ref),
+        isNull(drafts.uploadStatus),
+        sql`exists (select 1 from ${segments} where ${segments.draftId} = ${drafts.id})`,
+      ),
+    )
+    .orderBy(desc(drafts.lastModified))
+    .limit(1);
+  return row?.id ?? null;
 }
 
 export async function addSegment(draftId: string, segment: NewSegment): Promise<void> {
