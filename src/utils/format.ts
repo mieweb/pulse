@@ -61,10 +61,11 @@ const TWO_PART_SUFFIX = /^(?:ac|co|com|edu|gov|net|org)\.[a-z]{2}$/i;
  */
 export function shortHost(host: string, max = 32): string {
   if (host.length <= max) return host;
-  const [, name, port = ''] = /^(.*?)(:\d+)?$/.exec(host)!;
+  // What follows the last label is kept as it is: a final dot, and the port.
+  const [, name, end] = /^(.*?)(\.?(?::\d+)?)$/.exec(host)!;
   if (name.startsWith('[') || /^\d+(?:\.\d+){3}$/.test(name)) return host;
   const labels = name.split('.');
-  const shown = (count: number) => `….${labels.slice(-count).join('.')}${port}`;
+  const shown = (count: number) => `….${labels.slice(-count).join('.')}${end}`;
   let kept = Math.min(labels.length, TWO_PART_SUFFIX.test(labels.slice(-2).join('.')) ? 3 : 2);
   while (kept < labels.length - 1 && shown(kept + 1).length <= max) kept++;
   return kept < labels.length ? shown(kept) : host;

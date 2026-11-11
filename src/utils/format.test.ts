@@ -30,6 +30,12 @@ describe('shortHost', () => {
     );
   });
 
+  it('keeps the domain of a host written with its final dot', () => {
+    expect(shortHost('timehuddle.com.abcdefghijklmnopqrstuvwxyz.com.')).toBe(
+      '….abcdefghijklmnopqrstuvwxyz.com.',
+    );
+  });
+
   it('keeps three labels for a two-part public suffix', () => {
     expect(shortHost('timehuddle.com.some-very-long-label.evil.co.uk')).toBe('….evil.co.uk');
   });
