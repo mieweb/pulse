@@ -29,6 +29,8 @@ type Props = {
   muted: boolean;
   // A phone call holds the mic — audio is forced off and the toggle is locked while it lasts.
   callActive?: boolean;
+  /** A screen take has the mic: the camera's is off and the toggle locked while it runs. */
+  screenTake?: boolean;
   /** A clip is recording: the flash stays live; flip, stabilization and the mic lock (see below). */
   recording?: boolean;
   onFlip: () => void;
@@ -43,6 +45,7 @@ export function CameraControls({
   stabilization,
   muted,
   callActive = false,
+  screenTake = false,
   recording = false,
   onFlip,
   onToggleTorch,
@@ -82,21 +85,24 @@ export function CameraControls({
         </>
       )}
       <ControlButton
-        icon={muted || callActive ? 'mic.slash.fill' : 'mic.fill'}
+        icon={muted || callActive || screenTake ? 'mic.slash.fill' : 'mic.fill'}
         label={
           callActive
             ? 'Microphone unavailable during a call'
-            : muted
-              ? 'Unmute recording audio'
-              : 'Mute recording audio'
+            : screenTake
+              ? 'Microphone off'
+              : muted
+                ? 'Unmute recording audio'
+                : 'Mute recording audio'
         }
+        hint={screenTake ? 'The microphone is used by the screen recording' : undefined}
         // Surface WHY the mic is off during a call so it doesn't look like a bug; the toggle is
         // locked because the OS, not the user, owns the mic while telephony has it.
         caption={callActive ? 'On call' : undefined}
-        tint={muted || callActive ? Accent : '#fff'}
+        tint={muted || callActive || screenTake ? Accent : '#fff'}
         // A take's audio is fixed when it starts (see use-recorder), so a toggle mid-take would
         // show muted over a clip still recording sound.
-        disabled={recording || callActive}
+        disabled={recording || callActive || screenTake}
         onPress={onToggleMute}
       />
     </View>
@@ -106,6 +112,7 @@ export function CameraControls({
 function ControlButton({
   icon,
   label,
+  hint,
   onPress,
   tint = '#fff',
   caption,
@@ -114,6 +121,8 @@ function ControlButton({
 }: {
   icon: SymbolViewProps['name'];
   label: string;
+  /** Why it's locked, when that isn't obvious. */
+  hint?: string;
   onPress: () => void;
   tint?: string;
   caption?: string;
@@ -134,6 +143,7 @@ function ControlButton({
       hitSlop={6}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={hint}
       style={styles.wrap}>
       {({ pressed }) => (
         <>

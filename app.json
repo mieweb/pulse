@@ -104,6 +104,7 @@
       "./plugins/with-ios-local-notifications-only",
       "expo-notifications",
       "./plugins/with-upload-foreground-service",
+      "./plugins/with-broadcast-extension-name",
       "react-native-nitro-screen-recorder",
       "./plugins/with-release-signing"
     ],

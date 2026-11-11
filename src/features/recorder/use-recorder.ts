@@ -32,11 +32,12 @@ import {
   getRecorderPrefs,
   setSetting,
 } from '@/db/settings';
+import { screenCaptureHolds, useScreenCapture } from '@/features/screen-capture/screen-capture';
 import { useToast } from '@/features/toast/toast-provider';
 import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
 import { absolutize, deleteQuietly, persistRecording } from '@/utils/file-store';
-import { importFailureCopy } from '@/utils/import-copy';
+import { importFailureCopy, isOutOfSpace } from '@/utils/import-copy';
 import { userMessage } from '@/utils/user-message';
 import { getDurationMs } from '@/utils/video';
 
@@ -110,7 +111,10 @@ export function useRecorder(
   // open (and two extra rebuilds on every camera flip). The '!pri' -11800 recovery path
   // (reportMicPriorityError) remains the backstop for a cold open into an in-progress call,
   // which the interruption latch cannot see (nothing of ours was active to be interrupted).
-  const micWanted = !muted && !callActive;
+  // A screen take owns the mic (module state, so in every recorder): the camera's is off while it
+  // runs, without touching the saved mute.
+  const screenLive = useScreenCapture().phase !== 'idle';
+  const micWanted = !muted && !callActive && !screenLive;
   // Freeze the mic config for the duration of a recording: an enableAudio change rebuilds the video
   // output, which tears down the in-flight recorder before it can finalize — dropping the clip. We
   // hold the value captured while idle and only let it change once recording stops, so a call
@@ -262,9 +266,14 @@ export function useRecorder(
   const dropEmptyDraft = () => {
     const id = draftIdRef.current ?? sessionDraftId.current;
     const safeToDelete = sessionDraftId.current != null || everHadSegments.current;
-    if (id && segmentCount.current === 0 && safeToDelete) {
-      dropClipJobs({ draftId: id });
-      void deleteDraft(id);
+    // A screen take (or its import) for this draft still brings it a clip.
+    if (id && segmentCount.current === 0 && safeToDelete && !screenCaptureHolds(id)) {
+      // The count can lag a clip that just landed (a screen recording's import): the db decides.
+      void (async () => {
+        if ((await segmentsForDraft(id)).length > 0) return;
+        dropClipJobs({ draftId: id });
+        await deleteDraft(id);
+      })();
     }
   };
   useEffect(() => {
@@ -559,11 +568,14 @@ export function useRecorder(
         });
       }
     } catch (e) {
-      importLog.warn(`failed: ${describeError(e)}`);
+      const why = describeError(e);
+      importLog.warn(`failed: ${why}`);
       showToast({
         kind: 'error',
         title: 'Couldn’t import the video',
-        message: userMessage(e, 'Try again.', 'import'),
+        message: isOutOfSpace(why)
+          ? importFailureCopy(why)
+          : userMessage(e, 'Try again.', 'import'),
       });
     } finally {
       appStateSub?.remove();
@@ -722,6 +734,7 @@ export function useRecorder(
     onSessionConfigured: () => setConnectionEpoch((prev) => prev + 1),
     toggleRecording,
     finalizeRecording,
+    ensureDraft,
     importClip: () => void importClip(),
     startHoldRecording,
     endHoldRecording,
