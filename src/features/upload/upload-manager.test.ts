@@ -992,6 +992,32 @@ describe('the way back to the host', () => {
     expect(uploads.getAnnouncement('back5')!.returnTo).toBeNull();
   });
 
+  it('isn’t brought back by an earlier upload still waiting for its view link', async () => {
+    jest
+      .mocked(checkCapabilities)
+      .mockResolvedValueOnce({ ok: true, capabilities: { viewLinks: true } } as never);
+    let answerViewLink: (link: { url: string; expiresAt: number }) => void = () => {};
+    mockRequestViewLink.mockImplementationOnce(
+      () => new Promise((resolve) => (answerViewLink = resolve)),
+    );
+    tusWith();
+    await claimFrom('back6', RETURN);
+    await eventually(() => mockRequestViewLink.mock.calls.length > 0);
+
+    // The draft is uploaded again before the first upload's view link comes, and that one fails.
+    tusWith(() => {
+      throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });
+    });
+    await claimFrom('back6', null);
+    await eventually(() => db.log.includes('burn:back6'));
+
+    answerViewLink({ url: 'https://v/late', expiresAt: Date.now() + 60_000 });
+    await eventually(() => mockNotifyComplete.mock.calls.length > 0);
+    // The first upload still says it landed, but offers nothing for the draft as it is now.
+    expect(mockToast).toHaveBeenCalledWith('Uploaded');
+    expect(uploads.getAnnouncement('back6')).toBeNull();
+  });
+
   it('is not offered after a failed upload', async () => {
     tusWith(() => {
       throw new TusUploadError('Rejected', { retryable: false, statusCode: 400 });

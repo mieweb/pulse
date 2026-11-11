@@ -625,12 +625,14 @@ class BackgroundUploadManager {
     finished: Pick<UploadAnnouncement, 'at' | 'returnTo'>,
   ): Promise<void> {
     const link = (viewLinks && (await this.shareableLink(draftId, destination, direct))) || direct;
-    // A newer upload of the draft took over meanwhile: still say this one landed, copy nothing.
-    const copied =
-      this.watchLinks.get(draftId) === link && link.shareable && (await copyToClipboard(link.url));
+    // A newer upload of the draft took over meanwhile: still say this one landed, but copy
+    // nothing, and leave what the upload screen offers (its way back) to the newer one.
+    const current = () => this.watchLinks.get(draftId) === link;
+    const copied = current() && link.shareable && (await copyToClipboard(link.url));
     uploadLog.info(`${draftLabel(draftId)}: link ${copied ? 'copied' : 'not copied'}`);
     this.showToast?.(copied ? 'Share link copied to clipboard' : 'Uploaded');
     void uploadNotify.complete(copied);
+    if (!current()) return;
     this.announcements.set(draftId, { seq: ++this.announcementSeq, copied, ...finished });
     this.emit();
   }
