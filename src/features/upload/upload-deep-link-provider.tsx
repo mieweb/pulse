@@ -44,7 +44,7 @@ import {
   placeOpenedToast,
   recorderFailedToast,
 } from './link-messages';
-import { createRecorderOpener, type RecorderTarget } from './open-recorder';
+import { createRecorderOpener, HANDOFF_MS, type RecorderTarget } from './open-recorder';
 import { createLinkGate, createSaveOrder, pairLink, screenLink } from './pair-link';
 import { checkToken } from './token-check';
 import { isTrustedServer, trustServer } from './trusted-servers';
@@ -94,9 +94,6 @@ export const pairingSheetPresence = createPresence();
 
 /** Longest a link's recorder waits for a closing screen; past it, it goes ahead. */
 const SCREEN_GONE_TIMEOUT_MS = 1500;
-
-/** How long the recorder a link pushes has to mount and take its place from memory. */
-const HANDOFF_MS = 5000;
 
 /** How long a place paired during the welcome screen waits for the first recording, at most. */
 const WELCOME_OFFER_MS = 30 * 60_000;

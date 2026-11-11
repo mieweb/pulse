@@ -4,12 +4,14 @@ import type { DraftContext } from '@/db/drafts';
 import {
   offerRecorderPlace,
   peekRecorderPlace,
+  type RecorderPlace,
   takeRecorderPlace,
   withdrawRecorderPlace,
 } from '@/features/recorder/link-place';
 
 import {
   createRecorderOpener,
+  HANDOFF_MS,
   type OpenRecorderDeps,
   type RecorderTarget,
   SAVE_TIMEOUT_MS,
@@ -20,9 +22,17 @@ const SERVER = 'https://vault.example.org/pulsevault';
 // A key the router's own encoding would not hand back as it was: `%2F` decodes to `/`.
 const REF = 'ticket%3A12:a/b%2Fc';
 
+/** The recorder just pushed mounts and takes the place on offer, as `recorder.tsx` does. */
+function mountRecorder(): RecorderPlace | null {
+  const place = peekRecorderPlace();
+  if (place) takeRecorderPlace(place);
+  return place;
+}
+
 function harness(over: Partial<OpenRecorderDeps> = {}) {
   const calls: string[] = [];
   const pushed: (string | null)[] = [];
+  const mounted: (RecorderPlace | null)[] = [];
   const deps: OpenRecorderDeps = {
     sheetGone: async () => void calls.push('sheet-gone'),
     finalizeRecorders: async () => void calls.push('finalize'),
@@ -42,6 +52,7 @@ function harness(over: Partial<OpenRecorderDeps> = {}) {
     push: (draftId) => {
       calls.push('push');
       pushed.push(draftId);
+      mounted.push(mountRecorder());
     },
     ...over,
   };
@@ -54,7 +65,7 @@ function harness(over: Partial<OpenRecorderDeps> = {}) {
     opened: (draftId) => void opened.push(draftId),
     failed: () => void failed++,
   });
-  return { deps, calls, pushed, opened, target, failures: () => failed };
+  return { deps, calls, pushed, mounted, opened, target, failures: () => failed };
 }
 
 beforeEach(() => withdrawRecorderPlace());
@@ -104,10 +115,9 @@ describe('showRecorder', () => {
     // Nothing of the place is in what is pushed: only the draft to open on.
     expect(h.pushed).toEqual([null]);
     // What the recorder that mounts reads: the `%`, `:` and `/` all as they were.
-    const place = peekRecorderPlace();
-    expect(place).toEqual({ context: { server: SERVER, ref: REF }, name: 'Huddle update' });
+    const [place] = h.mounted;
+    expect(place).toMatchObject({ context: { server: SERVER, ref: REF }, name: 'Huddle update' });
     expect(place?.context.ref).toBe('ticket%3A12:a/b%2Fc');
-    takeRecorderPlace(place!);
     expect(peekRecorderPlace()).toBeNull();
   });
 
@@ -166,7 +176,10 @@ describe('createRecorderOpener', () => {
         if (finds++ === 0) await first;
         return null;
       },
-      push: () => void order.push('push'),
+      push: () => {
+        order.push('push');
+        mountRecorder();
+      },
     });
     const open = createRecorderOpener(h.deps);
     open(h.target('place-a'));
@@ -199,6 +212,46 @@ describe('createRecorderOpener', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.failures()).toBe(1);
     expect(h.pushed).toEqual([null]);
+  });
+
+  it('opens the next link’s recorder only once the last one has taken its place', async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+    // The recorders mount when the test says, not as they are pushed.
+    const h = harness({ push: (draftId) => void h.pushed.push(draftId) });
+    const open = createRecorderOpener(h.deps);
+    open(h.target('place-a'));
+    open(h.target('place-b'));
+    await tick();
+
+    // The first recorder hasn't mounted: its place is still on offer, and the second link waits.
+    expect(h.calls.filter((c) => c === 'offer')).toHaveLength(1);
+    expect(h.opened).toEqual([]);
+    expect(mountRecorder()?.context.ref).toBe('place-a');
+    await tick();
+
+    expect(h.opened).toEqual([null]);
+    expect(h.calls.filter((c) => c === 'offer')).toHaveLength(2);
+    expect(mountRecorder()?.context.ref).toBe('place-b');
+    await tick();
+    expect(h.opened).toEqual([null, null]);
+  });
+
+  describe('when a recorder never takes its place', () => {
+    beforeEach(() => void jest.useFakeTimers());
+    afterEach(() => void jest.useRealTimers());
+
+    it('still opens the next link’s recorder once the place’s offer has lapsed', async () => {
+      const h = harness({ push: (draftId) => void h.pushed.push(draftId) });
+      const open = createRecorderOpener(h.deps);
+      open(h.target('never-taken'));
+      open(h.target('next'));
+      await jest.advanceTimersByTimeAsync(HANDOFF_MS - 1);
+      expect(h.pushed).toEqual([null]);
+
+      await jest.advanceTimersByTimeAsync(1);
+      expect(h.pushed).toEqual([null, null]);
+      expect(peekRecorderPlace()?.context.ref).toBe('next');
+    });
   });
 
   describe('when a take never finishes saving', () => {
