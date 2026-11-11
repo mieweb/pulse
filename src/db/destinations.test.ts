@@ -368,6 +368,20 @@ describe('a place’s destination', () => {
     expect(mockTokens.has(id)).toBe(false);
   });
 
+  it('removed by the person while a newer link replaces it, is removed after that link, whole', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+
+    // The person removes the place while its newer link is being written: the removal waits its
+    // turn, so the pairing never writes a token for a row that is gone.
+    const pairing = addDestination(upload('art-2'), place('r1'));
+    const removed = deleteDestination(id);
+    await pairing;
+
+    expect(await removed).toBe(true);
+    expect(await order()).toEqual([]);
+    expect(mockTokens.has(id)).toBe(false);
+  });
+
   it('is used up by a claim like any other, and the place’s next link makes a new row', async () => {
     const id = await addDestination(upload('art-1'), place('r1'));
     // A draft claims it: the upload is running under art-1, and the row is gone.

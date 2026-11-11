@@ -42,6 +42,12 @@ const samePlace = (a: DraftContext | null, b: DraftContext) =>
  */
 export const SAVE_TIMEOUT_MS = 10_000;
 
+/**
+ * How long a pushed recorder has to mount and take its place from memory. The offer lapses then
+ * (`offerRecorderPlace`), and the next link's recorder stops waiting for it.
+ */
+export const HANDOFF_MS = 5000;
+
 /** `work`, or a rejection once `ms` have passed without it settling. */
 function within<T>(work: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -63,7 +69,8 @@ function within<T>(work: Promise<T>, ms: number): Promise<T> {
  * opened twice. Otherwise whatever is up (a recorder, the editor, export) is dismissed, so the
  * link never stacks a second recorder; and the push waits for the old recorder to unmount, so two
  * cameras never run at once. The recorder it pushes is a fresh screen that takes the place from
- * memory (see `link-place.ts`), never from its route.
+ * memory (see `link-place.ts`), never from its route; this resolves once it has (or `HANDOFF_MS`
+ * has passed), so the next link's place can't replace this one's before it is taken.
  */
 export async function showRecorder(target: RecorderTarget, deps: OpenRecorderDeps): Promise<void> {
   await deps.sheetGone();
@@ -87,14 +94,19 @@ export async function showRecorder(target: RecorderTarget, deps: OpenRecorderDep
       deps.dismissAll();
       await deps.recordersGone();
     }
-    deps.offerPlace({ context, name: target.name });
+    const taken = new Promise<void>((resolve) =>
+      deps.offerPlace({ context, name: target.name, onTaken: resolve }),
+    );
     deps.push(draftId);
+    // Not done until the recorder has taken its place: the next link's offer would replace it.
+    await within(taken, HANDOFF_MS).catch(() => {});
   }
   target.opened(draftId);
 }
 
 /**
- * One link's recorder at a time: a second link waits for the first to have opened. A recorder
+ * One link's recorder at a time: a second link waits for the first to have opened and taken its
+ * place. A recorder
  * that couldn't be opened tells its link (`failed`) and doesn't hold up the next.
  */
 export function createRecorderOpener(deps: OpenRecorderDeps): (target: RecorderTarget) => void {

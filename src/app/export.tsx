@@ -135,11 +135,11 @@ export default function ExportScreen() {
       : null;
   const backButton = back && (
     <>
-      {/* Says where it leads: the host is in the label, at the end a cut in the middle keeps. */}
+      {/* Says where it leads: the host ends the label, which is never cut, only wrapped. */}
       <PrimaryButton
         label={back.label}
         icon="arrow.uturn.backward"
-        truncateMiddle
+        truncate="never"
         onPress={() => void Linking.openURL(back.url).catch(() => {})}
       />
       {back.unusualHost && (
@@ -203,7 +203,7 @@ export default function ExportScreen() {
             label={state.status === 'merging' ? 'Preparing video…' : selectedName || 'Upload'}
             icon="icloud.and.arrow.up"
             busy={state.status === 'merging'}
-            truncateMiddle={state.status !== 'merging'}
+            truncate={state.status !== 'merging' ? 'middle' : undefined}
             onPress={() => void upload.claim(upload.selectedId)}
             disabled={!upload.selectedId || !uploadReady}
             accessibilityLabel={

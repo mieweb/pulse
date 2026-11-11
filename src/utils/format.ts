@@ -50,12 +50,27 @@ export function hasNonAsciiHost(host: string): boolean {
 }
 
 /**
- * A host shortened in the middle for a sentence (toast, alert), where layout can't truncate it:
- * keeps both ends, so the domain ("…mieweb.org") stays readable. Labels use
- * `numberOfLines={1} ellipsizeMode="middle"` instead.
+ * The fewest labels a shortened host keeps. Pulse has no public-suffix list, so it can't tell
+ * where a registrable domain starts: three labels hold it under any suffix of up to two labels,
+ * listed or not (`evil.co.uk`, `evil.ne.jp`, `someone.github.io`). A deeper suffix is rare.
+ */
+const MIN_KEPT_LABELS = 3;
+
+/**
+ * A host shortened for a sentence (toast, alert, the Back button), where layout can't truncate
+ * it. Only subdomains are dropped, whole and from the left: at least the last three labels
+ * (`MIN_KEPT_LABELS`) and the port always stay, and more labels nearest them while they fit, so
+ * a long host never shows a misleading prefix ("timehuddle.com.…"), nor a cut domain under a
+ * suffix of up to two labels. An IP address is never shortened.
  */
 export function shortHost(host: string, max = 32): string {
   if (host.length <= max) return host;
-  const tail = Math.ceil((max - 1) / 2);
-  return `${host.slice(0, max - 1 - tail)}…${host.slice(-tail)}`;
+  // What follows the last label is kept as it is: a final dot, and the port.
+  const [, name, end] = /^(.*?)(\.?(?::\d+)?)$/.exec(host)!;
+  if (name.startsWith('[') || /^\d+(?:\.\d+){3}$/.test(name)) return host;
+  const labels = name.split('.');
+  const shown = (count: number) => `….${labels.slice(-count).join('.')}${end}`;
+  let kept = MIN_KEPT_LABELS;
+  while (kept < labels.length - 1 && shown(kept + 1).length <= max) kept++;
+  return kept < labels.length ? shown(kept) : host;
 }

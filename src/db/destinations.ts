@@ -208,13 +208,15 @@ async function readDestination(id: string): Promise<StoredDestination | null> {
 /**
  * Remove a destination from the pool (claimed by an upload, or deleted by the user). Returns
  * whether this call removed it — when two drafts claim the same link, only one gets `true`.
+ * Always in turn with pairing: a removal between a re-pair's writes would leave the pairing
+ * updating a row that is gone and writing a token for it.
  *
  * `link`, for an upload's claim: the link the upload read (`getDestination`). The row is removed
  * only while it still holds that very link, decided in turn with pairing — a newer link that
  * replaced it since is left for the next upload, not spent on this one.
  */
 export function deleteDestination(id: string, link?: PairedDestination): Promise<boolean> {
-  if (!link) return removeDestination(id);
+  if (!link) return oneAtATime(() => removeDestination(id));
   return oneAtATime(async () => {
     const stored = await readDestination(id);
     const holds =
