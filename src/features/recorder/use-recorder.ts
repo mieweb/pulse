@@ -1,5 +1,4 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { File } from 'expo-file-system';
 import {
   launchImageLibraryAsync,
   UIImagePickerPreferredAssetRepresentationMode,
@@ -36,21 +35,15 @@ import {
 import { useToast } from '@/features/toast/toast-provider';
 import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
-import {
-  absolutize,
-  copyIntoSegments,
-  deleteSegmentFile,
-  persistRecording,
-  thumbRelPath,
-} from '@/utils/file-store';
-import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
+import { absolutize, deleteQuietly, persistRecording } from '@/utils/file-store';
 import { importFailureCopy } from '@/utils/import-copy';
 import { userMessage } from '@/utils/user-message';
-import { generateThumbnailFile, getDurationMs } from '@/utils/video';
+import { getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
+import { addExternalClip } from './add-external-clip';
 import { importLog } from './import-log';
-import { getRecorderFormat, learnRecorderFormat } from './recorder-format';
+import { learnRecorderFormat } from './recorder-format';
 import { useCallState } from './use-call-state';
 
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
@@ -67,13 +60,6 @@ export type CameraFacing = 'front' | 'back';
 /** Stopping the native recorder before it has actually started hangs the capture —
  * earlier stop requests are deferred to this boundary. */
 const MIN_RECORD_MS = 350;
-
-/** Delete a conform output; best-effort (it's in the purgeable cache dir anyway). */
-function discard(uri: string) {
-  try {
-    new File(uri).delete();
-  } catch {}
-}
 
 /**
  * `newDraft`: what a draft this recorder creates starts with — a link's `name` as its name (if
@@ -371,32 +357,11 @@ export function useRecorder(
     return id;
   }
 
-  // Generates the thumbnail and writes the db row for a segment whose file is already copied
-  // into the draft, then reflects it synchronously in the unmount-cleanup refs (see the effect
-  // above) so a racing close/unmount can't see an "empty" draft and delete the clip just added.
-  async function persistSegment(
-    forDraftId: string,
-    segmentId: string,
-    originalFilename: string,
-    durationMs: number,
-    signal?: AbortSignal,
-  ): Promise<boolean> {
-    const thumbRel = thumbRelPath(forDraftId, segmentId);
-    const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
-    // An import cancelled while its cover rendered: nothing is added (the caller drops the file).
-    if (signal?.aborted) {
-      if (ok) deleteSegmentFile(thumbRel);
-      return false;
-    }
-    await addSegment(forDraftId, {
-      id: segmentId,
-      originalFilename,
-      durationMs,
-      thumbnail: ok ? thumbRel : null,
-    });
+  // A clip an import just wrote, reflected synchronously in the unmount-cleanup refs (see the
+  // effect above) so a racing close/unmount can't see an "empty" draft and delete it.
+  function noteSegmentAdded() {
     everHadSegments.current = true;
     segmentCount.current = Math.max(segmentCount.current, 1);
-    return true;
   }
 
   async function startRecording() {
@@ -465,7 +430,7 @@ export function useRecorder(
       const durationMs = await getDurationMs(absolutize(originalFilename));
       // The row first, the cover after: the clip shows as soon as it's saved. On Android the
       // cover is the longest step after a stop (150–400 ms: Media3 prepares a player for each new
-      // file). Imports stay cover-first (persistSegment): they can be cancelled while it renders.
+      // file). Imports stay cover-first (addExternalClip): they can be cancelled while it renders.
       expectSegmentCover(originalFilename);
       await addSegment(id, { id: segmentId, originalFilename, durationMs, thumbnail: null });
       everHadSegments.current = true;
@@ -508,12 +473,7 @@ export function useRecorder(
   }, [isRecording, startQueued]);
 
   // Pick an existing device video (system picker — no permission prompt) and add it as a
-  // segment, following the same persist path as a recording. Imports already in the recorder's
-  // exact format keep their original bytes; everything else is conformed ONCE, here, to the
-  // reels contract AND the recorder's own signature (coded orientation, fps, AAC layout), so a
-  // draft mixing recordings and imports merges with no re-encode. The policy lives in
-  // decideImport (§ imports), the conversion (pulse-editor `conform`) and its verification in
-  // conformToContract.
+  // segment: conformed to the recorder's own format unless it's already in it (addExternalClip).
   async function importClip() {
     if (isRecordingRef.current || isImporting) return;
     if (Platform.OS === 'ios' && !libraryPermission?.granted) {
@@ -581,72 +541,22 @@ export function useRecorder(
         );
       };
 
-      // Conform before the clip enters the draft — and fail CLOSED: every stored clip must meet
-      // the reels contract, so a clip that can't be probed or conformed (or whose output fails
-      // verification) is rejected rather than persisted off-contract.
-      const target = await getRecorderFormat();
-      // Native reports often (iOS every 0.5 %, Android every 100 ms); whole percents are plenty
-      // for the ring. A report that lands after a cancel is dropped.
-      let shown = -1;
-      const onProgress = (fraction: number) => {
-        if (abort.signal.aborted || (fraction < 1 && fraction - shown < 0.01)) return;
-        shown = fraction;
-        setImportProgress(fraction);
-      };
-      let conformed: ConformOutcome | null;
-      try {
-        conformed = await conformToContract(picked.uri, target, abort.signal, onProgress);
-      } catch (e) {
-        if (abort.signal.aborted) {
-          cancelled();
-          return;
-        }
-        const why = describeError(e);
-        importLog.warn(`failed after ${formatSeconds(Date.now() - started)}: ${why}`);
+      // Conform before the clip enters the draft, then save it: each step checks for a cancel (the
+      // recorder closed, Pulse left) and undoes what's been done. An empty draft left behind is
+      // dropped in `finally` once the recorder has closed.
+      const outcome = await addExternalClip(picked.uri, ensureDraft, null, {
+        signal: abort.signal,
+        onProgress: setImportProgress,
+        onAdded: noteSegmentAdded,
+      });
+      if (outcome.status === 'cancelled') {
+        cancelled();
+      } else if (outcome.status === 'rejected') {
         showToast({
           kind: 'error',
           title: 'Couldn’t import the video',
-          message: importFailureCopy(why),
+          message: importFailureCopy(outcome.why),
         });
-        return;
-      }
-      // Finished just as Pulse left: still cancelled, as promised.
-      if (abort.signal.aborted) {
-        if (conformed) discard(conformed.path);
-        cancelled();
-        return;
-      }
-      if (conformed) {
-        importLog.info(
-          `converted with ${conformed.engine} in ${formatSeconds(Date.now() - started)}` +
-            (conformed.mergeMatch ? ', matches the recorder' : '') +
-            ` — ${conformed.notes.join('; ')}`,
-        );
-      } else {
-        importLog.info('already in the recorder format — kept as is');
-      }
-
-      // Saving: each step checks for a cancel (the recorder closed, Pulse left) and undoes what's
-      // been done, so the clip lands whole in its draft or not at all. An empty draft left behind
-      // is dropped in `finally` once the recorder has closed.
-      const id = await ensureDraft();
-      if (abort.signal.aborted) {
-        if (conformed) discard(conformed.path);
-        cancelled();
-        return;
-      }
-      const segmentId = `${id}-${Date.now()}`;
-      const originalFilename = await copyIntoSegments(conformed?.path ?? picked.uri, id, segmentId);
-      // The conform output lives in the OS-purgeable cache dir; drop it once copied.
-      if (conformed) discard(conformed.path);
-      const durationMs = await getDurationMs(absolutize(originalFilename));
-      const saved =
-        !abort.signal.aborted &&
-        (await persistSegment(id, segmentId, originalFilename, durationMs, abort.signal));
-      if (!saved) {
-        deleteSegmentFile(originalFilename);
-        cancelled();
-        return;
       }
     } catch (e) {
       importLog.warn(`failed: ${describeError(e)}`);
@@ -662,11 +572,7 @@ export function useRecorder(
       if (unmountedRef.current) dropEmptyDraft();
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
       // for 4K): the clip now lives in the draft (or was rejected), so drop it.
-      if (pickedUri) {
-        try {
-          new File(pickedUri).delete();
-        } catch {}
-      }
+      if (pickedUri) deleteQuietly(pickedUri);
       setImportProgress(null);
       setIsImporting(false);
     }

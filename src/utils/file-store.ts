@@ -13,6 +13,14 @@ import { Directory, File, Paths } from 'expo-file-system';
  */
 export const toFileUri = (path: string): string => (path.startsWith('/') ? `file://${path}` : path);
 
+/** Delete a file if it's there; never throws (a clean-up must not fail its caller). */
+export function deleteQuietly(uri: string): void {
+  try {
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch {}
+}
+
 export function segmentRelPath(draftId: string, segmentId: string): string {
   return `drafts/${draftId}/segments/${segmentId}.mp4`;
 }
