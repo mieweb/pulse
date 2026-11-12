@@ -612,8 +612,8 @@ export async function duplicateDraft(draftId: string): Promise<string> {
 export async function deleteDraft(draftId: string): Promise<void> {
   await assertNotUploading(draftId);
   await db.delete(drafts).where(eq(drafts.id, draftId));
-  deleteDraftDir(draftId);
-  await deleteSavedLink(draftId);
+  await afterCommit('delete draft files', async () => deleteDraftDir(draftId));
+  await afterCommit('delete draft link', () => deleteSavedLink(draftId));
 }
 
 // Upload pairing -------------------------------------------------------------------------------

@@ -1,5 +1,31 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
+import { getPulseDocument } from '@/pulse/runtime';
+
+/** Current canonical rows, rather than a deleted SQL owner, decide working-file retention. */
+function stillReferenced(path: string, directory = false): boolean {
+  try {
+    const { state } = getPulseDocument();
+    const paths = state.segments.flatMap((segment) => [
+      segment.originalFilename,
+      segment.editedFilename,
+      segment.thumbnail,
+    ]);
+    paths.push(
+      ...state.drafts
+        .filter((draft) => draft.mergedSignature !== null)
+        .map((draft) => `drafts/${draft.id}/export.mp4`),
+    );
+    return paths.some(
+      (current) =>
+        current !== null && (current === path || (directory && current.startsWith(`${path}/`))),
+    );
+  } catch {
+    // Failed/uninitialized recovery is not authorization to delete working media.
+    return true;
+  }
+}
+
 // Clips live under the document directory (safe from system eviction). The DB stores
 // relative paths only; we absolutize at runtime so the sandbox container can change
 // between launches without invalidating references (§2.2).
@@ -107,15 +133,16 @@ function uploadCopyRelPath(relPath: string): string {
   return relPath.replace(/\.[^./]+$/, '') + '.upload.mp4';
 }
 
-/** Delete a clip file. Caller must ensure no other segment references it (splits can share a file). */
+/** Delete an obsolete working copy only after canonical references no longer need it. */
 export function deleteSegmentFile(relPath: string): void {
+  if (stillReferenced(relPath)) return;
   const file = new File(absolutize(relPath));
   if (file.exists) file.delete();
   // Sweep a legacy `.upload.mp4` sibling with its source — every lifecycle op
   // (delete/re-edit/reset) routes through here, so the copy can never outlive the clip.
   if (!relPath.endsWith('.upload.mp4')) {
     const sibling = new File(absolutize(uploadCopyRelPath(relPath)));
-    if (sibling.exists) sibling.delete();
+    if (sibling.exists && !stillReferenced(uploadCopyRelPath(relPath))) sibling.delete();
   }
 }
 
@@ -146,6 +173,8 @@ export async function persistExportFile(draftId: string, mergeOutputPath: string
 }
 
 export function deleteDraftDir(draftId: string): void {
+  // Restored projects can share a source stored beneath another project's directory.
+  if (stillReferenced(`drafts/${draftId}`, true)) return;
   const dir = new Directory(Paths.document, 'drafts', draftId);
   if (dir.exists) dir.delete();
 }

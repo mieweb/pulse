@@ -151,6 +151,23 @@ describe('persisted export', () => {
     expect(deleteDraftDir).toHaveBeenCalledWith('d1');
     expect(deleteSavedLink).toHaveBeenCalledWith('d1');
   });
+
+  it('does not report a committed deletion as failed when later file/link cleanup fails', async () => {
+    mockSelects.push(idle);
+    jest.mocked(deleteDraftDir).mockImplementationOnce(() => {
+      throw new Error('file busy');
+    });
+    jest.mocked(deleteSavedLink).mockRejectedValueOnce(new Error('keychain unavailable'));
+    const log = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(deleteDraft('d1')).resolves.toBeUndefined();
+      expect(mockWrites.some((write) => write.op === 'delete')).toBe(true);
+      expect(deleteSavedLink).toHaveBeenCalledWith('d1');
+      expect(log).toHaveBeenCalledTimes(2);
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 describe('edit state', () => {

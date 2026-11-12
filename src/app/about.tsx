@@ -30,6 +30,7 @@ import {
 } from '@/features/about/build-info';
 import { formatDetails, type DeviceInfo } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
+import { exportPulseLibrary } from '@/features/draft-transfer/pack';
 import { logEntries, logExportText, writeLogExport } from '@/features/logs/logger';
 import { useToast } from '@/features/toast/toast-provider';
 import {
@@ -90,7 +91,7 @@ export default function AboutScreen() {
       }),
     );
   };
-  const [sharing, setSharing] = useState(false);
+  const [sharing, setSharing] = useState<'logs' | 'library' | null>(null);
   const logCount = useMemo(() => logEntries().length, []);
 
   const details = () =>
@@ -113,7 +114,7 @@ export default function AboutScreen() {
 
   const shareLogs = async () => {
     if (sharing) return;
-    setSharing(true);
+    setSharing('logs');
     try {
       if (!(await isAvailableAsync())) throw new Error('Sharing isn’t available on this device.');
       const file = writeLogExport(details());
@@ -126,7 +127,29 @@ export default function AboutScreen() {
         message: userMessage(e, 'Try again.', 'share logs'),
       });
     } finally {
-      setSharing(false);
+      setSharing(null);
+    }
+  };
+
+  const shareLibrary = async () => {
+    if (sharing) return;
+    setSharing('library');
+    try {
+      if (!(await isAvailableAsync())) throw new Error('Sharing isn’t available on this device.');
+      const uri = await exportPulseLibrary(Date.now());
+      await shareAsync(uri, {
+        mimeType: 'application/zip',
+        UTI: 'public.data',
+        dialogTitle: 'Share library backup',
+      });
+    } catch (e) {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t share the library backup',
+        message: userMessage(e, 'Review the draft and try again.', 'library backup'),
+      });
+    } finally {
+      setSharing(null);
     }
   };
 
@@ -243,22 +266,40 @@ export default function AboutScreen() {
           )}
         </Section>
 
-        <Section title="Debug logs" surface={surface}>
+        <Section title="Backups & logs" surface={surface}>
+          <Pressable
+            onPress={() => void shareLibrary()}
+            disabled={sharing !== null}
+            accessibilityRole="button"
+            accessibilityLabel="Share library backup"
+            accessibilityHint="Shares all projects, media, transcripts, corrections and preferences as a .pulse file. Upload tokens are excluded."
+            accessibilityState={{ busy: sharing === 'library' }}
+            style={({ pressed }) => [
+              styles.inlineButton,
+              pressed && { backgroundColor: theme.backgroundSelected },
+            ]}>
+            {sharing === 'library' ? (
+              <ActivityIndicator size="small" color={theme.accent} />
+            ) : (
+              <Icon name="square.and.arrow.up" size={18} tintColor={theme.accent} scalesWithText />
+            )}
+            <ThemedText themeColor="accent">Share library backup</ThemedText>
+          </Pressable>
           <ThemedText type="footnote" themeColor="textSecondary" style={styles.note}>
             Recent app activity, kept on this device ({formatCount(logCount, 'entry', 'entries')}).
             Upload tokens are removed before anything is saved.
           </ThemedText>
           <Pressable
             onPress={() => void shareLogs()}
-            disabled={sharing}
+            disabled={sharing !== null}
             accessibilityRole="button"
             accessibilityLabel="Share logs"
-            accessibilityState={{ busy: sharing }}
+            accessibilityState={{ busy: sharing === 'logs' }}
             style={({ pressed }) => [
               styles.inlineButton,
               pressed && { backgroundColor: theme.backgroundSelected },
             ]}>
-            {sharing ? (
+            {sharing === 'logs' ? (
               <ActivityIndicator size="small" color={theme.accent} />
             ) : (
               <Icon name="square.and.arrow.up" size={18} tintColor={theme.accent} scalesWithText />
