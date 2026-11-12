@@ -1,6 +1,6 @@
 # Repository instructions
 
-**Review-stack phase: Complete transfer and backup.** This layer completes v2 portable sharing/copy import, the explicit full-library archive-restore API and the library-backup UI on top of the canonical runtime. Native crash/relaunch, durability, workflow and performance release checks remain open. See [merge order and layer validation](./review-stack.md).
+**Current review: canonical Pulse persistence.** [PR #296](https://github.com/mieweb/pulse/pull/296) contains the complete persistence implementation, including v2 transfer, exact restore and library backup. Native crash/relaunch, durability, workflow and performance release checks remain open. See [review scope and validation](./review-stack.md).
 
 ## Current priority
 

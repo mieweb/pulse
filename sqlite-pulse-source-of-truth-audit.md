@@ -1,6 +1,6 @@
 # SQLite and Pulse archive source of truth audit
 
-**Review-stack phase: Complete transfer and backup.** This layer completes v2 portable sharing/copy import, the explicit full-library archive-restore API and the library-backup UI on top of the canonical runtime. Native crash/relaunch, durability, workflow and performance release checks remain open. See [merge order and layer validation](./review-stack.md).
+**Current review: canonical Pulse persistence.** [PR #296](https://github.com/mieweb/pulse/pull/296) contains the complete persistence implementation, including v2 transfer, exact restore and library backup. Native crash/relaunch, durability, workflow and performance release checks remain open. See [review scope and validation](./review-stack.md).
 
 **At the audited baseline, SQLite was authoritative and could not be discarded without losing data.** The v1 `.pulse` draft archive was an explicitly requested transfer snapshot, not an automatically maintained project file. It omitted manual caption corrections, caption placement, generated transcripts, clip labels, historical badge counters, identities, app preferences and upload associations. Its importer also changed some state that the archive did contain.
 
@@ -8,7 +8,7 @@ The required end state is: **every acknowledged save is durable in canonical Pul
 
 **Current implementation priority:** the ordered [canonical Pulse persistence checklist](./sqlite-pulse-implementation-plan.md) turns this audit into implementation work. Complete its standalone migration, canonical-write coverage and offline rebuild release gate before native or browser embedding implementation. The milestones below remain acceptance requirements, not completed work; record implementation evidence in that checklist. The repository rules are in [AGENTS.md](./AGENTS.md).
 
-**Implementation update:** this stack contains the [live YAML/media package, typed document and SQLite projection runtime](./sqlite-pulse-persistence-design.md), v2 transfer and isolated rebuild tests. The findings below retain their recorded baseline meaning; they do not describe the updated v2 serializer or claim that native release gates passed. Current layer commits and validation are recorded in [the review stack](./review-stack.md).
+**Implementation update:** PR #296 contains the [live YAML/media package, typed document and SQLite projection runtime](./sqlite-pulse-persistence-design.md), v2 transfer and isolated rebuild tests. The findings below retain their recorded baseline meaning; they do not describe the updated v2 serializer or claim that native release gates passed. The complete implementation source and validation are recorded in [the review record](./review-stack.md).
 
 Audited 2026-11-12 against Pulse application source at `26bd538b145c94ee55f8e3355496a39a63782760` (Pulse 2.6.0; `.pulse` draft-bundle version 1). This is a schema and persistence-code audit, with all 20 SQL migrations replayed into an empty in-memory database. It does not enumerate rows from an installed phone or modify a user's database/media. The companion plans are [native embedding](./native-embed-component-plan.md) and [browser embedding](./html-embed-editor.md).
 

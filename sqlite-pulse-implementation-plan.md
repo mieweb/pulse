@@ -1,8 +1,8 @@
 # Canonical Pulse files and disposable SQLite implementation checklist
 
-**Review-stack phase: Complete transfer and backup.** This layer completes v2 portable sharing/copy import, the explicit full-library archive-restore API and the library-backup UI on top of the canonical runtime. Native crash/relaunch, durability, workflow and performance release checks remain open. See [merge order and layer validation](./review-stack.md).
+**Current review: canonical Pulse persistence.** [PR #296](https://github.com/mieweb/pulse/pull/296) contains the complete persistence implementation, including v2 transfer, exact restore and library backup. Native crash/relaunch, durability, workflow and performance release checks remain open. See [review scope and validation](./review-stack.md).
 
-**Status: canonical runtime, v2 transfer and targeted recovery proof are present; the native release gate remains open.** This is the active prerequisite for the [native embedding plan](./native-embed-component-plan.md) and [browser embedding plan](./html-embed-editor.md). The [design](./sqlite-pulse-persistence-design.md) describes the complete target and current-layer boundaries. The [audit](./sqlite-pulse-source-of-truth-audit.md) describes the earlier baseline and required state coverage. Checked items below name implemented behavior and its test evidence; they do not imply completion of device, durability or performance acceptance.
+**Status: canonical runtime, v2 transfer and targeted recovery proof are present; the native release gate remains open.** This is the active prerequisite for the [native embedding plan](./native-embed-component-plan.md) and [browser embedding plan](./html-embed-editor.md). The [design](./sqlite-pulse-persistence-design.md) describes the complete implementation and remaining native release requirements. The [audit](./sqlite-pulse-source-of-truth-audit.md) describes the earlier baseline and required state coverage. Checked items below name implemented behavior and its test evidence; they do not imply completion of device, durability or performance acceptance.
 
 The required outcome is that every acknowledged save survives removal of SQLite, WAL and SHM. Canonical Pulse files, referenced immutable media and retained protected credentials provide the authority needed to rebuild the library offline. SQLite supplies queries and subscriptions as a disposable projection. Regenerable derivatives may change under documented policies; user state and original/selected legacy media must not be lost.
 
@@ -97,7 +97,7 @@ Goal: prove the guarantee after actual acknowledged application saves, rather th
 - [ ] Before adding canonical GC, prove versioned tombstones/retention prevent resurrection and protect shared sources/active exports. Exercise restored baked selection and reset/re-edit on native devices.
 - [ ] Verify stable IDs reconnect retained SecureStore tokens/viewing links. Missing protected credentials produce an explicit recoverable/re-pairing state; no stale `uploading` value claims an active session or silently duplicates a completed upload.
 - [x] Compare the complete typed object through YAML/ZIP/SQLite and exact restore, including historical revision, custom/extra asset descriptors and original byte hashes. Keep selection/copy/library scope explicit. Evidence: [archive.test.ts](./src/pulse/archive.test.ts), [sqlite-state.test.ts](./src/pulse/sqlite-state.test.ts), [native-archive.test.ts](./src/features/draft-transfer/native-archive.test.ts), [file-storage.test.ts](./src/pulse/file-storage.test.ts).
-- [ ] Run focused persistence regressions, typecheck, lint, unit tests and protocol-generation checks; record skipped integration coverage accurately. Record this layer’s actual source commit and results in [review-stack.md](./review-stack.md); earlier prototype results do not validate the split branch.
+- [x] Run focused persistence regressions, typecheck, lint, unit tests and protocol-generation checks; record skipped integration coverage accurately. The complete implementation passed 58 suites / 647 tests; one integration suite containing six tests was skipped locally. Source and command results are recorded in [review-stack.md](./review-stack.md).
 - [ ] Run device-specific crash/relaunch checks on both iOS and Android and preserve their commands/configuration/results.
 - [ ] Publish a release evidence report naming the tested source/platform revisions, canonical layout, recovery procedure, derived-state policies, measured save/rebuild limits and any excluded scope. Update the audit's status only when the evidence supports it.
 - [ ] Mark the persistence gate complete and update both embedding plans to the tested format/coordinator/API revision. Re-estimate those projects and resume their implementation; do not redesign storage independently in either track.
@@ -106,7 +106,7 @@ Goal: prove the guarantee after actual acknowledged application saves, rather th
 
 ## Recorded implementation evidence
 
-See [review-stack.md](./review-stack.md) for this stack’s actual layer commits, PRs and validation results. Results from the earlier all-in-one `aa16e08` prototype are not evidence that a split branch was tested. Check an implementation item only when its complete behavior is present in the current layer and its validation is recorded there; uncheck mixed criteria until the later dependency lands.
+See [review-stack.md](./review-stack.md) for the single persistence PR, validated implementation commit and command results. The PR includes the complete persistence source tree. Check an implementation item only when its complete behavior is present and its validation is recorded; keep mixed or partially verified criteria unchecked.
 
 The native release gate remains open. Node fixtures and JavaScript bundle exports do not prove native power-loss/process-kill behavior, installed-library workflows, save/rebuild performance or protected-secret/network coordination. Preserve the retained legacy input and canonical package while those checks remain open.
 
@@ -121,4 +121,4 @@ npm test -- --runInBand
 node scripts/gen-protocol-types.mjs --check
 ```
 
-Use the phase-specific evidence table in [review-stack.md](./review-stack.md) for each completed section. Link the owning layer commit and command/test result; keep native platform limitations explicit.
+Use the validation record in [review-stack.md](./review-stack.md) for each completed section. Link the implementation commit and command/test result; keep native platform limitations explicit.

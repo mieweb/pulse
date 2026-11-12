@@ -1,8 +1,8 @@
 # Canonical Pulse persistence design
 
-**Review-stack phase: Complete transfer and backup.** This layer completes v2 portable sharing/copy import, the explicit full-library archive-restore API and the library-backup UI on top of the canonical runtime. Native crash/relaunch, durability, workflow and performance release checks remain open. See [merge order and layer validation](./review-stack.md).
+**Current review: canonical Pulse persistence.** [PR #296](https://github.com/mieweb/pulse/pull/296) contains the complete persistence implementation, including v2 transfer, exact restore and library backup. Native crash/relaunch, durability, workflow and performance release checks remain open. See [review scope and validation](./review-stack.md).
 
-This document describes the implementation in this review stack, not a completed native release guarantee. The [implementation checklist](./sqlite-pulse-implementation-plan.md) records remaining work. The [audit](./sqlite-pulse-source-of-truth-audit.md) describes the earlier SQLite-authoritative baseline and the state that must survive recovery. Native device crash tests, filesystem durability verification and large-media benchmarks remain release gates; embedding implementation remains deferred.
+This document describes the complete persistence implementation under review in PR #296. Native release acceptance remains incomplete. The [implementation checklist](./sqlite-pulse-implementation-plan.md) records remaining work. The [audit](./sqlite-pulse-source-of-truth-audit.md) describes the earlier SQLite-authoritative baseline and the state that must survive recovery. Native device crash tests, filesystem durability verification and large-media benchmarks remain release gates; embedding implementation remains deferred.
 
 ## Authority and module boundaries
 

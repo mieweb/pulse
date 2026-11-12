@@ -1,6 +1,6 @@
 # Native Pulse component for Capacitor and Cordova
 
-**Review-stack phase: Complete transfer and backup.** This layer completes v2 portable sharing/copy import, the explicit full-library archive-restore API and the library-backup UI on top of the canonical runtime. Native crash/relaunch, durability, workflow and performance release checks remain open. See [merge order and layer validation](./review-stack.md).
+**Review scope:** this embedding plan will have its own future PR after the persistence prerequisite passes. The current [PR #296](https://github.com/mieweb/pulse/pull/296) covers the complete Pulse persistence plan. See [review scope and validation](./review-stack.md).
 
 This is an implementation plan, not an implemented SDK. Its source baseline is Pulse `495b382` on `main`. Package names, new files, scripts and APIs below are proposals. Confirm package-name availability before publication. The companion browser plan is [html-embed-editor.md](html-embed-editor.md).
 
