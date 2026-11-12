@@ -1,6 +1,6 @@
 # SQLite and Pulse archive source of truth audit
 
-**Review-stack phase: Planning only.** This layer contains plans and repository requirements only. It does not change production persistence. SQLite and the v1 transfer format remain the application baseline; the architecture below is the planned target. See [merge order and layer validation](./review-stack.md).
+**Review-stack phase: Inactive persistence foundation.** This layer provides the typed document, codecs, projection adapters, storage/repository, transaction guard and isolated recovery fixtures. These modules are not connected to the application. Production persistence still uses the existing SQLite startup and v1 transfer behavior; canonical runtime activation is the next layer. See [merge order and layer validation](./review-stack.md).
 
 **At the audited baseline, SQLite was authoritative and could not be discarded without losing data.** The v1 `.pulse` draft archive was an explicitly requested transfer snapshot, not an automatically maintained project file. It omitted manual caption corrections, caption placement, generated transcripts, clip labels, historical badge counters, identities, app preferences and upload associations. Its importer also changed some state that the archive did contain.
 
@@ -8,7 +8,7 @@ The required end state is: **every acknowledged save is durable in canonical Pul
 
 **Current implementation priority:** the ordered [canonical Pulse persistence checklist](./sqlite-pulse-implementation-plan.md) turns this audit into implementation work. Complete its standalone migration, canonical-write coverage and offline rebuild release gate before native or browser embedding implementation. The milestones below remain acceptance requirements, not completed work; record implementation evidence in that checklist. The repository rules are in [AGENTS.md](./AGENTS.md).
 
-**Implementation update:** this layer records the [planned live YAML/media package, typed document and SQLite projection contract](./sqlite-pulse-persistence-design.md). It does not change the audited production behavior. Implementation and fresh validation belong to the later layers in [the review stack](./review-stack.md).
+**Implementation update:** this layer contains inactive typed-document, codec, storage/coordinator, projection and isolated recovery modules. Production startup and v1 transfer still follow the earlier application path. The runtime and backup layers will connect those modules; see [the review stack](./review-stack.md).
 
 Audited 2026-11-12 against Pulse application source at `26bd538b145c94ee55f8e3355496a39a63782760` (Pulse 2.6.0; `.pulse` draft-bundle version 1). This is a schema and persistence-code audit, with all 20 SQL migrations replayed into an empty in-memory database. It does not enumerate rows from an installed phone or modify a user's database/media. The companion plans are [native embedding](./native-embed-component-plan.md) and [browser embedding](./html-embed-editor.md).
 

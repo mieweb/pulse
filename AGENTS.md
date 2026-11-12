@@ -1,10 +1,10 @@
 # Repository instructions
 
-**Review-stack phase: Planning only.** This layer contains plans and repository requirements only. It does not change production persistence. SQLite and the v1 transfer format remain the application baseline; the architecture below is the planned target. See [merge order and layer validation](./review-stack.md).
+**Review-stack phase: Inactive persistence foundation.** This layer provides the typed document, codecs, projection adapters, storage/repository, transaction guard and isolated recovery fixtures. These modules are not connected to the application. Production persistence still uses the existing SQLite startup and v1 transfer behavior; canonical runtime activation is the next layer. See [merge order and layer validation](./review-stack.md).
 
 ## Current priority
 
-Complete the [canonical Pulse persistence checklist](./sqlite-pulse-implementation-plan.md) before the native or browser embedding projects. Read the [current design](./sqlite-pulse-persistence-design.md) and [baseline audit](./sqlite-pulse-source-of-truth-audit.md) before changing persistence. This layer records the required canonical-file/projection contract; production persistence remains unchanged until the runtime layer. The audit's SQLite-authority findings describe its recorded pre-implementation baseline.
+Complete the [canonical Pulse persistence checklist](./sqlite-pulse-implementation-plan.md) before the native or browser embedding projects. Read the [current design](./sqlite-pulse-persistence-design.md) and [baseline audit](./sqlite-pulse-source-of-truth-audit.md) before changing persistence. This layer implements inactive canonical-file/projection modules and isolated recovery tests; application activation belongs to the runtime layer. The audit's SQLite-authority findings describe its recorded pre-implementation baseline.
 
 Until the persistence release gate passes, work on persistence, its migration/recovery tests, and necessary standalone compatibility fixes. Defer unrelated Capacitor/Cordova integration, browser media engines, shared UI extraction and embedding package publication. Keep the embedding plans as dependent follow-up plans. A later explicit user instruction can change this priority.
 

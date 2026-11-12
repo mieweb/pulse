@@ -1,6 +1,6 @@
 # Native Pulse component for Capacitor and Cordova
 
-**Review-stack phase: Planning only.** This layer contains plans and repository requirements only. It does not change production persistence. SQLite and the v1 transfer format remain the application baseline; the architecture below is the planned target. See [merge order and layer validation](./review-stack.md).
+**Review-stack phase: Inactive persistence foundation.** This layer provides the typed document, codecs, projection adapters, storage/repository, transaction guard and isolated recovery fixtures. These modules are not connected to the application. Production persistence still uses the existing SQLite startup and v1 transfer behavior; canonical runtime activation is the next layer. See [merge order and layer validation](./review-stack.md).
 
 This is an implementation plan, not an implemented SDK. Its source baseline is Pulse `495b382` on `main`. Package names, new files, scripts and APIs below are proposals. Confirm package-name availability before publication. The companion browser plan is [html-embed-editor.md](html-embed-editor.md).
 
