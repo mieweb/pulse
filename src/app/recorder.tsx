@@ -18,6 +18,7 @@ import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
 import { flushDraftWrites } from '@/features/editor/draft-writes';
+import { useToast } from '@/features/toast/toast-provider';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { ExportButton } from '@/components/export-button';
 import { CloseButton } from '@/features/recorder/close-button';
@@ -115,6 +116,7 @@ const SESSION_ERROR_ESCALATION_MS = 3000;
 const AUDIO_HANDOFF_SETTLE_MS = 50;
 
 export default function RecorderScreen() {
+  const { showToast } = useToast();
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
   const textSizeKey = useTextSizeKey();
@@ -193,7 +195,16 @@ export default function RecorderScreen() {
   const open = (href: Href) => {
     if (opening.current) return;
     opening.current = true;
-    void flushDraftWrites().then(() => router.push(href));
+    void flushDraftWrites()
+      .then(() => router.push(href))
+      .catch(() => {
+        opening.current = false;
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t save the draft',
+          message: 'Review the draft and try again.',
+        });
+      });
   };
 
   // Navigation from outside (a link opening its place's recorder) finalizes an in-flight take

@@ -22,26 +22,21 @@ import { drafts, segments } from './schema';
  *
  * Mapping into this app's model:
  *   - Each old draft → a `drafts` row (id / name / mode / timestamps preserved).
- *   - Each old segment → a `segments` row + its clip file MOVED from `Documents/pulse/…`
+ *   - Each old segment → a `segments` row + its clip file COPIED from `Documents/pulse/…`
  *     into `Documents/drafts/{draftId}/segments/{segmentId}.{ext}` (real extension kept —
  *     old iOS recordings are .mov). A fresh thumbnail is generated.
- *   - Old NON-DESTRUCTIVE trim points are intentionally dropped: the full pristine clip is
- *     imported and the user re-trims in the new (destructive) editor.
- *   - Old per-draft upload configs are NOT migrated — the new pairing model needs an
- *     artifactId that the legacy `{server, token}` config never had; re-pair instead.
+ *   - The original AsyncStorage records and media tree are retained verbatim. Ancient trim,
+ *     redo and upload-config fields have no complete semantic mapping yet. They remain in
+ *     their original store; bearer-containing upload configs are never copied into YAML.
+ *     Full lossless migration of Pulse ≤1.2 fields remains a native release gate.
  *
  * Idempotent + crash-safe: inserts are `onConflictDoNothing` (ids preserved), file moves skip
- * already-moved clips, and completion is tracked by the data-migration runner — a crash mid-way
- * just re-runs the remainder on next launch. Legacy files/keys are deleted only at the very end.
+ * already-copied clips, and completion is tracked by the data-migration runner — a crash mid-way
+ * just re-runs the remainder on next launch. No legacy files or keys are deleted by this task.
  */
 
 /** Legacy AsyncStorage keys (see mieweb/pulse `utils/draftStorage.ts` / `uploadConfig.ts`). */
 const LEGACY_DRAFTS_KEY = 'recording_drafts';
-const LEGACY_UPLOAD_CONFIG_PREFIX = 'upload_config_';
-const LEGACY_REDO_STACK_KEY = 'redo_stack';
-
-/** Legacy Documents-relative root all old media lived under. */
-const LEGACY_BASE_DIR = 'pulse';
 
 type LegacySegment = {
   id?: string;
@@ -88,7 +83,7 @@ async function migrateDraft(draft: LegacyDraft): Promise<boolean> {
   const draftId = draft.id;
   if (!draftId) return false;
 
-  // Move each clip into the new layout first; only drafts with ≥1 surviving clip get a row.
+  // Copy into the new layout first; the legacy source remains available for explicit repair.
   const imported: { id: string; relPath: string; durationMs: number }[] = [];
   for (const seg of draft.segments ?? []) {
     if (!seg.id || !seg.uri) continue;
@@ -105,7 +100,7 @@ async function migrateDraft(draft: LegacyDraft): Promise<boolean> {
         intermediates: true,
         idempotent: true,
       });
-      await src.move(dest);
+      await src.copy(dest);
     }
 
     const declaredSec = seg.recordedDurationSeconds ?? seg.duration;
@@ -157,28 +152,6 @@ async function migrateDraft(draft: LegacyDraft): Promise<boolean> {
   return true;
 }
 
-/** Delete the legacy media tree and every legacy AsyncStorage key. Best-effort. */
-async function cleanupLegacyStorage(): Promise<void> {
-  try {
-    const legacyRoot = new Directory(Paths.document, LEGACY_BASE_DIR);
-    if (legacyRoot.exists) legacyRoot.delete();
-  } catch (e) {
-    console.warn('[legacy-migration] could not delete legacy media dir', e);
-  }
-  try {
-    const keys = await AsyncStorage.getAllKeys();
-    const stale = keys.filter(
-      (k) =>
-        k === LEGACY_DRAFTS_KEY ||
-        k === LEGACY_REDO_STACK_KEY ||
-        k.startsWith(LEGACY_UPLOAD_CONFIG_PREFIX),
-    );
-    if (stale.length > 0) await AsyncStorage.multiRemove(stale);
-  } catch (e) {
-    console.warn('[legacy-migration] could not clear legacy AsyncStorage keys', e);
-  }
-}
-
 /** The legacy import as a one-shot data-migration task (see `data-migrations.ts`). */
 export const legacyDraftsImport: DataMigration = {
   id: 'legacy-drafts-import',
@@ -192,6 +165,7 @@ export const legacyDraftsImport: DataMigration = {
       }
       console.log(`[legacy-migration] imported ${migrated} legacy draft(s)`);
     }
-    await cleanupLegacyStorage();
+    // Retain the entire old tree and AsyncStorage records until a separate, verified migration
+    // can represent every historical field. Absence from the new SQL index is not deletion proof.
   },
 };

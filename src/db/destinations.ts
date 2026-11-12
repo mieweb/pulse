@@ -119,7 +119,8 @@ async function upsertPlace(
     .select({ id: uploadDestinations.id })
     .from(uploadDestinations)
     .where(and(eq(uploadDestinations.server, dest.server), eq(uploadDestinations.ref, place.ref)));
-  if (match && !takesOver(await getDestinationToken(match.id))) return match.id;
+  const previousToken = match ? await getDestinationToken(match.id) : null;
+  if (match && !takesOver(previousToken)) return match.id;
   const id = match?.id ?? Crypto.randomUUID();
   const link = { artifactId: dest.artifactId, ...place };
   // The row and its token live in two stores, so the two writes can't be one. The token goes
@@ -128,10 +129,25 @@ async function upsertPlace(
   // token, which the server would refuse every time. Opening the link again completes it.
   if (match) {
     await setDestinationToken(id, null);
-    await db
-      .update(uploadDestinations)
-      .set({ ...link, createdAt: sql`(unixepoch('subsec') * 1000)` })
-      .where(eq(uploadDestinations.id, id));
+    try {
+      await db
+        .update(uploadDestinations)
+        .set({ ...link, createdAt: sql`(unixepoch('subsec') * 1000)` })
+        .where(eq(uploadDestinations.id, id));
+    } catch (error) {
+      // A rejected canonical publication leaves the old row intact. Restore its protected
+      // credential too. A saved canonical change with a broken SQLite projection returns
+      // success, so it never restores the old credential beside the new upload metadata.
+      try {
+        await setDestinationToken(id, previousToken);
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          'Pairing update failed and the previous protected upload token could not be restored. Reopen the prior upload link to recover pairing.',
+        );
+      }
+      throw error;
+    }
   } else {
     await db.insert(uploadDestinations).values({ id, server: dest.server, ...link });
   }
