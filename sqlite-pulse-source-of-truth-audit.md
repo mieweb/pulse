@@ -1,8 +1,12 @@
 # SQLite and Pulse archive source of truth audit
 
-**SQLite is currently authoritative and cannot be discarded without losing data.** The `.pulse` draft archive is an explicitly requested transfer snapshot, not an automatically maintained project file. It omits manual caption corrections, caption placement, generated transcripts, clip labels, historical badge counters, identities, app preferences and upload associations. Its importer also changes some state that the archive does contain.
+**At the audited baseline, SQLite was authoritative and could not be discarded without losing data.** The v1 `.pulse` draft archive was an explicitly requested transfer snapshot, not an automatically maintained project file. It omitted manual caption corrections, caption placement, generated transcripts, clip labels, historical badge counters, identities, app preferences and upload associations. Its importer also changed some state that the archive did contain.
 
 The required end state is: **every acknowledged save is durable in canonical Pulse files; SQLite is a disposable projection that can be rebuilt offline without losing project or application state.** Recomputable caches may be recreated, but regenerating a transcript is not equivalent to preserving the transcript the person edited.
+
+**Current implementation priority:** the ordered [canonical Pulse persistence checklist](./sqlite-pulse-implementation-plan.md) turns this audit into implementation work. Complete its standalone migration, canonical-write coverage and offline rebuild release gate before native or browser embedding implementation. The milestones below remain acceptance requirements, not completed work; record implementation evidence in that checklist. The repository rules are in [AGENTS.md](./AGENTS.md).
+
+**Implementation update:** this branch now contains a [live YAML/media package, typed document and SQLite projection design](./sqlite-pulse-persistence-design.md), with targeted codec, transaction, transfer and isolated rebuild tests. The findings below retain their recorded baseline meaning; they do not describe the updated v2 serializer or claim that the remaining native release gates have passed.
 
 Audited 2026-11-12 against Pulse application source at `26bd538b145c94ee55f8e3355496a39a63782760` (Pulse 2.6.0; `.pulse` draft-bundle version 1). This is a schema and persistence-code audit, with all 20 SQL migrations replayed into an empty in-memory database. It does not enumerate rows from an installed phone or modify a user's database/media. The companion plans are [native embedding](./native-embed-component-plan.md) and [browser embedding](./html-embed-editor.md).
 
@@ -291,4 +295,4 @@ npm test -- --runInBand --runTestsByPath \
   src/utils/segment-window.test.ts
 ```
 
-**Current result: the requested zero-loss rebuild guarantee fails.** The database must remain part of the durable data until canonical writes, complete format coverage and isolated delete-and-rebuild checks pass.
+**Audited baseline result: the requested zero-loss rebuild guarantee failed.** The implementation checklist now tracks the replacement and its test evidence. Retain first-upgrade legacy data and keep the native release gate open until device durability, performance and workflow checks pass; the historical findings alone do not establish the updated implementation's release status.
