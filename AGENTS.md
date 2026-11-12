@@ -21,6 +21,23 @@ Until the persistence release gate passes, work on persistence, its migration/re
 - Validate canonical recovery before migrations, cleanup, transcription and upload recovery run. Garbage collection follows committed tombstones and canonical reference checks; missing SQLite rows are not deletion authorization.
 - The implemented authority is the complete live `library.pulse` directory: YAML slots, verified publication markers and immutable assets. Transfer ZIPs are snapshots. Preserve the package as a unit and document any new authoritative file; never describe an older shared ZIP or YAML alone as the current complete authority.
 
+## Pull request scope and reviewer effort
+
+- Optimize for the human reviewer's total effort. Use the smallest complete, cohesive change that delivers the agreed outcome; neither fewer lines nor more PRs automatically makes review easier. Exclude unrelated features, refactors and dependency upgrades.
+- Default to one PR per agreed plan. Milestones and implementation phases are checklist checkpoints inside that PR, not instructions to create branches or dependent PRs. Preserve the user's agreed review boundary.
+- Keep tightly coupled types, schema/migrations, runtime wiring, recovery behavior, tests and required documentation together when a reviewer needs them to establish correctness. Do not split them into artificial foundation/runtime/transfer layers that require reconstructing one behavior across several PRs.
+- Split work only when doing so reduces human review effort and each resulting PR has a clear purpose, is independently understandable and useful, and passes its relevant checks against its stated base. Do not publish inactive scaffolding solely to reduce a later diff or split to meet an arbitrary file/line limit. If a cohesive change is necessarily broad, provide a concise review map of the affected subsystems and their interactions.
+- Prefer independent PRs for independent outcomes. Create dependent PRs only for a necessary prerequisite; keep the chain as short as possible and explain the dependency and merge order. A request for one PR per plan does not authorize a separate stack for every phase within a plan.
+- Write the PR title and description around the final change: the problem, resulting behavior, affected subsystems, validation and material risks or remaining acceptance work. State any required predecessor by PR number and why it is required. A reviewer should understand the scope, breadth and depth without reading other PR descriptions or this conversation.
+
+Before opening, splitting or substantially rescoping a PR, verify this checklist and record the relevant conclusions in its description:
+
+- [ ] The PR has one clear outcome that can be summarized in one sentence; every changed file supports it.
+- [ ] The diff includes the implementation, tests, migrations and documentation needed to assess that outcome, with unrelated work removed.
+- [ ] A reviewer can assess correctness from this diff and its stated base; no required behavior or validation is hidden in another unmerged PR.
+- [ ] Each dependency is necessary and explicitly linked with its reason and merge order; avoidable dependencies have been removed.
+- [ ] Relevant checks ran against the actual PR contents/base, and skipped coverage or remaining release gates are stated accurately.
+
 ## Working and verification
 
 - Keep changes focused and preserve existing work. Inspect `git status` before edits; coordinate ownership of shared files and lockfiles. Native engines and PulseVault are pinned submodules; change their pointers only deliberately.
