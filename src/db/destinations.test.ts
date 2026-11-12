@@ -23,6 +23,10 @@ jest.mock('./client', () => {
   const db = drizzle(async (sql, params, method) => {
     const statement = sqlite.prepare(sql);
     if (method === 'run') {
+      if (/^update "upload_destinations"/i.test(sql) && mockFailure.nextRowUpdate) {
+        mockFailure.nextRowUpdate = false;
+        throw new Error('canonical publication failed');
+      }
       statement.run(...params);
       if (/^(insert into|update) "upload_destinations"/i.test(sql)) mockWrites.push('row');
       return { rows: [] };
@@ -36,7 +40,7 @@ const mockTokens = new Map<string, string>();
 /** Every token write and row write, in order, to check which lands first. */
 const mockWrites: string[] = [];
 /** Set to make the next write of a token (not a clear) fail, as a full or locked keychain would. */
-const mockFailure = { nextTokenWrite: false };
+const mockFailure = { nextTokenWrite: false, nextRowUpdate: false };
 jest.mock('./secure-token', () => ({
   getDestinationToken: async (id: string) => mockTokens.get(id) ?? null,
   setDestinationToken: async (id: string, token: string | null) => {
@@ -107,6 +111,7 @@ beforeEach(() => {
   mockTokens.clear();
   mockWrites.length = 0;
   mockFailure.nextTokenWrite = false;
+  mockFailure.nextRowUpdate = false;
 });
 
 describe('a plain link’s destination', () => {
@@ -298,6 +303,43 @@ describe('a place’s destination', () => {
     await expect(addDestination(upload('art-9'), place('r9'))).rejects.toThrow();
     const [first] = (await destinationsQuery).filter((row) => row.ref === 'r9');
     expect(await getDestination(first.id)).toMatchObject({ ...upload('art-9'), token: null });
+  });
+
+  it('restores the previous protected token when the canonical metadata update fails', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+    setCreatedAt(id, 100);
+    const before = await destinationsQuery;
+    mockWrites.length = 0;
+    mockFailure.nextRowUpdate = true;
+
+    await expect(
+      addDestination(upload('art-2'), place('r1', { label: 'New label' })),
+    ).rejects.toThrow();
+
+    expect(await destinationsQuery).toEqual(before);
+    expect(await getDestination(id)).toMatchObject(upload('art-1'));
+    expect(mockTokens.get(id)).toBe('token-art-1');
+    expect(mockWrites).toEqual(['token:clear', 'token:token-art-1']);
+    expect([...mockTokens.values()]).not.toContain('token-art-2');
+  });
+
+  it('reports both failures when protected-token rollback also fails', async () => {
+    const id = await addDestination(upload('art-1'), place('r1'));
+    mockFailure.nextRowUpdate = true;
+    mockFailure.nextTokenWrite = true;
+    let failure: unknown;
+    try {
+      await addDestination(upload('art-2'), place('r1'));
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toHaveLength(2);
+    expect((failure as AggregateError).message).toContain('could not be restored');
+    expect(await destinationsQuery).toMatchObject([{ id, artifactId: 'art-1' }]);
+    expect(mockTokens.has(id)).toBe(false);
+    expect([...mockTokens.values()]).not.toContain('token-art-2');
   });
 
   it('takes the place of the same upload paired as a plain link before an upgrade', async () => {
