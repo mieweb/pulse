@@ -1,8 +1,16 @@
 import { File } from 'expo-file-system';
-import { strFromU8, unzipSync } from 'fflate';
+import { strFromU8 } from 'fflate';
 
 import { insertImportedDraft } from '@/db/drafts';
 import { describeError } from '@/features/upload/upload-log';
+import {
+  decodePulseArchiveEntries,
+  PULSE_MAX_ARCHIVE_BYTES,
+  PULSE_YAML_ENTRY,
+  readPulseArchiveEntries,
+} from '@/pulse/archive';
+import type { PulseDocument } from '@/pulse/document';
+import { getPulsePublicationGeneration } from '@/pulse/runtime';
 import { conformToContract } from '@/utils/contract-gate';
 import {
   absolutize,
@@ -18,6 +26,7 @@ import { importFailureNote } from '@/utils/import-copy';
 import { editTimelineMs, parseEdit } from '@/utils/segment-window';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 import { isPulseManifest, MANIFEST_NAME } from './manifest';
+import { importPulseArchiveCopy, restoreDecodedPulseArchive } from './native-archive';
 
 /** A clip the bundle carried that was left out of its draft. */
 export type SkippedClip = {
@@ -30,7 +39,7 @@ export type SkippedClip = {
   detail: string;
 };
 
-export type ImportResult = { draftIds: string[]; skipped: SkippedClip[] };
+export type ImportResult = { draftIds: string[]; skipped: SkippedClip[]; notes?: string[] };
 
 /** "3 clips skipped: damaged video" — the reason only when every skipped clip shares it. */
 export function skippedSummary(skipped: SkippedClip[]): string {
@@ -82,33 +91,41 @@ const TOO_BIG = 'This .pulse bundle is too large to import.';
 // bundle whose entries claim to inflate far beyond the cap is a deflate bomb,
 // not a real export. The whole archive is held in memory during import, so the
 // cap also keeps legitimate-but-huge files from OOMing the app.
-const MAX_BUNDLE_BYTES = 1024 * 1024 * 1024; // 1 GiB
+const MAX_BUNDLE_BYTES = PULSE_MAX_ARCHIVE_BYTES;
 
-/**
- * Unpack a `.pulse` bundle: validate it, write each clip back to disk under a FRESH draft id
- * (never the source's — so importing can't clobber a local draft and a bundle can be imported
- * repeatedly), regenerate thumbnails, then commit the rows. Each draft is independent: a bad
- * one is rolled back (its files removed) and skipped rather than aborting the whole import.
- */
-export async function importPulseFile(fileUri: string): Promise<ImportResult> {
+async function readArchive(fileUri: string): Promise<Record<string, Uint8Array>> {
   const file = new File(fileUri);
   if ((file.size ?? 0) > MAX_BUNDLE_BYTES) throw new Error(TOO_BIG);
-  const bytes = await file.bytes();
+  return readPulseArchiveEntries(await file.bytes());
+}
 
-  let archive: Record<string, Uint8Array>;
-  try {
-    let declaredTotal = 0;
-    archive = unzipSync(bytes, {
-      filter: (entry) => {
-        declaredTotal += entry.originalSize;
-        if (declaredTotal > MAX_BUNDLE_BYTES) throw new Error(TOO_BIG);
-        return true;
-      },
-    });
-  } catch (e) {
-    throw new Error(e instanceof Error && e.message === TOO_BIG ? TOO_BIG : BAD_FILE);
+/** Exact replacement is an explicit recovery API, separate from the normal copy importer. */
+export async function restorePulseArchive(fileUri: string): Promise<PulseDocument> {
+  const expectedGeneration = getPulsePublicationGeneration();
+  const archive = await readArchive(fileUri);
+  return restoreDecodedPulseArchive(decodePulseArchiveEntries(archive), expectedGeneration);
+}
+
+/**
+ * Copy a `.pulse` bundle under fresh identities, preserving the existing library. V2 verifies
+ * every referenced byte and commits all projects together. The incomplete legacy v1 reader
+ * retains its old conforming/partial-import behavior and reports that limitation explicitly.
+ */
+export async function importPulseFile(fileUri: string): Promise<ImportResult> {
+  const archive = await readArchive(fileUri);
+  if (archive[PULSE_YAML_ENTRY]) {
+    const decoded = decodePulseArchiveEntries(archive);
+    const draftIds = await importPulseArchiveCopy(decoded);
+    return { draftIds, skipped: [] };
   }
 
+  return importLegacyPulseArchive(archive);
+}
+
+/** Legacy v1 can normalize/skip clips and never contained all durable project fields. */
+async function importLegacyPulseArchive(
+  archive: Record<string, Uint8Array>,
+): Promise<ImportResult> {
   const manifestEntry = archive[MANIFEST_NAME];
   if (!manifestEntry) throw new Error(BAD_FILE);
 
@@ -281,5 +298,11 @@ export async function importPulseFile(fileUri: string): Promise<ImportResult> {
     const why = skipped.length > 0 ? ` (${skippedSummary(skipped)})` : '';
     throw new Error(`No drafts could be imported from this file${why}.`);
   }
-  return { draftIds, skipped };
+  return {
+    draftIds,
+    skipped,
+    notes: [
+      'Legacy v1 bundle: transcripts, corrections and other omitted project data cannot be recovered. Media may be conformed during copy import.',
+    ],
+  };
 }

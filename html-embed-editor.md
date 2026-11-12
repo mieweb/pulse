@@ -1,6 +1,6 @@
 # Browser and HTML embedded Pulse editor implementation plan
 
-**Review-stack phase: Canonical runtime cutover.** This layer activates canonical package saves, guarded SQLite projections and recovery-aware startup in the standalone application. Portable sharing/import still uses the existing incomplete v1 path. V2 transfer, explicit archive restore and the library-backup UI are the next layer. See [merge order and layer validation](./review-stack.md).
+**Review-stack phase: Complete transfer and backup.** This layer completes v2 portable sharing/copy import, the explicit full-library archive-restore API and the library-backup UI on top of the canonical runtime. Native crash/relaunch, durability, workflow and performance release checks remain open. See [merge order and layer validation](./review-stack.md).
 
 Status: implementation plan only. Prepared 2026-11-12. No package publication or documentation-site deployment is part of this planning task. All package names, new paths, APIs, scripts, and story IDs below are **proposals**, unless a source is explicitly described as existing.
 

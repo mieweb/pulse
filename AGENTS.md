@@ -1,10 +1,10 @@
 # Repository instructions
 
-**Review-stack phase: Canonical runtime cutover.** This layer activates canonical package saves, guarded SQLite projections and recovery-aware startup in the standalone application. Portable sharing/import still uses the existing incomplete v1 path. V2 transfer, explicit archive restore and the library-backup UI are the next layer. See [merge order and layer validation](./review-stack.md).
+**Review-stack phase: Complete transfer and backup.** This layer completes v2 portable sharing/copy import, the explicit full-library archive-restore API and the library-backup UI on top of the canonical runtime. Native crash/relaunch, durability, workflow and performance release checks remain open. See [merge order and layer validation](./review-stack.md).
 
 ## Current priority
 
-Complete the [canonical Pulse persistence checklist](./sqlite-pulse-implementation-plan.md) before the native or browser embedding projects. Read the [current design](./sqlite-pulse-persistence-design.md) and [baseline audit](./sqlite-pulse-source-of-truth-audit.md) before changing persistence. This layer activates the canonical-file/projection boundary and recovery-aware application startup; v2 archive integration belongs to the backup layer. The audit's SQLite-authority findings describe its recorded pre-implementation baseline.
+Complete the [canonical Pulse persistence checklist](./sqlite-pulse-implementation-plan.md) before the native or browser embedding projects. Read the [current design](./sqlite-pulse-persistence-design.md) and [baseline audit](./sqlite-pulse-source-of-truth-audit.md) before changing persistence. This branch implements the canonical-file/projection boundary and recovery tests; native durability, performance and workflow release gates remain open. The audit's SQLite-authority findings describe its recorded pre-implementation baseline.
 
 Until the persistence release gate passes, work on persistence, its migration/recovery tests, and necessary standalone compatibility fixes. Defer unrelated Capacitor/Cordova integration, browser media engines, shared UI extraction and embedding package publication. Keep the embedding plans as dependent follow-up plans. A later explicit user instruction can change this priority.
 

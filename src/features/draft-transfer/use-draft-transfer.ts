@@ -58,11 +58,17 @@ export function useDraftTransfer() {
 
     setState('importing');
     try {
-      const { draftIds, skipped } = await importPulseFile(asset.uri);
+      const { draftIds, skipped, notes } = await importPulseFile(asset.uri);
       const imported = `${formatCount(draftIds.length, 'draft', 'drafts')} imported`;
       // Clips the phone couldn't take are left out, not fatal: say so, without a dialog.
-      if (skipped.length > 0) {
-        showToast({ kind: 'warning', title: imported, message: skippedSummary(skipped) });
+      if (skipped.length > 0 || notes?.length) {
+        showToast({
+          kind: 'warning',
+          title: imported,
+          message: [skipped.length ? skippedSummary(skipped) : null, ...(notes ?? [])]
+            .filter(Boolean)
+            .join(' '),
+        });
       } else {
         showToast(imported);
       }

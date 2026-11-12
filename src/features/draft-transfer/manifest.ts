@@ -1,4 +1,5 @@
-// The `.pulse` bundle format — a self-contained, cross-device draft transfer.
+// Legacy v1 import-copy format. New exports use the complete v2 pulse.yaml document
+// and checksum codec in src/pulse/archive.ts. V1 is intentionally incomplete.
 //
 // A `.pulse` file is a ZIP archive (STORE/no recompression — the media is already
 // H.264) holding this `manifest.json` at the root plus the raw clip files under `media/`.
@@ -41,7 +42,7 @@ export type BundleDraft = {
 
 export type PulseManifest = {
   format: typeof PULSE_FORMAT;
-  version: number;
+  version: typeof PULSE_VERSION;
   /** When the bundle was written (ms epoch); informational. */
   exportedAt: number;
   drafts: BundleDraft[];
@@ -52,7 +53,7 @@ export function isPulseManifest(value: unknown): value is PulseManifest {
   if (typeof value !== 'object' || value === null) return false;
   const m = value as Record<string, unknown>;
   if (m.format !== PULSE_FORMAT) return false;
-  if (typeof m.version !== 'number') return false;
+  if (m.version !== PULSE_VERSION) return false;
   if (!Array.isArray(m.drafts)) return false;
   return m.drafts.every((d) => {
     if (typeof d !== 'object' || d === null) return false;
