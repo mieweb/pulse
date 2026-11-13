@@ -2,31 +2,17 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useCallback, useEffect } from 'react';
 import { BackHandler, ScrollView, StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { PrimaryButton } from '@/components/primary-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { EaseOut } from '@/constants/motion';
 import { Spacing } from '@/constants/theme';
 import { markOnboardingComplete } from '@/db/settings';
 import { WELCOME_FEATURES } from '@/features/onboarding/steps';
 import { useTextScale } from '@/hooks/use-text-scale';
 import { useTheme } from '@/hooks/use-theme';
-
-/**
- * The rows arrive one after another, after the title: quick enough not to keep anyone waiting.
- * Continue doesn't wait for them, or move: it fades in at once, so it's never a moving or invisible
- * target.
- */
-const ENTER_MS = 400;
-const ROW_STAGGER_MS = 80;
-const rowEnter = (i: number) =>
-  FadeInDown.duration(ENTER_MS)
-    .easing(EaseOut)
-    .delay(200 + i * ROW_STAGGER_MS);
 
 /** Width of the column the feature glyphs centre in, at the default text size. */
 const FEATURE_ICON_COLUMN = 40;
@@ -68,7 +54,7 @@ export function OnboardingScreen() {
       <ScrollView
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.six }]}
         showsVerticalScrollIndicator={false}>
-        <Animated.View entering={FadeIn.duration(ENTER_MS).easing(EaseOut)} style={styles.hero}>
+        <View style={styles.hero}>
           <Image
             source={require('../../../assets/images/pulse-logo-master-2048.png')}
             style={styles.logo}
@@ -78,11 +64,11 @@ export function OnboardingScreen() {
           <ThemedText type="largeTitle" style={styles.title} accessibilityRole="header">
             Welcome to Pulse
           </ThemedText>
-        </Animated.View>
+        </View>
 
         <View style={styles.features}>
           {WELCOME_FEATURES.map((feature, i) => (
-            <Animated.View key={feature.title} entering={rowEnter(i)} style={styles.feature}>
+            <View key={feature.title} style={styles.feature}>
               <View style={[styles.featureIcon, iconColumn]}>
                 <Icon name={feature.icon} size={30} tintColor={theme.accent} scalesWithText />
               </View>
@@ -92,14 +78,12 @@ export function OnboardingScreen() {
                   {feature.text}
                 </ThemedText>
               </View>
-            </Animated.View>
+            </View>
           ))}
         </View>
       </ScrollView>
 
-      <Animated.View
-        entering={FadeIn.duration(ENTER_MS / 2).easing(EaseOut)}
-        style={[styles.footer, { paddingBottom: insets.bottom + Spacing.four }]}>
+      <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.four }]}>
         <View style={styles.privacy}>
           <Icon name="lock.fill" size={14} tintColor={theme.textSecondary} scalesWithText />
           <ThemedText type="footnote" themeColor="textSecondary" style={styles.privacyText}>
@@ -107,7 +91,7 @@ export function OnboardingScreen() {
           </ThemedText>
         </View>
         <PrimaryButton label="Continue" onPress={() => finish(true)} />
-      </Animated.View>
+      </View>
     </ThemedView>
   );
 }

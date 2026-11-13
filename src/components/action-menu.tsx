@@ -1,16 +1,9 @@
 import type { SymbolViewProps } from 'expo-symbols';
 import { Icon } from '@/components/icon';
-import { Modal, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
-import Animated, {
-  FadeIn,
-  Keyframe,
-  ReduceMotion,
-  useReducedMotion,
-} from 'react-native-reanimated';
+import { Modal, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { EaseOut } from '@/constants/motion';
 import { FloatShadow, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -39,17 +32,6 @@ const GAP = Spacing.one;
 /** Approximate row height — used only to decide whether the menu opens up or down. */
 const EST_ROW_HEIGHT = 48;
 
-// The menu grows out of its trigger (with `transformOrigin` at the trigger's corner), as the
-// system menus do. No exit animation: a picked or dismissed menu is gone at once, also as theirs.
-const MENU_ENTERING = new Keyframe({
-  0: { opacity: 0, transform: [{ scale: 0.95 }] },
-  100: { opacity: 1, transform: [{ scale: 1 }], easing: EaseOut },
-}).duration(150);
-/**
- * Under Reduce Motion, a fade in place instead of the grow. `Never`, so it still fades (gentler
- * than popping in) rather than following the system to instant: nothing moves either way.
- */
-const MENU_ENTERING_REDUCED = FadeIn.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 /**
  * A popover menu anchored to a control (e.g. a ⋯ button) rather than a bottom sheet. Pops
@@ -60,7 +42,6 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { width: screenW, height: screenH } = useWindowDimensions();
-  const reduceMotion = useReducedMotion();
 
   if (!anchor) return null;
 
@@ -80,8 +61,7 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
         <Pressable onPress={() => {}} style={[styles.menu, { top, right, width: MENU_WIDTH }]}>
           {/* `cardRaised`: white in light, and in dark one gray above the cards it floats over —
               the card fill itself left the menu indistinguishable from the card under it. */}
-          <Animated.View
-            entering={reduceMotion ? MENU_ENTERING_REDUCED : MENU_ENTERING}
+          <View
             style={[
               styles.card,
               {
@@ -112,7 +92,7 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
                 </Pressable>
               );
             })}
-          </Animated.View>
+          </View>
         </Pressable>
       </Pressable>
     </Modal>

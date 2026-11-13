@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DestructiveAction } from '@/components/destructive-action';
@@ -20,10 +20,20 @@ import { tallSheetFits } from '@/utils/sheet-fit';
 
 import { currentDeviceProfile } from './device-profile';
 import { applyModelSelection, isModelReady } from './model-manager';
-import { getModel, LARGE_MODEL_BYTES, modelCaveat, MODELS, type WhisperModel } from './models';
+import {
+  getModel,
+  LARGE_MODEL_BYTES,
+  modelCaveat,
+  modelsFor,
+  resolveSelectedModel,
+  type WhisperModel,
+} from './models';
 import { useTranscriptionStatus } from './transcription-status';
 
 const sizeMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+
+/** Parakeet's weights are NVIDIA's, licensed CC BY 4.0 (the Whisper models are MIT). */
+const CC_BY_4_URL = 'https://creativecommons.org/licenses/by/4.0/';
 
 /** Matches the active ring, so selecting a row doesn't shift the list. */
 const RING_WIDTH = 1.5;
@@ -46,19 +56,19 @@ function statusLine(status: ReturnType<typeof useTranscriptionStatus>): string |
 }
 
 /**
- * The on-device AI sheet, opened from the export screen's captions button and the captions
- * editor. Today it holds a single section — Captions — but it's structured so future on-device
- * features can slot in as additional sections. Selecting a model persists the choice and frees the
- * previous model's weights/contexts (`applyModelSelection`); the new model is downloaded lazily the
- * next time a draft is exported, not here — so selecting records intent without blocking on a
- * download. A large model not on disk yet asks first, in the sheet itself. The active model can be
+ * The on-device AI sheet, opened from the editor's Captions tool (and its Model tool). Today it
+ * holds a single section — Captions — but it's structured so future on-device features can slot in
+ * as additional sections. Selecting a model persists the choice and frees the previous model's
+ * weights/contexts (`applyModelSelection`); the editor downloads the new model once the sheet
+ * closes, not the sheet — so selecting records intent without blocking on a download. A large model not on disk yet asks first, in the sheet itself. The active model can be
  * removed here to free disk. Same sheet style as the pairing and destinations sheets.
  */
 export function OnDeviceAiSheet() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { data } = useLiveQuery(selectedModelQuery, []);
-  const selectedId = data[0]?.value ?? null;
+  // As captions read it: a retired or other-platform choice shows as the model it runs as.
+  const selectedId = resolveSelectedModel(data[0]?.value, Platform.OS)?.id ?? null;
   const status = useTranscriptionStatus();
   const busy = statusLine(status);
   const { showToast } = useToast();
@@ -66,7 +76,7 @@ export function OnDeviceAiSheet() {
   // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
   const [scrolls] = useState(() => !tallSheetFits());
   // A large model not on disk yet: the sheet asks first, in place of the list. Choosing it doesn't
-  // download it here; captions download it when they next run (`useMergedTranscription`).
+  // download it here; the editor's Captions tool does (`downloadModel`).
   const [confirming, setConfirming] = useState<WhisperModel | null>(null);
   // A switch or removal under way. Each ends by closing the sheet, so a second tap while the first
   // is still saving would start another change and close twice, popping the screen underneath
@@ -105,7 +115,7 @@ export function OnDeviceAiSheet() {
       return;
     }
     // Free the previous model's contexts + delete other weights now; the new model itself is
-    // downloaded lazily at export time (no background loop pulls it here anymore). The sheet stays
+    // downloaded by the editor's Captions tool (no background loop pulls it here). The sheet stays
     // up until that's done, so a reopened sheet can't start a second change over it. If it fails,
     // the previous model is selected again and the sheet stays open, so choosing again retries.
     try {
@@ -249,7 +259,7 @@ export function OnDeviceAiSheet() {
           {/* A plain list, not a ScrollView: iOS takes over a form sheet's first scroll view, which
             breaks its layout under `fitToContents`. The catalog is a handful of models. */}
           <View style={styles.list}>
-            {MODELS.map((model) => {
+            {modelsFor(Platform.OS).map((model) => {
               const active = model.id === selectedId;
               // Device-aware caveat (RAM floor / Android CPU-only inference) appended to the
               // model's base note — computed here, not in the catalog, so models.ts stays pure.
@@ -293,7 +303,20 @@ export function OnDeviceAiSheet() {
           </View>
 
           <ThemedText type="footnote" themeColor="textSecondary" style={styles.sectionNote}>
-            Transcribed when you export. Only the selected model stays on disk.
+            Each clip is transcribed after you record it. Only the selected model stays on disk.
+          </ThemedText>
+          {/* The credit Parakeet's licence asks for: the work, its author, the licence, and the
+              change made (ggml-org's quantized conversion is what's downloaded). */}
+          <ThemedText type="footnote" themeColor="textSecondary" style={styles.sectionNote}>
+            Parakeet is NVIDIA’s Parakeet TDT 0.6B v3, quantized by ggml-org, under{' '}
+            <ThemedText
+              type="footnote"
+              themeColor="accent"
+              accessibilityRole="link"
+              onPress={() => void Linking.openURL(CC_BY_4_URL)}>
+              CC BY 4.0
+            </ThemedText>
+            . Whisper is OpenAI’s, under the MIT licence.
           </ThemedText>
         </View>
 

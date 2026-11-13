@@ -1,7 +1,8 @@
 import type { MergeClip, MergeOptions } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { setCaptionEdits } from '@/db/captions';
 import {
   deleteSegment,
   reorderSegments,
@@ -23,6 +24,7 @@ import {
   type ParsedEdit,
 } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
+import { useClipTranscription } from '@/features/transcription/use-clip-transcription';
 
 /** A clip as the editor shows and edits it. */
 export type EditorClip = {
@@ -105,6 +107,9 @@ function toEditorClip(s: Segment): EditorClip {
  */
 export function useEditorDraft(draftId: string) {
   const { data: rows, updatedAt } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
+  // Every clip (muted ones too, ready for an unmute) is transcribed in the background while the
+  // editor is open; the captions ask for the ones they're missing at once (useDraftCaptions).
+  useClipTranscription(rows, true);
   const { showToast } = useToast();
   const [pending, setPending] = useState<ReadonlyMap<string, EditValue>>(new Map());
 
@@ -122,14 +127,21 @@ export function useEditorDraft(draftId: string) {
   // A reorder shows at once, until the rows hold it (or it fails).
   const [pendingOrder, setPendingOrder] = useState<readonly string[] | null>(null);
   const rowOrder = rows.map((r) => r.id);
-  if (pendingOrder && rowOrder.filter((id) => pendingOrder.includes(id)).join() === pendingOrder.filter((id) => rowOrder.includes(id)).join()) {
+  if (
+    pendingOrder &&
+    rowOrder.filter((id) => pendingOrder.includes(id)).join() ===
+      pendingOrder.filter((id) => rowOrder.includes(id)).join()
+  ) {
     setPendingOrder(null);
   }
-  const ordered = pendingOrder
-    ? [...rows].sort((a, b) => rank(pendingOrder, a.id) - rank(pendingOrder, b.id))
-    : rows;
-
-  const segments = ordered.map((s) => withPending(s, pending.get(s.id))).filter((s) => effMs(s) > 0);
+  // The same array until the rows, the pending edits or the pending order change, so what's
+  // composed from it (captions, spans) isn't redone on every render.
+  const segments = useMemo(() => {
+    const ordered = pendingOrder
+      ? [...rows].sort((a, b) => rank(pendingOrder, a.id) - rank(pendingOrder, b.id))
+      : rows;
+    return ordered.map((s) => withPending(s, pending.get(s.id))).filter((s) => effMs(s) > 0);
+  }, [rows, pending, pendingOrder]);
 
   // Clips change identity only when what they render changes (a new array rebuilds the preview):
   // a cover landing later, or a label, keeps the same clips.
@@ -140,8 +152,22 @@ export function useEditorDraft(draftId: string) {
     clips = segments.map(toEditorClip);
     setBuilt({ signature, clips });
   }
-  // Covers and labels follow the rows without rebuilding the clips.
-  const covers = new Map(segments.map((s) => [s.id, s.thumbnail ? absolutize(s.thumbnail) : null]));
+  // Covers, labels and caption edits follow the rows without rebuilding the clips.
+  // Same maps (by identity) until one of them changes, so what they feed doesn't re-render.
+  const coversKey = segments.map((s) => `${s.id}=${s.thumbnail ?? ''}`).join('|');
+  const captionsKey = segments.map((s) => `${s.id}=${s.captionEdit ?? ''}`).join('\u0000');
+  const covers = useMemo(
+    () => new Map(segments.map((s) => [s.id, s.thumbnail ? absolutize(s.thumbnail) : null])),
+    // `coversKey` is the segments' covers as one value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [coversKey],
+  );
+  const captionEdits = useMemo(
+    () => new Map(segments.map((s) => [s.id, s.captionEdit])),
+    // `captionsKey` is the segments' caption edits as one value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [captionsKey],
+  );
 
   const [options, setOptions] = useState<MergeOptions | null>(null);
   useEffect(() => {
@@ -201,6 +227,17 @@ export function useEditorDraft(draftId: string) {
     });
   };
 
+  /** Store clips' edited captions (JSON, or null for the model's words again). */
+  const setCaptions = (values: ReadonlyMap<string, string | null>) => {
+    setCaptionEdits(values).catch((e: unknown) =>
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t save the captions',
+        message: userMessage(e, 'Try again.', 'edit captions'),
+      }),
+    );
+  };
+
   const remove = async (id: string) => {
     try {
       await deleteSegment(id);
@@ -217,12 +254,17 @@ export function useEditorDraft(draftId: string) {
     /** False until the rows are first read. */
     loaded: updatedAt !== undefined,
     clips,
+    /** The clips' rows as they play now (pending edits applied), for the captions. */
+    segments,
     covers,
+    /** Each clip's edited captions (`segments.caption_edit`), by id. */
+    captionEdits,
     options,
     setEdit,
     /** Store a raw value (undo/redo): an edit string, or null to reset. */
     setValue: write,
     reorder,
     remove,
+    setCaptions,
   };
 }

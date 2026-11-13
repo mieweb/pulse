@@ -6,6 +6,7 @@ import {
   clearDrafts,
   seedDraft,
   seedLargeUpload,
+  seedSpeech,
   seedSpeedMixed,
   seedSpeedUniform,
   seedSync,
@@ -54,6 +55,11 @@ export function DevSeedRow() {
       <Pressable onPress={() => void seedSyncMixed()} hitSlop={8}>
         <ThemedText themeColor="accent" type="small">
           + s7
+        </ThemedText>
+      </Pressable>
+      <Pressable onPress={() => void seedSpeech()} hitSlop={8}>
+        <ThemedText themeColor="accent" type="small">
+          + s8
         </ThemedText>
       </Pressable>
       <Pressable onPress={() => void clearDrafts()} hitSlop={8}>

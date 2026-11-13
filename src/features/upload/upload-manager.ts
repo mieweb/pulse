@@ -12,9 +12,8 @@ import {
   setUploadDestination,
 } from '@/db/drafts';
 import { deleteSavedLink, getSavedLink, setSavedLink } from '@/db/secure-token';
-import { getDraftTranscriptRow } from '@/db/transcripts';
 import { linesToVtt } from '@/features/transcription/vtt';
-import { parseTranscriptLines } from '@/features/transcription/whisper';
+import { getDraftCaptions } from '@/features/transcription/draft-captions';
 import { copyToClipboard } from '@/utils/clipboard';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { hostOf } from '@/utils/format';
@@ -717,12 +716,11 @@ class BackgroundUploadManager {
         file: relatedFile,
       });
 
-    // Captions: the draft's transcript of the video (hand-edit if present, else auto).
-    const row = await getDraftTranscriptRow(draftId);
-    const lines = parseTranscriptLines(row?.editedLines ?? row?.lines);
-    if (lines.length > 0) {
+    // Captions: composed from the clips as they are now (their edits and hand-edited words).
+    const captions = await getDraftCaptions(draftId);
+    if (captions.lines.length > 0) {
       this.setRunLive(run, { status: 'uploading', phase: 'captions', progress: 0 });
-      const vttFile = writeTempTextFile(`${draftId}.vtt`, linesToVtt(lines));
+      const vttFile = writeTempTextFile(`${draftId}.vtt`, linesToVtt(captions.lines, captions.y));
       run.temps.push(vttFile);
       await related(`${draftId}.vtt`, 'captions', vttFile);
     }

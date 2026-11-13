@@ -1,7 +1,6 @@
 /**
- * Pure undo/redo history with op-key coalescing, used by the subtitle editor. Snapshots are
- * whole values (the editor stores `Cue[]` arrays, which share unchanged cue objects, so the
- * memory cost per step is one array). Kept free of React so it is unit-testable.
+ * Pure undo/redo history with op-key coalescing, used by the editor (use-editor-history).
+ * Snapshots are whole values. Kept free of React so it is unit-testable.
  */
 
 export const COALESCE_MS = 900; // same-op edits inside this window collapse into one undo step

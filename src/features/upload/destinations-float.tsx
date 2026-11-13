@@ -1,12 +1,10 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef } from 'react';
-import { Pressable, StyleSheet } from 'react-native';
-import Animated, { FadeIn, FadeOut, ReduceMotion } from 'react-native-reanimated';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { EaseOut } from '@/constants/motion';
 import { FloatShadow, Opacity, Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatCount, hostOf } from '@/utils/format';
@@ -18,13 +16,6 @@ const FAB_SIZE = 60;
 const FAB_CLEARANCE = Spacing.four + FAB_SIZE + Spacing.three;
 /** Longest the pill gets on wide screens, so it stays a pill rather than a bar. */
 const PILL_MAX_WIDTH = 280;
-
-/**
- * The pill fades in when the first server is paired and out when the last one goes. Opacity only,
- * so it runs under Reduce Motion too: Reanimated's default would skip it there and pop the pill in.
- */
-const ENTERING = FadeIn.duration(200).easing(EaseOut).reduceMotion(ReduceMotion.Never);
-const EXITING = FadeOut.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 /**
  * A floating pill on the home screen surfacing the device-wide pool of paired upload destinations
@@ -52,13 +43,8 @@ export function DestinationsFloat() {
 
   return (
     // The lane runs from the left margin to just short of the + FAB, so a long host truncates
-    // instead of sliding under it; taps outside the pill fall through to the list. The lane is
-    // what mounts and unmounts, so it carries the fade.
-    <Animated.View
-      entering={ENTERING}
-      exiting={EXITING}
-      pointerEvents="box-none"
-      style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
+    // instead of sliding under it; taps outside the pill fall through to the list.
+    <View pointerEvents="box-none" style={[styles.lane, { bottom: insets.bottom + Spacing.four }]}>
       <Pressable
         // The count picks the sheet's size up front (`destinationsSheetOptions`).
         onPress={() => {
@@ -98,7 +84,7 @@ export function DestinationsFloat() {
             : formatCount(destinations.length, 'destination', 'destinations')}
         </ThemedText>
       </Pressable>
-    </Animated.View>
+    </View>
   );
 }
 

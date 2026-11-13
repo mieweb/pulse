@@ -126,10 +126,9 @@ user (AAB) downloads **one** ABI. Per-device (arm64) ≈ **78 MB** uncompressed 
 4. **FFmpeg → AVFoundation (iOS) / MediaCodec (Android)** for speed/crop, dropping
    ffmpeg-kit entirely → ~13–17 MB. Done (2026-10): pulse-editor (AVFoundation / Media3)
    replaced the video-trim module and its FFmpeg; not re-measured since.
-5. **Skia (10.8 MB Android)** — rewrite the karaoke caption overlay
-   (`src/features/transcription/caption-overlay.tsx`, the only Skia consumer) in plain RN +
-   Reanimated to drop react-native-skia. Worth it mainly for Android; on iOS it's already
-   dead-stripped into the main binary.
+5. **Skia (10.8 MB Android)** — no longer removable: it now draws the editor's timeline
+   (`src/features/editor/timeline-canvas.tsx`) and the captions
+   (`src/features/transcription/skia-caption.tsx`).
 6. **iOS AVIF** — only removable by building ExpoImage from source
    (`EXPO_USE_PRECOMPILED_MODULES=false`), which makes iOS builds much slower for ~3.8 MB.
    Marginal.

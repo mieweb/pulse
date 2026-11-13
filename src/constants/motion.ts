@@ -10,6 +10,3 @@ import { cubicBezier, Easing } from 'react-native-reanimated';
 export const EaseOut = Easing.bezier(0.23, 1, 0.32, 1);
 /** `EaseOut` for Reanimated CSS transitions (`transitionTimingFunction`). */
 export const EaseOutCss = cubicBezier(0.23, 1, 0.32, 1);
-
-/** Lists closing a gap (a deleted row). */
-export const ListReflowMs = 250;

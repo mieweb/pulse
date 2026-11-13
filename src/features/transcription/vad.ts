@@ -1,6 +1,8 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { initWhisperVad, type WhisperVadContext } from 'whisper.rn';
 
+import { whisperJsiReady } from './whisper-jsi';
+
 /**
  * Voice-activity-detection pre-gate for transcription.
  *
@@ -64,7 +66,8 @@ let unavailable = false;
  * Build a VAD context on the CPU. whisper.rn 0.7.4 runs VAD on the CPU on both platforms whatever
  * `useGpu` says; it defaults to true, so it's set to false here to say what actually happens.
  */
-function initVadContext(filePath: string): Promise<WhisperVadContext> {
+async function initVadContext(filePath: string): Promise<WhisperVadContext> {
+  await whisperJsiReady();
   return initWhisperVad({ filePath, useGpu: false });
 }
 

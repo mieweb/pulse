@@ -1,10 +1,9 @@
 import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AccessibilityInfo, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   cancelAnimation,
-  FadeIn,
   ReduceMotion,
   useAnimatedStyle,
   useReducedMotion,
@@ -102,11 +101,6 @@ const EXIT = { duration: 240, easing: EaseOut };
  * default (follow the system) would make this fade instant too.
  */
 const FADE = { duration: 200, easing: EaseOut, reduceMotion: ReduceMotion.Never };
-/**
- * A replacing toast's content fading in over the surface that stays put. Opacity only, so it
- * stays under Reduce Motion (`Never`): gentler than a snap, and nothing moves.
- */
-const SWAP_IN = FadeIn.duration(150).easing(EaseOut).reduceMotion(ReduceMotion.Never);
 
 /** Rubber-banding for a pull past the resting point: 1:1 at first, never past the limit. */
 function rubberBand(offset: number): number {
@@ -179,8 +173,7 @@ export function Toast({
   const swiped = useSharedValue(false);
   const isLeaving = useSharedValue(leaving);
 
-  // The first toast slides in whole; a replacement's content fades in over the surface.
-  const [firstId] = useState(id);
+  // The first toast slides in whole; a replacement swaps in at once.
 
   useEffect(() => {
     isLeaving.set(leaving);
@@ -283,7 +276,7 @@ export function Toast({
   const body = (
     // Keyed by id so a replacement swaps in whole (and any press on the old action button ends
     // with it). Opacity on this child of the glass is fine; it's an ancestor's that blanks it.
-    <Animated.View key={id} entering={id === firstId ? undefined : SWAP_IN} style={styles.row}>
+    <View key={id} style={styles.row}>
       <Icon name={ICONS[kind]} size={22} tintColor={iconColor(kind, mode)} scalesWithText={1.6} />
       <View style={styles.text}>
         <ThemedText type="headline" numberOfLines={3} maxFontSizeMultiplier={1.6}>
@@ -330,7 +323,7 @@ export function Toast({
           </ThemedText>
         </Pressable>
       )}
-    </Animated.View>
+    </View>
   );
 
   return (

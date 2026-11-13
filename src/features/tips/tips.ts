@@ -41,14 +41,9 @@ export const TIPS = {
   },
   captions: {
     title: 'Add captions',
-    message: 'Captions are made on this phone. Pick a model once and they’re added for you.',
+    message:
+      'Captions are made on this phone. Pick a model once and they’re added to every clip. Drag one to move them.',
     symbol: 'captions.bubble',
-    kind: 'popover',
-  },
-  captionEdit: {
-    title: 'Fix a caption',
-    message: 'Tap a caption to split, merge or delete it. Tap it again to change its words.',
-    symbol: 'pencil',
     kind: 'popover',
   },
 } as const satisfies Record<string, Tip>;

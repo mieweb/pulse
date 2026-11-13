@@ -2,8 +2,45 @@ import type { ParsedEdit } from '@/utils/segment-window';
 
 // Pure timeline maths for the editor, safe to call from worklets (UI thread) and from JS.
 
-/** Strip scale: dp per timeline ms (48 dp per second; a 12 s clip is a 576 dp tile). */
+/** The strip's scale when the editor opens: dp per timeline ms (48 dp per second; a 12 s clip is
+ * a 576 dp tile). A pinch zooms it between the draft fitting the strip and MAX_DP_PER_MS. */
 export const DP_PER_MS = 0.048;
+/** The furthest a pinch zooms in: 600 dp per second (a 0.3 s caption is 180 dp wide). */
+export const MAX_DP_PER_MS = 0.6;
+
+/** The scale at which `totalMs` fills `widthDp` (the furthest a pinch zooms out), at most the
+ * opening scale. */
+export function minDpPerMs(totalMs: number, widthDp: number): number {
+  'worklet';
+  return totalMs > 0 && widthDp > 0 ? Math.min(DP_PER_MS, (widthDp * 0.9) / totalMs) : DP_PER_MS;
+}
+
+/** The ruler's marks at a scale: labelled every `majorMs`, a tick every `minorMs`, with labels
+ * about 80 dp apart. (Loops, not `.find` callbacks: it runs in the canvas's worklet.) */
+export function rulerSteps(dpPerMs: number): { majorMs: number; minorMs: number } {
+  'worklet';
+  const steps = [500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000];
+  let majorMs = steps[steps.length - 1];
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i] * dpPerMs >= 80) {
+      majorMs = steps[i];
+      break;
+    }
+  }
+  const parts = [5, 4, 2];
+  let n = 1;
+  for (let i = 0; i < parts.length; i++) {
+    if ((majorMs / parts[i]) * dpPerMs >= 12) {
+      n = parts[i];
+      break;
+    }
+  }
+  return { majorMs, minorMs: majorMs / n };
+}
+
+/** A selected caption word's grip, drawn just outside each of its edges (the strip's touch areas
+ * match it), dp. */
+export const CAP_GRIP = 10;
 /** Shortest clip a trim can make, in source ms. */
 export const MIN_CLIP_SOURCE_MS = 1000;
 /** A crop this close to the whole frame is stored as no crop. */
@@ -44,6 +81,77 @@ export function clipIndexAt(starts: readonly number[], ms: number): number {
   }
   return index;
 }
+
+/** About how wide the captions lane draws a character (11 pt semibold), dp. */
+const LANE_CHAR_DP = 6.6;
+/** Room around a word's text on the lane, and the narrowest a word gets for a fingertip, dp. */
+const WORD_PAD_DP = 8;
+const WORD_MIN_DP = 32;
+/** The most a caption zooms the timeline to on its own (dp per ms): 300 dp a second. */
+const CAPTION_ZOOM_MAX = 0.3;
+
+/** The dp a word needs on the lane: its text with padding, at least a fingertip. */
+const wordDp = (text: string) => Math.max(WORD_MIN_DP, text.length * LANE_CHAR_DP + WORD_PAD_DP);
+
+/**
+ * The scale (dp per ms) for editing a sentence's words on the captions lane: where about half its
+ * words fit their text (each needs its text plus padding over its duration), but never past the
+ * whole sentence fitting on the strip, nor 300 dp a second. With a word tapped (`focus`, its
+ * index), at least where that word fits its text and its grips, however short it is, up to the
+ * deepest zoom: a quick "a" or "I" can be read and trimmed. Left as it is when the strip is
+ * already zoomed in at least that far. Times in centiseconds, as captions keep them.
+ */
+export function captionZoom(
+  words: readonly { text: string; t0: number; t1: number }[],
+  stripWidth: number,
+  focus = -1,
+): ZoomRequest {
+  const durMs = (w: { t0: number; t1: number }) => Math.max(10, (w.t1 - w.t0) * 10);
+  const need = words.map((w) => wordDp(w.text) / durMs(w)).sort((a, b) => a - b);
+  const median = need.length ? need[Math.floor(need.length / 2)] : DP_PER_MS;
+  const spanMs = words.length ? (words[words.length - 1].t1 - words[0].t0) * 10 : 0;
+  const fits = spanMs > 0 ? (stripWidth * 0.9) / spanMs : median;
+  let target = Math.min(CAPTION_ZOOM_MAX, median, fits);
+  const w = words[focus];
+  if (w) {
+    const own = Math.min(MAX_DP_PER_MS, (wordDp(w.text) + CAP_GRIP * 2) / durMs(w));
+    target = Math.max(target, own);
+  }
+  return { min: target, max: MAX_DP_PER_MS, target };
+}
+
+/**
+ * The scale for editing a clip (`lengthMs` long) on the timeline: the whole clip and both its trim
+ * grips on the strip, the clip filling about 80% of it, within the zoom's range (no further out
+ * than the whole draft, no further in than 300 dp a second). Left as it is while the clip already
+ * takes 40–100% of the strip.
+ */
+export function clipZoom(lengthMs: number, totalMs: number, stripWidth: number): ZoomRequest {
+  const len = Math.max(1, lengthMs);
+  const target = clamp((stripWidth * 0.8) / len, minDpPerMs(totalMs, stripWidth), CAPTION_ZOOM_MAX);
+  // The range always holds the target (a short clip's target is capped, a long one's raised to
+  // the draft fitting), so a scale already at it is left alone.
+  return {
+    min: Math.min((stripWidth * 0.4) / len, target),
+    max: Math.max(stripWidth / len, target),
+    target,
+  };
+}
+
+/**
+ * The scale the timeline opens a whole draft at (the recorder's Edit): the whole draft on the
+ * strip while that leaves it at least half the usual scale (a draft up to about 16 s on a phone),
+ * no further in than 300 dp a second; a longer one at the usual scale (about 9 s across), where
+ * frames and words still read.
+ */
+export function draftZoom(totalMs: number, stripWidth: number): number {
+  const fit = totalMs > 0 ? (stripWidth * 0.9) / totalMs : DP_PER_MS;
+  return fit >= DP_PER_MS / 2 ? Math.min(fit, CAPTION_ZOOM_MAX) : DP_PER_MS;
+}
+
+/** A scale to zoom the timeline to (`target`, dp per ms), unless it's already within min … max;
+ * `instant` sets it without the ease (the editor opening). */
+export type ZoomRequest = { min: number; max: number; target: number; instant?: boolean };
 
 /** `m:ss.t`, the readout under the preview. */
 export function formatTime(ms: number): string {

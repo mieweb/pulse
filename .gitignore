@@ -55,3 +55,4 @@ modules/*/android/build/
 
 # Pages site built locally by scripts/build-compat-page.mjs
 _site/
+assets/dev/speech/.source/

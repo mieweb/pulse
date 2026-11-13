@@ -1,11 +1,9 @@
 import { useSyncExternalStore } from 'react';
 
 /**
- * Coarse transcription status, shown in the On-device AI sheet and (for `transcribing`) on the
- * export screen. Unlike the old always-on background engine, work is now driven on demand by the
- * export orchestration (`useMergedTranscription`) and model selection (`model-manager`), which
- * write into this tiny module-level store. `transcribing` is a single-item state now (one merged
- * video per export), so it carries no done/total count.
+ * Coarse transcription status, shown in the On-device AI sheet and the editor's captions. Written
+ * by the clip queue (`transcribing` while a clip is being transcribed), `downloadModel` (a model
+ * download) and model selection (`model-manager`), into this tiny module-level store.
  */
 export type TranscriptionStatus =
   | { kind: 'idle' }
@@ -20,6 +18,11 @@ const listeners = new Set<() => void>();
 export function setTranscriptionStatus(next: TranscriptionStatus): void {
   current = next;
   for (const listener of listeners) listener();
+}
+
+/** Back to idle, if the status is still `kind` (a writer finishing doesn't clear another's). */
+export function clearTranscriptionStatus(kind: TranscriptionStatus['kind']): void {
+  if (current.kind === kind) setTranscriptionStatus({ kind: 'idle' });
 }
 
 function subscribe(onStoreChange: () => void): () => void {
