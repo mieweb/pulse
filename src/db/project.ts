@@ -166,6 +166,7 @@ export function buildProject(
 }
 
 const NEWER = 'This file was made by a newer version of Pulse. Update Pulse to open it.';
+const DAMAGED_PROJECT = 'This .pulse file is damaged.';
 
 /** A parsed document checked against this build's schema: no table or column it doesn't know. */
 export function checkProject(value: unknown): ProjectDocument {
@@ -184,8 +185,24 @@ export function checkProject(value: unknown): ProjectDocument {
   for (const [name, rows] of Object.entries(doc.tables)) {
     const columns = known.get(name);
     if (!columns || !Array.isArray(rows)) throw new Error(NEWER);
-    for (const row of rows)
+    for (const row of rows) {
+      if (typeof row !== 'object' || row === null) throw new Error(DAMAGED_PROJECT);
       if (Object.keys(row).some((k) => !columns.has(k))) throw new Error(NEWER);
+    }
+  }
+  // Every child row's parent is in the file: a copy remaps ids through its parent, and an orphan
+  // would land under `drafts/undefined/`.
+  const t = doc.tables;
+  const idsOf = (rows: Row[] | undefined) => new Set((rows ?? []).map((r) => r.id));
+  const draftIds = idsOf(t.drafts);
+  const segmentIds = idsOf(t.segments);
+  if (
+    [...draftIds, ...segmentIds].some((id) => typeof id !== 'string') ||
+    (t.segments ?? []).some((r) => !draftIds.has(r.draftId)) ||
+    (t.draft_transcripts ?? []).some((r) => !draftIds.has(r.draftId)) ||
+    (t.clip_transcripts ?? []).some((r) => !segmentIds.has(r.segmentId))
+  ) {
+    throw new Error(DAMAGED_PROJECT);
   }
   for (const m of doc.media) {
     if (

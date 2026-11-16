@@ -21,18 +21,7 @@ let ordering = false;
 let snapshot: DraftWrites = { edits: new Set(), order: false };
 const listeners = new Set<() => void>();
 const failureListeners = new Set<(f: WriteFailure) => void>();
-let whenIdle: { resolve(): void; reject(error: Error): void }[] = [];
-const unreportedFailures = new Map<string | null, unknown>();
-
-function takeFailure(): Error | null {
-  if (unreportedFailures.size === 0) return null;
-  const error = new AggregateError(
-    [...unreportedFailures.values()],
-    'Some draft changes could not be saved. Review the draft and try again.',
-  );
-  unreportedFailures.clear();
-  return error;
-}
+let whenIdle: (() => void)[] = [];
 
 function changed() {
   snapshot = { edits: new Set(editing), order: ordering };
@@ -40,18 +29,11 @@ function changed() {
   if (editing.size === 0 && !ordering) {
     const waiting = whenIdle;
     whenIdle = [];
-    // Every caller waiting for this batch receives the same failure. Keep an error until a
-    // flush observes it, even if the failing write finished just before that flush started.
-    const error = waiting.length ? takeFailure() : null;
-    for (const listener of waiting) {
-      if (error) listener.reject(error);
-      else listener.resolve();
-    }
+    for (const resolve of waiting) resolve();
   }
 }
 
 const failed = (f: WriteFailure) => {
-  unreportedFailures.set(f.id, f.error);
   for (const l of failureListeners) l(f);
 };
 
@@ -68,7 +50,6 @@ export function writeEdit(id: string, value: EditValue) {
       try {
         if (v === null) await resetEdit(id);
         else await setEditState(id, v);
-        unreportedFailures.delete(id);
       } catch (error) {
         // A newer value is queued: it's what the editor shows and what gets stored, so this one
         // failing changes nothing the person sees.
@@ -92,7 +73,6 @@ export function writeOrder(order: string[]) {
       nextOrder = null;
       try {
         await reorderSegments(o);
-        unreportedFailures.delete(null);
       } catch (error) {
         if (!nextOrder) failed({ id: null, error });
       }
@@ -119,15 +99,8 @@ export function onWriteFailure(listener: (f: WriteFailure) => void) {
   };
 }
 
-/**
- * Resolves once the queued edits/order are committed; rejects if a newest write failed.
- * A rejection reports that batch. The UI rolls back its optimistic state and shows an error;
- * a subsequent explicit retry may proceed with the reviewed committed state.
- */
+/** Resolves once every edit and reorder asked for so far is stored (or failed). */
 export function flushDraftWrites(): Promise<void> {
-  if (editing.size === 0 && !ordering) {
-    const error = takeFailure();
-    return error ? Promise.reject(error) : Promise.resolve();
-  }
-  return new Promise((resolve, reject) => whenIdle.push({ resolve, reject }));
+  if (editing.size === 0 && !ordering) return Promise.resolve();
+  return new Promise((resolve) => whenIdle.push(resolve));
 }

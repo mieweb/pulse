@@ -4,7 +4,7 @@ import * as Device from 'expo-device';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -132,8 +132,12 @@ export default function AboutScreen() {
     }
   };
 
+  // A ref, not the state: two quick taps both see the state before it re-renders, and a second
+  // backup would clear the first one's files mid-zip.
+  const backingUp = useRef(false);
   const shareLibrary = async () => {
-    if (sharing) return;
+    if (sharing || backingUp.current) return;
+    backingUp.current = true;
     setSharing('library');
     try {
       if (!(await isAvailableAsync())) throw new Error('Sharing isn’t available on this device.');
@@ -150,6 +154,7 @@ export default function AboutScreen() {
         message: userMessage(e, 'Try again.', 'library backup'),
       });
     } finally {
+      backingUp.current = false;
       setSharing(null);
     }
   };
@@ -274,7 +279,7 @@ export default function AboutScreen() {
             accessibilityRole="button"
             accessibilityLabel="Share library backup"
             accessibilityHint="Shares every draft, its videos, captions and settings as one .pulse file. Upload tokens are left out."
-            accessibilityState={{ busy: sharing === 'library' }}
+            accessibilityState={{ busy: sharing === 'library', disabled: sharing !== null }}
             style={({ pressed }) => [
               styles.inlineButton,
               pressed && { backgroundColor: theme.backgroundSelected },
@@ -295,7 +300,7 @@ export default function AboutScreen() {
             disabled={sharing !== null}
             accessibilityRole="button"
             accessibilityLabel="Share logs"
-            accessibilityState={{ busy: sharing === 'logs' }}
+            accessibilityState={{ busy: sharing === 'logs', disabled: sharing !== null }}
             style={({ pressed }) => [
               styles.inlineButton,
               pressed && { backgroundColor: theme.backgroundSelected },

@@ -45,7 +45,8 @@ export function editCoverRelPath(draftId: string, segmentId: string, rev: number
 /**
  * The draft's persisted merged export (relative path). One per draft, inside the draft dir so
  * `deleteDraftDir` removes it for free; its content key lives on the `drafts` row
- * (`merged_signature`). Never bundled into a `.pulse` transfer — it's derived, re-mergeable data.
+ * (`merged_signature`). Left out of draft transfers (merged again after import); a library backup
+ * carries it with that signature.
  */
 export function exportRelPath(draftId: string): string {
   return `drafts/${draftId}/export.mp4`;

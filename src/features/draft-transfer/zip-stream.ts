@@ -20,11 +20,19 @@ const CHUNK = 1 << 20;
 /** fflate writes no ZIP64, so sizes and offsets must fit in 32 bits. */
 const MAX_ZIP_BYTES = 0xffffffff;
 export const TOO_BIG_TO_ZIP = 'This is more than a .pulse file can hold (4 GB).';
+/** Far more than any `.pulse` file's entries need (each is ~100 bytes). */
+const MAX_DIRECTORY_BYTES = 16 << 20;
 
 export type ZipSource = { name: string; file: File } | { name: string; bytes: Uint8Array };
 
 /** Write `sources` to `dest` as a STORE zip, streamed. */
 export function writeZip(dest: File, sources: ZipSource[]): void {
+  // Refuse before writing anything: the sizes are known up front (headers add a few KB).
+  const total = sources.reduce(
+    (sum, s) => sum + ('bytes' in s ? s.bytes.length : (s.file.size ?? 0)),
+    0,
+  );
+  if (total > MAX_ZIP_BYTES) throw new Error(TOO_BIG_TO_ZIP);
   if (dest.exists) dest.delete();
   dest.create({ intermediates: true });
   const out = dest.open(FileMode.WriteOnly);
@@ -92,6 +100,10 @@ export function readZipIndex(handle: FileHandle): Map<string, ZipEntry> {
   const count = tail.getUint16(eocd + 10, true);
   const dirSize = tail.getUint32(eocd + 12, true);
   const dirOffset = tail.getUint32(eocd + 16, true);
+  // A crafted directory size would make this read (and allocate) up to the whole file.
+  if (dirSize > MAX_DIRECTORY_BYTES || dirOffset + dirSize > size) {
+    throw new Error('Damaged zip directory.');
+  }
   const dir = readAt(handle, dirOffset, dirSize);
   const entries = new Map<string, ZipEntry>();
   for (let i = 0, p = 0; i < count; i++) {

@@ -1,6 +1,5 @@
 import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
-import { Directory, File, Paths } from 'expo-file-system';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { editedThumbRelPath, exportRelPath, thumbRelPath } from '@/utils/media-paths';
@@ -55,52 +54,48 @@ export function referencedMediaPaths(conn: SQLiteDatabase, draftIds?: string[]):
   return paths;
 }
 
-/**
- * The files under `drafts/` nothing references. Null — sweep nothing — when a referenced path
- * isn't a plain relative one: it could name one of these files some other way.
- */
-export function unreferencedFiles(files: string[], referenced: Set<string>): string[] | null {
-  for (const p of referenced) {
-    if (
-      p.startsWith('/') ||
-      p.includes('://') ||
-      p.split('/').some((s) => s === '' || s === '.' || s === '..')
-    ) {
-      return null;
-    }
-  }
-  return files.filter((f) => !referenced.has(f));
+const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** A path a row may store: relative, under `drafts/`, with no empty, `.` or `..` segment. */
+export function isSafeMediaPath(path: string): boolean {
+  return (
+    path.startsWith('drafts/') &&
+    !path.includes('\\') &&
+    path.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+  );
 }
 
-/** Every file under `dir`, as paths relative to the documents folder (`prefix/...`). */
-function listFiles(dir: Directory, prefix: string): string[] {
-  if (!dir.exists) return [];
-  return dir
-    .list()
-    .flatMap((e) =>
-      e instanceof Directory ? listFiles(e, `${prefix}/${e.name}`) : [`${prefix}/${e.name}`],
-    );
-}
-
-/** Set by a recovery or a restore: media left without rows may still be wanted, so keep it. */
-export const sweepHold = () => new File(Paths.document, 'backups', 'sweep-hold');
-
 /**
- * Delete the files under `drafts/` that nothing in the library references (left by a crash between
- * a file write and its row, or by older versions' leaks), then empty draft folders. Run at launch,
- * before anything can be recording or rendering into `drafts/`. Returns how many files went.
+ * Refuse a library (a restored backup's database) whose ids or paths could reach outside
+ * `drafts/`: draft and segment ids name folders and files, so `..` in one would let deleting a
+ * draft delete the documents folder. Plain SQL over the columns the file has, so a backup from an
+ * older schema (before its migrations run) is checked too.
  */
-export function sweepUnreferencedMedia(conn: SQLiteDatabase, now: number): number {
-  const hold = sweepHold();
-  if (hold.exists && Number(hold.textSync()) > now) return 0;
-  const root = new Directory(Paths.document, 'drafts');
-  const orphans = unreferencedFiles(listFiles(root, 'drafts'), referencedMediaPaths(conn));
-  if (!orphans) return 0;
-  for (const rel of orphans) new File(Paths.document, ...rel.split('/')).delete();
-  if (root.exists) {
-    for (const dir of root.list()) {
-      if (dir instanceof Directory && listFiles(dir, '').length === 0) dir.delete();
-    }
+export function assertSafeLibrary(conn: SQLiteDatabase): void {
+  const has = (table: string) =>
+    conn
+      .getAllSync<{ name: string }>(`PRAGMA table_info("${table}")`)
+      .reduce((set, c) => set.add(c.name), new Set<string>());
+  const strings = (table: string, column: string) =>
+    has(table).has(column)
+      ? conn
+          .getAllSync<Record<string, unknown>>(`SELECT "${column}" AS v FROM "${table}"`)
+          .map((r) => r.v)
+          .filter((v): v is string => typeof v === 'string')
+      : [];
+  const ids = [...strings('drafts', 'id'), ...strings('segments', 'id')];
+  if (ids.some((id) => !SAFE_ID.test(id))) throw new Error('Unsafe draft or clip id.');
+  if (strings('segments', 'draft_id').some((id) => !SAFE_ID.test(id))) {
+    throw new Error('Unsafe draft or clip id.');
   }
-  return orphans.length;
+  const paths = [
+    ...strings('segments', 'original_filename'),
+    ...strings('segments', 'edited_filename'),
+    ...strings('segments', 'thumbnail'),
+    ...strings('clip_transcripts', 'file'),
+    ...strings('segments', 'caption_edit').map(captionFile),
+  ];
+  for (const path of paths) {
+    if (path != null && !isSafeMediaPath(path)) throw new Error('Unsafe media path.');
+  }
 }

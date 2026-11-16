@@ -28,11 +28,12 @@ import {
 import { exportDrafts } from '@/features/draft-transfer/pack';
 import { importProjectFile, pulseFileKind } from '@/features/draft-transfer/unpack-project';
 import { applyDurability, readDurability } from './durability';
-import { referencedMediaPaths, sweepUnreferencedMedia, unreferencedFiles } from './media-refs';
+import { assertSafeLibrary, referencedMediaPaths } from './media-refs';
 import {
   APP_SCHEMA_VERSION,
   assertSchemaCoverage,
   buildProject,
+  checkProject,
   restoreProject,
   schemaVersion,
   type ProjectDocument,
@@ -403,45 +404,55 @@ describe('schema-driven project document', () => {
     );
     expect(await pulseFileKind(`file://${path}`)).toBe('draft-bundle');
   });
+
+  it('refuses a draft file whose media doesn’t match its MD5, keeping nothing', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const archive = unzipSync(readFileSync(new File(exportDrafts(src, [D], 1234)).path));
+    const doc = JSON.parse(strFromU8(archive['project.json']));
+    doc.media[0].md5 = '0'.repeat(32);
+    const tampered = join(env.cacheDir, 'tampered-draft.pulse');
+    writeFileSync(
+      tampered,
+      zipSync({ ...archive, 'project.json': strToU8(JSON.stringify(doc)) }, { level: 0 }),
+    );
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    expect(() => importProjectFile(dst, `file://${tampered}`, () => 'copy')).toThrow(/damaged/);
+    expect(drizzle(dst, { schema }).select().from(schema.drafts).all()).toEqual([]);
+    expect(existsSync(join(env.docDir, 'drafts', 'copy'))).toBe(false);
+  });
+
+  it('refuses a project whose child rows have no parent', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    const doc = buildProject(conn, { draftIds: [D], now: 0, byteLength });
+    expect(() => checkProject({ ...doc, tables: { ...doc.tables, drafts: [] } })).toThrow(
+      'This .pulse file is damaged.',
+    );
+  });
 });
 
-describe('referencedMediaPaths and the sweep', () => {
+describe('referencedMediaPaths and library safety', () => {
   it('covers every stored and derived path', async () => {
     const conn = await openMigrated();
     seedFixture(conn);
     expect([...referencedMediaPaths(conn)].sort()).toEqual(FIXTURE_MEDIA);
   });
 
-  it('deletes only unreferenced files, and a deleted draft frees its media', async () => {
+  it('refuses ids and paths that could reach outside drafts/', async () => {
     const conn = await openMigrated();
     seedFixture(conn);
-    const orphans = [
-      P(S2, '.cover.100.jpg'), // an earlier edit's cover
-      P(S1, '.upload.mp4'), // a legacy upload copy
-      P('seg-crash', '.mp4'), // a recording whose row never landed
-      `drafts/gone-draft/segments/x.mp4`, // a draft folder without a row
-    ];
-    for (const rel of orphans) media(rel);
-    expect(sweepUnreferencedMedia(conn, 0)).toBe(orphans.length);
-    for (const rel of FIXTURE_MEDIA) expect(existsSync(join(env.docDir, rel))).toBe(true);
-    for (const rel of orphans) expect(existsSync(join(env.docDir, rel))).toBe(false);
-    expect(existsSync(join(env.docDir, 'drafts/gone-draft'))).toBe(false);
-
-    drizzle(conn, { schema }).delete(schema.drafts).run(); // all drafts, rows cascade
-    expect(sweepUnreferencedMedia(conn, 0)).toBe(FIXTURE_MEDIA.length);
-  });
-
-  it('sweeps nothing when a referenced path is not a plain relative one, or while held', async () => {
-    expect(
-      unreferencedFiles(['drafts/a/x.mp4'], new Set(['file:///abs/drafts/a/x.mp4'])),
-    ).toBeNull();
-    const conn = await openMigrated();
-    seedFixture(conn);
-    media(P(S2, '.cover.100.jpg'));
-    mkdirSync(join(env.docDir, 'backups'), { recursive: true });
-    writeFileSync(join(env.docDir, 'backups/sweep-hold'), '100');
-    expect(sweepUnreferencedMedia(conn, 50)).toBe(0);
-    expect(sweepUnreferencedMedia(conn, 150)).toBe(1);
+    expect(() => assertSafeLibrary(conn)).not.toThrow();
+    conn.execSync(`INSERT INTO drafts (id, last_clip_number) VALUES ('..', 0)`);
+    expect(() => assertSafeLibrary(conn)).toThrow('Unsafe draft or clip id.');
+    conn.execSync(`DELETE FROM drafts WHERE id = '..'`);
+    conn.execSync(`UPDATE segments SET thumbnail = 'drafts/../logs/pulse.log' WHERE id = '${S4}'`);
+    expect(() => assertSafeLibrary(conn)).toThrow('Unsafe media path.');
   });
 });
 
@@ -466,7 +477,6 @@ describe('snapshots and launch recovery', () => {
     const opened = openLibrary(5000);
     expect(opened).toMatchObject({ recoveredFrom: 1000, failed: false, restored: false });
     expect(dump(opened.conn)).toEqual(before);
-    expect(existsSync(join(env.docDir, 'backups/sweep-hold'))).toBe(true);
   });
 
   it('with no sound snapshot it fails without touching media', async () => {
@@ -513,6 +523,82 @@ describe('snapshots and launch recovery', () => {
         .filter((n) => n.endsWith('.db'))
         .sort(),
     ).toEqual(['pulse-10.db', 'pulse-3.db', 'pulse-4.db']);
+  });
+
+  it('recovers an empty database while a usable snapshot exists (an interrupted recovery)', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    takeSnapshot(conn, 1000);
+    const before = dump(conn);
+    conn.closeSync();
+    for (const f of ['pulse.db', 'pulse.db-wal', 'pulse.db-shm']) {
+      rmSync(join(env.dbDir, f), { force: true });
+    }
+    writeFileSync(join(env.dbDir, 'pulse.db'), ''); // what a copy cut short leaves
+
+    const opened = openLibrary(5000);
+    expect(opened).toMatchObject({ recoveredFrom: 1000, failed: false });
+    expect(dump(opened.conn)).toEqual(before);
+  });
+
+  it('never picks a snapshot that was cut short', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    takeSnapshot(conn, 1000);
+    const before = dump(conn);
+    conn.closeSync();
+    const backups = join(env.dbDir, 'backups');
+    writeFileSync(join(backups, 'pulse-2000.db'), ''); // empty: sound, but no schema
+    writeFileSync(join(backups, 'pulse-3000.db.part'), 'half a copy');
+    const path = join(env.dbDir, 'pulse.db');
+    const bytes = readFileSync(path);
+    bytes.fill(0xab, 4096 * 2, 4096 * 3);
+    writeFileSync(path, bytes);
+
+    const opened = openLibrary(5000);
+    expect(opened).toMatchObject({ recoveredFrom: 1000, failed: false });
+    expect(dump(opened.conn)).toEqual(before);
+  });
+
+  it('a staged restore that can’t be applied leaves the library as it was, once', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    const before = dump(conn);
+    conn.closeSync();
+    const backups = join(env.dbDir, 'backups');
+    mkdirSync(backups, { recursive: true });
+    writeFileSync(join(backups, 'restore-pending.db'), randomBytes(8192));
+    media('.pulse-restore-media/drafts/x/segments/y.mp4', 'from the backup');
+
+    const opened = openLibrary(5000);
+    expect(opened).toMatchObject({ restored: false, restoreFailed: true, failed: false });
+    expect(dump(opened.conn)).toEqual(before);
+    expect(existsSync(join(backups, 'restore-pending.db'))).toBe(false);
+    expect(existsSync(join(backups, 'restore-failed-5000.db'))).toBe(true);
+    expect(existsSync(join(env.docDir, '.pulse-restore-media'))).toBe(false);
+    opened.conn.closeSync();
+    expect(openLibrary(6000)).toMatchObject({ restoreFailed: false, failed: false });
+  });
+
+  it('a routine snapshot that can’t be written never stops the launch', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    conn.closeSync();
+    writeFileSync(join(env.dbDir, 'backups'), 'a file where the folder goes');
+    const opened = openLibrary(5000); // no snapshot yet, so one is due
+    expect(opened).toMatchObject({ failed: false, restoreFailed: false });
+    rmSync(join(env.dbDir, 'backups'));
+  });
+
+  it('leftover restore files never touch the library unless their database was applied', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    conn.closeSync();
+    const live = FIXTURE_MEDIA[0];
+    media(`.pulse-restore-media/${live}`, 'from a restore that never finished');
+    expect(openLibrary(5000)).toMatchObject({ restoreFailed: false, failed: false });
+    expect(readMedia(live)).toBe(`bytes of ${live}`);
+    expect(existsSync(join(env.docDir, '.pulse-restore-media'))).toBe(false);
   });
 });
 
@@ -643,7 +729,8 @@ describe('library backup', () => {
     env.availableDiskSpace = 1000;
     try {
       await expect(createLibraryBackup(src, 43)).rejects.toThrow(/needs about .* GB free/);
-      expect(readdirSync(join(env.cacheDir, 'pulse-exports'))).toEqual([]); // no archive, no db copy
+      // No new archive or staged database; the last backup made is left alone.
+      expect(readdirSync(join(env.cacheDir, 'pulse-exports'))).toEqual(['pulse-library-42.pulse']);
     } finally {
       env.availableDiskSpace = Infinity;
     }
@@ -660,10 +747,70 @@ describe('library backup', () => {
       env.availableDiskSpace = Infinity;
     }
   });
+
+  it('refuses a backup whose database has an unsafe id, before touching the library', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    src.execSync(`INSERT INTO drafts (id, name, last_clip_number) VALUES ('..', 'Crafted', 0)`);
+    const uri = oldBackup(src, []);
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    await expect(restoreLibraryBackup(dst, uri, 100)).rejects.toThrow('This backup is damaged.');
+    expect(existsSync(join(env.dbDir, 'backups', 'restore-pending.db'))).toBe(false);
+    expect(readdirSync(env.docDir).filter((n) => n.startsWith('.pulse-restore'))).toEqual([]);
+  });
+
+  it('refuses manifest paths that escape drafts/ or collide with the database', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    for (const path of ['drafts/../escaped.txt', 'drafts/pulse.db', '/etc/passwd']) {
+      const uri = oldBackup(src, [], [{ path, size: 1, md5: '0'.repeat(32) }]);
+      const target = newDevice();
+      use(target);
+      const dst = await openMigrated();
+      await expect(restoreLibraryBackup(dst, uri, 100)).rejects.toThrow('This backup is damaged.');
+      expect(existsSync(join(env.dbDir, 'backups', 'restore-pending.db'))).toBe(false);
+      use(source);
+    }
+  });
+
+  it('a file that differs from one already here is replaced with the database, not before', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const uri = await createLibraryBackup(src, 42);
+    const before = dump(src);
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    seedFixture(dst);
+    const live = FIXTURE_MEDIA[0];
+    media(live, 'this phone’s newer copy');
+    await restoreLibraryBackup(dst, uri, 100);
+    expect(readMedia(live)).toBe('this phone’s newer copy'); // the old rows still point at it
+    dst.closeSync();
+
+    const relaunched = openLibrary(200);
+    expect(relaunched).toMatchObject({ restored: true, restoreFailed: false, failed: false });
+    expect(readMedia(live)).toBe(`bytes of ${live}`);
+    await migrate(drizzle(relaunched.conn), migrations);
+    expect(dump(relaunched.conn)).toEqual(before);
+    expect(existsSync(join(env.docDir, '.pulse-restore-media'))).toBe(false);
+  });
 });
 
 /** A backup as an older Pulse wrote it: same format and layout, its own (older) database. */
-function oldBackup(conn: SQLiteDatabase, files: string[]): string {
+function oldBackup(
+  conn: SQLiteDatabase,
+  files: string[],
+  extra: { path: string; size: number; md5: string }[] = [],
+): string {
   const copy = sqlite.openDatabaseSync('old-copy.db', {}, env.cacheDir);
   sqlite.backupDatabaseSync({ sourceDatabase: conn as never, destDatabase: copy });
   copy.execSync('PRAGMA journal_mode = DELETE;');
@@ -679,6 +826,7 @@ function oldBackup(conn: SQLiteDatabase, files: string[]): string {
     files: [
       { path: 'pulse.db', size: db.length, md5: md5(db) },
       ...media.map((m) => ({ path: m.path, size: m.bytes.length, md5: md5(m.bytes) })),
+      ...extra,
     ],
   };
   const out = join(env.cacheDir, 'old.pulse');

@@ -6,10 +6,11 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { PrimaryButton } from '@/components/primary-button';
 import { StateMessage } from '@/components/state-message';
 import { ThemedView } from '@/components/themed-view';
+import { removeLeftoverRestores } from '@/features/draft-transfer/library-backup';
 import { formatDateTime } from '@/utils/relative-date';
 import migrations from '../../drizzle/migrations';
 import { db, expoDb, library } from './client';
-import { referencedMediaPaths, sweepUnreferencedMedia } from './media-refs';
+import { referencedMediaPaths } from './media-refs';
 import { runDataMigrations, type DataMigration } from './data-migrations';
 import { dropBakedEdits } from './baked-edits-migration';
 import { dropDraftTokens } from './draft-token-migration';
@@ -57,29 +58,60 @@ function sweepRnvtOutputs(referenced: Set<string>): number {
   return removed;
 }
 
+type Notice = {
+  icon: 'exclamationmark.triangle.fill' | 'checkmark.circle.fill';
+  title: string;
+  message: string;
+};
+
+/** What this launch's library open needs to tell the person, before the library shows. */
+function launchNotice(): Notice | null {
+  if (library.recoveredFrom != null) {
+    return {
+      icon: 'exclamationmark.triangle.fill',
+      title: 'Pulse repaired your library',
+      message: `Its database was damaged, so Pulse went back to its copy from ${formatDateTime(library.recoveredFrom)}. Changes after that are gone; your videos are still on this phone.`,
+    };
+  }
+  if (library.restoreFailed) {
+    return {
+      icon: 'exclamationmark.triangle.fill',
+      title: 'Couldn’t finish restoring the backup',
+      message:
+        'Your library is as it was before. Free up some space, then restore the backup again.',
+    };
+  }
+  if (library.restored) {
+    return {
+      icon: 'checkmark.circle.fill',
+      title: 'Library backup restored',
+      message: 'Your drafts are now the ones in the backup.',
+    };
+  }
+  return null;
+}
+
 export function MigrationGate({ children }: { children: React.ReactNode }) {
   // Schema migrations (drizzle's expo-sqlite migrator), then the one-shot data migrations (file
-  // moves, transforms — e.g. the legacy Pulse ≤1.2.x draft import), then the media sweeps, all
-  // before the library renders. Nothing runs on a library that failed its check and couldn't be
-  // recovered: the recovery screen shows instead, and media is left alone.
+  // moves, transforms — e.g. the legacy Pulse ≤1.2.x draft import), then the RNVT leftover sweep,
+  // all before the library renders. Nothing runs on a library that failed its check and couldn't
+  // be recovered: the recovery screen shows instead. No media is ever deleted for lacking a row.
   const [ready, setReady] = useState(false);
-  const [error, setError] = useState<unknown>(
-    library.failed ? new Error('Unusable database') : null,
-  );
-  const [recovered, setRecovered] = useState(library.recoveredFrom);
+  const [error, setError] = useState<unknown>(null);
+  const [notice, setNotice] = useState(launchNotice);
   useEffect(() => {
     if (library.failed) return;
     migrate(db, migrations)
       .then(async () => {
         await runDataMigrations(DATA_MIGRATIONS);
-        // Media nothing references (and react-native-video-trim leftovers): nothing of this version
-        // is recording or rendering yet, so no file is mid-write.
+        // react-native-video-trim leftovers, and unzipped restores a crash left behind: nothing
+        // of this version is writing either yet.
         try {
-          const swept = sweepUnreferencedMedia(expoDb, Date.now());
+          removeLeftoverRestores();
           const rnvt = sweepRnvtOutputs(referencedMediaPaths(expoDb));
-          console.log(`[cleanup] removed ${swept} unreferenced and ${rnvt} RNVT file(s)`);
+          if (rnvt > 0) console.log(`[cleanup] removed ${rnvt} RNVT file(s)`);
         } catch (e) {
-          console.warn('[cleanup] media sweep failed', e); // a leftover file costs space, not data
+          console.warn('[cleanup] RNVT sweep failed', e); // a leftover file costs space, not data
         }
       })
       .then(() => setReady(true), setError);
@@ -91,28 +123,28 @@ export function MigrationGate({ children }: { children: React.ReactNode }) {
     if (error) console.error('[db] migrations failed', error);
   }, [error]);
 
-  if (error) {
+  if (library.failed || error) {
     return (
       <ThemedView style={centered}>
         <StateMessage
           icon="exclamationmark.triangle.fill"
           tone="accent"
           title="Couldn’t open your drafts"
-          message="Close Pulse and open it again. Your drafts are still on this phone."
+          message="Free up some space, then close Pulse and open it again. Your videos are still on this phone."
         />
       </ThemedView>
     );
   }
 
-  if (recovered != null) {
+  if (notice) {
     return (
       <ThemedView style={centered}>
         <StateMessage
-          icon="exclamationmark.triangle.fill"
+          icon={notice.icon}
           tone="accent"
-          title="Your drafts were restored"
-          message={`Pulse’s database was damaged, so it went back to its copy from ${formatDateTime(recovered)}. Changes after that are gone; your videos are kept.`}>
-          <PrimaryButton label="Continue" onPress={() => setRecovered(null)} />
+          title={notice.title}
+          message={notice.message}>
+          <PrimaryButton label="Continue" onPress={() => setNotice(null)} />
         </StateMessage>
       </ThemedView>
     );

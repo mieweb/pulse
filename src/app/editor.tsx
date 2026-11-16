@@ -476,16 +476,7 @@ export default function EditorScreen() {
     if (exporting.current) return;
     exporting.current = true;
     ctl.pause();
-    void flushDraftWrites()
-      .then(() => router.push({ pathname: '/export', params: { draftId } }))
-      .catch(() => {
-        exporting.current = false;
-        showToast({
-          kind: 'error',
-          title: 'Couldn’t save the draft',
-          message: 'Review the draft and try again.',
-        });
-      });
+    void flushDraftWrites().then(() => router.push({ pathname: '/export', params: { draftId } }));
   };
 
   const reset = () => {

@@ -1,6 +1,7 @@
 import { reloadAppAsync } from 'expo';
 import * as Crypto from 'expo-crypto';
 import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
 import { useState } from 'react';
 import { Alert } from 'react-native';
@@ -15,12 +16,20 @@ import { exportDrafts } from './pack';
 import { importPulseFile, skippedSummary } from './unpack';
 import { importProjectFile, pulseFileKind } from './unpack-project';
 
+/** Delete a file if it's there; never throws (a clean-up must not fail its caller). */
+function deleteQuietly(uri: string): void {
+  try {
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch {}
+}
+
 /** Ask before a library backup replaces the library. */
 const confirmRestore = () =>
   new Promise<boolean>((resolve) =>
     Alert.alert(
       'Replace your library?',
-      'Your drafts become the ones in this backup. Pulse keeps a copy of the current library.',
+      'Your drafts become the ones in this backup, and Pulse reopens to finish.',
       [
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
         { text: 'Replace', style: 'destructive', onPress: () => resolve(true) },
@@ -81,7 +90,16 @@ export function useDraftTransfer() {
       if (kind === 'library-backup') {
         if (!(await confirmRestore())) return [];
         await restoreLibraryBackup(expoDb, asset.uri, Date.now());
-        await reloadAppAsync('Restoring a library backup'); // the next launch swaps it in
+        deleteQuietly(asset.uri); // the picker's copy; it can be as large as the library
+        try {
+          await reloadAppAsync('Restoring a library backup'); // the next launch swaps it in
+        } catch {
+          showToast({
+            kind: 'warning',
+            title: 'Backup ready to restore',
+            message: 'Close Pulse and open it again to finish.',
+          });
+        }
         return [];
       }
       if (kind === 'project') {
@@ -106,6 +124,7 @@ export function useDraftTransfer() {
       });
       return [];
     } finally {
+      deleteQuietly(asset.uri); // the picker's copy in the cache
       setState('idle');
     }
   }
