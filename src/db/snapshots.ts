@@ -86,6 +86,15 @@ export function takeSnapshot(conn: SQLiteDatabase, now: number): string {
   return name;
 }
 
+/** Copies a crash or kill cut short (`*.part`): nothing is mid-write when the app launches. */
+function removePartials(): void {
+  const dir = backupsDir();
+  if (!dir.exists) return;
+  for (const entry of dir.list()) {
+    if (entry instanceof File && /\.part(-wal|-shm|-journal)?$/.test(entry.name)) entry.delete();
+  }
+}
+
 /** A routine snapshot: worth having, never worth failing a launch over (a full phone, say). */
 function trySnapshot(conn: SQLiteDatabase, now: number): void {
   try {
@@ -214,6 +223,9 @@ export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLib
   const result = { recoveredFrom: null as number | null, restored: false, restoreFailed: false };
   try {
     applyDurability(conn, ios);
+  } catch {}
+  try {
+    removePartials();
   } catch {}
 
   const staged = new File(backupsDir(), PENDING_RESTORE);

@@ -569,6 +569,7 @@ describe('snapshots and launch recovery', () => {
     const opened = openLibrary(5000);
     expect(opened).toMatchObject({ recoveredFrom: 1000, failed: false });
     expect(dump(opened.conn)).toEqual(before);
+    expect(existsSync(join(backups, 'pulse-3000.db.part'))).toBe(false); // cleared at launch
   });
 
   it('a staged restore that can’t be applied leaves the library as it was, once', async () => {
