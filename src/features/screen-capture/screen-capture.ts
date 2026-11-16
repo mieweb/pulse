@@ -62,6 +62,8 @@ type Row = {
   sourcePath?: string;
   /** iOS: the broadcast's Microphone was off. */
   micOff?: boolean;
+  /** The take is finished with (added, discarded or too short) and only its clean-up is left. */
+  cleanup?: boolean;
 };
 
 async function readRow(): Promise<Row | null> {
@@ -108,8 +110,13 @@ function retrieve(): ScreenRecordingFile | null {
   }
 }
 
-/** The take is done with: its file, the library's copies and leftovers, then its row. */
+/**
+ * The take is done with: its file, the library's copies and leftovers, then its row. The row is
+ * marked first and dropped only once the library's files are gone, so a failed clean-up is
+ * finished by the next `reconcile()` instead of offering or importing the take again.
+ */
 async function cleanUp(src: string | undefined, segmentId: string): Promise<void> {
+  await patchRow({ cleanup: true }, segmentId);
   if (src) deleteQuietly(src);
   // iOS: every `retrieveLastGlobalRecording()` copies the App Group file here, never deleted.
   if (Platform.OS === 'ios') {
@@ -120,7 +127,10 @@ async function cleanUp(src: string | undefined, segmentId: string): Promise<void
   try {
     clearCache();
   } catch (e) {
-    log.warn(`couldn't clear the recorder's files: ${describeError(e)}`);
+    log.warn(
+      `couldn't clear the recorder's files; retried on the next pick-up: ${describeError(e)}`,
+    );
+    return;
   }
   await dropRow(segmentId);
 }
@@ -229,6 +239,12 @@ const toast = {
     error('Couldn’t add the screen recording', 'It was too short. Record for at least a second.'),
   lost: () =>
     error('Couldn’t save the screen recording', 'It stopped when Pulse closed. Record it again.'),
+  stillAdding: () =>
+    showToast?.({
+      kind: 'info',
+      title: 'Still adding your last screen recording',
+      message: 'Try again in a moment.',
+    }),
   noVoice: () =>
     showToast?.({
       kind: 'warning',
@@ -245,6 +261,8 @@ const PROCESS_STARTED = Date.now();
 const IOS_ROW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** A take shorter than this isn't worth a clip. */
 const MIN_TAKE_MS = 1000;
+/** iOS: a broadcast Pulse didn't start (Control Center) ended; until then its file is waited for. */
+let outsideEndedUntil = 0;
 
 let flight: Promise<boolean> | null = null;
 /** A failed import's alert is up: nothing runs until Discard or Try again. */
@@ -273,9 +291,9 @@ async function run(): Promise<boolean> {
   }
   const row = await readRow();
 
-  // An earlier run added the clip and stopped before cleaning up.
-  if (row && (await segmentExists(row.segmentId))) {
-    log.info('clip already in its draft; cleaning up');
+  // An earlier run finished with the take (or added the clip) and stopped before cleaning up.
+  if (row && (row.cleanup || (await segmentExists(row.segmentId)))) {
+    log.info('take already handled; cleaning up');
     await cleanUp(row.sourcePath, row.segmentId);
     return false;
   }
@@ -294,7 +312,8 @@ async function run(): Promise<boolean> {
   }
 
   if (!src) {
-    if (!row) return false;
+    // A broadcast started outside Pulse just ended: its file may still be being written.
+    if (!row) return Platform.OS === 'ios' && Date.now() < outsideEndedUntil;
     // Android: an idle take with no file is gone (a kill, or a stop that failed).
     if (Platform.OS === 'android') {
       log.warn('the take left no file');
@@ -476,6 +495,16 @@ export async function startScreenCapture(
   enableMic: boolean,
 ): Promise<void> {
   if (!canRecordScreen || state.phase !== 'idle' || state.importing) return;
+  // The last take still owns the saved row (its file is settling, or Pulse left mid-import): a new
+  // take's row would replace it and lose that take. Its pick-up runs instead.
+  const last = await readRow();
+  const lastFile = last?.sourcePath && !last.cleanup && fileExists(last.sourcePath);
+  if (settlingTake() || lastFile) {
+    log.info('start: the last take is still being added');
+    if (lastFile) void reconcile();
+    toast.stillAdding();
+    return;
+  }
   try {
     const draftId = await draft();
     requested = { at: Date.now(), draftId, mic: enableMic };
@@ -561,6 +590,12 @@ function onRecordingEvent(event: ScreenRecordingEvent) {
   } else if (state.phase === 'live' || state.phase === 'stopping') {
     log.info('capture ended');
     void onEnded();
+  } else if (Platform.OS === 'ios') {
+    // Ended while Pulse thought nothing was live: a Control Center broadcast, or Pulse's own take
+    // after Pulse was reopened during it. Its file is still being written: wait for it.
+    log.info('a capture Pulse wasn’t tracking ended');
+    outsideEndedUntil = Date.now() + IOS_WAIT_MS;
+    pickUp(false);
   }
 }
 
@@ -577,21 +612,54 @@ async function onEnded() {
 function finishTake() {
   if (state.phase === 'idle') return;
   setState({ phase: 'idle', began: null });
-  void afterTake();
+  pickUp(true);
 }
 
-/** The file of a take that just ended: imported now, or E6 when iOS never hands it over (its row
- * stays: the extension may still deliver it). Android settles this inside `run()`. */
-async function afterTake() {
-  const until = Date.now() + IOS_WAIT_MS;
-  while (await reconcile()) {
-    if (Date.now() >= until) {
-      log.warn('no file after the take');
-      toast.noFile();
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, IOS_RETRY_MS));
+/** The one pick-up loop running, how long it keeps looking, and whether a take just stopped. */
+let pickingUp: Promise<void> | null = null;
+let pickUpUntil = 0;
+let warnIfMissing = false;
+/** Asked again while a pass ran: that pass's answer may predate the ask, so look once more. */
+let pickUpAgain = false;
+
+/** A take that just stopped is waiting for its file: a new take mustn't take its row. */
+function settlingTake(): boolean {
+  return pickingUp != null && warnIfMissing;
+}
+
+/**
+ * Look for an owed file every second for `IOS_WAIT_MS` (iOS writes it after the capture ends);
+ * Android settles inside `run()`. A call while one runs extends it. `warn`: a take of Pulse's own
+ * just stopped, so a file that never comes is E6 (its row stays: the extension may still deliver
+ * it). On a return or launch it stays quiet: iOS can't say whether that broadcast is still live.
+ */
+function pickUp(warn: boolean) {
+  pickUpUntil = Math.max(pickUpUntil, Date.now() + IOS_WAIT_MS);
+  warnIfMissing ||= warn;
+  if (pickingUp) {
+    pickUpAgain = true;
+    return;
   }
+  pickingUp = (async () => {
+    try {
+      do {
+        pickUpAgain = false;
+        while (await reconcile()) {
+          if (Date.now() >= pickUpUntil) {
+            if (warnIfMissing) {
+              log.warn('no file after the take');
+              toast.noFile();
+            }
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, IOS_RETRY_MS));
+        }
+      } while (pickUpAgain);
+    } finally {
+      pickingUp = null;
+      warnIfMissing = false;
+    }
+  })();
 }
 
 /**
@@ -621,9 +689,9 @@ export function ScreenCaptureLifecycle(): null {
     const sub = AppState.addEventListener('change', (next) => {
       if (next !== 'active') return;
       onReturn();
-      void reconcile();
+      pickUp(false);
     });
-    void reconcile();
+    pickUp(false);
     return () => {
       removeListener();
       sub.remove();
