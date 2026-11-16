@@ -104,6 +104,11 @@ export async function setSetting(key: string, value: string): Promise<void> {
     .onConflictDoUpdate({ target: settings.key, set: { value } });
 }
 
+/** Remove a single settings value. */
+export async function deleteSetting(key: string): Promise<void> {
+  await db.delete(settings).where(eq(settings.key, key));
+}
+
 /** The timeline editor's last view: the one it opens in next time. */
 const EDITOR_VIEW_KEY = 'editor.view';
 export type EditorView = 'clips' | 'timeline';

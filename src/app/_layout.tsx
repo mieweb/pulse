@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { MigrationGate } from '@/db/migrate';
 import { type BuildConfig, readBuildInfo } from '@/features/about/build-info';
 import { installLogCapture } from '@/features/logs/logger';
+import { ScreenCaptureLifecycle } from '@/features/screen-capture/screen-capture';
 import { ToastProvider } from '@/features/toast/toast-provider';
 import { setClientIdentity } from '@/features/upload/client-identity';
 import { destinationsSheetOptions } from '@/features/upload/destinations-sheet';
@@ -51,6 +52,7 @@ function ThemedNavigation() {
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
       <ToastProvider>
+        <ScreenCaptureLifecycle />
         <UploadDeepLinkProvider>
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="recorder" options={fullScreen} />

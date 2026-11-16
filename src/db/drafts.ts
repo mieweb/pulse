@@ -201,6 +201,15 @@ export async function addSegment(draftId: string, segment: NewSegment): Promise<
   });
 }
 
+/** Whether a draft exists and can take a new clip (it isn't uploading, see `assertNotUploading`). */
+export async function draftTakesClips(draftId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ status: drafts.uploadStatus })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+  return row != null && row.status !== 'uploading';
+}
+
 /** The draft's persisted upload status (null when unset / draft missing). */
 export async function getDraftUploadStatus(draftId: string): Promise<Draft['uploadStatus']> {
   const [row] = await db
