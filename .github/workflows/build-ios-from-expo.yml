@@ -82,9 +82,9 @@ jobs:
 
       # ── pod install + sign + archive + upload ─────────────────────────────
       - name: Build & upload iOS to TestFlight
-        # TEMPORARY: mieweb/actions#23 (per-target extension signing). Re-pin to the release
+        # TEMPORARY: mieweb/actions#24 (per-target extension signing). Re-pin to the release
         # tag once it merges.
-        uses: priyamrmore/actions/sign-archive-upload-ios@a3758ccd03ba1f11a3369fc01c101da430e271de # mieweb/actions#23
+        uses: morepriyam/actions/sign-archive-upload-ios@a3758ccd03ba1f11a3369fc01c101da430e271de # mieweb/actions#24
         with:
           signing_mode:                  match
           app_identifier:                com.mieweb.pulse
