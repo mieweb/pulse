@@ -178,6 +178,21 @@ function applyPendingMedia(): void {
   root.delete();
 }
 
+/**
+ * After going back to a snapshot: `export.mp4` is rewritten in place, so a draft's file may be
+ * newer than the snapshot's signature for it. Clear the signatures so each export merges again.
+ */
+function forgetExports(conn: SQLiteDatabase): void {
+  try {
+    const columns = conn.getAllSync<{ name: string }>('PRAGMA table_info("drafts")');
+    if (columns.some((c) => c.name === 'merged_signature')) {
+      conn.execSync('UPDATE drafts SET merged_signature = NULL, merged_duration_ms = NULL');
+    }
+  } catch (e) {
+    console.warn('[db] clearing export signatures failed', e);
+  }
+}
+
 export type OpenedLibrary = {
   conn: SQLiteDatabase;
   /** The snapshot time the library was recovered from, when it failed its check. */
@@ -203,8 +218,10 @@ export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLib
 
   const staged = new File(backupsDir(), PENDING_RESTORE);
   if (staged.exists) {
-    // The restore already snapshotted the library it replaces when it was staged.
+    // The restore already snapshotted the library it replaces when it was staged. A damaged
+    // library (restoring from the recovery screen) can't be written through: set it aside first.
     try {
+      if (!isSound(conn)) conn = setAsideDamaged(conn, now);
       const source = openBackup(PENDING_RESTORE);
       try {
         copyDatabase(source, conn); // one transaction: the old library or the new one, never half
@@ -261,6 +278,7 @@ export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLib
     }
     if (!isUsable(conn)) return { conn, ...result, failed: true };
     result.recoveredFrom = snap.at;
+    forgetExports(conn);
     try {
       applyDurability(conn, ios);
     } catch {}

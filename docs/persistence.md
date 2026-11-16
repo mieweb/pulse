@@ -57,9 +57,9 @@ damaged, empty or restored database would then delete videos.
 
 | | Draft transfer | Library backup |
 |---|---|---|
-| Contents | `project.json`: every row and column of the chosen drafts, built from `schema.ts` (`src/db/project.ts`), plus their media | `pulse.db` (via the backup API), `manifest.json` (every file the database references, with its size and MD5), and the whole `drafts/` folder |
+| Contents | `project.json`: every row and column of the chosen drafts, built from `schema.ts` (`src/db/project.ts`), plus their media | `pulse.db` (via the backup API), `manifest.json` (each file's library path, archive entry, size and MD5), and exactly the files the database references, except each draft's `export.mp4` |
 | Import | copy with new ids (`unpack-project.ts`); v1 bundles still go to the v1 importer | exact restore, staged for the next launch, then migrated (`library-backup.ts`) |
-| Zip | streamed in JS (`zip-stream.ts`), limited to 4 GB (no ZIP64 in fflate) | native (`react-native-zip-archive`); only files the manifest lists are restored |
+| Zip | streamed in JS (`zip-stream.ts`), limited to 4 GB (no ZIP64 in fflate) | native (`react-native-zip-archive`), flat: each file under its base name, unique because media names carry their segment id |
 
 **Coverage:** the export refuses a database column that `schema.ts` doesn't define, and a test fails
 if a schema column is missing from the export.
@@ -67,12 +67,18 @@ if a schema column is missing from the export.
 **Integrity and safety**, checked before anything in the library is touched:
 - Each file's MD5 is computed natively (`File.info({ md5: true })`) and checked on import.
 - A draft file's child rows must have their parent in the file.
-- A backup's manifest paths must stay under `drafts/`, be unique, and not collide with `pulse.db`.
+- A backup's manifest paths must stay under `drafts/` and be unique, and each entry must be the path's base name, unique, and not `pulse.db` or `manifest.json`.
 - The restored database's draft and clip ids and its stored paths must stay under `drafts/` too
   (`assertSafeLibrary`).
 
+**Exports:** a draft's `export.mp4` is the one file rewritten in place, so:
+- library backups leave it out and clear the copy's export signatures, so a restored draft merges
+  its export again;
+- going back to a snapshot also clears the signatures, since a newer export may be on disk.
+
 **Restore order:**
-1. The current library is snapshotted.
+1. The current library is snapshotted. From the recovery screen, where there's no sound library,
+   it isn't; the damaged database is set aside at the next launch instead.
 2. Files new to the phone move into place.
 3. Files that differ from one already here wait in `Documents/.pulse-restore-media/`.
 4. On the next launch, they are applied together with the database (only once a marker shows the
@@ -80,5 +86,4 @@ if a schema column is missing from the export.
 
 **Free space and versions:**
 - Export, import and restore check `Paths.availableDiskSpace` and refuse before writing anything.
-  A backup counts the whole `drafts/` folder.
 - A backup from a newer schema is refused; an older one is migrated after the swap.

@@ -275,6 +275,13 @@ const FIXTURE_MEDIA = [
   `drafts/${D2}/export.mp4`,
 ].sort();
 
+/** What a library backup carries: everything but each draft's export (merged again). */
+const BACKED_UP_MEDIA = FIXTURE_MEDIA.filter((p) => !p.endsWith('/export.mp4'));
+
+/** A library backup's database leaves out export signatures, as its files leave out exports. */
+const forgetExports = (conn: SQLiteDatabase) =>
+  conn.execSync('UPDATE drafts SET merged_signature = NULL, merged_duration_ms = NULL');
+
 const byteLength = (rel: string) => {
   const f = new File(env.docDir, rel);
   return f.exists ? f.size : null;
@@ -461,6 +468,7 @@ describe('snapshots and launch recovery', () => {
     const conn = await openMigrated();
     seedFixture(conn);
     takeSnapshot(conn, 1000);
+    forgetExports(conn); // recovery merges exports again
     const before = dump(conn);
     drizzle(conn, { schema })
       .insert(schema.drafts)
@@ -496,6 +504,7 @@ describe('snapshots and launch recovery', () => {
     const conn = await openMigrated();
     seedFixture(conn);
     takeSnapshot(conn, 1000);
+    forgetExports(conn); // recovery merges exports again
     const before = dump(conn);
     conn.closeSync();
 
@@ -529,6 +538,7 @@ describe('snapshots and launch recovery', () => {
     const conn = await openMigrated();
     seedFixture(conn);
     takeSnapshot(conn, 1000);
+    forgetExports(conn); // recovery merges exports again
     const before = dump(conn);
     conn.closeSync();
     for (const f of ['pulse.db', 'pulse.db-wal', 'pulse.db-shm']) {
@@ -545,6 +555,7 @@ describe('snapshots and launch recovery', () => {
     const conn = await openMigrated();
     seedFixture(conn);
     takeSnapshot(conn, 1000);
+    forgetExports(conn); // recovery merges exports again
     const before = dump(conn);
     conn.closeSync();
     const backups = join(env.dbDir, 'backups');
@@ -600,15 +611,33 @@ describe('snapshots and launch recovery', () => {
     expect(readMedia(live)).toBe(`bytes of ${live}`);
     expect(existsSync(join(env.docDir, '.pulse-restore-media'))).toBe(false);
   });
+
+  it('after going back to a snapshot, exports merge again', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    takeSnapshot(conn, 1000);
+    conn.closeSync();
+    writeFileSync(join(env.dbDir, 'pulse.db'), randomBytes(65536));
+    writeFileSync(join(env.dbDir, 'pulse.db-wal'), '');
+    writeFileSync(join(env.dbDir, 'pulse.db-shm'), '');
+
+    const opened = openLibrary(5000);
+    expect(opened.recoveredFrom).toBe(1000);
+    const rows = drizzle(opened.conn, { schema }).select().from(schema.drafts).all();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect([r.mergedSignature, r.mergedDurationMs]).toEqual([null, null]);
+  });
 });
 
 describe('library backup', () => {
-  it('round-trips the whole library, media included', async () => {
+  it('round-trips the whole library, media included (exports merged again)', async () => {
     const source = newDevice();
     use(source);
     const src = await openMigrated();
     seedFixture(src);
+    media('drafts/gone-draft/segments/leftover.mp4', 'a file no row references');
     const uri = await createLibraryBackup(src, 42);
+    forgetExports(src);
     const before = dump(src);
 
     const target = newDevice();
@@ -622,7 +651,9 @@ describe('library backup', () => {
     expect(relaunched.restored).toBe(true);
     await migrate(drizzle(relaunched.conn), migrations);
     expect(dump(relaunched.conn)).toEqual(before);
-    for (const rel of FIXTURE_MEDIA) expect(readMedia(rel)).toBe(`bytes of ${rel}`);
+    for (const rel of BACKED_UP_MEDIA) expect(readMedia(rel)).toBe(`bytes of ${rel}`);
+    expect(existsSync(join(env.docDir, `drafts/${D}/export.mp4`))).toBe(false);
+    expect(existsSync(join(env.docDir, 'drafts/gone-draft'))).toBe(false); // never carried
   });
 
   it('restores a backup from an older schema, then migrates it', async () => {
@@ -680,13 +711,16 @@ describe('library backup', () => {
     const uri = await createLibraryBackup(src, 42);
     const archive = unzipSync(readFileSync(new File(uri).path));
     const manifest = JSON.parse(strFromU8(archive['manifest.json']));
-    // The native layout: pulse.db and manifest.json at the root, drafts/ contents beside them.
-    const entry = (path: string) => path.replace(/^drafts\//, '');
+    // Flat: exactly the manifest's files, each under its base name, plus the manifest.
+    type Listed = { path: string; entry: string; md5: string };
     expect(Object.keys(archive).sort()).toEqual(
-      ['manifest.json', ...manifest.files.map((f: { path: string }) => entry(f.path))].sort(),
+      ['manifest.json', ...manifest.files.map((f: Listed) => f.entry)].sort(),
     );
-    for (const f of manifest.files) {
-      expect(f.md5).toBe(createHash('md5').update(archive[entry(f.path)]).digest('hex'));
+    expect(manifest.files.map((f: Listed) => f.path).sort()).toEqual(
+      ['pulse.db', ...BACKED_UP_MEDIA].sort(),
+    );
+    for (const f of manifest.files as Listed[]) {
+      expect(f.md5).toBe(createHash('md5').update(archive[f.entry]).digest('hex'));
     }
 
     // Same bytes (so every CRC still matches), one manifest MD5 changed: only the MD5 check sees it.
@@ -713,7 +747,7 @@ describe('library backup', () => {
     use(fresh);
     const ok = await openMigrated();
     await restoreLibraryBackup(ok, uri, 100); // the untouched backup still restores
-    for (const rel of FIXTURE_MEDIA) expect(readMedia(rel)).toBe(`bytes of ${rel}`);
+    for (const rel of BACKED_UP_MEDIA) expect(readMedia(rel)).toBe(`bytes of ${rel}`);
   });
 
   it('refuses a backup or a restore the phone has no room for, before writing anything', async () => {
@@ -784,13 +818,14 @@ describe('library backup', () => {
     const src = await openMigrated();
     seedFixture(src);
     const uri = await createLibraryBackup(src, 42);
+    forgetExports(src);
     const before = dump(src);
 
     const target = newDevice();
     use(target);
     const dst = await openMigrated();
     seedFixture(dst);
-    const live = FIXTURE_MEDIA[0];
+    const live = P(S2, '.cover.222.jpg'); // a file both libraries have, at the same path
     media(live, 'this phone’s newer copy');
     await restoreLibraryBackup(dst, uri, 100);
     expect(readMedia(live)).toBe('this phone’s newer copy'); // the old rows still point at it
@@ -802,6 +837,35 @@ describe('library backup', () => {
     await migrate(drizzle(relaunched.conn), migrations);
     expect(dump(relaunched.conn)).toEqual(before);
     expect(existsSync(join(env.docDir, '.pulse-restore-media'))).toBe(false);
+  });
+
+  it('restores from the recovery screen over a database with no usable snapshot', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const uri = await createLibraryBackup(src, 42);
+    forgetExports(src);
+    const before = dump(src);
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    dst.closeSync();
+    const garbage = randomBytes(65536);
+    writeFileSync(join(env.dbDir, 'pulse.db'), garbage);
+    writeFileSync(join(env.dbDir, 'pulse.db-wal'), '');
+    writeFileSync(join(env.dbDir, 'pulse.db-shm'), '');
+    const broken = openLibrary(100);
+    expect(broken.failed).toBe(true);
+
+    await restoreLibraryBackup(broken.conn, uri, 150, { snapshotCurrent: false });
+    broken.conn.closeSync();
+    const relaunched = openLibrary(200);
+    expect(relaunched).toMatchObject({ restored: true, restoreFailed: false, failed: false });
+    await migrate(drizzle(relaunched.conn), migrations);
+    expect(dump(relaunched.conn)).toEqual(before);
+    expect(readFileSync(join(env.dbDir, 'backups', 'damaged-200-pulse.db'))).toEqual(garbage);
   });
 });
 
@@ -816,17 +880,23 @@ function oldBackup(
   copy.execSync('PRAGMA journal_mode = DELETE;');
   copy.closeSync();
   const md5 = (bytes: Uint8Array) => createHash('md5').update(bytes).digest('hex');
+  const base = (path: string) => path.slice(path.lastIndexOf('/') + 1);
   const db = readFileSync(join(env.cacheDir, 'old-copy.db'));
   const media = files.map((p) => ({ path: p, bytes: readFileSync(join(env.docDir, p)) }));
   const manifest = {
     format: 'pulse-library-backup',
-    version: 2,
+    version: 3,
     schemaVersion: schemaVersion(conn),
     createdAt: 1,
     files: [
-      { path: 'pulse.db', size: db.length, md5: md5(db) },
-      ...media.map((m) => ({ path: m.path, size: m.bytes.length, md5: md5(m.bytes) })),
-      ...extra,
+      { path: 'pulse.db', entry: 'pulse.db', size: db.length, md5: md5(db) },
+      ...media.map((m) => ({
+        path: m.path,
+        entry: base(m.path),
+        size: m.bytes.length,
+        md5: md5(m.bytes),
+      })),
+      ...extra.map((e) => ({ ...e, entry: base(e.path) })),
     ],
   };
   const out = join(env.cacheDir, 'old.pulse');
@@ -834,7 +904,7 @@ function oldBackup(
     'pulse.db': db,
     'manifest.json': strToU8(JSON.stringify(manifest)),
   };
-  for (const m of media) entries[m.path.replace(/^drafts\//, '')] = m.bytes;
+  for (const m of media) entries[base(m.path)] = m.bytes;
   writeFileSync(out, zipSync(entries, { level: 0 }));
   return `file://${out}`;
 }

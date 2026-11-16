@@ -1,4 +1,6 @@
 import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
+import { reloadAppAsync } from 'expo';
+import * as DocumentPicker from 'expo-document-picker';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator } from 'react-native';
 import { Directory, File, Paths } from 'expo-file-system';
@@ -6,7 +8,11 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { PrimaryButton } from '@/components/primary-button';
 import { StateMessage } from '@/components/state-message';
 import { ThemedView } from '@/components/themed-view';
-import { removeLeftoverRestores } from '@/features/draft-transfer/library-backup';
+import {
+  removeLeftoverRestores,
+  restoreLibraryBackup,
+} from '@/features/draft-transfer/library-backup';
+import { userMessage } from '@/utils/user-message';
 import { formatDateTime } from '@/utils/relative-date';
 import migrations from '../../drizzle/migrations';
 import { db, expoDb, library } from './client';
@@ -99,6 +105,33 @@ export function MigrationGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState(launchNotice);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+
+  // The library screen (and its import) never mounts while the library is unusable, so restoring a
+  // backup has to be offered here. There's no sound library to snapshot first.
+  const restoreFromRecovery = async () => {
+    const picked = await DocumentPicker.getDocumentAsync({
+      type: '*/*',
+      copyToCacheDirectory: true,
+    });
+    const asset = picked.canceled ? null : picked.assets?.[0];
+    if (!asset) return;
+    setRestoring(true);
+    setRestoreError(null);
+    try {
+      await restoreLibraryBackup(expoDb, asset.uri, Date.now(), { snapshotCurrent: false });
+      await reloadAppAsync('Restoring a library backup'); // the next launch swaps it in
+    } catch (e) {
+      setRestoreError(userMessage(e, 'Pick a Pulse library backup and try again.', 'restore'));
+    } finally {
+      try {
+        const copy = new File(asset.uri);
+        if (copy.exists) copy.delete(); // the picker's copy in the cache
+      } catch {}
+      setRestoring(false);
+    }
+  };
   useEffect(() => {
     if (library.failed) return;
     migrate(db, migrations)
@@ -130,8 +163,17 @@ export function MigrationGate({ children }: { children: React.ReactNode }) {
           icon="exclamationmark.triangle.fill"
           tone="accent"
           title="Couldn’t open your drafts"
-          message="Free up some space, then close Pulse and open it again. Your videos are still on this phone."
-        />
+          message={
+            restoreError ??
+            'Free up some space, then close Pulse and open it again. Your videos are still on this phone. If you have a library backup, you can restore it.'
+          }>
+          <PrimaryButton
+            label="Restore a library backup"
+            busy={restoring}
+            disabled={restoring}
+            onPress={() => void restoreFromRecovery()}
+          />
+        </StateMessage>
       </ThemedView>
     );
   }

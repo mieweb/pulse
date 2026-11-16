@@ -20,53 +20,52 @@ import {
 import { ensureFreeSpace, nativeMd5 } from '@/utils/disk-space';
 import { absolutize, toFileUri } from '@/utils/file-store';
 
-// A library backup: the database as a SQLite file (copied with the online backup API), the files
-// its rows need, and a manifest listing each with its size and native MD5. Zipping and unzipping
-// run in native code (react-native-zip-archive): a multi-GB library never streams through JS, so
-// memory stays flat. Media is zipped straight from `drafts/`, never copied first; native zip takes
-// the whole folder, so files nothing references are carried too, and ignored on restore.
+// A library backup: the database as a SQLite file (copied with the online backup API), exactly the
+// files its rows need, and a manifest listing each with its library path, size and native MD5.
+// Zipping and unzipping run in native code (react-native-zip-archive): a multi-GB library never
+// streams through JS, so memory stays flat. Media is zipped straight from `drafts/`, never copied.
+//
+// Native zip stores each listed file under its base name, so the archive is flat and the manifest
+// maps each entry back to its path. Every media name carries its segment id, so names are unique,
+// except each draft's `export.mp4`: that one is left out (it's derived, and the only file rewritten
+// in place, so a backup can't race a re-export) and the copy's export signatures are cleared, so a
+// restored draft merges its export again.
 //
 // Restoring unzips beside `drafts/` (same volume, so moving a file into place is a rename), checks
 // every listed file's MD5 and the database's ids and paths, snapshots the current library, then:
 // files new to this phone move into place now; files that differ from one already here wait in
 // `pendingMediaDir()` with the database, and both are applied on the next launch (`openLibrary`),
 // so the library never pairs the old rows with a restored file.
-//
-// Archive layout (what native zip produces for [pulse.db, manifest.json, Documents/drafts]):
-//   pulse.db, manifest.json, and the contents of drafts/ (`<draftId>/segments/…`).
 
 export const BACKUP_FORMAT = 'pulse-library-backup';
 const MANIFEST = 'manifest.json';
 const DATABASE = 'pulse.db';
-const DRAFTS = 'drafts/';
 
 export type BackupManifest = {
   format: typeof BACKUP_FORMAT;
-  version: 2;
+  version: 3;
   /** The newest migration applied to the backed-up database (drizzle journal `when`). */
   schemaVersion: number;
   createdAt: number;
-  /** `pulse.db`, and each media file by its library path (`drafts/…`), with its native MD5. */
-  files: { path: string; size: number; md5: string }[];
+  /**
+   * `pulse.db`, and each media file by its library path (`drafts/…`): its archive `entry` (base
+   * name), size and native MD5.
+   */
+  files: { path: string; entry: string; size: number; md5: string }[];
 };
 
 /** A file:// URI as the plain path native code (expo-sqlite's `directory`, zip) takes. */
 const plainPath = (uri: string) =>
   decodeURIComponent(uri.replace(/^file:\/\//, '')).replace(/\/$/, '');
 
-/** Where a manifest file sits in the archive. */
-const entryName = (path: string) => (path.startsWith(DRAFTS) ? path.slice(DRAFTS.length) : path);
+/** Where a file sits in the (flat) archive: its base name. */
+const entryName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
+
+/** Each draft's merged export: derived, rewritten in place, and left out of library backups. */
+const isExport = (path: string) => /^drafts\/[^/]+\/export\.mp4$/.test(path);
 
 /** Let a frame through between native calls that each take a moment (hashing a clip). */
 const yieldToUi = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-/** Bytes in every file under `dir`. */
-function folderBytes(dir: Directory): number {
-  if (!dir.exists) return 0;
-  return dir
-    .list()
-    .reduce((sum, e) => sum + (e instanceof Directory ? folderBytes(e) : (e.size ?? 0)), 0);
-}
 
 /** The live database's files (with its WAL), roughly what its copy will take. */
 function databaseBytes(): number {
@@ -78,9 +77,8 @@ function databaseBytes(): number {
 
 /** Write the whole library to a `.pulse` backup in the cache and return its URI for sharing. */
 export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Promise<string> {
-  const draftsDir = new Directory(Paths.document, 'drafts');
-  // The zip holds all of drafts/ plus the database copy; the copy is written first, then the zip.
-  ensureFreeSpace(folderBytes(draftsDir) + 2 * databaseBytes());
+  // The database copy is written first; the room for the media is checked once it's listed.
+  ensureFreeSpace(2 * databaseBytes());
   const dir = new Directory(Paths.cache, 'pulse-exports');
   if (dir.exists) dir.delete(); // these are transient share files
   const stage = new Directory(dir, `stage-${now}`);
@@ -94,9 +92,13 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
     try {
       backupDatabaseSync({ sourceDatabase: conn, destDatabase: copy });
       copy.execSync('PRAGMA journal_mode = DELETE;'); // one self-contained file, no -wal beside it
+      // Exports aren't carried: a restored draft merges again instead of trusting a stale one.
+      copy.execSync('UPDATE drafts SET merged_signature = NULL, merged_duration_ms = NULL');
       version = schemaVersion(copy);
       // The files the COPY's rows reference, so the manifest matches the database in it.
-      media = [...referencedMediaPaths(copy)].filter((p) => new File(absolutize(p)).exists).sort();
+      media = [...referencedMediaPaths(copy)]
+        .filter((p) => !isExport(p) && new File(absolutize(p)).exists)
+        .sort();
     } finally {
       copy.closeSync();
     }
@@ -104,14 +106,19 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
 
     const sources = [new File(stage, DATABASE), ...media.map((p) => new File(absolutize(p)))];
     const paths = [DATABASE, ...media];
+    const entries = paths.map(entryName);
+    if (new Set([...entries, MANIFEST]).size !== entries.length + 1) {
+      throw new Error('Two files in the library share a name; the backup can’t hold both.');
+    }
+    ensureFreeSpace(sources.reduce((sum, f) => sum + (f.size ?? 0), 0));
     const files: BackupManifest['files'] = [];
     for (const [i, file] of sources.entries()) {
-      files.push({ path: paths[i], size: file.size ?? 0, md5: nativeMd5(file) });
+      files.push({ path: paths[i], entry: entries[i], size: file.size ?? 0, md5: nativeMd5(file) });
       await yieldToUi();
     }
     const manifest: BackupManifest = {
       format: BACKUP_FORMAT,
-      version: 2,
+      version: 3,
       schemaVersion: version,
       createdAt: now,
       files,
@@ -119,11 +126,7 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
     new File(stage, MANIFEST).write(JSON.stringify(manifest));
 
     await zip(
-      [
-        plainPath(new File(stage, DATABASE).uri),
-        plainPath(new File(stage, MANIFEST).uri),
-        ...(draftsDir.exists ? [plainPath(draftsDir.uri)] : []),
-      ],
+      [...sources, new File(stage, MANIFEST)].map((f) => plainPath(f.uri)),
       plainPath(out.uri),
       { compressionLevel: 0 }, // media is already compressed
     );
@@ -165,7 +168,7 @@ function readManifest(stage: Directory): BackupManifest {
   } catch {
     throw new Error(DAMAGED);
   }
-  if (manifest?.format !== BACKUP_FORMAT || manifest.version !== 2) throw new Error(NOT_A_BACKUP);
+  if (manifest?.format !== BACKUP_FORMAT || manifest.version !== 3) throw new Error(NOT_A_BACKUP);
   if (!KNOWN_SCHEMA_VERSIONS.has(manifest.schemaVersion)) {
     throw new Error(
       manifest.schemaVersion > APP_SCHEMA_VERSION
@@ -174,18 +177,21 @@ function readManifest(stage: Directory): BackupManifest {
     );
   }
   if (!Array.isArray(manifest.files)) throw new Error(DAMAGED);
-  const seen = new Set<string>();
+  const paths = new Set<string>();
+  const entries = new Set<string>([MANIFEST]);
   for (const f of manifest.files) {
     const ok =
       typeof f?.path === 'string' &&
+      typeof f.entry === 'string' &&
       typeof f.md5 === 'string' &&
       typeof f.size === 'number' &&
-      (f.path === DATABASE ||
-        (isSafeMediaPath(f.path) && ![DATABASE, MANIFEST].includes(entryName(f.path))));
-    if (!ok || seen.has(f.path)) throw new Error(DAMAGED);
-    seen.add(f.path);
+      f.entry === entryName(f.path) && // a plain base name, never a path
+      (f.path === DATABASE || isSafeMediaPath(f.path));
+    if (!ok || paths.has(f.path) || entries.has(f.entry)) throw new Error(DAMAGED);
+    paths.add(f.path);
+    entries.add(f.entry);
   }
-  if (!seen.has(DATABASE)) throw new Error(DAMAGED);
+  if (!paths.has(DATABASE)) throw new Error(DAMAGED);
   return manifest;
 }
 
@@ -193,12 +199,14 @@ function readManifest(stage: Directory): BackupManifest {
  * Check a library backup and stage it for the next launch (the app reloads to finish). Refuses a
  * backup from a newer Pulse, a damaged or unsafe one (any listed file whose MD5 differs; ids or
  * paths that reach outside `drafts/`) and one the phone has no room for — before anything in the
- * library is touched. The current library is snapshotted first.
+ * library is touched. The current library is snapshotted first, unless `snapshotCurrent` is false
+ * (the recovery screen: there's no sound library to snapshot).
  */
 export async function restoreLibraryBackup(
   conn: SQLiteDatabase,
   fileUri: string,
   now: number,
+  { snapshotCurrent = true }: { snapshotCurrent?: boolean } = {},
 ): Promise<void> {
   removeLeftoverRestores();
   const archive = plainPath(fileUri);
@@ -212,7 +220,7 @@ export async function restoreLibraryBackup(
   try {
     await unzip(archive, plainPath(stage.uri));
     const manifest = readManifest(stage);
-    const staged = (path: string) => new File(stage, ...entryName(path).split('/'));
+    const staged = (path: string) => new File(stage, entryName(path));
     for (const f of manifest.files) {
       const file = staged(f.path);
       if (!file.exists || file.size !== f.size || nativeMd5(file) !== f.md5) {
@@ -234,7 +242,7 @@ export async function restoreLibraryBackup(
       db.closeSync();
     }
 
-    takeSnapshot(conn, now);
+    if (snapshotCurrent) takeSnapshot(conn, now);
     const pending = pendingMediaDir();
     if (pending.exists) pending.delete(); // from an earlier restore that never launched
     for (const f of manifest.files) {
@@ -253,6 +261,7 @@ export async function restoreLibraryBackup(
       await yieldToUi();
     }
     const next = new File(toFileUri(`${backupsPath()}/${PENDING_RESTORE}`));
+    next.parentDirectory.create({ intermediates: true, idempotent: true }); // none without a snapshot
     if (next.exists) next.delete();
     staged(DATABASE).moveSync(next);
   } finally {
