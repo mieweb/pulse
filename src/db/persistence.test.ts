@@ -942,7 +942,8 @@ describe('library backup', () => {
     src.execSync(
       `INSERT INTO segments (id, draft_id, sort_order, label, original_filename, duration_ms) VALUES ('dup-1', 'dup', 0, '1', '${shared}', 1000)`,
     );
-    media(shared, 'the copy’s bytes');
+    const copyBytes = 'c'.repeat(1 << 20); // big enough that the copy decides the room check
+    media(shared, copyBytes);
     const uri = await createLibraryBackup(src, 42);
     asRestored(src);
     const before = dump(src);
@@ -955,8 +956,21 @@ describe('library backup', () => {
     const relaunched = openLibrary(200);
     await migrate(drizzle(relaunched.conn), migrations);
     expect(dump(relaunched.conn)).toEqual(before);
-    expect(readMedia(shared)).toBe('the copy’s bytes');
+    expect(readMedia(shared)).toBe(copyBytes);
     expect(readMedia(P(S1, '.mp4'))).toBe(`bytes of ${P(S1, '.mp4')}`);
+
+    // The room check counts the renamed copy too: room for the archive alone is refused.
+    use(source);
+    const listed = JSON.parse(
+      strFromU8(unzipSync(readFileSync(new File(uri).path))['manifest.json']),
+    );
+    const archiveBytes = listed.files.reduce((sum: number, f: { size: number }) => sum + f.size, 0);
+    env.availableDiskSpace = archiveBytes + 200 * 1024 * 1024 + 1024; // the copy needs 1 MiB more
+    try {
+      await expect(createLibraryBackup(src, 43)).rejects.toThrow(/needs about .* GB free/);
+    } finally {
+      env.availableDiskSpace = Infinity;
+    }
   });
 
   it('a restore whose files can’t all be moved holds the library, then finishes', async () => {

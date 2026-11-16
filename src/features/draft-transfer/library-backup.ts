@@ -118,19 +118,28 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
 
     const sources = [new File(stage, DATABASE), ...media.map((p) => new File(absolutize(p)))];
     const paths = [DATABASE, ...media];
-    ensureFreeSpace(sources.reduce((sum, f) => sum + (f.size ?? 0), 0));
+    // Plan the entries first: native zip names an entry after its file, so a second file with a
+    // taken name goes in as a renamed copy, and those copies need room too.
     const taken = new Set([MANIFEST]);
+    const copies = new Set<number>();
     const entries = paths.map((path, i) => {
       let entry = entryName(path);
       if (taken.has(entry)) {
-        // Native zip names an entry after its file, so this one goes in as a renamed copy.
         while (taken.has(entry)) entry = `${i}-${entry}`;
-        sources[i].copySync(new File(stage, entry));
-        sources[i] = new File(stage, entry);
+        copies.add(i);
       }
       taken.add(entry);
       return entry;
     });
+    const size = (i: number) => sources[i].size ?? 0;
+    ensureFreeSpace(
+      sources.reduce((sum, _, i) => sum + size(i), 0) +
+        [...copies].reduce((sum, i) => sum + size(i), 0),
+    );
+    for (const i of copies) {
+      sources[i].copySync(new File(stage, entries[i]));
+      sources[i] = new File(stage, entries[i]);
+    }
     const files: BackupManifest['files'] = [];
     for (const [i, file] of sources.entries()) {
       files.push({ path: paths[i], entry: entries[i], size: file.size ?? 0, md5: nativeMd5(file) });
