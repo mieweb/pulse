@@ -63,6 +63,7 @@
       "./plugins/with-disable-script-sandboxing",
       "expo-image",
       "expo-sharing",
+      "react-native-zip-archive",
       "./plugins/with-strip-legacy-storage",
       [
         "expo-media-library",

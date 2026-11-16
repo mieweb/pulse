@@ -1,12 +1,15 @@
-import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
-import { useEffect, useRef, useState } from 'react';
+import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator } from 'react-native';
 import { Directory, File, Paths } from 'expo-file-system';
 
+import { PrimaryButton } from '@/components/primary-button';
 import { StateMessage } from '@/components/state-message';
 import { ThemedView } from '@/components/themed-view';
+import { formatDateTime } from '@/utils/relative-date';
 import migrations from '../../drizzle/migrations';
-import { db } from './client';
+import { db, expoDb, library } from './client';
+import { referencedMediaPaths, sweepUnreferencedMedia } from './media-refs';
 import { runDataMigrations, type DataMigration } from './data-migrations';
 import { dropBakedEdits } from './baked-edits-migration';
 import { dropDraftTokens } from './draft-token-migration';
@@ -30,14 +33,19 @@ const RNVT_FILE_PREFIX = 'trimmedVideo';
 
 /**
  * Delete the files react-native-video-trim left at the top of the documents and caches folders
- * in older versions, the two places it wrote to. Returns how many were removed.
+ * in older versions, the two places it wrote to — never one a row still references. Returns how
+ * many were removed.
  */
-function sweepRnvtOutputs(): number {
+function sweepRnvtOutputs(referenced: Set<string>): number {
   let removed = 0;
   for (const dir of [Paths.document, Paths.cache]) {
     try {
       for (const entry of new Directory(dir).list()) {
-        if (entry instanceof File && entry.name.startsWith(RNVT_FILE_PREFIX)) {
+        if (
+          entry instanceof File &&
+          entry.name.startsWith(RNVT_FILE_PREFIX) &&
+          !referenced.has(entry.name)
+        ) {
           try {
             entry.delete();
             removed++;
@@ -50,26 +58,32 @@ function sweepRnvtOutputs(): number {
 }
 
 export function MigrationGate({ children }: { children: React.ReactNode }) {
-  const { success, error } = useMigrations(db, migrations);
-
-  // One-shot data migrations (file moves, transforms — e.g. the legacy Pulse ≤1.2.x draft
-  // import) run after the schema migrations and before the library renders, so an updating
-  // user's first frame already shows their drafts. Completed tasks are skipped instantly.
-  const [dataDone, setDataDone] = useState(false);
+  // Schema migrations (drizzle's expo-sqlite migrator), then the one-shot data migrations (file
+  // moves, transforms — e.g. the legacy Pulse ≤1.2.x draft import), then the media sweeps, all
+  // before the library renders. Nothing runs on a library that failed its check and couldn't be
+  // recovered: the recovery screen shows instead, and media is left alone.
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<unknown>(
+    library.failed ? new Error('Unusable database') : null,
+  );
+  const [recovered, setRecovered] = useState(library.recoveredFrom);
   useEffect(() => {
-    if (!success) return;
-    void runDataMigrations(DATA_MIGRATIONS).finally(() => setDataDone(true));
-  }, [success]);
-
-  // Sweep the files react-native-video-trim left in older versions once on launch: nothing of
-  // this version writes RNVT-named files, so none is live at startup.
-  const swept = useRef(false);
-  useEffect(() => {
-    if (!success || swept.current) return;
-    swept.current = true;
-    const n = sweepRnvtOutputs();
-    if (__DEV__ && n > 0) console.log(`[cleanup] removed ${n} stale RNVT output file(s)`);
-  }, [success]);
+    if (library.failed) return;
+    migrate(db, migrations)
+      .then(async () => {
+        await runDataMigrations(DATA_MIGRATIONS);
+        // Media nothing references (and react-native-video-trim leftovers): nothing of this version
+        // is recording or rendering yet, so no file is mid-write.
+        try {
+          const swept = sweepUnreferencedMedia(expoDb, Date.now());
+          const rnvt = sweepRnvtOutputs(referencedMediaPaths(expoDb));
+          console.log(`[cleanup] removed ${swept} unreferenced and ${rnvt} RNVT file(s)`);
+        } catch (e) {
+          console.warn('[cleanup] media sweep failed', e); // a leftover file costs space, not data
+        }
+      })
+      .then(() => setReady(true), setError);
+  }, []);
 
   // The raw error goes to the log, not the screen: a SQLite message means nothing to the person,
   // and what they can do about it is the same whatever it says.
@@ -90,7 +104,21 @@ export function MigrationGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!success || !dataDone) {
+  if (recovered != null) {
+    return (
+      <ThemedView style={centered}>
+        <StateMessage
+          icon="exclamationmark.triangle.fill"
+          tone="accent"
+          title="Your drafts were restored"
+          message={`Pulse’s database was damaged, so it went back to its copy from ${formatDateTime(recovered)}. Changes after that are gone; your videos are kept.`}>
+          <PrimaryButton label="Continue" onPress={() => setRecovered(null)} />
+        </StateMessage>
+      </ThemedView>
+    );
+  }
+
+  if (!ready) {
     return (
       <ThemedView style={centered}>
         <ActivityIndicator />
