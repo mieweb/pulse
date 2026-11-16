@@ -96,6 +96,25 @@ export function assertSchemaCoverage(conn: SQLiteDatabase): void {
   }
 }
 
+/**
+ * Fail when a database lacks a table or column this build's schema has: a restored backup, after
+ * its migrations, must be a complete library (a file holding only the migration log isn't one).
+ */
+export function assertCurrentSchema(conn: SQLiteDatabase): void {
+  for (const t of TABLES) {
+    const name = tableName(t);
+    const have = new Set(
+      conn.getAllSync<{ name: string }>(`PRAGMA table_xinfo("${name}")`).map((c) => c.name),
+    );
+    if (have.size === 0) throw new Error(`Schema check: table ${name} is missing`);
+    for (const column of Object.values(getTableColumns(t))) {
+      if (!have.has(column.name)) {
+        throw new Error(`Schema check: column ${name}.${column.name} is missing`);
+      }
+    }
+  }
+}
+
 /** A table's rows: all of them, or those of the given drafts. */
 function selectRows(conn: SQLiteDatabase, t: SQLiteTable, draftIds?: string[]): Row[] {
   const d = drizzle(conn);

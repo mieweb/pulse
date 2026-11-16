@@ -133,7 +133,7 @@ export function MigrationGate({ children }: { children: React.ReactNode }) {
     }
   };
   useEffect(() => {
-    if (library.failed) return;
+    if (library.failed || library.restoreIncomplete) return;
     migrate(db, migrations)
       .then(async () => {
         await runDataMigrations(DATA_MIGRATIONS);
@@ -155,6 +155,21 @@ export function MigrationGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (error) console.error('[db] migrations failed', error);
   }, [error]);
+
+  if (library.restoreIncomplete) {
+    // The restored rows are live but some of their files aren't in place yet: showing the library
+    // now would show drafts without their videos. The next launch retries the move.
+    return (
+      <ThemedView style={centered}>
+        <StateMessage
+          icon="exclamationmark.triangle.fill"
+          tone="accent"
+          title="Couldn’t finish restoring the backup"
+          message="Some of its videos aren’t in place yet. Free up some space, then close Pulse and open it again to finish."
+        />
+      </ThemedView>
+    );
+  }
 
   if (library.failed || error) {
     return (

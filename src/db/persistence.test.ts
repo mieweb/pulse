@@ -282,6 +282,12 @@ const BACKED_UP_MEDIA = FIXTURE_MEDIA.filter((p) => !p.endsWith('/export.mp4'));
 const forgetExports = (conn: SQLiteDatabase) =>
   conn.execSync('UPDATE drafts SET merged_signature = NULL, merged_duration_ms = NULL');
 
+/** What a restore brings back: no exports, and no upload destinations (their tokens stay here). */
+const asRestored = (conn: SQLiteDatabase) => {
+  forgetExports(conn);
+  conn.execSync('DELETE FROM upload_destinations');
+};
+
 const byteLength = (rel: string) => {
   const f = new File(env.docDir, rel);
   return f.exists ? f.size : null;
@@ -580,14 +586,14 @@ describe('snapshots and launch recovery', () => {
     const backups = join(env.dbDir, 'backups');
     mkdirSync(backups, { recursive: true });
     writeFileSync(join(backups, 'restore-pending.db'), randomBytes(8192));
-    media('.pulse-restore-media/drafts/x/segments/y.mp4', 'from the backup');
+    media('.pulse-pending-media/drafts/x/segments/y.mp4', 'from the backup');
 
     const opened = openLibrary(5000);
     expect(opened).toMatchObject({ restored: false, restoreFailed: true, failed: false });
     expect(dump(opened.conn)).toEqual(before);
     expect(existsSync(join(backups, 'restore-pending.db'))).toBe(false);
     expect(existsSync(join(backups, 'restore-failed-5000.db'))).toBe(true);
-    expect(existsSync(join(env.docDir, '.pulse-restore-media'))).toBe(false);
+    expect(existsSync(join(env.docDir, '.pulse-pending-media'))).toBe(false);
     opened.conn.closeSync();
     expect(openLibrary(6000)).toMatchObject({ restoreFailed: false, failed: false });
   });
@@ -607,10 +613,10 @@ describe('snapshots and launch recovery', () => {
     seedFixture(conn);
     conn.closeSync();
     const live = FIXTURE_MEDIA[0];
-    media(`.pulse-restore-media/${live}`, 'from a restore that never finished');
+    media(`.pulse-pending-media/${live}`, 'from a restore that never finished');
     expect(openLibrary(5000)).toMatchObject({ restoreFailed: false, failed: false });
     expect(readMedia(live)).toBe(`bytes of ${live}`);
-    expect(existsSync(join(env.docDir, '.pulse-restore-media'))).toBe(false);
+    expect(existsSync(join(env.docDir, '.pulse-pending-media'))).toBe(false);
   });
 
   it('after going back to a snapshot, exports merge again', async () => {
@@ -638,7 +644,7 @@ describe('library backup', () => {
     seedFixture(src);
     media('drafts/gone-draft/segments/leftover.mp4', 'a file no row references');
     const uri = await createLibraryBackup(src, 42);
-    forgetExports(src);
+    asRestored(src);
     const before = dump(src);
 
     const target = newDevice();
@@ -765,7 +771,7 @@ describe('library backup', () => {
     try {
       await expect(createLibraryBackup(src, 43)).rejects.toThrow(/needs about .* GB free/);
       // No new archive or staged database; the last backup made is left alone.
-      expect(readdirSync(join(env.cacheDir, 'pulse-exports'))).toEqual(['pulse-library-42.pulse']);
+      expect(readdirSync(join(env.cacheDir, 'pulse-exports'))).toEqual(['library-42']);
     } finally {
       env.availableDiskSpace = Infinity;
     }
@@ -819,7 +825,7 @@ describe('library backup', () => {
     const src = await openMigrated();
     seedFixture(src);
     const uri = await createLibraryBackup(src, 42);
-    forgetExports(src);
+    asRestored(src);
     const before = dump(src);
 
     const target = newDevice();
@@ -837,7 +843,7 @@ describe('library backup', () => {
     expect(readMedia(live)).toBe(`bytes of ${live}`);
     await migrate(drizzle(relaunched.conn), migrations);
     expect(dump(relaunched.conn)).toEqual(before);
-    expect(existsSync(join(env.docDir, '.pulse-restore-media'))).toBe(false);
+    expect(existsSync(join(env.docDir, '.pulse-pending-media'))).toBe(false);
   });
 
   it('restores from the recovery screen over a database with no usable snapshot', async () => {
@@ -846,7 +852,7 @@ describe('library backup', () => {
     const src = await openMigrated();
     seedFixture(src);
     const uri = await createLibraryBackup(src, 42);
-    forgetExports(src);
+    asRestored(src);
     const before = dump(src);
 
     const target = newDevice();
@@ -867,6 +873,130 @@ describe('library backup', () => {
     await migrate(drizzle(relaunched.conn), migrations);
     expect(dump(relaunched.conn)).toEqual(before);
     expect(readFileSync(join(env.dbDir, 'backups', 'damaged-200-pulse.db'))).toEqual(garbage);
+    // The fresh connection is configured like any other: foreign keys on.
+    expect(relaunched.conn.getFirstSync<{ foreign_keys: number }>('PRAGMA foreign_keys')).toEqual({
+      foreign_keys: 1,
+    });
+  });
+
+  it('refuses a second restore while one is waiting, touching neither', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const uri = await createLibraryBackup(src, 42);
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    await restoreLibraryBackup(dst, uri, 100);
+    await expect(restoreLibraryBackup(dst, uri, 101)).rejects.toThrow(
+      'A restore is already waiting.',
+    );
+    expect(existsSync(join(env.dbDir, 'backups', 'restore-pending.db'))).toBe(true);
+  });
+
+  it('refuses a backup whose database isn’t a complete library once migrated', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    for (const t of ['segments', 'draft_transcripts', 'clip_transcripts', 'settings']) {
+      src.execSync(`DROP TABLE IF EXISTS "${t}"`);
+    }
+    const uri = oldBackup(src, []);
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    await expect(restoreLibraryBackup(dst, uri, 100)).rejects.toThrow('This backup is damaged.');
+    expect(existsSync(join(env.dbDir, 'backups', 'restore-pending.db'))).toBe(false);
+  });
+
+  it('never restores upload destinations (their tokens stay on this phone)', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    expect(drizzle(src, { schema }).select().from(schema.uploadDestinations).all()).not.toEqual([]);
+    const uri = await createLibraryBackup(src, 42);
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    await restoreLibraryBackup(dst, uri, 100);
+    dst.closeSync();
+    const relaunched = openLibrary(200);
+    await migrate(drizzle(relaunched.conn), migrations);
+    expect(
+      drizzle(relaunched.conn, { schema }).select().from(schema.uploadDestinations).all(),
+    ).toEqual([]);
+  });
+
+  it('backs up two files that share a name (a duplicated draft keeps a shared original’s)', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const shared = `drafts/dup/segments/${S1}.mp4`; // same base name as ${P(S1, '.mp4')}
+    src.execSync(`INSERT INTO drafts (id, name, last_clip_number) VALUES ('dup', 'Copy', 1)`);
+    src.execSync(
+      `INSERT INTO segments (id, draft_id, sort_order, label, original_filename, duration_ms) VALUES ('dup-1', 'dup', 0, '1', '${shared}', 1000)`,
+    );
+    media(shared, 'the copy’s bytes');
+    const uri = await createLibraryBackup(src, 42);
+    asRestored(src);
+    const before = dump(src);
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    await restoreLibraryBackup(dst, uri, 100);
+    dst.closeSync();
+    const relaunched = openLibrary(200);
+    await migrate(drizzle(relaunched.conn), migrations);
+    expect(dump(relaunched.conn)).toEqual(before);
+    expect(readMedia(shared)).toBe('the copy’s bytes');
+    expect(readMedia(P(S1, '.mp4'))).toBe(`bytes of ${P(S1, '.mp4')}`);
+  });
+
+  it('a restore whose files can’t all be moved holds the library, then finishes', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const uri = await createLibraryBackup(src, 42);
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    seedFixture(dst);
+    const live = P(S2, '.cover.222.jpg');
+    media(live, 'this phone’s newer copy'); // differs: deferred to the launch
+    await restoreLibraryBackup(dst, uri, 100);
+    dst.closeSync();
+    rmSync(join(env.docDir, live));
+    mkdirSync(join(env.docDir, live)); // a folder in the way: the move fails
+
+    const held = openLibrary(200);
+    expect(held).toMatchObject({ restored: true, restoreIncomplete: true });
+    held.conn.closeSync();
+    rmSync(join(env.docDir, live), { recursive: true });
+
+    const finished = openLibrary(300);
+    expect(finished).toMatchObject({ restoreIncomplete: false, failed: false });
+    expect(readMedia(live)).toBe(`bytes of ${live}`);
+    expect(existsSync(join(env.docDir, '.pulse-pending-media'))).toBe(false);
+  });
+
+  it('a library backup and a draft export running together don’t clear each other’s files', async () => {
+    use(newDevice());
+    const src = await openMigrated();
+    seedFixture(src);
+    const backup = createLibraryBackup(src, 100); // yields between files
+    const draft = exportDrafts(src, [D], 101);
+    const uri = await backup;
+    expect(existsSync(new File(uri).path)).toBe(true);
+    expect(existsSync(new File(draft).path)).toBe(true);
   });
 });
 

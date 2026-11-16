@@ -1,13 +1,11 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { File } from 'expo-file-system';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { buildProject, PROJECT_NAME } from '@/db/project';
 import { ensureFreeSpace, nativeMd5 } from '@/utils/disk-space';
 import { absolutize } from '@/utils/file-store';
+import { exportWorkspace } from './workspace';
 import { writeZip } from './zip-stream';
-
-/** Cache subdir for built bundles. Wiped on each export — these are transient share artifacts. */
-const EXPORT_DIRNAME = 'pulse-exports';
 
 /** Reduce a draft name to a filesystem-safe slug for the single-draft filename. */
 function safeName(name: string | null): string {
@@ -40,9 +38,7 @@ export function exportDrafts(conn: SQLiteDatabase, draftIds: string[], now: numb
   ensureFreeSpace(doc.media.reduce((sum, m) => sum + m.byteLength, 0));
   doc.media = doc.media.map((m) => ({ ...m, md5: nativeMd5(new File(absolutize(m.path))) }));
 
-  const dir = new Directory(Paths.cache, EXPORT_DIRNAME);
-  if (dir.exists) dir.delete(); // clear stale exports so the cache doesn't grow unbounded
-  dir.create({ intermediates: true });
+  const dir = exportWorkspace('drafts', now); // its own folder: a backup may be running too
   const fileName =
     drafts.length === 1
       ? `pulse-draft-${safeName(drafts[0].name as string | null)}-${now}.pulse`

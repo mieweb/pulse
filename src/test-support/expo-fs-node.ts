@@ -92,6 +92,9 @@ export class File {
   async copy(dest: File) {
     copyFileSync(this.path, dest.path);
   }
+  copySync(dest: File) {
+    copyFileSync(this.path, dest.path);
+  }
   async move(dest: File) {
     this.moveSync(dest);
   }

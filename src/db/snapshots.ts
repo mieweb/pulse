@@ -29,7 +29,7 @@ export const PENDING_RESTORE = 'restore-pending.db';
  * `restoreLibraryBackup` and moved into place here, after the database, so the library never
  * pairs old rows with a restored file (or the reverse). Laid out like the documents folder.
  */
-export const pendingMediaDir = () => new Directory(Paths.document, '.pulse-restore-media');
+export const pendingMediaDir = () => new Directory(Paths.document, '.pulse-pending-media');
 
 const dbDir = (): string => defaultDatabaseDirectory;
 export const backupsPath = () => `${dbDir()}/backups`;
@@ -143,7 +143,7 @@ function newestUsableSnapshot(): { at: number; db: SQLiteDatabase } | null {
  * a new file. If that copy is interrupted, the next launch finds the new file empty while a usable
  * snapshot exists, and recovers again.
  */
-function setAsideDamaged(conn: SQLiteDatabase, now: number): SQLiteDatabase {
+function setAsideDamaged(conn: SQLiteDatabase, now: number, ios: boolean): SQLiteDatabase {
   try {
     conn.closeSync();
   } catch {}
@@ -153,7 +153,11 @@ function setAsideDamaged(conn: SQLiteDatabase, now: number): SQLiteDatabase {
     const file = new File(toFileUri(`${dbDir()}/${DB_NAME}${suffix}`));
     if (file.exists) file.moveSync(new File(dir, `damaged-${now}-${DB_NAME}${suffix}`));
   }
-  return openDatabaseSync(DB_NAME, { enableChangeListener: true });
+  const fresh = openDatabaseSync(DB_NAME, { enableChangeListener: true });
+  try {
+    applyDurability(fresh, ios); // foreign keys and durability are per connection
+  } catch {}
+  return fresh;
 }
 
 /**
@@ -162,11 +166,16 @@ function setAsideDamaged(conn: SQLiteDatabase, now: number): SQLiteDatabase {
  */
 const APPLY_MARK = '.apply';
 
-/** Move every staged restore file into the documents folder, replacing what's there. */
-function applyPendingMedia(): void {
+/**
+ * Move every deferred restore file into the documents folder, replacing what's there. `applied`:
+ * its database went in on this launch. Otherwise only a folder with the marker is applied; one
+ * without it was never committed and is discarded. A failed move throws and leaves the rest (and
+ * the marker) in place, so the next launch finishes the job.
+ */
+function applyPendingMedia(applied: boolean): void {
   const root = pendingMediaDir();
   if (!root.exists) return;
-  if (!new File(root, APPLY_MARK).exists) {
+  if (!applied && !new File(root, APPLY_MARK).exists) {
     root.delete();
     return;
   }
@@ -210,6 +219,11 @@ export type OpenedLibrary = {
   restored: boolean;
   /** A staged library backup couldn't be applied; the library is as it was. */
   restoreFailed: boolean;
+  /**
+   * A restored database went in, but not all of its files could be moved into place. Hold the
+   * library until a later launch finishes the move (the files and marker are kept for it).
+   */
+  restoreIncomplete: boolean;
   /** Unusable and no snapshot helped: show the recovery screen, migrate nothing. */
   failed: boolean;
 };
@@ -220,7 +234,12 @@ export type OpenedLibrary = {
  */
 export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLibrary {
   let conn = openDatabaseSync(DB_NAME, { enableChangeListener: true });
-  const result = { recoveredFrom: null as number | null, restored: false, restoreFailed: false };
+  const result = {
+    recoveredFrom: null as number | null,
+    restored: false,
+    restoreFailed: false,
+    restoreIncomplete: false,
+  };
   try {
     applyDurability(conn, ios);
   } catch {}
@@ -228,27 +247,43 @@ export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLib
     removePartials();
   } catch {}
 
-  const staged = new File(backupsDir(), PENDING_RESTORE);
-  if (staged.exists) {
+  const pendingDb = () => new File(backupsDir(), PENDING_RESTORE);
+  let committed = false;
+  if (pendingDb().exists) {
     // The restore already snapshotted the library it replaces when it was staged. A damaged
     // library (restoring from the recovery screen) can't be written through: set it aside first.
     try {
-      if (!isSound(conn)) conn = setAsideDamaged(conn, now);
+      if (!isSound(conn)) conn = setAsideDamaged(conn, now, ios);
       const source = openBackup(PENDING_RESTORE);
       try {
         copyDatabase(source, conn); // one transaction: the old library or the new one, never half
       } finally {
         source.closeSync();
       }
-      const media = pendingMediaDir();
-      if (media.exists) new File(media, APPLY_MARK).write(String(now)); // before the staged db goes
-      staged.delete();
-      result.restored = true;
+      committed = true;
     } catch (e) {
       console.warn('[db] staged restore failed', e);
       result.restoreFailed = true;
       try {
-        staged.moveSync(new File(backupsDir(), `restore-failed-${now}.db`)); // don't retry forever
+        pendingDb().moveSync(new File(backupsDir(), `restore-failed-${now}.db`)); // tried once
+      } catch {}
+    }
+  }
+  if (committed) {
+    // The restored rows are live: from here on, finish the restore; never undo half of it.
+    result.restored = true;
+    try {
+      const media = pendingMediaDir();
+      if (media.exists) new File(media, APPLY_MARK).write(String(now)); // lets a later launch finish
+    } catch (e) {
+      console.warn('[db] marking the restore applied failed', e);
+    }
+    try {
+      pendingDb().delete();
+    } catch {
+      try {
+        // Left in place it would be applied again, over whatever changes come after.
+        pendingDb().moveSync(new File(backupsDir(), `restore-applied-${now}.db`));
       } catch {}
     }
   }
@@ -258,13 +293,13 @@ export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLib
       const media = pendingMediaDir();
       if (media.exists) media.delete();
     } catch {}
-  } else if (!new File(backupsDir(), PENDING_RESTORE).exists) {
-    // After the database (also finishes a move interrupted on an earlier launch).
+  } else {
+    // After the database (also finishes a move an earlier launch couldn't).
     try {
-      applyPendingMedia();
+      applyPendingMedia(committed);
     } catch (e) {
-      console.warn('[db] restoring backup files failed', e);
-      result.restoreFailed = true;
+      console.warn('[db] moving restored files into place failed', e);
+      result.restoreIncomplete = true;
     }
   }
 
@@ -280,7 +315,7 @@ export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLib
     // No usable snapshot: leave the damaged file exactly where it is for the recovery screen.
     if (!snap) return { conn, ...result, failed: true };
     try {
-      conn = setAsideDamaged(conn, now);
+      conn = setAsideDamaged(conn, now, ios);
       copyDatabase(snap.db, conn);
     } catch (e) {
       console.warn('[db] recovery failed', e);

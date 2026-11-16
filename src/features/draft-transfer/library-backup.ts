@@ -5,11 +5,18 @@ import {
   openDatabaseSync,
   type SQLiteDatabase,
 } from 'expo-sqlite';
+import { drizzle } from 'drizzle-orm/expo-sqlite';
+import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
 import { listContents, unzip, zip } from 'react-native-zip-archive';
 
 import { quickCheckOk } from '@/db/durability';
 import { assertSafeLibrary, isSafeMediaPath, referencedMediaPaths } from '@/db/media-refs';
-import { APP_SCHEMA_VERSION, KNOWN_SCHEMA_VERSIONS, schemaVersion } from '@/db/project';
+import {
+  APP_SCHEMA_VERSION,
+  assertCurrentSchema,
+  KNOWN_SCHEMA_VERSIONS,
+  schemaVersion,
+} from '@/db/project';
 import {
   backupsPath,
   DB_NAME,
@@ -19,6 +26,8 @@ import {
 } from '@/db/snapshots';
 import { ensureFreeSpace, nativeMd5 } from '@/utils/disk-space';
 import { absolutize, toFileUri } from '@/utils/file-store';
+import migrations from '../../../drizzle/migrations';
+import { exportWorkspace } from './workspace';
 
 // A library backup: the database as a SQLite file (copied with the online backup API), exactly the
 // files its rows need, and a manifest listing each with its library path, size and native MD5.
@@ -26,10 +35,14 @@ import { absolutize, toFileUri } from '@/utils/file-store';
 // streams through JS, so memory stays flat. Media is zipped straight from `drafts/`, never copied.
 //
 // Native zip stores each listed file under its base name, so the archive is flat and the manifest
-// maps each entry back to its path. Every media name carries its segment id, so names are unique,
-// except each draft's `export.mp4`: that one is left out (it's derived, and the only file rewritten
-// in place, so a backup can't race a re-export) and the copy's export signatures are cleared, so a
-// restored draft merges its export again.
+// maps each entry back to its path. Media names carry their segment id, so they're nearly always
+// unique; a second file with a name already taken (a duplicated draft keeps a shared original's
+// name) goes in as a copy under a name of its own. Each draft's `export.mp4` is left out (it's
+// derived, and the only file rewritten in place, so a backup can't race a re-export) and the
+// copy's export signatures are cleared, so a restored draft merges its export again.
+//
+// A restore never brings back upload destinations: their tokens stay in this phone's secure
+// store, keyed by id, and a backup must not be able to pair one of them with another server.
 //
 // Restoring unzips beside `drafts/` (same volume, so moving a file into place is a rename), checks
 // every listed file's MD5 and the database's ids and paths, snapshots the current library, then:
@@ -79,10 +92,9 @@ function databaseBytes(): number {
 export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Promise<string> {
   // The database copy is written first; the room for the media is checked once it's listed.
   ensureFreeSpace(2 * databaseBytes());
-  const dir = new Directory(Paths.cache, 'pulse-exports');
-  if (dir.exists) dir.delete(); // these are transient share files
-  const stage = new Directory(dir, `stage-${now}`);
-  stage.create({ intermediates: true });
+  const dir = exportWorkspace('library', now);
+  const stage = new Directory(dir, 'stage');
+  stage.create({ intermediates: true, idempotent: true });
   const out = new File(dir, `pulse-library-${now}.pulse`);
   let done = false;
   try {
@@ -106,11 +118,19 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
 
     const sources = [new File(stage, DATABASE), ...media.map((p) => new File(absolutize(p)))];
     const paths = [DATABASE, ...media];
-    const entries = paths.map(entryName);
-    if (new Set([...entries, MANIFEST]).size !== entries.length + 1) {
-      throw new Error('Two files in the library share a name; the backup can’t hold both.');
-    }
     ensureFreeSpace(sources.reduce((sum, f) => sum + (f.size ?? 0), 0));
+    const taken = new Set([MANIFEST]);
+    const entries = paths.map((path, i) => {
+      let entry = entryName(path);
+      if (taken.has(entry)) {
+        // Native zip names an entry after its file, so this one goes in as a renamed copy.
+        while (taken.has(entry)) entry = `${i}-${entry}`;
+        sources[i].copySync(new File(stage, entry));
+        sources[i] = new File(stage, entry);
+      }
+      taken.add(entry);
+      return entry;
+    });
     const files: BackupManifest['files'] = [];
     for (const [i, file] of sources.entries()) {
       files.push({ path: paths[i], entry: entries[i], size: file.size ?? 0, md5: nativeMd5(file) });
@@ -134,7 +154,7 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
     return out.uri;
   } finally {
     if (stage.exists) stage.delete();
-    if (!done && out.exists) out.delete(); // a half-written backup is no use to anyone
+    if (!done && dir.exists) dir.delete(); // a half-written backup is no use to anyone
   }
 }
 
@@ -185,14 +205,31 @@ function readManifest(stage: Directory): BackupManifest {
       typeof f.entry === 'string' &&
       typeof f.md5 === 'string' &&
       typeof f.size === 'number' &&
-      f.entry === entryName(f.path) && // a plain base name, never a path
-      (f.path === DATABASE || isSafeMediaPath(f.path));
+      /^[^/\\]+$/.test(f.entry) && // a plain name in the flat archive, never a path
+      !['.', '..'].includes(f.entry) &&
+      (f.path === DATABASE ? f.entry === DATABASE : isSafeMediaPath(f.path));
     if (!ok || paths.has(f.path) || entries.has(f.entry)) throw new Error(DAMAGED);
     paths.add(f.path);
     entries.add(f.entry);
   }
   if (!paths.has(DATABASE)) throw new Error(DAMAGED);
   return manifest;
+}
+
+/**
+ * Migrate a throwaway copy of a backup's database and check it holds this build's whole schema: a
+ * file with a valid migration log but missing tables would otherwise replace a working library
+ * and fail on the next launch.
+ */
+async function assertCompleteOnceMigrated(db: SQLiteDatabase, stage: Directory): Promise<void> {
+  const check = openDatabaseSync('check.db', { useNewConnection: true }, plainPath(stage.uri));
+  try {
+    backupDatabaseSync({ sourceDatabase: db, destDatabase: check });
+    await migrate(drizzle(check), migrations);
+    assertCurrentSchema(check);
+  } finally {
+    check.closeSync();
+  }
 }
 
 /**
@@ -208,6 +245,13 @@ export async function restoreLibraryBackup(
   now: number,
   { snapshotCurrent = true }: { snapshotCurrent?: boolean } = {},
 ): Promise<void> {
+  // A second restore would replace the first one's deferred files before its database went in.
+  if (
+    new File(toFileUri(`${backupsPath()}/${PENDING_RESTORE}`)).exists ||
+    pendingMediaDir().exists
+  ) {
+    throw new Error('A restore is already waiting. Close Pulse and open it again to finish it.');
+  }
   removeLeftoverRestores();
   const archive = plainPath(fileUri);
   const entries = await listContents(archive);
@@ -220,7 +264,8 @@ export async function restoreLibraryBackup(
   try {
     await unzip(archive, plainPath(stage.uri));
     const manifest = readManifest(stage);
-    const staged = (path: string) => new File(stage, entryName(path));
+    const entryOf = new Map(manifest.files.map((f) => [f.path, f.entry]));
+    const staged = (path: string) => new File(stage, entryOf.get(path)!);
     for (const f of manifest.files) {
       const file = staged(f.path);
       if (!file.exists || file.size !== f.size || nativeMd5(file) !== f.md5) {
@@ -236,6 +281,11 @@ export async function restoreLibraryBackup(
         throw new Error(DAMAGED);
       }
       assertSafeLibrary(db);
+      await assertCompleteOnceMigrated(db, stage);
+      const tables = db.getAllSync<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'upload_destinations'",
+      );
+      if (tables.length > 0) db.execSync('DELETE FROM upload_destinations');
     } catch (e) {
       throw e instanceof Error && e.message === DAMAGED ? e : new Error(DAMAGED);
     } finally {

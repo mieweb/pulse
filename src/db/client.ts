@@ -16,7 +16,14 @@ function open(): OpenedLibrary {
   } catch (e) {
     console.error('[db] could not open the library', e);
     const conn = openDatabaseSync(':memory:', { enableChangeListener: true });
-    return { conn, recoveredFrom: null, restored: false, restoreFailed: false, failed: true };
+    return {
+      conn,
+      recoveredFrom: null,
+      restored: false,
+      restoreFailed: false,
+      restoreIncomplete: false,
+      failed: true,
+    };
   }
 }
 
