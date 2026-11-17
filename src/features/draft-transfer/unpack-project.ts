@@ -1,4 +1,4 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { listContents, unzip } from 'react-native-zip-archive';
 
@@ -7,6 +7,7 @@ import { ensureFreeSpace, nativeMd5 } from '@/utils/disk-space';
 import { absolutize, deleteDraftDir } from '@/utils/file-store';
 import { looksLikeLibraryBackup, RESTORE_PREFIX } from './library-backup';
 import { plainPath, yieldToUi } from './native-zip';
+import { documentDir } from '@/utils/storage-root';
 
 /** What a picked `.pulse` file holds: drafts (v2 or a v1 bundle) or a whole-library backup. */
 export type PulseFileKind = 'project' | 'library-backup' | 'draft-bundle';
@@ -44,7 +45,7 @@ export async function importProjectFile(
   // The unzipped copy sits beside the library until each file is moved into place.
   ensureFreeSpace(listed.reduce((sum, e) => sum + (e.isDirectory ? 0 : e.size), 0));
 
-  const stage = new Directory(Paths.document, `${RESTORE_PREFIX}import-${now}`);
+  const stage = new Directory(documentDir(), `${RESTORE_PREFIX}import-${now}`);
   stage.create({ intermediates: true });
   try {
     await unzip(archive, plainPath(stage.uri));
