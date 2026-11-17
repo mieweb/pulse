@@ -16,7 +16,11 @@ function walk(dir: string, base = dir): [string, string][] {
   });
 }
 
+/** Every archive `zip` wrote, in order (tests check which path wrote a file). */
+export const zipCalls: string[] = [];
+
 export async function zip(source: string | string[], target: string, _options?: unknown) {
+  zipCalls.push(target);
   const files: Record<string, Uint8Array> = {};
   for (const path of Array.isArray(source) ? source : [source]) {
     if (statSync(path).isDirectory()) {

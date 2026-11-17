@@ -1,79 +1,22 @@
 import { File, FileMode, type FileHandle } from 'expo-file-system';
-import { strFromU8, Zip, ZipPassThrough } from 'fflate';
+import { strFromU8 } from 'fflate';
 
 import { nativeMd5 } from '@/utils/disk-space';
 
-// Streamed ZIP for `.pulse` files of any size we can write: one 1 MiB chunk in memory at a time,
-// read and written through expo-file-system's FileHandle. Entries are STORE (fflate's
-// ZipPassThrough): the media is already compressed.
-//
-// Writing uses fflate's streaming `Zip`. Reading does NOT use fflate's streaming `Unzip`: `Zip`
-// always writes sizes after the data (a data descriptor), so `Unzip` finds an entry's end by
-// scanning its bytes for a ZIP signature, and a recording that happens to contain one is cut
-// there (a real iPhone .MOV did: "unknown compression type"). The reader below takes every
-// entry's offset and size from the central directory at the end of the file instead.
-//
-// Writing still computes each entry's CRC-32 in JS (fflate; the ZIP format requires it).
-// Reading checks media against the native MD5 its manifest records instead of that CRC.
+// Reads the `.pulse` draft files Pulse writes (natively, STORE, flat: see native-zip.ts), one
+// 1 MiB chunk in memory at a time, through expo-file-system's FileHandle. It does NOT use
+// fflate's streaming `Unzip`, which finds an entry's end by scanning its bytes for a ZIP signature
+// when sizes come after the data, so a recording that happens to contain one is cut there (a real
+// iPhone .MOV did: "unknown compression type"). Every entry's offset and size come from the
+// central directory at the end of the file instead, and media is checked against the native MD5
+// its project document records, not the CRC.
 
 const CHUNK = 1 << 20;
-/** fflate writes no ZIP64, so sizes and offsets must fit in 32 bits. */
-const MAX_ZIP_BYTES = 0xffffffff;
+/** The reader handles no ZIP64, so a draft file's sizes and offsets must fit in 32 bits. */
+export const MAX_ZIP_BYTES = 0xffffffff;
 export const TOO_BIG_TO_ZIP = 'This is more than a .pulse file can hold (4 GB).';
 /** Far more than any `.pulse` file's entries need (each is ~100 bytes). */
 const MAX_DIRECTORY_BYTES = 16 << 20;
-
-export type ZipSource = { name: string; file: File } | { name: string; bytes: Uint8Array };
-
-/** Write `sources` to `dest` as a STORE zip, streamed. */
-export function writeZip(dest: File, sources: ZipSource[]): void {
-  // Refuse before writing anything: the sizes are known up front (headers add a few KB).
-  const total = sources.reduce(
-    (sum, s) => sum + ('bytes' in s ? s.bytes.length : (s.file.size ?? 0)),
-    0,
-  );
-  if (total > MAX_ZIP_BYTES) throw new Error(TOO_BIG_TO_ZIP);
-  if (dest.exists) dest.delete();
-  dest.create({ intermediates: true });
-  const out = dest.open(FileMode.WriteOnly);
-  let written = 0;
-  let failure: unknown = null;
-  const zip = new Zip((err, chunk) => {
-    if (err) failure ??= err;
-    else if ((written += chunk.length) > MAX_ZIP_BYTES) failure ??= new Error(TOO_BIG_TO_ZIP);
-    else out.writeBytes(chunk);
-  });
-  try {
-    for (const source of sources) {
-      const entry = new ZipPassThrough(source.name);
-      zip.add(entry);
-      if ('bytes' in source) entry.push(source.bytes, true);
-      else streamFile(source.file, (chunk, last) => entry.push(chunk, last));
-      if (failure) throw failure;
-    }
-    zip.end();
-    if (failure) throw failure;
-  } finally {
-    out.close();
-  }
-}
-
-/** Feed a file to `push` in chunks; the last call has `last` set (an empty file gets one call). */
-function streamFile(file: File, push: (chunk: Uint8Array, last: boolean) => void): void {
-  const handle = file.open(FileMode.ReadOnly);
-  try {
-    const size = handle.size ?? 0;
-    if (size === 0) push(new Uint8Array(0), true);
-    for (let offset = 0; offset < size;) {
-      const chunk = handle.readBytes(Math.min(CHUNK, size - offset));
-      if (chunk.length === 0) throw new Error(`${file.name} ended early`);
-      offset += chunk.length;
-      push(chunk, offset >= size);
-    }
-  } finally {
-    handle.close();
-  }
-}
 
 export type ZipEntry = { name: string; size: number; crc: number; headerOffset: number };
 

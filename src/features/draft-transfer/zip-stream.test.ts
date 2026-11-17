@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, jest } from '@jest/globals';
-import { Unzip, UnzipPassThrough } from 'fflate';
+import { zipSync } from 'fflate';
 import {
   closeSync,
   ftruncateSync,
@@ -8,12 +8,13 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { File, FileHandle, FileMode } from '@/test-support/expo-fs-node';
-import { extractEntry, readZipIndex, writeZip } from './zip-stream';
+import { extractEntry, readZipIndex } from './zip-stream';
 
 jest.mock('expo-file-system', () => jest.requireActual('@/test-support/expo-fs-node'));
 
@@ -27,42 +28,22 @@ function withSignature(): Uint8Array {
   return bytes;
 }
 
-describe('streamed .pulse zip', () => {
-  it('fflate’s streaming Unzip cuts an entry at a signature inside its data; the central-directory reader does not', () => {
+/** A STORE zip of `entries` (name → file path), as Pulse's native zip writes `.pulse` files. */
+function storedZip(dest: string, entries: Record<string, string>): void {
+  const files = Object.fromEntries(Object.entries(entries).map(([n, p]) => [n, readFileSync(p)]));
+  writeFileSync(dest, zipSync(files, { level: 0 }));
+}
+
+describe('streamed .pulse zip reader', () => {
+  it('reads an entry with a ZIP signature in its data exactly (central directory, no scanning)', () => {
     const src = new File(DIR, 'clip.mp4');
     src.write(withSignature());
     const zip = new File(DIR, 'a.pulse');
-    writeZip(zip as never, [{ name: 'media/clip.mp4', file: src as never }]);
+    storedZip(zip.path, { 'media/clip.mp4': src.path });
 
-    // fflate's Unzip over the same bytes: the entry ends early or the stream errors.
-    const seen: { name: string; bytes: number }[] = [];
-    let error: unknown = null;
-    const unzip = new Unzip((f) => {
-      const e = { name: f.name, bytes: 0 };
-      seen.push(e);
-      f.ondata = (err, d) => {
-        if (err) error = err;
-        else e.bytes += d.length;
-      };
-      f.start();
-    });
-    unzip.register(UnzipPassThrough);
-    try {
-      unzip.push(readFileSync(zip.path), true);
-    } catch (e) {
-      error = e;
-    }
-    console.log(
-      '[fflate Unzip]',
-      error ? String(error) : JSON.stringify(seen),
-      'expected',
-      src.size,
-    );
-    expect(error !== null || seen[0].bytes !== src.size).toBe(true);
-
-    // Ours: exact bytes, CRC checked.
     const handle = zip.open(FileMode.ReadOnly);
     const entry = readZipIndex(handle as never).get('media/clip.mp4')!;
+    expect(entry.size).toBe(src.size);
     const out = new File(DIR, 'out.mp4');
     extractEntry(handle as never, entry, out as never);
     handle.close();
@@ -73,7 +54,7 @@ describe('streamed .pulse zip', () => {
     const src = new File(DIR, 'b.mp4');
     src.write(new Uint8Array(100_000).fill(7));
     const zip = new File(DIR, 'b.pulse');
-    writeZip(zip as never, [{ name: 'b.mp4', file: src as never }]);
+    storedZip(zip.path, { 'b.mp4': src.path });
     const bytes = readFileSync(zip.path);
     bytes[200] ^= 0xff; // inside the data
     new File(DIR, 'b2.pulse').write(bytes);
@@ -89,13 +70,16 @@ describe('streamed .pulse zip', () => {
   // PULSE_BIG_ZIP=<MiB> runs it (e.g. 500); it writes the zip and the extracted copy to disk.
   const bigMiB = Number(process.env.PULSE_BIG_ZIP ?? 0);
   (bigMiB > 0 ? it : it.skip)(
-    `round-trips a ${bigMiB} MiB file with flat memory`,
+    `extracts a ${bigMiB} MiB entry with flat memory`,
     () => {
       const size = bigMiB << 20;
       const src = new File(DIR, 'big.mp4');
       const fd = openSync(src.path, 'w');
       ftruncateSync(fd, size); // sparse source: no disk for the input
       closeSync(fd);
+
+      const zip = new File(DIR, 'big.pulse');
+      storedZip(zip.path, { 'media/big.mp4': src.path });
 
       // Sample memory on every chunk read, through the fake FileHandle. (Not jest.spyOn: a mock
       // keeps every return value — every chunk — which is itself a 1:1 leak.)
@@ -111,10 +95,6 @@ describe('streamed .pulse zip', () => {
       const gc = (global as { gc?: () => void }).gc;
       gc?.();
       const startRss = process.memoryUsage().rss;
-      const t0 = Date.now();
-      const zip = new File(DIR, 'big.pulse');
-      writeZip(zip as never, [{ name: 'media/big.mp4', file: src as never }]);
-      const tZip = Date.now() - t0;
       const handle = zip.open(FileMode.ReadOnly);
       const entry = readZipIndex(handle as never).get('media/big.mp4')!;
       const out = new File(DIR, 'big-out.mp4');
@@ -127,7 +107,7 @@ describe('streamed .pulse zip', () => {
       const retained = process.memoryUsage().arrayBuffers;
       const MiB = (b: number) => Math.round(b / 1048576);
       console.log(
-        `[big zip] ${bigMiB} MiB: zip ${MiB(statSync(zip.path).size)} MiB in ${tZip} ms, extract in ${tUnzip} ms; ` +
+        `[big zip] ${bigMiB} MiB: zip ${MiB(statSync(zip.path).size)} MiB, extract in ${tUnzip} ms; ` +
           `RSS start ${MiB(startRss)} MiB, peak ${MiB(peak)} MiB (+${MiB(peak - startRss)} MiB), ` +
           `peak ArrayBuffers ${MiB(peakBuffers)} MiB, after GC ${gc ? MiB(retained) + ' MiB' : 'n/a (no --expose-gc)'}`,
       );

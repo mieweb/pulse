@@ -56,7 +56,7 @@ export function useDraftTransfer() {
       if (!(await isAvailableAsync())) {
         throw new Error('Sharing isn’t available on this device.');
       }
-      const uri = exportDrafts(expoDb, draftIds, Date.now());
+      const uri = await exportDrafts(expoDb, draftIds, Date.now());
       await shareAsync(uri, {
         mimeType: 'application/zip',
         UTI: 'public.data',

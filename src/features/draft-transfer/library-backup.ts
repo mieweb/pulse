@@ -7,7 +7,7 @@ import {
 } from 'expo-sqlite';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
-import { listContents, unzip, zip } from 'react-native-zip-archive';
+import { listContents, unzip } from 'react-native-zip-archive';
 
 import { quickCheckOk } from '@/db/durability';
 import { assertSafeLibrary, isSafeMediaPath, referencedMediaPaths } from '@/db/media-refs';
@@ -27,6 +27,7 @@ import {
 import { ensureFreeSpace, nativeMd5 } from '@/utils/disk-space';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import migrations from '../../../drizzle/migrations';
+import { plainPath, yieldToUi, zipFlat } from './native-zip';
 import { exportWorkspace } from './workspace';
 
 // A library backup: the database as a SQLite file (copied with the online backup API), exactly the
@@ -67,18 +68,8 @@ export type BackupManifest = {
   files: { path: string; entry: string; size: number; md5: string }[];
 };
 
-/** A file:// URI as the plain path native code (expo-sqlite's `directory`, zip) takes. */
-const plainPath = (uri: string) =>
-  decodeURIComponent(uri.replace(/^file:\/\//, '')).replace(/\/$/, '');
-
-/** Where a file sits in the (flat) archive: its base name. */
-const entryName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
-
 /** Each draft's merged export: derived, rewritten in place, and left out of library backups. */
 const isExport = (path: string) => /^drafts\/[^/]+\/export\.mp4$/.test(path);
-
-/** Let a frame through between native calls that each take a moment (hashing a clip). */
-const yieldToUi = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /** The live database's files (with its WAL), roughly what its copy will take. */
 function databaseBytes(): number {
@@ -115,50 +106,25 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
       copy.closeSync();
     }
     if (version == null) throw new Error('There is no library to back up yet.');
+    const schemaVersionOfCopy = version;
 
-    const sources = [new File(stage, DATABASE), ...media.map((p) => new File(absolutize(p)))];
-    const paths = [DATABASE, ...media];
-    // Plan the entries first: native zip names an entry after its file, so a second file with a
-    // taken name goes in as a renamed copy, and those copies need room too.
-    const taken = new Set([MANIFEST]);
-    const copies = new Set<number>();
-    const entries = paths.map((path, i) => {
-      let entry = entryName(path);
-      if (taken.has(entry)) {
-        while (taken.has(entry)) entry = `${i}-${entry}`;
-        copies.add(i);
-      }
-      taken.add(entry);
-      return entry;
+    const sources = [
+      { path: DATABASE, file: new File(stage, DATABASE) },
+      ...media.map((p) => ({ path: p, file: new File(absolutize(p)) })),
+    ];
+    await zipFlat(sources, stage, out, {
+      names: [MANIFEST],
+      write: (files) => {
+        const manifest: BackupManifest = {
+          format: BACKUP_FORMAT,
+          version: 3,
+          schemaVersion: schemaVersionOfCopy,
+          createdAt: now,
+          files,
+        };
+        new File(stage, MANIFEST).write(JSON.stringify(manifest));
+      },
     });
-    const size = (i: number) => sources[i].size ?? 0;
-    ensureFreeSpace(
-      sources.reduce((sum, _, i) => sum + size(i), 0) +
-        [...copies].reduce((sum, i) => sum + size(i), 0),
-    );
-    for (const i of copies) {
-      sources[i].copySync(new File(stage, entries[i]));
-      sources[i] = new File(stage, entries[i]);
-    }
-    const files: BackupManifest['files'] = [];
-    for (const [i, file] of sources.entries()) {
-      files.push({ path: paths[i], entry: entries[i], size: file.size ?? 0, md5: nativeMd5(file) });
-      await yieldToUi();
-    }
-    const manifest: BackupManifest = {
-      format: BACKUP_FORMAT,
-      version: 3,
-      schemaVersion: version,
-      createdAt: now,
-      files,
-    };
-    new File(stage, MANIFEST).write(JSON.stringify(manifest));
-
-    await zip(
-      [...sources, new File(stage, MANIFEST)].map((f) => plainPath(f.uri)),
-      plainPath(out.uri),
-      { compressionLevel: 0 }, // media is already compressed
-    );
     done = true;
     return out.uri;
   } finally {

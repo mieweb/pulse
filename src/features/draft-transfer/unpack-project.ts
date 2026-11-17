@@ -43,8 +43,12 @@ export function importProjectFile(
     const project = entries.get(PROJECT_NAME);
     if (!project) throw new Error(DAMAGED);
     const doc = checkProject(JSON.parse(readEntryText(handle, project)));
+    // Each file's entry: its own name in the flat archive, or `media/<path>` in the first v2 files.
+    const entryOf = new Map(
+      doc.media.map((m) => [m.path, entries.get(m.entry ?? `media/${m.path}`)]),
+    );
     for (const m of doc.media) {
-      if (entries.get(`media/${m.path}`)?.size !== m.byteLength) throw new Error(DAMAGED);
+      if (entryOf.get(m.path)?.size !== m.byteLength) throw new Error(DAMAGED);
     }
     const plan = planCopy(doc, freshId);
     if (plan.draftIds.length === 0) throw new Error('This .pulse file has no drafts.');
@@ -53,7 +57,7 @@ export function importProjectFile(
     try {
       for (const [next, old] of plan.files) {
         const dest = new File(absolutize(next));
-        extractEntry(handle, entries.get(`media/${old}`)!, dest, md5Of.get(old));
+        extractEntry(handle, entryOf.get(old)!, dest, md5Of.get(old));
       }
       commitCopy(conn, plan);
     } catch (e) {

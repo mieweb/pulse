@@ -26,8 +26,12 @@ export type ProjectDocument = {
   exportedAt: number;
   /** Rows by SQL table name, keyed by the schema's property names. */
   tables: Record<string, Row[]>;
-  /** Files (relative to the documents folder) the rows need, with their sizes and native MD5. */
-  media: { path: string; byteLength: number; md5?: string }[];
+  /**
+   * Files (relative to the documents folder) the rows need, with their sizes and native MD5. In a
+   * `.pulse` file, `entry` is the file's name in the (flat) archive; a file without one is at
+   * `media/<path>`, as the first v2 files had it.
+   */
+  media: { path: string; byteLength: number; md5?: string; entry?: string }[];
 };
 
 /**
@@ -185,6 +189,15 @@ export function buildProject(
 }
 
 const NEWER = 'This file was made by a newer version of Pulse. Update Pulse to open it.';
+
+/** A flat archive entry name, not one already listed: no folders, no `.` or `..`. */
+const isPlainEntry = (entry: unknown, taken: Set<string>) =>
+  typeof entry === 'string' &&
+  entry !== '' &&
+  entry !== '.' &&
+  entry !== '..' &&
+  !/[/\\]/.test(entry) &&
+  !taken.has(entry);
 const DAMAGED_PROJECT = 'This .pulse file is damaged.';
 
 /** A parsed document checked against this build's schema: no table or column it doesn't know. */
@@ -223,15 +236,18 @@ export function checkProject(value: unknown): ProjectDocument {
   ) {
     throw new Error(DAMAGED_PROJECT);
   }
+  const entries = new Set<string>([PROJECT_NAME]);
   for (const m of doc.media) {
     if (
       typeof m.path !== 'string' ||
       m.path.startsWith('/') ||
       m.path.split('/').includes('..') ||
-      (m.md5 !== undefined && !/^[0-9a-f]{32}$/.test(m.md5))
+      (m.md5 !== undefined && !/^[0-9a-f]{32}$/.test(m.md5)) ||
+      (m.entry !== undefined && !isPlainEntry(m.entry, entries))
     ) {
       throw new Error('This file isn’t a Pulse project.');
     }
+    if (m.entry !== undefined) entries.add(m.entry);
   }
   return doc;
 }

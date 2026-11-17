@@ -20,6 +20,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import migrations from '../../drizzle/migrations';
 import { env, File, md5Calls } from '@/test-support/expo-fs-node';
+import { zipCalls } from '@/test-support/zip-archive-node';
 import { mockModule as sqlite } from '@/test-support/expo-sqlite-node';
 import {
   createLibraryBackup,
@@ -34,6 +35,7 @@ import {
   assertSchemaCoverage,
   buildProject,
   checkProject,
+  PROJECT_FORMAT,
   restoreProject,
   schemaVersion,
   type ProjectDocument,
@@ -364,7 +366,7 @@ describe('schema-driven project document', () => {
     use(source);
     const src = await openMigrated();
     seedFixture(src);
-    const uri = exportDrafts(src, [D], 1234);
+    const uri = await exportDrafts(src, [D], 1234);
     const srcRows = buildProject(src, { draftIds: [D], now: 0, byteLength }).tables;
 
     const target = newDevice();
@@ -406,6 +408,61 @@ describe('schema-driven project document', () => {
     }
   });
 
+  it('exports drafts natively and flat: every file under the entry project.json lists', async () => {
+    use(newDevice());
+    const src = await openMigrated();
+    seedFixture(src);
+    const zips = zipCalls.length;
+    const archive = unzipSync(readFileSync(new File(await exportDrafts(src, [D], 1234)).path));
+    expect(zipCalls.length).toBe(zips + 1); // the native zip wrote it, not JS
+    const doc = JSON.parse(strFromU8(archive['project.json']));
+    expect(Object.keys(archive).every((name) => !name.includes('/'))).toBe(true);
+    expect(Object.keys(archive).sort()).toEqual(
+      ['project.json', ...doc.media.map((m: { entry: string }) => m.entry)].sort(),
+    );
+    for (const m of doc.media) {
+      expect(strFromU8(archive[m.entry])).toBe(readFileSync(join(env.docDir, m.path), 'utf8'));
+    }
+  });
+
+  it('still imports a v2 file in the first layout (media/<path>, no entry names)', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const doc = buildProject(src, { draftIds: [D], now: 0, byteLength });
+    const files: Record<string, Uint8Array> = { 'project.json': strToU8(JSON.stringify(doc)) };
+    for (const m of doc.media) files[`media/${m.path}`] = readFileSync(join(source.docDir, m.path));
+    const old = join(env.cacheDir, 'first-v2.pulse');
+    writeFileSync(old, zipSync(files, { level: 0 }));
+
+    use(newDevice());
+    const dst = await openMigrated();
+    const [copy] = importProjectFile(dst, `file://${old}`, () => `c${Math.random()}`.slice(0, 12));
+    expect(
+      drizzle(dst, { schema })
+        .select()
+        .from(schema.drafts)
+        .all()
+        .map((r) => r.id),
+    ).toEqual([copy]);
+  });
+
+  it('refuses a project whose entry names have folders or repeat', () => {
+    const base = { format: PROJECT_FORMAT, version: 2, tables: {}, schemaVersion: null };
+    const media = (entry: string) => ({ path: 'drafts/a/x.mp4', byteLength: 1, entry });
+    expect(() => checkProject({ ...base, media: [media('../x.mp4')] })).toThrow(/isn’t a Pulse/);
+    expect(() => checkProject({ ...base, media: [media('project.json')] })).toThrow(
+      /isn’t a Pulse/,
+    );
+    expect(() =>
+      checkProject({
+        ...base,
+        media: [media('x.mp4'), { ...media('x.mp4'), path: 'drafts/b/x.mp4' }],
+      }),
+    ).toThrow(/isn’t a Pulse/);
+  });
+
   it('still recognizes a v1 bundle as one for the v1 importer', async () => {
     const path = join(env.cacheDir, 'old.pulse');
     writeFileSync(
@@ -423,7 +480,7 @@ describe('schema-driven project document', () => {
     use(source);
     const src = await openMigrated();
     seedFixture(src);
-    const archive = unzipSync(readFileSync(new File(exportDrafts(src, [D], 1234)).path));
+    const archive = unzipSync(readFileSync(new File(await exportDrafts(src, [D], 1234)).path));
     const doc = JSON.parse(strFromU8(archive['project.json']));
     doc.media[0].md5 = '0'.repeat(32);
     const tampered = join(env.cacheDir, 'tampered-draft.pulse');
@@ -1007,8 +1064,7 @@ describe('library backup', () => {
     const src = await openMigrated();
     seedFixture(src);
     const backup = createLibraryBackup(src, 100); // yields between files
-    const draft = exportDrafts(src, [D], 101);
-    const uri = await backup;
+    const [uri, draft] = await Promise.all([backup, exportDrafts(src, [D], 101)]);
     expect(existsSync(new File(uri).path)).toBe(true);
     expect(existsSync(new File(draft).path)).toBe(true);
   });
