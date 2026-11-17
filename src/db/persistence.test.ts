@@ -376,7 +376,7 @@ describe('schema-driven project document', () => {
     const ids = ['new-D', 'new-1', 'new-2', 'new-3'];
     const fresh = () => ids.shift()!;
     expect(await pulseFileKind(uri)).toBe('project');
-    const [newDraft] = importProjectFile(dst, uri, fresh);
+    const [newDraft] = await importProjectFile(dst, uri, fresh);
     expect(newDraft).toBe('new-D');
 
     const swap = (v: unknown) =>
@@ -425,6 +425,49 @@ describe('schema-driven project document', () => {
     }
   });
 
+  it('imports a draft file whose entries are deflated, as Android’s native zip writes them', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const stored = unzipSync(readFileSync(new File(await exportDrafts(src, [D], 1234)).path));
+    const deflated = join(env.cacheDir, 'deflated.pulse');
+    writeFileSync(deflated, zipSync(stored, { level: 6 }));
+
+    use(newDevice());
+    const dst = await openMigrated();
+    const ids = ['n-D', 'n-1', 'n-2', 'n-3'];
+    const [copy] = await importProjectFile(dst, `file://${deflated}`, () => ids.shift()!);
+    expect(copy).toBe('n-D');
+    const doc = JSON.parse(strFromU8(stored['project.json']));
+    for (const m of doc.media) {
+      const swapped = m.path.replace(D, 'n-D').replace(S1, 'n-1').replace(S2, 'n-2');
+      expect(readMedia(swapped.replace(S3, 'n-3'))).toBe(strFromU8(stored[m.entry]));
+    }
+    expect(readdirSync(env.docDir).some((n) => n.startsWith('.pulse-restore-'))).toBe(false);
+  });
+
+  it('imports two drafts that share a file: moved to the first copy, copied to the other', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    // Draft B's clip uses draft A's original, as a duplicated draft keeps its source's file.
+    src.runSync('UPDATE segments SET original_filename = ? WHERE id = ?', P(S1, '.mp4'), S4);
+    const uri = await exportDrafts(src, [D, D2], 1234);
+
+    use(newDevice());
+    const dst = await openMigrated();
+    const draftIds = await importProjectFile(dst, uri, () => `x${Math.random()}`.slice(0, 10));
+    expect(draftIds).toHaveLength(2);
+    const originals = dst.getAllSync<{ f: string }>('SELECT original_filename AS f FROM segments');
+    for (const { f } of originals) expect(existsSync(join(env.docDir, f))).toBe(true);
+    const shared = originals
+      .map((r) => r.f)
+      .filter((f) => readMedia(f) === `bytes of ${P(S1, '.mp4')}`);
+    expect(new Set(shared.map((f) => f.split('/')[1])).size).toBe(2); // in both new drafts
+  });
+
   it('still imports a v2 file in the first layout (media/<path>, no entry names)', async () => {
     const source = newDevice();
     use(source);
@@ -438,7 +481,9 @@ describe('schema-driven project document', () => {
 
     use(newDevice());
     const dst = await openMigrated();
-    const [copy] = importProjectFile(dst, `file://${old}`, () => `c${Math.random()}`.slice(0, 12));
+    const [copy] = await importProjectFile(dst, `file://${old}`, () =>
+      `c${Math.random()}`.slice(0, 12),
+    );
     expect(
       drizzle(dst, { schema })
         .select()
@@ -492,7 +537,10 @@ describe('schema-driven project document', () => {
     const target = newDevice();
     use(target);
     const dst = await openMigrated();
-    expect(() => importProjectFile(dst, `file://${tampered}`, () => 'copy')).toThrow(/damaged/);
+    await expect(importProjectFile(dst, `file://${tampered}`, () => 'copy')).rejects.toThrow(
+      /damaged/,
+    );
+    expect(readdirSync(env.docDir).some((n) => n.startsWith('.pulse-restore-'))).toBe(false);
     expect(drizzle(dst, { schema }).select().from(schema.drafts).all()).toEqual([]);
     expect(existsSync(join(env.docDir, 'drafts', 'copy'))).toBe(false);
   });

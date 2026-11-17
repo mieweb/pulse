@@ -103,7 +103,7 @@ export function useDraftTransfer() {
         return [];
       }
       if (kind === 'project') {
-        const ids = importProjectFile(expoDb, asset.uri, Crypto.randomUUID);
+        const ids = await importProjectFile(expoDb, asset.uri, Crypto.randomUUID);
         showToast(`${formatCount(ids.length, 'draft', 'drafts')} imported`);
         return ids;
       }

@@ -4,7 +4,6 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { buildProject, PROJECT_NAME } from '@/db/project';
 import { absolutize } from '@/utils/file-store';
 import { zipFlat } from './native-zip';
-import { MAX_ZIP_BYTES, TOO_BIG_TO_ZIP } from './zip-stream';
 import { exportWorkspace } from './workspace';
 
 /** Reduce a draft name to a filesystem-safe slug for the single-draft filename. */
@@ -39,10 +38,6 @@ export async function exportDrafts(
   const doc = buildProject(conn, { draftIds, now, byteLength });
   const drafts = doc.tables.drafts;
   if (drafts.length === 0) throw new Error('The selected drafts are gone.');
-  // Importing reads the file without ZIP64: refuse one it couldn't read back (headers add a few KB).
-  if (doc.media.reduce((sum, m) => sum + m.byteLength, 1 << 20) > MAX_ZIP_BYTES) {
-    throw new Error(TOO_BIG_TO_ZIP);
-  }
 
   const dir = exportWorkspace('drafts', now); // its own folder: a backup may be running too
   const stage = new Directory(dir, 'stage');

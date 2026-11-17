@@ -141,9 +141,10 @@ export async function looksLikeLibraryBackup(fileUri: string): Promise<boolean> 
 
 const DAMAGED = 'This backup is damaged.';
 const NOT_A_BACKUP = 'This isn’t a Pulse library backup.';
-const RESTORE_PREFIX = '.pulse-restore-';
+/** Unzipped `.pulse` files (a restore, or a draft import) are staged in folders named so. */
+export const RESTORE_PREFIX = '.pulse-restore-';
 
-/** Remove unzipped restores a crash or kill left behind (each can be as large as the library). */
+/** Remove unzipped restores and imports a crash or kill left behind (each can be large). */
 export function removeLeftoverRestores(): void {
   for (const entry of new Directory(Paths.document).list()) {
     if (entry instanceof Directory && entry.name.startsWith(RESTORE_PREFIX)) {

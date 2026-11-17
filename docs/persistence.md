@@ -58,8 +58,8 @@ damaged, empty or restored database would then delete videos.
 | | Draft transfer | Library backup |
 |---|---|---|
 | Contents | `project.json`: every row and column of the chosen drafts, built from `schema.ts` (`src/db/project.ts`), plus their media, each listed with its archive entry, size and MD5 | `pulse.db` (via the backup API), `manifest.json` (each file's library path, archive entry, size and MD5), and exactly the files the database references, except each draft's `export.mp4` |
-| Import | copy with new ids (`unpack-project.ts`); v1 bundles still go to the v1 importer | exact restore, staged for the next launch, then migrated (`library-backup.ts`) |
-| Zip | both native (`react-native-zip-archive`, `native-zip.ts`), flat: each file under its base name; a second file with a taken name (a duplicated draft keeps a shared original's) goes in as a renamed copy. A draft file is read back in JS (`zip-stream.ts`, no ZIP64), so it's limited to 4 GB; files from before entry names (`media/<path>`) still import | (same) |
+| Import | copy with new ids (`unpack-project.ts`); a file two copies share is moved once and copied for the other; v1 bundles still go to the v1 importer | exact restore, staged for the next launch, then migrated (`library-backup.ts`) |
+| Zip | native both ways (`react-native-zip-archive`; `native-zip.ts` writes): flat, each file under its base name; a second file with a taken name (a duplicated draft keeps a shared original's) goes in as a renamed copy. Import unzips beside `drafts/`, checks sizes and MD5s, then moves each file into place. Draft files from before entry names (`media/<path>`) still import | (same) |
 
 **Coverage:** the export refuses a database column that `schema.ts` doesn't define, and a test fails
 if a schema column is missing from the export.
