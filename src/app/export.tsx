@@ -34,6 +34,7 @@ import {
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { captionYQuery } from '@/db/captions';
 import { segmentsForDraft } from '@/db/drafts';
+import { finishWithVideo, useEmbedded } from '@/features/embed/host';
 import { useExport } from '@/features/export/use-export';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
@@ -93,6 +94,7 @@ export default function ExportScreen() {
   const [busy, setBusy] = useState(false);
 
   const photos = useSaveToPhotos();
+  const embedded = useEmbedded();
   const { showToast } = useToast();
   const theme = useTheme();
   // Secondary buttons and the uploading bar: cards on the grouped background, lifted by a
@@ -248,6 +250,17 @@ export default function ExportScreen() {
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
               note={<CaptionsNote captions={captions} />}
             />
+
+            {/* Embedded in another app: hand the video back to it. */}
+            {embedded && (
+              <PrimaryButton
+                label="Use this video"
+                icon="checkmark"
+                onPress={() =>
+                  void finishWithVideo(draftId ?? '', state.outputPath, state.durationMs)
+                }
+              />
+            )}
 
             {/* Compact inline row — these are secondary actions; the upload button(s) below
                 own the vertical space. */}

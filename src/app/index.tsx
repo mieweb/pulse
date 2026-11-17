@@ -12,6 +12,7 @@ import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { deleteDraft, draftListQuery, duplicateDraft, renameDraft } from '@/db/drafts';
 import { adoptMergedCaptionEdit } from '@/db/transcripts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
+import { cancelEmbedSession, useEmbedded } from '@/features/embed/host';
 import { DraftCard } from '@/features/home/draft-card';
 import { DraftMenu } from '@/features/home/draft-menu';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
@@ -39,6 +40,7 @@ export default function HomeScreen() {
   useOnboardingRedirect();
 
   const theme = useTheme();
+  const embedded = useEmbedded();
   const insets = useSafeAreaInsets();
   const { data: drafts } = useLiveQuery(draftListQuery);
   // What an unnamed draft recorded for a place is called: that place's label, live from the pool.
@@ -187,6 +189,24 @@ export default function HomeScreen() {
       ) : (
         <View style={[styles.header, styles.headerEnd, { paddingTop: insets.top + Spacing.three }]}>
           <View style={styles.headerActions}>
+            {/* Embedded in another app: go back to it without a video. */}
+            {embedded && (
+              <Pressable
+                onPress={cancelEmbedSession}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                accessibilityHint="Closes Pulse and goes back to the app you came from"
+                style={({ pressed }) => [
+                  styles.headerButton,
+                  pressed && { backgroundColor: theme.backgroundSelected },
+                ]}>
+                <Icon name="xmark" size={20} tintColor={theme.text} />
+                <ThemedText type="caption2" style={styles.headerButtonLabel}>
+                  Close
+                </ThemedText>
+              </Pressable>
+            )}
             <Pressable
               onPress={importDrafts}
               hitSlop={12}

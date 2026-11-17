@@ -1,7 +1,6 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import {
   backupDatabaseSync,
-  defaultDatabaseDirectory,
   openDatabaseSync,
   type SQLiteDatabase,
 } from 'expo-sqlite';
@@ -29,6 +28,8 @@ import { absolutize, toFileUri } from '@/utils/file-store';
 import migrations from '../../../drizzle/migrations';
 import { plainPath, yieldToUi, zipFlat } from './native-zip';
 import { exportWorkspace } from './workspace';
+import { documentDir } from '@/utils/storage-root';
+import { databaseDir } from '@/db/database-dir';
 
 // A library backup: the database as a SQLite file (copied with the online backup API), exactly the
 // files its rows need, and a manifest listing each with its library path, size and native MD5.
@@ -74,7 +75,7 @@ const isExport = (path: string) => /^drafts\/[^/]+\/export\.mp4$/.test(path);
 /** The live database's files (with its WAL), roughly what its copy will take. */
 function databaseBytes(): number {
   return ['', '-wal'].reduce((sum, suffix) => {
-    const f = new File(toFileUri(`${defaultDatabaseDirectory}/${DB_NAME}${suffix}`));
+    const f = new File(toFileUri(`${databaseDir()}/${DB_NAME}${suffix}`));
     return sum + (f.exists ? (f.size ?? 0) : 0);
   }, 0);
 }
@@ -146,7 +147,7 @@ export const RESTORE_PREFIX = '.pulse-restore-';
 
 /** Remove unzipped restores and imports a crash or kill left behind (each can be large). */
 export function removeLeftoverRestores(): void {
-  for (const entry of new Directory(Paths.document).list()) {
+  for (const entry of new Directory(documentDir()).list()) {
     if (entry instanceof Directory && entry.name.startsWith(RESTORE_PREFIX)) {
       try {
         entry.delete();
@@ -235,7 +236,7 @@ export async function restoreLibraryBackup(
   // The unzipped copy sits beside the library until each file is moved into place.
   ensureFreeSpace(entries.reduce((sum, e) => sum + (e.isDirectory ? 0 : e.size), 0));
 
-  const stage = new Directory(Paths.document, `${RESTORE_PREFIX}${now}`);
+  const stage = new Directory(documentDir(), `${RESTORE_PREFIX}${now}`);
   stage.create({ intermediates: true });
   try {
     await unzip(archive, plainPath(stage.uri));

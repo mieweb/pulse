@@ -1,9 +1,10 @@
 import { requireOptionalNativeModule } from 'expo';
-import { Directory, File, FileMode, Paths, UploadType } from 'expo-file-system';
+import { Directory, File, FileMode, UploadType } from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import type { UploadChunk } from './tus-client';
 import { describeError, formatBytes, formatRate, formatSeconds, uploadLog } from './upload-log';
+import { cacheDir } from '@/utils/storage-root';
 
 function randomId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -24,7 +25,7 @@ const LEGACY_CHUNK_DIR_NAME = 'tus-resume';
  */
 export function cleanupStaleUploadTempFiles(): void {
   for (const name of [CHUNK_DIR_NAME, LEGACY_CHUNK_DIR_NAME]) {
-    const dir = new Directory(Paths.cache, name);
+    const dir = new Directory(cacheDir(), name);
     if (!dir.exists) continue;
     try {
       dir.delete();
@@ -83,7 +84,7 @@ function prepareChunkSource(
 ): { file: File; cleanup: () => void } {
   if (offset <= 0 && chunkBytes >= totalBytes) return { file: source, cleanup: () => {} };
 
-  const dir = new Directory(Paths.cache, CHUNK_DIR_NAME);
+  const dir = new Directory(cacheDir(), CHUNK_DIR_NAME);
   dir.create({ intermediates: true, idempotent: true });
   const temp = new File(dir, `${randomId()}.bin`);
   if (temp.exists) temp.delete();

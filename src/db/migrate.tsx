@@ -3,7 +3,7 @@ import { reloadAppAsync } from 'expo';
 import * as DocumentPicker from 'expo-document-picker';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator } from 'react-native';
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 
 import { PrimaryButton } from '@/components/primary-button';
 import { StateMessage } from '@/components/state-message';
@@ -21,6 +21,7 @@ import { runDataMigrations, type DataMigration } from './data-migrations';
 import { dropBakedEdits } from './baked-edits-migration';
 import { dropDraftTokens } from './draft-token-migration';
 import { legacyDraftsImport } from './legacy-migration';
+import { cacheDir, documentDir } from '@/utils/storage-root';
 
 /**
  * All one-shot data migrations, in execution order. APPEND new tasks at the end — never
@@ -45,7 +46,7 @@ const RNVT_FILE_PREFIX = 'trimmedVideo';
  */
 function sweepRnvtOutputs(referenced: Set<string>): number {
   let removed = 0;
-  for (const dir of [Paths.document, Paths.cache]) {
+  for (const dir of [documentDir(), cacheDir()]) {
     try {
       for (const entry of new Directory(dir).list()) {
         if (

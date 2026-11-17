@@ -1,7 +1,6 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import {
   backupDatabaseSync,
-  defaultDatabaseDirectory,
   openDatabaseSync,
   type SQLiteDatabase,
 } from 'expo-sqlite';
@@ -10,6 +9,8 @@ import { Platform } from 'react-native';
 import { toFileUri } from '@/utils/file-store';
 import { applyDurability, quickCheckOk } from './durability';
 import { APP_SCHEMA_VERSION, schemaVersion } from './project';
+import { documentDir } from '@/utils/storage-root';
+import { databaseDir } from './database-dir';
 
 // Recovery snapshots: copies of the database (SQLite's online backup API, through expo-sqlite's
 // backupDatabaseSync) in `SQLite/backups/pulse-<ms>.db`, the newest three kept. Each is written
@@ -29,9 +30,9 @@ export const PENDING_RESTORE = 'restore-pending.db';
  * `restoreLibraryBackup` and moved into place here, after the database, so the library never
  * pairs old rows with a restored file (or the reverse). Laid out like the documents folder.
  */
-export const pendingMediaDir = () => new Directory(Paths.document, '.pulse-pending-media');
+export const pendingMediaDir = () => new Directory(documentDir(), '.pulse-pending-media');
 
-const dbDir = (): string => defaultDatabaseDirectory;
+const dbDir = (): string => databaseDir();
 export const backupsPath = () => `${dbDir()}/backups`;
 const backupsDir = () => new Directory(toFileUri(backupsPath()));
 const SNAPSHOT = /^pulse-(\d+)\.db$/;
@@ -153,7 +154,7 @@ function setAsideDamaged(conn: SQLiteDatabase, now: number, ios: boolean): SQLit
     const file = new File(toFileUri(`${dbDir()}/${DB_NAME}${suffix}`));
     if (file.exists) file.moveSync(new File(dir, `damaged-${now}-${DB_NAME}${suffix}`));
   }
-  const fresh = openDatabaseSync(DB_NAME, { enableChangeListener: true });
+  const fresh = openDatabaseSync(DB_NAME, { enableChangeListener: true }, databaseDir());
   try {
     applyDurability(fresh, ios); // foreign keys and durability are per connection
   } catch {}
@@ -186,7 +187,7 @@ function applyPendingMedia(applied: boolean): void {
         continue;
       }
       if (rel.length === 0 && entry.name === APPLY_MARK) continue;
-      const dest = new File(Paths.document, ...rel, entry.name);
+      const dest = new File(documentDir(), ...rel, entry.name);
       dest.parentDirectory.create({ intermediates: true, idempotent: true });
       if (dest.exists) dest.delete();
       entry.moveSync(dest);
@@ -233,7 +234,7 @@ export type OpenedLibrary = {
  * newest usable snapshot if it needs it, and snapshot it before migrations or once a day.
  */
 export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLibrary {
-  let conn = openDatabaseSync(DB_NAME, { enableChangeListener: true });
+  let conn = openDatabaseSync(DB_NAME, { enableChangeListener: true }, databaseDir());
   const result = {
     recoveredFrom: null as number | null,
     restored: false,

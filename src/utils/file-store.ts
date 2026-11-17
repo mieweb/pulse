@@ -1,6 +1,7 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 
 import { editedSegmentRelPath, exportRelPath, segmentRelPath } from './media-paths';
+import { documentDir } from '@/utils/storage-root';
 
 export {
   editCoverRelPath,
@@ -25,12 +26,12 @@ export {
 export const toFileUri = (path: string): string => (path.startsWith('/') ? `file://${path}` : path);
 
 export function absolutize(relPath: string): string {
-  return new File(Paths.document, ...relPath.split('/')).uri;
+  return new File(documentDir(), ...relPath.split('/')).uri;
 }
 
 /** The draft's segments dir, creating it (and any missing parents) if needed. */
 function segmentsDir(draftId: string): Directory {
-  const dir = new Directory(Paths.document, 'drafts', draftId, 'segments');
+  const dir = new Directory(documentDir(), 'drafts', draftId, 'segments');
   dir.create({ intermediates: true, idempotent: true });
   return dir;
 }
@@ -109,7 +110,7 @@ export async function persistExportFile(draftId: string, mergeOutputPath: string
 }
 
 export function deleteDraftDir(draftId: string): void {
-  const dir = new Directory(Paths.document, 'drafts', draftId);
+  const dir = new Directory(documentDir(), 'drafts', draftId);
   if (dir.exists) dir.delete();
 }
 

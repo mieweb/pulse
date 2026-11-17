@@ -1,0 +1,92 @@
+{
+  "expo": {
+    "name": "Pulse",
+    "slug": "pulse-camera",
+    "owner": "mieweb",
+    "version": "2.6.0",
+    "orientation": "portrait",
+    "scheme": "pulsecam",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.mieweb.pulse.embedhost",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Pulse needs camera access to record video clips.",
+        "NSMicrophoneUsageDescription": "Pulse needs microphone access to record sound with your video clips."
+      }
+    },
+    "android": {
+      "package": "com.mieweb.pulse.embedhost",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-brownfield",
+        {
+          "ios": {
+            "targetName": "PulseKit",
+            "bundleIdentifier": "com.mieweb.pulse.kit"
+          },
+          "android": {
+            "libraryName": "pulsekit",
+            "group": "com.mieweb.pulse",
+            "package": "com.mieweb.pulse.kit",
+            "version": "0.1.0"
+          }
+        }
+      ],
+      "./plugins/with-pulsekit-facade",
+      "expo-sqlite",
+      "expo-video",
+      "expo-image",
+      "expo-sharing",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Pulse to access your photos to import videos into your drafts.",
+          "savePhotosPermission": "Allow Pulse to save exported videos to your photo library.",
+          "granularPermissions": []
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Pulse to access your photos to import videos into your drafts."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Pulse needs microphone access to record sound with your video clips.",
+          "enableBackgroundPlayback": false
+        }
+      ],
+      "expo-asset",
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 29,
+            "extraProguardRules": "-keep class com.rnwhisper.** { *; }"
+          }
+        }
+      ],
+      "expo-status-bar",
+      "../plugins/with-disable-script-sandboxing"
+    ],
+    "experiments": {
+      "reactCompiler": true
+    }
+  }
+}

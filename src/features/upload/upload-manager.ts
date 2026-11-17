@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import { getInfoAsync } from 'expo-file-system/legacy';
 
 import { deleteDestination } from '@/db/destinations';
@@ -48,6 +48,7 @@ import type {
   UploadSession,
 } from './types';
 import { requestViewLink } from './view-link';
+import { cacheDir } from '@/utils/storage-root';
 
 /** Every failure spends the link, so the way to try again is a new one. */
 const NEW_LINK = 'open a new link to try again.';
@@ -150,7 +151,7 @@ async function md5Checksum(file: File): Promise<string> {
 }
 
 function tempFile(name: string): File {
-  const dir = new Directory(Paths.cache, TEMP_DIR_NAME);
+  const dir = new Directory(cacheDir(), TEMP_DIR_NAME);
   dir.create({ intermediates: true, idempotent: true });
   const file = new File(dir, name);
   if (file.exists) file.delete();
@@ -315,7 +316,7 @@ class BackgroundUploadManager {
     }
     cleanupStaleUploadTempFiles();
     try {
-      const temps = new Directory(Paths.cache, TEMP_DIR_NAME);
+      const temps = new Directory(cacheDir(), TEMP_DIR_NAME);
       if (temps.exists) temps.delete();
     } catch {
       // Locked — the next launch tries again.

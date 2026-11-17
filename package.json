@@ -71,6 +71,7 @@
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.2",
     "eslint-config-prettier": "^10.1.8",
+    "expo-brownfield": "~57.0.25",
     "jest": "~29.7.0",
     "json-schema-to-typescript": "^15.0.4",
     "patch-package": "^8.0.1",
@@ -106,7 +107,10 @@
         "buildFromSource": [
           "expo-file-system"
         ]
-      }
+      },
+      "exclude": [
+        "expo-brownfield"
+      ]
     }
   },
   "scripts": {

@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../src/*"],
+      "@/assets/*": ["../assets/*"],
+      "whisper.rn": ["../node_modules/whisper.rn/lib/typescript/index"],
+      "@mieweb/pulse-editor": ["../modules/pulse-editor/src/index.tsx"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../src/**/*.ts", "../src/**/*.tsx", "../expo-env.d.ts"],
+  "exclude": ["node_modules", "ios", "android"]
+}

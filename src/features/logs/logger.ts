@@ -1,7 +1,8 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import { AppState } from 'react-native';
 
 import { formatEntry, LogBuffer, type LogLevel, MAX_ENTRIES, splitEntries } from './log-buffer';
+import { cacheDir, documentDir } from '@/utils/storage-root';
 
 /**
  * The debug log behind the About page's Share logs (#155). `installLogCapture` (called once at
@@ -18,8 +19,8 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let entriesInFile = 0;
 let installed = false;
 
-const logDir = () => new Directory(Paths.document, 'logs');
-const logFile = () => new File(Paths.document, 'logs', 'pulse.log');
+const logDir = () => new Directory(documentDir(), 'logs');
+const logFile = () => new File(documentDir(), 'logs', 'pulse.log');
 
 /** Write pending entries now. Never throws — logging must not break the app. */
 export function flushLogs(): void {
@@ -108,7 +109,7 @@ export function installLogCapture(): void {
 
 /** A text file with `header` (the About details) followed by the log, ready to share. */
 export function writeLogExport(header: string): File {
-  const file = new File(Paths.cache, 'pulse-logs.txt');
+  const file = new File(cacheDir(), 'pulse-logs.txt');
   if (file.exists) file.delete();
   file.write(logExportText(header));
   return file;
