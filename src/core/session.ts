@@ -7,6 +7,13 @@
  *
  * The Pulse app has one session per launch and never resets. `PulseCore` in `embedded` mode calls
  * `resetSession()` as it mounts, before any screen renders, so every flow starts clean.
+ *
+ * Not wired yet: the per-flow owners live in feature files outside this module's change, so
+ * nothing registers so far. Each must call `onSessionReset` at module load: the tip on screen
+ * (features/tips/use-tip.ts `active`), the tip callout (features/tips/tip-callout.tsx `current`),
+ * the transcription queue's 'recording' pause (features/transcription/clip-queue.ts `pausedFor`)
+ * and the mounted recorders (features/recorder/recorder-presence.ts `recorders`). The V0 embed
+ * host's `session` (features/embed/host.ts) goes when the embed shell deletes that file.
  */
 type Reset = () => void;
 
