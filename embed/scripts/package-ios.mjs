@@ -42,6 +42,8 @@ const HELP = `Usage: node embed/scripts/package-ios.mjs [options]
 
 Packages expo-brownfield's iOS xcframeworks into PulseKit release assets.
 
+Relative --input, --out and --vendored paths are relative to the current folder.
+
 Options:
   --input <dir>     expo-brownfield's output folder of *.xcframework (default: embed/artifacts)
   --out <dir>       Where to write (default: embed/artifacts/pulsekit-ios). It must be empty
@@ -49,8 +51,8 @@ Options:
                     an xcframework it reads, and may not be or contain --input or the repo.
   --clean           Delete --out first. Only an earlier run's output (${OUT_ENTRIES.join(', ')})
                     is deleted; anything else in --out stops the run.
-  --vendored <dir>  An extra xcframework to ship when --input lacks it; repeatable
-                    (default: ${VENDORED.join(', ')}).
+  --vendored <dir>  An xcframework to ship when --input lacks it; repeatable. Giving it
+                    replaces the default list (${VENDORED.join(', ')}, relative to the repo).
   --version <v>     PulseKitVersion (default: the app version in the root package.json, which
                     PulseKit and @mieweb/pulse-embed share, AD18).
   --build <n>       PulseKitBuild (default: $GITHUB_RUN_NUMBER, else the commit count).
@@ -118,8 +120,11 @@ function main() {
   if (!sources.some((s) => s.name === 'PulseKit.xcframework')) {
     throw new Error(`${input} has no PulseKit.xcframework; is it expo-brownfield's iOS output?`);
   }
-  for (const rel of values.vendored ?? VENDORED) {
-    const dir = path.resolve(repoRoot, rel);
+  // Given paths are relative to the current folder; the default is relative to the repo.
+  const vendored = values.vendored
+    ? values.vendored.map((p) => path.resolve(p))
+    : VENDORED.map((rel) => path.resolve(repoRoot, rel));
+  for (const dir of vendored) {
     const name = path.basename(dir);
     if (sources.some((s) => s.name === name)) continue; // the build already has it
     if (!fs.existsSync(path.join(dir, 'Info.plist'))) {
