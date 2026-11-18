@@ -23,7 +23,15 @@ import type {
  *     save as they happen, so there's nothing to discard: `closed{draftId}` if this flow changed
  *     it, else `canceled{draftId}`.
  * The host's `close` never shows the sheet: the take is kept (`closed{reason:'host'}`) unless it
- * asks to discard (a shared phone), which deletes it and ends `canceled`.
+ * asks to discard (a shared phone), which deletes a draft this flow made and ends `canceled`. A
+ * draft the flow opened is never deleted by the host's close: discard means the take, and that
+ * draft (with its earlier clips) was the person's before the flow began; it ends as X would.
+ *
+ * A take in progress: the host's close and a failure wait for it. The recorder stops the take
+ * (the shell asks it to, as the recorder's own close does), and the `stop` that follows settles
+ * the end with the draft the take landed in, so a first take can't leave a draft the result says
+ * doesn't exist. If the take can't report (its recorder is gone), the shell dispatches a bare
+ * `stop`, which settles the end with what's known.
  */
 
 /** How the flow ended; result.ts adds the common fields. */
@@ -51,6 +59,10 @@ export type FlowEnd =
 
 export type CloseReason = 'user' | 'host' | 'interrupted';
 
+/** An end waiting for the running take to stop. */
+export type PendingEnd =
+  { type: 'hostClose'; discard: boolean } | { type: 'error'; error: PulseErrorInfo };
+
 export interface FlowState {
   requestId: string;
   entry: EntryName;
@@ -72,6 +84,8 @@ export interface FlowState {
   stage: FlowStage;
   /** The keep/discard sheet is up. */
   sheet: 'exit' | null;
+  /** The host's close or a failure came during a take; the take's `stop` settles it. */
+  pending: PendingEnd | null;
   end: FlowEnd | null;
   /** A draft the shell must delete as the flow ends (discarded, or left with no clip). */
   deleteDraft: string | null;
@@ -141,6 +155,7 @@ export function initFlow(requestId: string, request: OpenRequest, draft?: Opened
     changed: false,
     stage: 'none' as FlowStage,
     sheet: null,
+    pending: null,
     end: null,
     deleteDraft: null,
   };
@@ -173,10 +188,18 @@ const STAGE_RANK: Record<FlowStage, number> = { none: 0, recorded: 1, edited: 2,
 export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
   if (state.end) return state; // one result per flow: nothing after it counts
 
-  // The host and failures end the flow from anywhere, the sheet and a running take included.
-  if (event.type === 'hostClose') return hostClose(state, event.discard === true);
-  if (event.type === 'error') return fail(state, event.error);
   if (event.type === 'mounted') return state.mounted ? state : { ...state, mounted: true };
+
+  // The host and failures end the flow from anywhere, the sheet included. During a take they wait
+  // for its stop, so the draft it lands in is known.
+  if (event.type === 'hostClose' || event.type === 'error') {
+    const end: PendingEnd =
+      event.type === 'hostClose'
+        ? { type: 'hostClose', discard: event.discard === true }
+        : { type: 'error', error: event.error };
+    if (state.recording) return { ...state, pending: mergePending(state.pending, end) };
+    return settle(state, end);
+  }
 
   if (state.sheet) {
     switch (event.type) {
@@ -196,7 +219,9 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
 
   if (state.recording) {
     // Only the take's end counts while it runs: the recorder stops it before anything else.
-    return event.type === 'stop' ? stopped(state, event) : state;
+    if (event.type !== 'stop') return state;
+    const after = stopped(state, event);
+    return state.pending ? settle({ ...after, pending: null }, state.pending) : after;
   }
 
   const top = topScreen(state);
@@ -210,7 +235,8 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
         ...state,
         changed: true,
         clipCount: event.clipCount,
-        stage: event.clipCount > 0 ? 'edited' : state.stage,
+        // Every clip deleted: no clip, so no stage (the contract's 'none').
+        stage: event.clipCount > 0 ? 'edited' : 'none',
       };
     case 'merged':
       return state.clipCount > 0 ? { ...state, stage: 'exported' } : state;
@@ -291,19 +317,30 @@ function close(state: FlowState): FlowState {
   return leaveExisting(state, 'user');
 }
 
+/**
+ * A second end while the take still runs: the first stays, except that the host asking to
+ * discard is never lost (a shared phone's expiry after an ordinary close).
+ */
+function mergePending(pending: PendingEnd | null, next: PendingEnd): PendingEnd {
+  if (!pending) return next;
+  if (pending.type === 'hostClose' && next.type === 'hostClose') {
+    return { type: 'hostClose', discard: pending.discard || next.discard };
+  }
+  return pending;
+}
+
+function settle(state: FlowState, end: PendingEnd): FlowState {
+  return end.type === 'hostClose' ? hostClose(state, end.discard) : fail(state, end.error);
+}
+
 function hostClose(state: FlowState, discard: boolean): FlowState {
-  const ended = { ...state, recording: false };
-  if (!hasTake(state)) {
-    // Nothing to keep. A draft this flow made with no clip goes; an opened one stays as it was.
-    return state.newDraft
-      ? finish(ended, { status: 'canceled', reason: 'host' }, state.draftId)
-      : leaveExisting(ended, 'host');
+  // An opened draft was the person's before this flow: the host's close leaves it as X would.
+  if (!state.newDraft) return leaveExisting(state, 'host');
+  // A draft this flow made: kept with a clip unless the host discards; with none, it goes.
+  if (!hasTake(state) || discard) {
+    return finish(state, { status: 'canceled', reason: 'host' }, state.draftId);
   }
-  if (discard) return finish(ended, { status: 'canceled', reason: 'host' }, state.draftId);
-  if (state.newDraft) {
-    return finish(ended, { status: 'closed', reason: 'host', draftId: state.draftId as string });
-  }
-  return leaveExisting(ended, 'host');
+  return finish(state, { status: 'closed', reason: 'host', draftId: state.draftId as string });
 }
 
 /** Leaving a draft the flow opened: kept if this flow changed it, else untouched. */
@@ -319,7 +356,7 @@ function fail(state: FlowState, error: PulseErrorInfo): FlowState {
   // this flow made with no clip goes.
   const survives = state.draftId !== null && (hasTake(state) || !state.newDraft);
   return finish(
-    { ...state, recording: false },
+    state,
     survives
       ? { status: 'failed', error, draftId: state.draftId as string }
       : { status: 'failed', error },
@@ -328,5 +365,5 @@ function fail(state: FlowState, error: PulseErrorInfo): FlowState {
 }
 
 function finish(state: FlowState, end: FlowEnd, deleteDraft: string | null = null): FlowState {
-  return { ...state, sheet: null, end, deleteDraft };
+  return { ...state, sheet: null, recording: false, pending: null, end, deleteDraft };
 }

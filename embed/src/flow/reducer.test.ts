@@ -247,6 +247,7 @@ describe('X with zero clips', () => {
     );
     expect(s.end).toEqual({ status: 'canceled', reason: 'user' });
     expect(s.deleteDraft).toBe('d1');
+    expect(s.stage).toBe('none');
   });
 });
 
@@ -331,7 +332,7 @@ describe('completion', () => {
 });
 
 describe('host close', () => {
-  it('without discard keeps the take: closed{host}, even over the sheet or a running take', () => {
+  it('without discard keeps the take: closed{host}, even over the sheet', () => {
     expect(run(recorded(), { type: 'hostClose' }).end).toEqual({
       status: 'closed',
       reason: 'host',
@@ -340,8 +341,6 @@ describe('host close', () => {
     expect(run(recorded(), { type: 'close' }, { type: 'hostClose' }).end).toMatchObject({
       status: 'closed',
     });
-    const midTake = run(recorded(), { type: 'record' }, { type: 'hostClose' });
-    expect(midTake).toMatchObject({ recording: false, end: { status: 'closed', reason: 'host' } });
   });
 
   it('with discard deletes the take: canceled{host}', () => {
@@ -358,7 +357,7 @@ describe('host close', () => {
     }
   });
 
-  it('on an opened draft: kept if changed, untouched if not, deleted with discard', () => {
+  it('on an opened draft: kept if changed, untouched if not, never deleted', () => {
     const opened = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 2 });
     expect(run(opened, { type: 'hostClose' }).end).toEqual({
       status: 'canceled',
@@ -371,8 +370,89 @@ describe('host close', () => {
       draftId: 'd1',
     });
     const discarded = run(opened, { type: 'hostClose', discard: true });
-    expect(discarded.end).toEqual({ status: 'canceled', reason: 'host' });
-    expect(discarded.deleteDraft).toBe('d1');
+    expect(discarded.end).toEqual({ status: 'canceled', reason: 'host', draftId: 'd1' });
+    expect(discarded.deleteDraft).toBeNull();
+    const continued = run(
+      initFlow('r1', { ...recordNew, draft: { continue: 'd9' } }, { context, clipCount: 3 }),
+      { type: 'record' },
+      { type: 'stop', draftId: 'd9', clipCount: 4 },
+      { type: 'hostClose', discard: true },
+    );
+    expect(continued.end).toEqual({ status: 'closed', reason: 'host', draftId: 'd9' });
+    expect(continued.deleteDraft).toBeNull();
+  });
+});
+
+describe('host close or error during a take', () => {
+  const firstTake = () => run(initFlow('r1', recordNew), { type: 'mounted' }, { type: 'record' });
+
+  it('waits for the take to stop: no end yet, and the take keeps running', () => {
+    const s = run(firstTake(), { type: 'hostClose' });
+    expect(s).toMatchObject({ recording: true, end: null, pending: { type: 'hostClose' } });
+  });
+
+  it('first take, host close: the landed take is kept, closed{host} with its draft', () => {
+    const s = run(
+      firstTake(),
+      { type: 'hostClose' },
+      { type: 'stop', draftId: 'd1', clipCount: 1 },
+    );
+    expect(s.end).toEqual({ status: 'closed', reason: 'host', draftId: 'd1' });
+    expect(s).toMatchObject({ stage: 'recorded', recording: false, pending: null });
+    expect(s.deleteDraft).toBeNull();
+  });
+
+  it('first take, host close with discard: canceled{host} and the landed draft is deleted', () => {
+    const s = run(
+      firstTake(),
+      { type: 'hostClose', discard: true },
+      { type: 'stop', draftId: 'd1', clipCount: 1 },
+    );
+    expect(s.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(s.deleteDraft).toBe('d1');
+  });
+
+  it('a later discard is not lost behind an earlier plain host close', () => {
+    const s = run(
+      firstTake(),
+      { type: 'hostClose' },
+      { type: 'hostClose', discard: true },
+      { type: 'stop', draftId: 'd1', clipCount: 1 },
+    );
+    expect(s.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(s.deleteDraft).toBe('d1');
+  });
+
+  it('first take dropped (a bare stop): canceled{host}, no draft', () => {
+    const s = run(firstTake(), { type: 'hostClose' }, { type: 'stop' });
+    expect(s.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(s.deleteDraft).toBeNull();
+  });
+
+  it('first take, error: failed with the draft the take landed in', () => {
+    const s = run(
+      firstTake(),
+      { type: 'error', error: failure },
+      { type: 'stop', draftId: 'd1', clipCount: 1 },
+    );
+    expect(s.end).toEqual({ status: 'failed', error: failure, draftId: 'd1' });
+    expect(s.deleteDraft).toBeNull();
+  });
+
+  it('first take, error, nothing landed: failed with no draft', () => {
+    const s = run(firstTake(), { type: 'error', error: failure }, { type: 'stop' });
+    expect(s.end).toEqual({ status: 'failed', error: failure });
+  });
+
+  it('a later take on a draft with clips: closed{host} with the new count', () => {
+    const s = run(
+      recorded(),
+      { type: 'record' },
+      { type: 'hostClose' },
+      { type: 'stop', draftId: 'd1', clipCount: 2 },
+    );
+    expect(s.end).toEqual({ status: 'closed', reason: 'host', draftId: 'd1' });
+    expect(s.clipCount).toBe(2);
   });
 });
 
