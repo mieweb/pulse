@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { formatSha256Sums, sha256File } from './lib/checksums.mjs';
+import { hasDebugMap } from './lib/debug-map.mjs';
 import { assertSafeOut, foreignOutEntries, OUT_ENTRIES } from './lib/out-dir.mjs';
 import { frameworkName, planSlices, prunedManifest, sharedEntries } from './lib/platforms.mjs';
 import { buildPlist, isBinaryPlist, parsePlist } from './lib/plist.mjs';
@@ -81,6 +82,21 @@ function readManifest(file) {
 /** @param {readonly string[]} args */
 function git(args) {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
+}
+
+/**
+ * Whether dsymutil has a debug map to read in `binary`. A dry run can't look (the staged binary
+ * isn't there), so it plans dsymutil; if nm fails, dsymutil runs and reports the problem itself.
+ * @param {import('./lib/runner.mjs').Runner} runner
+ * @param {string} binary
+ */
+function debugMapOf(runner, binary) {
+  try {
+    const listing = runner.inspect('nm', ['-ap', binary]);
+    return listing === null || hasDebugMap(listing);
+  } catch {
+    return true;
+  }
 }
 
 /** @param {string} file */
@@ -230,6 +246,7 @@ function main() {
   const releaseDir = path.join(out, 'release');
 
   // --- Per xcframework: prune, dSYMs, strip, stamp ------------------------------------------
+  runner.mkdir(dsymsDir); // the dSYMs zip needs it even when no binary has symbols
   for (const job of jobs) {
     const kept = job.keep.map((l) => l.id).join(', ');
     const pruned = job.drop.map((l) => l.id).join(', ') || 'nothing';
@@ -251,13 +268,15 @@ function main() {
       const shippedDsyms = lib.debugSymbolsPath ? path.join(sliceSrc, lib.debugSymbolsPath) : null;
       if (shippedDsyms && fs.existsSync(shippedDsyms)) {
         runner.run('ditto', [shippedDsyms, dsymDst]);
-      } else {
+      } else if (debugMapOf(runner, binary)) {
         // Before strip: dsymutil reads the debug map strip removes.
         runner.run('dsymutil', [
           binary,
           '-o',
           path.join(dsymDst, `${path.basename(lib.libraryPath)}.dSYM`),
         ]);
+      } else {
+        console.log(`# ${job.name}/${lib.id}: no debug map (prebuilt binary), so no dSYM`);
       }
       if (lib.archs.length > 0) runner.inspect('lipo', [binary, '-verify_arch', ...lib.archs]);
       runner.run('strip', ['-x', binary]);
