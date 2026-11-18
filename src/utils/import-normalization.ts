@@ -37,7 +37,7 @@ import type {
  */
 
 /** The app's fixed portrait canvas — every stored segment displays exactly this
- * (reels contract; mirrors REELS_TARGET in merge-signature.ts). */
+ * (reels contract; mirrors REELS_TARGET in core/media/merge-signature.ts). */
 export const CANVAS_WIDTH = 1080;
 export const CANVAS_HEIGHT = 1920;
 /** Re-encode target: the recorder's own frame rate. Also the passthrough gate: a clip whose

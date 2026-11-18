@@ -15,6 +15,7 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 
+import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 import {
   addSegment,
   addSegmentCover,
@@ -58,11 +59,8 @@ import { useCallState } from './use-call-state';
 // on both platforms so persisted iOS prefs and shared UI maps still typecheck.
 export const STABILIZATION_MODES: readonly StabilizationMode[] =
   Platform.OS === 'ios' ? ['off', 'standard', 'cinematic', 'auto'] : ['off', 'standard', 'auto'];
-export type StabilizationMode = 'off' | 'standard' | 'cinematic' | 'auto';
-
-/** Which camera the recorder is pointed at. Mirrors VisionCamera's `CameraPosition`,
- * declared locally so the rest of the app doesn't import the camera SDK for a string union. */
-export type CameraFacing = 'front' | 'back';
+// Defined in core (the settings table stores them); re-exported for the recorder's own modules.
+export type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 
 /** Stopping the native recorder before it has actually started hangs the capture —
  * earlier stop requests are deferred to this boundary. */

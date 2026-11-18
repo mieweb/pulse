@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 
+import { mergedSignature } from '@/core/media/merge-signature';
 import type { Segment } from '@/db/schema';
 import { getRecorderFormat } from '@/features/recorder/recorder-format';
 import { describeError } from '@/features/upload/upload-log';
 
 import { exportAudio, mergeWithEditor } from './editor-merge';
-import { mergedSignature } from './merge-signature';
 import { resolveMergedExport } from './merged-export';
 
 export type ExportState =

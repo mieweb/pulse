@@ -1,9 +1,7 @@
 import { eq, like } from 'drizzle-orm';
 import { Platform } from 'react-native';
 
-// Type-only import — erased at runtime, so this does NOT create a circular dependency
-// with use-recorder.ts (which imports the value helpers below).
-import type { CameraFacing, StabilizationMode } from '@/features/recorder/use-recorder';
+import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 
 import { db } from './client';
 import { settings } from './schema';
@@ -128,7 +126,7 @@ export type RecorderPrefs = {
   muted: boolean;
 };
 
-// Local validation list (kept in sync with StabilizationMode in use-recorder.ts) so we can
+// Local validation list (kept in sync with StabilizationMode in core/types/recorder-prefs.ts) so we can
 // reject corrupt/legacy stored values without a runtime import from the recorder module.
 const STABILIZATION_VALUES: readonly StabilizationMode[] = ['off', 'standard', 'cinematic', 'auto'];
 

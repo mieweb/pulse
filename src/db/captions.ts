@@ -1,6 +1,6 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
-import type { TranscriptWord } from '@/features/transcription/whisper';
+import type { TranscriptWord } from '@/core/types/transcription';
 import { db } from './client';
 import { drafts, segments } from './schema';
 
