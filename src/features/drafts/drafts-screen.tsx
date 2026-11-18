@@ -197,6 +197,7 @@ export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: Drafts
                 accessibilityRole="button"
                 accessibilityLabel="Close"
                 accessibilityHint="Closes Pulse and goes back to the app you came from"
+                testID="drafts.close"
                 style={({ pressed }) => [
                   styles.headerButton,
                   pressed && { backgroundColor: theme.backgroundSelected },
@@ -405,6 +406,7 @@ export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: Drafts
           onPress={onRecord}
           accessibilityRole="button"
           accessibilityLabel="New recording"
+          testID="drafts.record"
           style={({ pressed }) => [
             styles.fab,
             {

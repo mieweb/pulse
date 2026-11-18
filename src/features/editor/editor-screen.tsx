@@ -853,6 +853,7 @@ export function EditorScreen({
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={playing ? 'Pause' : 'Play'}
+            testID="editor.play"
             style={styles.play}>
             <Icon name={playing ? 'pause.fill' : 'play.fill'} size={22} tintColor={theme.text} />
           </Pressable>

@@ -223,6 +223,7 @@ export function ExportScreen({
             onPress={() => void upload.claim(upload.selectedId)}
             disabled={!upload.selectedId || !uploadReady}
             accessibilityLabel={actions.primary.accessibilityLabel}
+            testID="export.primary"
           />
         </>
       )}
@@ -269,6 +270,7 @@ export function ExportScreen({
                 label={actions.primary.label}
                 icon="checkmark"
                 accessibilityLabel={actions.primary.accessibilityLabel}
+                testID="export.primary"
                 onPress={() =>
                   primaryAction.onUse({
                     draftId,
@@ -289,6 +291,7 @@ export function ExportScreen({
                     disabled={busy}
                     accessibilityRole="button"
                     accessibilityLabel={busy ? 'Sharing' : 'Share'}
+                    testID="export.share"
                     accessibilityState={{ disabled: busy, busy }}
                     // 34pt pill + 5 each side = a 44pt tap target.
                     hitSlop={5}
@@ -331,6 +334,7 @@ export function ExportScreen({
                       disabled: photos.status !== 'idle',
                       busy: photos.status === 'saving',
                     }}
+                    testID="export.saveToPhotos"
                     // 34pt pill + 5 each side = a 44pt tap target.
                     hitSlop={5}
                     style={({ pressed }) => [
