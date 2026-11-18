@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { router } from 'expo-router';
+import { router, useIsFocused } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
@@ -9,6 +9,7 @@ import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
+import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { deleteDraft, draftListQuery, duplicateDraft, renameDraft } from '@/db/drafts';
 import { adoptMergedCaptionEdit } from '@/db/transcripts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
@@ -35,7 +36,17 @@ const DevSeedRow = __DEV__
 /** How often the cards' date labels ("Just now", "Today, 2:30 PM", …) re-evaluate. */
 const DATE_LABEL_REFRESH_MS = 60_000;
 
-export default function HomeScreen() {
+/** The route: tells the screen (through the focus port) whether it is the one on top. */
+export default function HomeRoute() {
+  const focused = useIsFocused();
+  return (
+    <ScreenFocusProvider focused={focused}>
+      <HomeScreen />
+    </ScreenFocusProvider>
+  );
+}
+
+function HomeScreen() {
   // First-run gate: pushes the onboarding tour over home when not yet completed.
   useOnboardingRedirect();
 

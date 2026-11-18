@@ -1,6 +1,6 @@
 import { PulsePreview } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ExportButton } from '@/components/export-button';
 import { Icon } from '@/components/icon';
+import { ScreenFocusProvider, useScreenFocusEffect } from '@/core/navigation/focus';
 import Sortable from 'react-native-sortables';
 
 import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
@@ -111,8 +112,19 @@ const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
  * transcribed in the background); a tapped word is edited or deleted, and sentences are split or
  * merged at the playhead. Captions show over the preview (drag one to move them all) and on a
  * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
+ *
+ * The route tells the screen (through the focus port) whether it is the one on top.
  */
-export default function EditorScreen() {
+export default function EditorRoute() {
+  const focused = useIsFocused();
+  return (
+    <ScreenFocusProvider focused={focused}>
+      <EditorScreen />
+    </ScreenFocusProvider>
+  );
+}
+
+function EditorScreen() {
   // Not compiled by the React Compiler (as before): its memoization here leaves the track's
   // animated opacity stale until a re-render. To be turned on as a change of its own, tested.
   'use no memo';
@@ -217,7 +229,7 @@ export default function EditorScreen() {
 
   // Android back leaves crop, typing, the speed row or a mode first, then the editor (only while
   // the editor is on screen: a screen pushed over it handles its own back).
-  useFocusEffect(
+  useScreenFocusEffect(
     useCallback(() => {
       if (!cropping && !typing && tools === 'clip' && mode === 'main') return;
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -467,7 +479,7 @@ export default function EditorScreen() {
   // Export reads the stored clips: it opens once every edit asked for is stored (a cover renders
   // first, up to about half a second), and once per tap until the editor is back on screen.
   const exporting = useRef(false);
-  useFocusEffect(
+  useScreenFocusEffect(
     useCallback(() => {
       exporting.current = false;
     }, []),

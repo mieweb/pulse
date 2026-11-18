@@ -1,5 +1,4 @@
-import { type Href, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
+import { type Href, router, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
@@ -14,6 +13,8 @@ import {
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedView } from '@/components/themed-view';
+import { ScreenFocusProvider, useScreenFocusEffect } from '@/core/navigation/focus';
+import { useStatusBarStyle } from '@/core/status-bar/status-bar';
 import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
@@ -114,7 +115,17 @@ const SESSION_ERROR_ESCALATION_MS = 3000;
 // write clobber it right back.
 const AUDIO_HANDOFF_SETTLE_MS = 50;
 
-export default function RecorderScreen() {
+/** The route: tells the screen (through the focus port) whether it is the one on top. */
+export default function RecorderRoute() {
+  const focused = useIsFocused();
+  return (
+    <ScreenFocusProvider focused={focused}>
+      <RecorderScreen />
+    </ScreenFocusProvider>
+  );
+}
+
+function RecorderScreen() {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
   const textSizeKey = useTextSizeKey();
@@ -183,13 +194,18 @@ export default function RecorderScreen() {
   // would stack two editors over the same draft. Open again once back on this screen. Edits an
   // editor just closed is still storing land first (export reads the stored clips).
   const opening = useRef(false);
-  useFocusEffect(
+  useScreenFocusEffect(
     useCallback(() => {
       opening.current = false;
       setFocused(true);
       return () => setFocused(false);
     }, []),
   );
+  // Light over the live camera whatever the theme: only once the camera shows (not over the
+  // permission gate or the loading screens below) and only while this screen is focused, since the
+  // recorder stays mounted under the editor and Export, which get the root's style back.
+  const cameraShown = permissions.ready && permissions.granted && prefsReady;
+  useStatusBarStyle(focused && cameraShown ? 'light' : null);
   const open = (href: Href) => {
     if (opening.current) return;
     opening.current = true;
@@ -576,10 +592,6 @@ export default function RecorderScreen() {
 
   return (
     <View style={styles.fill} onStartShouldSetResponderCapture={closeTips}>
-      {/* Light over the live camera whatever the theme. Only while this screen is focused: the
-          last StatusBar mounted wins, and the recorder stays mounted under the editor and Export,
-          which should get the root's again. */}
-      {focused && <StatusBar style="light" />}
       {device && (
         <Camera
           ref={cameraRef}

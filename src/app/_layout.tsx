@@ -5,6 +5,11 @@ import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import {
+  StatusBarProvider,
+  type StatusBarStyle,
+  useStatusBarTop,
+} from '@/core/status-bar/status-bar';
 import { MigrationGate } from '@/db/migrate';
 import { type BuildConfig, readBuildInfo } from '@/features/about/build-info';
 import { installLogCapture } from '@/features/logs/logger';
@@ -32,7 +37,9 @@ export default function RootLayout() {
             The gate's own loading/error UI follows the OS scheme (see use-theme.tsx). */}
         <MigrationGate>
           <AppThemeProvider>
-            <ThemedNavigation />
+            <StatusBarProvider>
+              <ThemedNavigation />
+            </StatusBarProvider>
           </AppThemeProvider>
         </MigrationGate>
       </SafeAreaProvider>
@@ -98,7 +105,13 @@ function ThemedNavigation() {
           </Stack>
         </UploadDeepLinkProvider>
       </ToastProvider>
-      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <StandaloneStatusBar fallback={isDark ? 'light' : 'dark'} />
     </ThemeProvider>
   );
+}
+
+/** The standalone implementation of the status-bar port: the style a screen asks for (the newest
+ * request wins, e.g. light over the recorder's camera), else the theme's. */
+function StandaloneStatusBar({ fallback }: { fallback: StatusBarStyle }) {
+  return <StatusBar style={useStatusBarTop() ?? fallback} />;
 }

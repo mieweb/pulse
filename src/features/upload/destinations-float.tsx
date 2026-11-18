@@ -1,4 +1,4 @@
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import { useCallback, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { FloatShadow, Opacity, Spacing } from '@/constants/theme';
+import { useScreenFocusEffect } from '@/core/navigation/focus';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { formatCount, hostOf } from '@/utils/format';
 
@@ -33,7 +34,7 @@ export function DestinationsFloat() {
   // One sheet per tap: a second tap before the first sheet is up would push another on top of it.
   // Open again once Home is back in focus (the sheet closed).
   const opening = useRef(false);
-  useFocusEffect(
+  useScreenFocusEffect(
     useCallback(() => {
       opening.current = false;
     }, []),

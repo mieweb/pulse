@@ -1,4 +1,3 @@
-import { useIsFocused } from 'expo-router';
 import {
   createContext,
   type RefObject,
@@ -21,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
+import { useScreenFocused } from '@/core/navigation/focus';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 
 import { TIPS, type TipId } from './tips';
@@ -139,7 +139,7 @@ const ARROW_INSET = Radius.card;
  * Export) would otherwise draw the same callout behind it, and announce it a second time.
  */
 export function TipLayer() {
-  const focused = useIsFocused();
+  const focused = useScreenFocused();
   const callout = useSyncExternalStore(subscribe, () => current);
   const ref = useRef<View>(null);
   // The layer's own place in the window and size: the anchors measure in window coordinates.
