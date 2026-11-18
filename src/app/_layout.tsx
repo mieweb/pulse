@@ -1,49 +1,61 @@
+import { reloadAppAsync } from 'expo';
 import Constants from 'expo-constants';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Platform } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import {
-  StatusBarProvider,
-  type StatusBarStyle,
-  useStatusBarTop,
-} from '@/core/status-bar/status-bar';
-import { MigrationGate } from '@/db/migrate';
+import { PulseCore } from '@/core/pulse-core';
+import { StandaloneRecovery } from '@/core/recovery/standalone-recovery';
+import { type StatusBarStyle, useStatusBarTop } from '@/core/status-bar/status-bar';
+import { expoDb } from '@/db/client';
 import { type BuildConfig, readBuildInfo } from '@/features/about/build-info';
+import {
+  removeLeftoverRestores,
+  restoreLibraryBackup,
+} from '@/features/draft-transfer/library-backup';
 import { installLogCapture } from '@/features/logs/logger';
 import { ToastProvider } from '@/features/toast/toast-provider';
 import { setClientIdentity } from '@/features/upload/client-identity';
 import { destinationsSheetOptions } from '@/features/upload/destinations-sheet';
 import { UploadDeepLinkProvider } from '@/features/upload/upload-deep-link-provider';
-import { ThemeProvider as AppThemeProvider, useThemeMode } from '@/hooks/use-theme';
+import { useThemeMode } from '@/hooks/use-theme';
 import { tallSheetOptions } from '@/utils/sheet-fit';
 
-// Before anything renders, so the debug log (About → Share logs) sees the whole session.
-installLogCapture();
+/** The Pulse app's start-up, run by PulseCore before anything renders. */
+function bootStandalone() {
+  // First, so the debug log (About → Share logs) sees the whole session.
+  installLogCapture();
+  // Every request to a server says which build this is (`Pulse-Client`) and every upload records
+  // it (`appVersion`) — PROTOCOL.md §7.2.
+  const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
+  setClientIdentity({ version: build.version, build: build.buildNumber, platform: Platform.OS });
+}
 
-// Every request to a server says which build this is (`Pulse-Client`) and every upload records it
-// (`appVersion`) — PROTOCOL.md §7.2.
-const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
-setClientIdentity({ version: build.version, build: build.buildNumber, platform: Platform.OS });
+/**
+ * The recovery screen's restore: stage the backup (there's no sound library to snapshot first),
+ * then restart so the next launch swaps it in. Only the Pulse app may restart itself: in the embed
+ * a reload would restart the host's runtime.
+ */
+async function restoreFromRecovery(fileUri: string): Promise<void> {
+  await restoreLibraryBackup(expoDb, fileUri, Date.now(), { snapshotCurrent: false });
+  await reloadAppAsync('Restoring a library backup');
+}
 
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        {/* AppThemeProvider live-queries the settings table, so it must mount inside
-            MigrationGate — on a fresh install the table doesn't exist until migrations run.
-            The gate's own loading/error UI follows the OS scheme (see use-theme.tsx). */}
-        <MigrationGate>
-          <AppThemeProvider>
-            <StatusBarProvider>
-              <ThemedNavigation />
-            </StatusBarProvider>
-          </AppThemeProvider>
-        </MigrationGate>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    // The stored theme live-queries the settings table, so PulseCore mounts it inside the
+    // library gate — on a fresh install the table doesn't exist until migrations run. The gate's
+    // own loading/error UI follows the OS scheme (see use-theme.tsx).
+    <PulseCore
+      mode="standalone"
+      onBoot={bootStandalone}
+      wrap={ToastProvider}
+      recovery={<StandaloneRecovery restore={restoreFromRecovery} />}
+      // Unzipped restores and imports a crash left behind: nothing of this version is writing
+      // them yet.
+      afterMigrations={removeLeftoverRestores}>
+      <ThemedNavigation />
+    </PulseCore>
   );
 }
 
@@ -57,54 +69,52 @@ function ThemedNavigation() {
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
-      <ToastProvider>
-        <UploadDeepLinkProvider>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="recorder" options={fullScreen} />
-            <Stack.Screen name="export" options={fullScreen} />
-            <Stack.Screen name="editor" options={{ ...fullScreen, gestureEnabled: false }} />
-            <Stack.Screen
-              name="about"
-              options={() => ({
-                presentation: 'formSheet',
-                sheetGrabberVisible: true,
-                // Sized to its content, or full height and scrolling at large text sizes.
-                ...tallSheetOptions(),
-              })}
-            />
-            <Stack.Screen
-              name="on-device-ai"
-              options={() => ({
-                presentation: 'formSheet',
-                sheetGrabberVisible: true,
-                // Sized to its content, or full height and scrolling at large text sizes.
-                ...tallSheetOptions(),
-              })}
-            />
-            <Stack.Screen
-              name="destinations"
-              options={({ route }) => ({
-                presentation: 'formSheet',
-                sheetGrabberVisible: true,
-                // The home pill passes `?count`; a link without it gives NaN, which sizes the
-                // sheet for a long list (`destinationsSheetOptions`).
-                ...destinationsSheetOptions(
-                  Number((route.params as { count?: string } | undefined)?.count),
-                ),
-              })}
-            />
-            <Stack.Screen
-              name="pair"
-              options={{
-                presentation: 'formSheet',
-                ...tallSheetOptions(),
-                sheetGrabberVisible: true,
-              }}
-            />
-            <Stack.Screen name="onboarding" options={{ ...fullScreen, gestureEnabled: false }} />
-          </Stack>
-        </UploadDeepLinkProvider>
-      </ToastProvider>
+      <UploadDeepLinkProvider>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="recorder" options={fullScreen} />
+          <Stack.Screen name="export" options={fullScreen} />
+          <Stack.Screen name="editor" options={{ ...fullScreen, gestureEnabled: false }} />
+          <Stack.Screen
+            name="about"
+            options={() => ({
+              presentation: 'formSheet',
+              sheetGrabberVisible: true,
+              // Sized to its content, or full height and scrolling at large text sizes.
+              ...tallSheetOptions(),
+            })}
+          />
+          <Stack.Screen
+            name="on-device-ai"
+            options={() => ({
+              presentation: 'formSheet',
+              sheetGrabberVisible: true,
+              // Sized to its content, or full height and scrolling at large text sizes.
+              ...tallSheetOptions(),
+            })}
+          />
+          <Stack.Screen
+            name="destinations"
+            options={({ route }) => ({
+              presentation: 'formSheet',
+              sheetGrabberVisible: true,
+              // The home pill passes `?count`; a link without it gives NaN, which sizes the
+              // sheet for a long list (`destinationsSheetOptions`).
+              ...destinationsSheetOptions(
+                Number((route.params as { count?: string } | undefined)?.count),
+              ),
+            })}
+          />
+          <Stack.Screen
+            name="pair"
+            options={{
+              presentation: 'formSheet',
+              ...tallSheetOptions(),
+              sheetGrabberVisible: true,
+            }}
+          />
+          <Stack.Screen name="onboarding" options={{ ...fullScreen, gestureEnabled: false }} />
+        </Stack>
+      </UploadDeepLinkProvider>
       <StandaloneStatusBar fallback={isDark ? 'light' : 'dark'} />
     </ThemeProvider>
   );
