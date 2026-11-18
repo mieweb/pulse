@@ -1,5 +1,6 @@
 import { PulsePreview } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
+import { setAudioModeAsync } from 'expo-audio';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
@@ -92,12 +93,55 @@ import {
 } from '@/features/transcription/compose';
 import { useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import { useTheme } from '@/hooks/use-theme';
+import { claimAudioSession } from '@/utils/audio-session';
 import { haptics } from '@/utils/haptics';
 import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
 
 import type { EditorScreenProps } from './contract';
 
 const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
+
+/** Tries at the preview's playback session while the camera underneath still holds the mic. */
+const PLAYBACK_SESSION_ATTEMPTS = 20;
+const PLAYBACK_SESSION_RETRY_MS = 250;
+
+/**
+ * The preview's playback session again, each time the editor is back on top after the first
+ * time (usePreviewTransport sets it up on mount). A recorder opened over the editor (Add clips)
+ * is the last screen to set the session, and its leave-time restore (no silent-mode playback,
+ * mixed with other apps) would otherwise stay: the preview muted by the silent switch. Claimed
+ * first, so that restore, if it's still to run, leaves the session alone.
+ */
+function usePlaybackSessionOnReturn() {
+  const returned = useRef(false);
+  useScreenFocusEffect(
+    useCallback(() => {
+      if (!returned.current) {
+        returned.current = true;
+        return;
+      }
+      claimAudioSession();
+      // Refused while the camera underneath still holds the mic: retried until it lets go.
+      let live = true;
+      let retry: ReturnType<typeof setTimeout> | undefined;
+      const apply = (attempt: number) => {
+        setAudioModeAsync({
+          playsInSilentMode: true,
+          allowsRecording: false,
+          interruptionMode: 'doNotMix',
+        }).catch(() => {
+          if (live && attempt < PLAYBACK_SESSION_ATTEMPTS)
+            retry = setTimeout(() => apply(attempt + 1), PLAYBACK_SESSION_RETRY_MS);
+        });
+      };
+      apply(1);
+      return () => {
+        live = false;
+        clearTimeout(retry);
+      };
+    }, []),
+  );
+}
 
 /**
  * The timeline editor: the draft playing as it will export (<PulsePreview>), a strip of its
@@ -131,6 +175,7 @@ export function EditorScreen({
   const draft = useEditorDraft(draftId);
   const { clips, covers, options } = draft;
   const { ctl, values, playing, status } = usePreviewTransport();
+  usePlaybackSessionOnReturn();
   const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionYValue = captionRows[0]?.captionY;
   const history = useEditorHistory(
