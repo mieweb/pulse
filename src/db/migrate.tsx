@@ -5,8 +5,9 @@ import { Directory, File } from 'expo-file-system';
 
 import { PrimaryButton } from '@/components/primary-button';
 import { StateMessage } from '@/components/state-message';
+import { libraryProblem } from '@/core/recovery/problem';
 import { RecoveryScreen } from '@/core/recovery/screen';
-import type { PulseMode } from '@/core/recovery/types';
+import type { LibraryProblem, PulseMode } from '@/core/recovery/types';
 import { formatDateTime } from '@/utils/relative-date';
 import migrations from '../../drizzle/migrations';
 import { db, expoDb, library } from './client';
@@ -100,13 +101,51 @@ function launchNotice(): Notice | null {
   return null;
 }
 
+/**
+ * Once per runtime, not per mount. The Pulse app mounts one gate per launch, but each embedded
+ * presentation mounts its own on the runtime the last one used: the migrations ran there already,
+ * and the library's launch notice was already seen. A failed run isn't kept, so the next mount
+ * tries again (space freed, say).
+ */
+let migration: Promise<void> | null = null;
+let migrated = false;
+let noticeSeen = false;
+
+function runMigrations(mode: PulseMode, afterMigrations?: () => void): Promise<void> {
+  migration ??= migrate(db, migrations)
+    .then(async () => {
+      await runDataMigrations(dataMigrationsFor(mode));
+      try {
+        afterMigrations?.();
+      } catch (e) {
+        console.warn('[cleanup] after-migrations housekeeping failed', e);
+      }
+      // react-native-video-trim leftovers: nothing of this version is writing them. Only the
+      // Pulse app ever ran RNVT, so the embed has none to sweep (B6).
+      if (mode === 'standalone') {
+        try {
+          const rnvt = sweepRnvtOutputs(referencedMediaPaths(expoDb));
+          if (rnvt > 0) console.log(`[cleanup] removed ${rnvt} RNVT file(s)`);
+        } catch (e) {
+          console.warn('[cleanup] RNVT sweep failed', e); // a leftover file costs space, not data
+        }
+      }
+      migrated = true;
+    })
+    .catch((e: unknown) => {
+      migration = null;
+      throw e;
+    });
+  return migration;
+}
+
 type MigrationGateProps = {
   mode: PulseMode;
   /**
    * Shown instead of the library when it failed its check and couldn't be recovered, or a
-   * migration failed: the shell's recovery screen (src/core/recovery).
+   * migration failed: the shell's recovery screen (src/core/recovery), told which it was.
    */
-  recovery: ReactNode;
+  recovery: (problem: LibraryProblem) => ReactNode;
   /**
    * Housekeeping the shell adds after the migrations, before the library shows (the Pulse app
    * removes unzipped restores a crash left behind). A throw is logged, never fatal.
@@ -121,32 +160,13 @@ export function MigrationGate({ mode, recovery, afterMigrations, children }: Mig
   // and the RNVT leftover sweep, all before the library renders. Nothing runs on a library that
   // failed its check and couldn't be recovered: the recovery screen shows instead. No media is
   // ever deleted for lacking a row.
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(migrated);
   const [error, setError] = useState<unknown>(null);
-  const [notice, setNotice] = useState(launchNotice);
+  const [notice, setNotice] = useState(() => (noticeSeen ? null : launchNotice()));
 
   useEffect(() => {
-    if (library.failed || library.restoreIncomplete) return;
-    migrate(db, migrations)
-      .then(async () => {
-        await runDataMigrations(dataMigrationsFor(mode));
-        try {
-          afterMigrations?.();
-        } catch (e) {
-          console.warn('[cleanup] after-migrations housekeeping failed', e);
-        }
-        // react-native-video-trim leftovers: nothing of this version is writing them. Only the
-        // Pulse app ever ran RNVT, so the embed has none to sweep (B6).
-        if (mode === 'standalone') {
-          try {
-            const rnvt = sweepRnvtOutputs(referencedMediaPaths(expoDb));
-            if (rnvt > 0) console.log(`[cleanup] removed ${rnvt} RNVT file(s)`);
-          } catch (e) {
-            console.warn('[cleanup] RNVT sweep failed', e); // a leftover file costs space, not data
-          }
-        }
-      })
-      .then(() => setReady(true), setError);
+    if (migrated || library.failed || library.restoreIncomplete) return;
+    runMigrations(mode, afterMigrations).then(() => setReady(true), setError);
     // Once per mount: the mode and the shell's housekeeping are fixed for a shell's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -172,7 +192,7 @@ export function MigrationGate({ mode, recovery, afterMigrations, children }: Mig
     );
   }
 
-  if (library.failed || error) return <>{recovery}</>;
+  if (library.failed || error) return <>{recovery(libraryProblem(library.failed, error))}</>;
 
   if (notice) {
     return (
@@ -182,7 +202,13 @@ export function MigrationGate({ mode, recovery, afterMigrations, children }: Mig
           tone="accent"
           title={notice.title}
           message={notice.message}>
-          <PrimaryButton label="Continue" onPress={() => setNotice(null)} />
+          <PrimaryButton
+            label="Continue"
+            onPress={() => {
+              noticeSeen = true;
+              setNotice(null);
+            }}
+          />
         </StateMessage>
       </RecoveryScreen>
     );

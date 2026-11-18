@@ -81,11 +81,11 @@ export function PulseCore(props: PulseCoreProps) {
     <MigrationGate
       mode={mode}
       recovery={
-        props.mode === 'standalone' ? (
-          props.recovery
-        ) : (
-          <EmbeddedRecovery onFatalStorage={props.onFatalStorage} />
-        )
+        props.mode === 'standalone'
+          ? () => props.recovery // its copy covers each problem: free up space, or restore
+          : (problem) => (
+              <EmbeddedRecovery problem={problem} onFatalStorage={props.onFatalStorage} />
+            )
       }
       afterMigrations={props.mode === 'standalone' ? props.afterMigrations : undefined}>
       {explicitTheme ? screens : <ThemeProvider {...themeProps}>{screens}</ThemeProvider>}
