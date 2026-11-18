@@ -122,7 +122,8 @@
     "lint": "expo lint",
     "test": "jest",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "embed:package:ios": "node embed/scripts/package-ios.mjs"
   },
   "private": true,
   "pulseProtocol": {
