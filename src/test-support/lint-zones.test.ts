@@ -109,6 +109,30 @@ describe('lint zones', () => {
     expect(await boundaryHits('src/features/upload/destinations-sheet.tsx', about)).toEqual([]);
   });
 
+  it('fails a shell package loaded by require() or import() in a feature', async () => {
+    const required = "export const r = require('expo-router');\n";
+    const subpath = "export const r = require('expo-router/build/hooks');\n";
+    const dynamic = "export const load = () => import('expo-status-bar');\n";
+    const importEquals = "import r = require('expo-router');\nexport const R = r;\n";
+    for (const [code, name] of [
+      [required, 'expo-router'],
+      [subpath, 'expo-router'],
+      [dynamic, 'expo-status-bar'],
+      [importEquals, 'expo-router'],
+    ]) {
+      expect(await boundaryHits('src/features/editor/x.ts', code)).toEqual([
+        expect.stringContaining(`${name} belongs to the standalone shell`),
+      ]);
+    }
+    // Not a package that only starts with the same name; and the shell may.
+    const other = "export const r = require('expo-router-extra');\n";
+    expect(await boundaryHits('src/features/editor/x.ts', other)).toEqual([]);
+    expect(await boundaryHits('src/app/x.tsx', required)).toEqual([]);
+    expect(await boundaryHits('src/features/onboarding/onboarding-screen.tsx', required)).toEqual(
+      [],
+    );
+  });
+
   it('lets the listed pairing and onboarding files use expo-router until PR2-B', async () => {
     expect(
       await boundaryHits('src/features/onboarding/use-onboarding-redirect.ts', ROUTER),
@@ -162,6 +186,15 @@ describe('lint zones', () => {
     expect(await boundaryHits('src/features/editor/x.ts', renamed)).toEqual([
       expect.stringContaining('Use Linking under its own name'),
     ]);
+    // Reached through a namespace import.
+    const namespaced =
+      "import * as RN from 'react-native';\n" +
+      'export const first = () => RN.Linking.getInitialURL();\n' +
+      'export const settings = () => RN.Linking.openSettings();\n';
+    expect(await boundaryHits('src/features/editor/x.ts', namespaced)).toEqual([
+      expect.stringContaining('Only pairing listens for incoming links'),
+    ]);
+    expect(await boundaryHits('src/features/upload/pairing-sheet.tsx', namespaced)).toEqual([]);
   });
 
   it('keeps the embed entry to its one static import (rule 4)', async () => {

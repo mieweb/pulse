@@ -79,6 +79,53 @@ const LINKING_ALIAS_MESSAGE =
   'Use Linking under its own name, so the link-listener rule can see what it is used for.';
 
 /**
+ * The no-restricted-syntax half of the boundary rules: the packages in PACKAGES that `allow`
+ * doesn't lift, loaded by `require()` or `import()` (no-restricted-imports already sees
+ * `import x = require()`); and, unless `allow` lifts them, link listeners on Linking, whether it's
+ * imported, destructured or reached as `RN.Linking`.
+ */
+function syntaxRules(allow) {
+  const loaded = Object.entries(PACKAGES).filter(([name]) => !allow.includes(name));
+  // esquery regexes can't hold a "/": `\b(?![-.])` ends the name before a subpath or the end.
+  const loads = loaded.flatMap(([name, message]) => {
+    const source = `/^${name}\\b(?![-.])/`;
+    return [
+      `CallExpression[callee.name='require'][arguments.0.value=${source}]`,
+      `ImportExpression[source.value=${source}]`,
+    ].map((selector) => ({ selector, message }));
+  });
+  const listeners = allow.includes('link-listeners')
+    ? []
+    : [
+        {
+          selector: `MemberExpression[object.name='Linking'][property.name=/^(${LINK_LISTENERS})$/]`,
+          message: LISTENER_MESSAGE,
+        },
+        // `import * as RN from 'react-native'; RN.Linking.getInitialURL()`
+        {
+          selector: `MemberExpression[object.property.name='Linking'][property.name=/^(${LINK_LISTENERS})$/]`,
+          message: LISTENER_MESSAGE,
+        },
+        {
+          selector: `ImportDeclaration[source.value='expo-linking'] > ImportSpecifier[imported.name=/^(${LINK_LISTENERS})$/]`,
+          message: LISTENER_MESSAGE,
+        },
+        // `const { addEventListener } = Linking`
+        {
+          selector: `VariableDeclarator[init.name='Linking'] > ObjectPattern > Property[key.name=/^(${LINK_LISTENERS})$/]`,
+          message: LISTENER_MESSAGE,
+        },
+        // `import { Linking as L } from 'react-native'`, which the rules above can't follow.
+        {
+          selector: `ImportSpecifier[imported.name='Linking'][local.name!='Linking']`,
+          message: LINKING_ALIAS_MESSAGE,
+        },
+      ];
+  const rules = [...loads, ...listeners];
+  return rules.length ? ['error', ...rules] : 'off';
+}
+
+/**
  * The boundary rules for one group of files. `allow` lifts the expo-router, expo-linking,
  * link-listener or standalone-feature rule; `belowFeatures` adds "no feature imports". A later
  * group's rules replace an earlier one's for the files both match, so each group states all of its
@@ -119,30 +166,10 @@ function boundaries({ allow = [], belowFeatures = false } = {}) {
         ],
       },
     ],
-    // Opening a URL or Settings (Linking.openURL / openSettings) is fine everywhere.
-    'no-restricted-syntax': allow.includes('link-listeners')
-      ? 'off'
-      : [
-          'error',
-          {
-            selector: `MemberExpression[object.name='Linking'][property.name=/^(${LINK_LISTENERS})$/]`,
-            message: LISTENER_MESSAGE,
-          },
-          {
-            selector: `ImportDeclaration[source.value='expo-linking'] > ImportSpecifier[imported.name=/^(${LINK_LISTENERS})$/]`,
-            message: LISTENER_MESSAGE,
-          },
-          // `const { addEventListener } = Linking`
-          {
-            selector: `VariableDeclarator[init.name='Linking'] > ObjectPattern > Property[key.name=/^(${LINK_LISTENERS})$/]`,
-            message: LISTENER_MESSAGE,
-          },
-          // `import { Linking as L } from 'react-native'`, which the rules above can't follow.
-          {
-            selector: `ImportSpecifier[imported.name='Linking'][local.name!='Linking']`,
-            message: LINKING_ALIAS_MESSAGE,
-          },
-        ],
+    // What no-restricted-imports can't see: a package loaded by require() or import(), and
+    // listeners reached some other way. Opening a URL or Settings (Linking.openURL /
+    // openSettings) is fine everywhere.
+    'no-restricted-syntax': syntaxRules(allow),
   };
 }
 
