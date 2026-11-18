@@ -78,10 +78,10 @@ export function readSourceStamps(repoRoot) {
 
   const contract =
     /CONTRACT\b[^=]*=\s*Object\.freeze\(\{\s*major:\s*\d+,\s*minor:\s*(\d+)\s*\}\)/.exec(
-      read('embed/packages/pulse-embed/src/index.ts'),
+      read('embed/packages/pulse-embed/src/envelope.ts'),
     );
   if (!contract)
-    throw new Error('CONTRACT.minor not found in embed/packages/pulse-embed/src/index.ts');
+    throw new Error('CONTRACT.minor not found in embed/packages/pulse-embed/src/envelope.ts');
 
   const project = /export const PROJECT_VERSION\s*=\s*(\d+)\s*;/.exec(read('src/db/project.ts'));
   if (!project) throw new Error('PROJECT_VERSION not found in src/db/project.ts');
