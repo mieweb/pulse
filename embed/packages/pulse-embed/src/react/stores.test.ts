@@ -9,6 +9,8 @@ import type {
   PulseEventName,
   PulseInfo,
 } from '@mieweb/pulse-embed';
+// By package name, as a host names the hooks' results; tsc fails here if the entry stops exporting them.
+import type { Availability, Loadable, PresentState } from '@mieweb/pulse-embed/react';
 
 import { pulseError } from '../errors';
 import {
@@ -61,7 +63,8 @@ describe('the drafts store', () => {
       { on: c.on as never, listDrafts },
       { contextKeyPrefix: 'ticket:' },
     );
-    expect(store.getSnapshot()).toMatchObject({ data: undefined, loading: true, error: null });
+    const first: Loadable<DraftSummary[]> = store.getSnapshot();
+    expect(first).toMatchObject({ data: undefined, loading: true, error: null });
     expect(listDrafts).not.toHaveBeenCalled();
 
     const changed = jest.fn();
@@ -191,7 +194,8 @@ describe('the availability store', () => {
   it('is available for a supported facade', async () => {
     const info = { supported: true } as PulseInfo;
     const store = createAvailabilityStore({ getInfo: async () => info });
-    expect(store.getSnapshot()).toEqual({ available: false, info: null, loading: true });
+    const before: Availability = store.getSnapshot();
+    expect(before).toEqual({ available: false, info: null, loading: true });
     store.subscribe(() => {});
     await tick();
     expect(store.getSnapshot()).toEqual({ available: true, info, loading: false });
@@ -228,7 +232,8 @@ describe('the present store', () => {
     const b = store.open({ entry: 'export', draftId: 'd-2' });
     expect(b).toBe(a);
     expect(open).toHaveBeenCalledTimes(1);
-    expect(store.getSnapshot()).toEqual({ isOpen: true, lastResult: null });
+    const opened: PresentState = store.getSnapshot();
+    expect(opened).toEqual({ isOpen: true, lastResult: null });
     d.resolve(result);
     await expect(a).resolves.toBe(result);
     expect(store.getSnapshot()).toEqual({ isOpen: false, lastResult: result });

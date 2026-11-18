@@ -21,6 +21,10 @@ import {
   type Store,
 } from './stores';
 
+// The shapes the hooks return, for a host that names them (contract: '@mieweb/pulse-embed/react').
+export type { Loadable } from '../types';
+export type { Availability, PresentState } from './stores';
+
 /**
  * '@mieweb/pulse-embed/react': hooks over the stores in ./stores. Each takes an optional client
  * (default: the page-wide `getPulse()`); options are compared by value, so an inline filter
