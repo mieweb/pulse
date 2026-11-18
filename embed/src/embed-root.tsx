@@ -44,7 +44,10 @@ function start(props: Props): string | null {
 
 export function EmbedRoot(props: Props) {
   const [failure] = useState(() => start(props));
-  useEffect(() => () => console.log(`[embed] unmount request=${props.requestId}`), [props.requestId]);
+  useEffect(
+    () => () => console.log(`[embed] unmount request=${props.requestId}`),
+    [props.requestId],
+  );
   if (failure) {
     console.log(`[embed] can't open: ${failure}`);
     return (

@@ -1,9 +1,5 @@
 import { Directory, File } from 'expo-file-system';
-import {
-  backupDatabaseSync,
-  openDatabaseSync,
-  type SQLiteDatabase,
-} from 'expo-sqlite';
+import { backupDatabaseSync, openDatabaseSync, type SQLiteDatabase } from 'expo-sqlite';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
 import { listContents, unzip } from 'react-native-zip-archive';

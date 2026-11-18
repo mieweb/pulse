@@ -1,9 +1,5 @@
 import { Directory, File } from 'expo-file-system';
-import {
-  backupDatabaseSync,
-  openDatabaseSync,
-  type SQLiteDatabase,
-} from 'expo-sqlite';
+import { backupDatabaseSync, openDatabaseSync, type SQLiteDatabase } from 'expo-sqlite';
 import { Platform } from 'react-native';
 
 import { toFileUri } from '@/utils/file-store';
