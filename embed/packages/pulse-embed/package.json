@@ -25,7 +25,12 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
+    "build": "npm run build:clean && npm run build:js && npm run build:types && npm run build:check",
+    "build:clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build:js": "esbuild './src/**/index.ts' --bundle --splitting --format=esm --platform=neutral --target=es2020 --packages=external --outbase=src --outdir=dist '--chunk-names=chunks/[name]-[hash]' --log-level=warning",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:check": "node --input-type=module -e \"import { existsSync, readFileSync } from 'node:fs'; const { exports } = JSON.parse(readFileSync('package.json', 'utf8')); const entries = Object.entries(exports).filter(([k, v]) => v.default && existsSync('./src/' + k.slice(2) + '/index.ts')).map(([, v]) => v.default); for (const e of entries) await import(e); console.log('dist loads in Node:', entries.join(', '));\"",
+    "prepack": "npm run build"
   },
   "peerDependencies": {
     "react": ">=18"

@@ -1,10 +1,14 @@
 {
-  // The published build (`npm run build`, or `npx tsc -p embed/packages/pulse-embed/tsconfig.build.json`
-  // from the repo root): src → dist as ES modules with .d.ts, so a host never type-checks our .ts.
+  // The published build is `npm run build` here (npm pack runs it too, as `prepack`). esbuild
+  // bundles src/index.ts and src/*/index.ts into ES modules in dist, with the code they share in
+  // dist/chunks (one copy, so getPulse() is one client page-wide), and every specifier Node's ESM
+  // loader can resolve: tsc keeps `./client` extensionless, which Node (and so a host's vitest)
+  // can't load. This file gives the .d.ts next to them, so a host never type-checks our .ts.
   // Inside the Pulse repo the path aliases and jest keep resolving the package to src.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
+    "emitDeclarationOnly": true,
     "allowJs": false,
     "rootDir": "src",
     "outDir": "dist",
