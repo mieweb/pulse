@@ -1,0 +1,29 @@
+// The Android stub of @mieweb/capacitor-pulse (AD20). It answers every call itself, so it depends
+// on nothing but Capacitor: no Maven libraries and no manifest permissions. Versions follow the
+// host's variables.gradle, as Capacitor's own plugins do.
+apply plugin: 'com.android.library'
+
+def hostValue(String name, def fallback) {
+    return rootProject.ext.has(name) ? rootProject.ext.get(name) : fallback
+}
+
+android {
+    namespace = 'com.mieweb.pulse.capacitor'
+    compileSdk = hostValue('compileSdkVersion', 36)
+    defaultConfig {
+        minSdkVersion hostValue('minSdkVersion', 24)
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(':capacitor-android')
+}
