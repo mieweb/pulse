@@ -1,10 +1,9 @@
-import type { ContractVersion, PulseError } from './types';
+import type { PulseError } from './types';
 
 export type * from './types';
 export { CONTEXT_KEY_MAX, contextKey } from './context-key';
-
-/** The contract this client speaks (AD18): major 1; minor 0 is PR1, minor 1 adds PR2's data API. */
-export const CONTRACT: ContractVersion = Object.freeze({ major: 1, minor: 0 });
+export { CONTRACT } from './envelope';
+export { createPulseClient, getPulse } from './client';
 
 /** True for a PulseError from any call, also one rebuilt from a bridge reply (no class check). */
 export function isPulseError(e: unknown): e is PulseError {
