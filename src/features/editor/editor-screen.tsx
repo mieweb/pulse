@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ExportButton } from '@/components/export-button';
 import { Icon } from '@/components/icon';
-import { useScreenFocusEffect } from '@/core/navigation/focus';
+import { useScreenFocused, useScreenFocusEffect } from '@/core/navigation/focus';
 import Sortable from 'react-native-sortables';
 
 import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
@@ -111,8 +111,8 @@ const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
  * merged at the playhead. Captions show over the preview (drag one to move them all) and on a
  * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
  *
- * No router: where Close, Export and the captions model go is the caller's (`EditorScreenProps`),
- * and whether the screen is the one on top comes through the focus port.
+ * No router: where Close, Export, Add clips and the captions model go is the caller's
+ * (`EditorScreenProps`), and whether the screen is the one on top comes through the focus port.
  */
 export function EditorScreen({
   draftId,
@@ -120,6 +120,7 @@ export function EditorScreen({
   view: openView,
   onClose,
   onExport,
+  onAddClips,
   onOpenModelSheet,
 }: EditorScreenProps) {
   // Not compiled by the React Compiler (as before): its memoization here leaves the track's
@@ -244,13 +245,15 @@ export function EditorScreen({
   }, []);
 
   // Leave when the draft has no clips left, once: a new `onClose` while leaving doesn't close twice
-  // (which would also close the screen underneath).
+  // (which would also close the screen underneath). Only while on top: a recorder opened over the
+  // editor (Add clips) can empty the draft, and closing then would close that recorder instead.
+  const focused = useScreenFocused();
   const left = useRef(false);
   useEffect(() => {
-    if (left.current || !draft.loaded || clips.length > 0) return;
+    if (left.current || !focused || !draft.loaded || clips.length > 0) return;
     left.current = true;
     onClose();
-  }, [draft.loaded, clips.length, onClose]);
+  }, [focused, draft.loaded, clips.length, onClose]);
 
   // Opened on a clip: the playhead starts on it. Placed once the clips are known, before the strip
   // or row is shown (they stay hidden until then, on the UI thread, so no frame shows 0 first).
@@ -473,20 +476,23 @@ export function EditorScreen({
     });
   };
 
-  // Export reads the stored clips: it opens once every edit asked for is stored (a cover renders
-  // first, up to about half a second), and once per tap until the editor is back on screen.
-  const exporting = useRef(false);
+  // Export and the recorder (Add clips) read the stored clips: each opens once every edit asked for
+  // is stored (a cover renders first, up to about half a second), and one screen opens per tap
+  // until the editor is back on screen.
+  const opening = useRef(false);
   useScreenFocusEffect(
     useCallback(() => {
-      exporting.current = false;
+      opening.current = false;
     }, []),
   );
-  const openExport = () => {
-    if (exporting.current) return;
-    exporting.current = true;
+  const openOver = (go: () => void) => {
+    if (opening.current) return;
+    opening.current = true;
     ctl.pause();
-    void flushDraftWrites().then(() => onExport(draftId));
+    void flushDraftWrites().then(go);
   };
+  const openExport = () => openOver(() => onExport(draftId));
+  const addClips = () => openOver(() => onAddClips?.(draftId));
 
   const reset = () => {
     const t = target();
@@ -757,6 +763,8 @@ export function EditorScreen({
         <Pressable style={styles.header} onPress={deselect} accessible={false}>
           <HeaderButton icon="xmark" label="Close" onPress={onClose} />
           <View style={styles.headerRight}>
+            {/* More clips for this draft: the recorder, back here with them on Edit. */}
+            {onAddClips && <HeaderButton icon="plus" label="Add clips" onPress={addClips} />}
             <HeaderButton
               icon="arrow.uturn.backward"
               label="Undo"

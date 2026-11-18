@@ -7,6 +7,9 @@ import { EditorScreen } from '@/features/editor/editor-screen';
 /** Back to the recorder (or Home, when the editor was opened by a link). */
 const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
 const openExport = (draftId: string) => router.push({ pathname: '/export', params: { draftId } });
+/** Add clips: the recorder for this draft, whose Edit comes back to this editor. */
+const addClips = (draftId: string) =>
+  router.push({ pathname: '/recorder', params: { draftId, returnTo: 'editor' } });
 const openModelSheet = () => router.push('/on-device-ai');
 
 const asView = (v: string | undefined): EditorView | undefined =>
@@ -31,6 +34,7 @@ export default function EditorRoute() {
         view={asView(view)}
         onClose={close}
         onExport={openExport}
+        onAddClips={addClips}
         onOpenModelSheet={openModelSheet}
       />
     </ScreenFocusProvider>
