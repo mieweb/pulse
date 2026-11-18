@@ -340,6 +340,13 @@
       "requestId": "r-1",
       "presenter": "none",
       "expect": "noPresenter"
+    },
+    {
+      "name": "nothing open but the presenter isn't in a window: busy",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "detached",
+      "expect": "busy"
     }
   ],
   "inbox": [

@@ -46,6 +46,9 @@ public final class PulseKit: NSObject {
     /// Every `open` waiting for this request: the first, and any with the same requestId.
     var waiters: [(callId: String, reply: (PulseReply) -> Void)]
     var forceClose: DispatchWorkItem?
+    /// The `pulse.cmd` callIds sent while this flow was open; `finish` drops the ones still
+    /// waiting, since a runtime that died or wasn't listening yet will never reply.
+    var commandIds: [String] = []
 
     init(
       requestId: String, callId: String, request: [String: JSONValue], roots: PulseKitRoots,
@@ -170,8 +173,16 @@ public final class PulseKit: NSObject {
     case .failure(let error): return respond(.failure(error))
     case .success(let a): args = a
     }
-    let state: PulsePresenterState =
-      presenter == nil ? .none : presenter?.presentedViewController != nil ? .presenting : .idle
+    let state: PulsePresenterState
+    if let presenter {
+      // Out of a window, `present` fails with only a UIKit warning: the flow would stay set, the
+      // reply would never come and every later open would be busy.
+      state =
+        presenter.presentedViewController != nil
+        ? .presenting : presenter.viewIfLoaded?.window == nil ? .detached : .idle
+    } else {
+      state = .none
+    }
     let decision = PulseOpenGate.decide(
       openRequestId: flow?.requestId, requestId: args.requestId, presenter: state)
     if decision == .join, let flow {
@@ -236,9 +247,7 @@ public final class PulseKit: NSObject {
     container.onDismissedByHost = { [weak self, weak flow] in
       guard let self, let flow, self.flow === flow else { return }
       self.log("open \(flow.callId): the app dismissed Pulse")
-      self.finish(
-        flow.roots.inbox.read(flow.requestId)
-          ?? self.ended(flow, status: "canceled", ["reason": .string("interrupted")]))
+      self.finish(flow.roots.inbox.read(flow.requestId) ?? self.interrupted(flow, reason: "interrupted"))
     }
     self.flow = flow
     log("open \(callId): \(args.entry) as \(requestId) in \(roots.namespace)")
@@ -269,9 +278,7 @@ public final class PulseKit: NSObject {
       let work = DispatchWorkItem { [weak self, weak flow] in
         guard let self, let flow, self.flow === flow else { return }
         self.log("close: Pulse didn't end \(flow.requestId) in 5 s; dismissing it")
-        self.finish(
-          flow.roots.inbox.read(flow.requestId)
-            ?? self.ended(flow, status: "canceled", ["reason": .string("host")]))
+        self.finish(flow.roots.inbox.read(flow.requestId) ?? self.interrupted(flow, reason: "host"))
       }
       flow.forceClose = work
       DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
@@ -285,13 +292,36 @@ public final class PulseKit: NSObject {
     guard let flow else { return }
     self.flow = nil
     flow.forceClose?.cancel()
+    for id in flow.commandIds where commands.removeValue(forKey: id) != nil {
+      log("pulse.cmd \(id): no reply before \(flow.requestId) ended; dropped")
+    }
     flow.roots.inbox.writeIfAbsent(result, requestId: flow.requestId)
     log("open \(flow.callId): ended \(result["status"]?.string ?? "?") for \(flow.requestId)")
     PulseKitPresenter.dismiss(flow.container) { [weak self] in
-      flow.audio.restore()
+      // Retries stop once another flow has opened: the session is that flow's then.
+      flow.audio.restore(while: { [weak self] in self?.flow == nil })
       for waiter in flow.waiters { waiter.reply(.success(waiter.callId, result)) }
       self?.emit("flowResult", result)
     }
+  }
+
+  /// The facade's own result for a flow Pulse JS didn't end in time (a forced close, or the host
+  /// dismissing Pulse itself). With a take on screen (`pulse.ui` hasTake) and a known draft it is
+  /// `closed`, as `close()` promises; otherwise `canceled`, because `closed` needs a draftId the
+  /// facade doesn't know for a new recording. Either way it is only a fallback: if Pulse JS writes
+  /// its own result for this requestId later, that file replaces this one and a second
+  /// `flowResult` follows; the host acts on the later one (vectors/README.md).
+  private func interrupted(_ flow: Flow, reason: String) -> JSONValue {
+    if flow.container.hasTake, let draftId = Self.draftId(flow.request) {
+      return ended(
+        flow, status: "closed",
+        ["reason": .string(reason), "draftId": .string(draftId), "stage": .string("recorded")])
+    }
+    return ended(flow, status: "canceled", ["reason": .string(reason)])
+  }
+
+  private static func draftId(_ request: [String: JSONValue]) -> String? {
+    request["draftId"]?.string ?? request["draft"]?["continue"]?.string
   }
 
   /// A result the facade writes itself, when the flow ended without one from Pulse JS.
@@ -306,9 +336,7 @@ public final class PulseKit: NSObject {
       "context": request["context"] ?? .null,
       "endedAt": .int(Int64(Date().timeIntervalSince1970 * 1000)),
     ]
-    if let draftId = request["draftId"]?.string ?? request["draft"]?["continue"]?.string {
-      o["draftId"] = .string(draftId)
-    }
+    if let draftId = Self.draftId(request) { o["draftId"] = .string(draftId) }
     o.merge(extra) { _, new in new }
     return .object(o)
   }
@@ -334,7 +362,11 @@ public final class PulseKit: NSObject {
   }
 
   /// JS error isolation (B3): a fatal error inside Pulse ends the open flow as
-  /// `failed{runtime.error}` instead of crashing the host. Installed once, for the process's
+  /// `failed{runtime.error}` instead of crashing the host.
+  ///
+  /// Release builds only: React Native's RCTExceptionsManager calls RCTFatal for a fatal JS
+  /// exception only when `!RCT_DEV`. A Debug PulseKit shows a RedBox instead, and this handler
+  /// never runs. Installed once, for the process's
   /// lifetime, because the runtime outlives the flow: a fatal after the flow ended goes to the
   /// handler that was there before, or is logged.
   private func installFatalHandler() {
@@ -399,6 +431,7 @@ public final class PulseKit: NSObject {
       guard let name = message["name"]?.string else { return }
       emit(name, message["payload"] ?? .null)
     case "pulse.ui":
+      // Not in native-bridge.md §8.1 yet: a PR1 contract addition (vectors/README.md).
       flow?.container.apply(ui: message)
     default:
       break
@@ -411,6 +444,7 @@ public final class PulseKit: NSObject {
   ) {
     let callId = "n-" + UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
       .prefix(12)
+    flow?.commandIds.append(callId)
     commands[callId] =
       done ?? { [weak self] reply in
         if reply["ok"]?.bool == false {

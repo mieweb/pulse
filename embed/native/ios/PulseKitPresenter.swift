@@ -8,6 +8,9 @@ import UIKit
 /// on iPhone even when the host allows landscape, and the theme bridge's appearance, set on this
 /// controller only, never on the window or app-wide. Pulse JS steers it with `pulse.ui`
 /// messages; until JS says otherwise it shows a dark skeleton with light status-bar text.
+///
+/// `pulse.ui` is a PR1 addition to native-bridge.md §8.1 (JS → native), written up in
+/// vectors/README.md until the contract carries it.
 final class PulseKitContainerViewController: UIViewController {
   private let content: UIViewController
   private let skeleton = UIView()
@@ -15,6 +18,8 @@ final class PulseKitContainerViewController: UIViewController {
   private var statusBarHidden = false
   private var contentObserver: NSObjectProtocol?
   private var accent: UIColor?
+  /// The last `hasTake` from Pulse JS: a take would be lost if the flow ended now.
+  private(set) var hasTake = false
 
   /// Called when the host dismissed Pulse itself rather than through `close`.
   var onDismissedByHost: (() -> Void)?
@@ -103,8 +108,10 @@ final class PulseKitContainerViewController: UIViewController {
 
   // MARK: Messages from Pulse JS
 
-  /// `pulse.ui` from Pulse JS: `{ statusBar?: 'light'|'dark'|'auto', statusBarHidden?: bool,
-  /// hasTake?: bool }`. Unknown fields are ignored.
+  /// `pulse.ui` from Pulse JS: `{ type: 'pulse.ui', statusBar?: 'light'|'dark'|'auto',
+  /// statusBarHidden?: bool, hasTake?: bool }`. Each field is optional and sticks until the next
+  /// message sets it; unknown fields and values are ignored ('auto' and anything else → the
+  /// system default for the appearance).
   func apply(ui: JSONValue) {
     if let style = ui["statusBar"]?.string {
       statusBarStyle =
@@ -115,7 +122,10 @@ final class PulseKitContainerViewController: UIViewController {
         }
     }
     if let hidden = ui["statusBarHidden"]?.bool { statusBarHidden = hidden }
-    if let hasTake = ui["hasTake"]?.bool { isModalInPresentation = hasTake }
+    if let hasTake = ui["hasTake"]?.bool {
+      self.hasTake = hasTake
+      isModalInPresentation = hasTake
+    }
     setNeedsStatusBarAppearanceUpdate()
   }
 
@@ -183,16 +193,32 @@ struct PulseKitAudioState {
   }
 
   /// Put the category back, and when other audio was playing, deactivate with
-  /// `notifyOthersOnDeactivation` so that app resumes.
-  func restore() {
+  /// `notifyOthersOnDeactivation` so that app resumes. The recorder's camera and mic may still be
+  /// stopping when the dismissal completes, and then deactivating fails as busy: it is retried
+  /// twice, 300 ms apart, as long as `stillClosed()` says no new flow owns the session.
+  func restore(while stillClosed: @escaping () -> Bool) {
     let s = AVAudioSession.sharedInstance()
     do {
       try s.setCategory(category, mode: mode, options: options)
     } catch {
       NSLog("[PulseKit] couldn't restore the audio category: %@", "\(error)")
     }
-    if otherAudioWasPlaying {
-      try? s.setActive(false, options: .notifyOthersOnDeactivation)
+    if otherAudioWasPlaying { Self.deactivate(attemptsLeft: 3, stillClosed) }
+  }
+
+  private static func deactivate(attemptsLeft: Int, _ stillClosed: @escaping () -> Bool) {
+    guard stillClosed() else { return }
+    do {
+      try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    } catch {
+      let left = attemptsLeft - 1
+      NSLog(
+        "[PulseKit] couldn't hand the audio session back (%@)%@", "\(error)",
+        left > 0 ? "; retrying in 300 ms" : "; giving up, other audio won't resume")
+      guard left > 0 else { return }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        Self.deactivate(attemptsLeft: left, stillClosed)
+      }
     }
   }
 }

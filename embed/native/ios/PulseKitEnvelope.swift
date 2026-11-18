@@ -472,6 +472,9 @@ public enum PulsePresenterState: String {
   case idle
   /// It is already presenting something.
   case presenting
+  /// It isn't in a window (not on screen yet, or already removed), so `present` would fail with
+  /// only a UIKit warning and the `open` reply would never come.
+  case detached
 }
 
 public enum PulseOpenDecision: String {
@@ -494,7 +497,7 @@ public enum PulseOpenGate {
     if let open = openRequestId { return requestId == open ? .join : .busy }
     switch presenter {
     case .none: return .noPresenter
-    case .presenting: return .busy
+    case .presenting, .detached: return .busy
     case .idle: return .start
     }
   }
