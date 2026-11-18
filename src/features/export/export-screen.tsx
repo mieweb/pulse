@@ -1,7 +1,5 @@
 import { useEvent } from 'expo';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import * as Linking from 'expo-linking';
-import { router, useLocalSearchParams } from 'expo-router';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -34,7 +32,8 @@ import {
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { captionYQuery } from '@/db/captions';
 import { segmentsForDraft } from '@/db/drafts';
-import { finishWithVideo, useEmbedded } from '@/features/embed/host';
+import type { ExportScreenProps } from '@/features/export/contract';
+import { exportActions } from '@/features/export/primary-action';
 import { useExport } from '@/features/export/use-export';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
@@ -54,18 +53,28 @@ import { useUploadAnnouncement, useWatchLink } from '@/features/upload/use-uploa
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
-import { closeToHome } from '@/utils/navigation';
 import { effMs } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
 
 /** How long after an upload finished its way back to the host is still offered here. */
 const RETURN_OFFER_MS = 10 * 60_000;
 
-export default function ExportScreen() {
+/**
+ * Merges the draft into one video, previews it, and offers the primary action (the pool's Upload,
+ * or handing the video back to a host), Share and Save to Photos. It never navigates: the shell
+ * leaves from `onClose` and goes back to a host page from `onBackToHost`.
+ */
+export function ExportScreen({
+  draftId,
+  primaryAction,
+  policy,
+  photosAddPurpose = true,
+  onClose,
+  onBackToHost,
+}: ExportScreenProps) {
   const insets = useSafeAreaInsets();
-  const { draftId } = useLocalSearchParams<{ draftId?: string }>();
 
-  const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
+  const { data: segments } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
   // Zero-length clips (failed native reads) can't be concatenated — drop them before merging.
   const clips = useMemo(() => segments.filter((s) => effMs(s) > 0), [segments]);
 
@@ -73,10 +82,10 @@ export default function ExportScreen() {
   // read — before the merge finishes. It's read at enqueue time, once the merge is done. See the
   // `useUpload` doc comment.
   const mergedRef = useRef<{ path: string; durationMs: number } | null>(null);
-  const upload = useUpload(draftId ?? '', clips, mergedRef);
+  const upload = useUpload(draftId, clips, mergedRef);
 
   // The merge runs on mount: Share/Save/Preview and the upload all need the one video.
-  const { state, run } = useExport(draftId ?? '', clips);
+  const { state, run } = useExport(draftId, clips);
   // The upload reads `mergedRef.current` at enqueue time, not via a reactive prop — update it
   // whenever the merge's own state changes instead of threading `merged` through as a value.
   useEffect(() => {
@@ -86,15 +95,14 @@ export default function ExportScreen() {
 
   // The draft's captions, composed from its clips (made and edited in the editor), where they
   // were moved to there. No wait for the merge.
-  const captions = useDraftCaptions(draftId ?? '', clips);
-  const { data: captionRows } = useLiveQuery(captionYQuery(draftId ?? ''), [draftId]);
+  const captions = useDraftCaptions(draftId, clips);
+  const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionY = captionRows[0]?.captionY ?? null;
 
   // Whether the share sheet is being presented, so we can disable the button and show a spinner.
   const [busy, setBusy] = useState(false);
 
   const photos = useSaveToPhotos();
-  const embedded = useEmbedded();
   const { showToast } = useToast();
   const theme = useTheme();
   // Secondary buttons and the uploading bar: cards on the grouped background, lifted by a
@@ -110,6 +118,16 @@ export default function ExportScreen() {
   const selected = upload.selectedDestination;
   const selectedHost = selected ? hostOf(selected.server) : '';
   const selectedName = selected ? (selected.label ?? selectedHost) : '';
+  const actions = exportActions({
+    primaryAction,
+    policy,
+    photosAddPurpose,
+    merging: state.status === 'merging',
+    destination: selected
+      ? { name: selectedName, spokenName: destinationSpokenName(selected) }
+      : null,
+  });
+  const pool = actions.primary.kind === 'upload';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
   // chains like `upload.state` don't stay narrowed across nested JSX the way a plain const does.
   const uState = upload.state;
@@ -121,10 +139,10 @@ export default function ExportScreen() {
   // link (the toast still says it uploaded, and that the link was copied). Only announcements
   // newer than the one current when the screen opened count, so leaving the screen puts the
   // usual upload UI back.
-  const announcement = useUploadAnnouncement(draftId ?? null);
+  const announcement = useUploadAnnouncement(draftId || null);
   const [seqAtOpen] = useState(() => (draftId ? (uploads.getAnnouncement(draftId)?.seq ?? 0) : 0));
   const justFinished = announcement && announcement.seq > seqAtOpen ? announcement : null;
-  const finishedLink = useWatchLink(justFinished ? (draftId ?? null) : null);
+  const finishedLink = useWatchLink(justFinished ? draftId || null : null);
   const finished = justFinished && finishedLink ? { ...justFinished, link: finishedLink } : null;
   // The host page a place's link came from, to go back to once the upload is in. It rides the
   // upload's announcement, so it is still here after this screen was left and opened again while
@@ -132,7 +150,7 @@ export default function ExportScreen() {
   // ended while this screen was open) doesn't cover.
   const [openedAt] = useState(() => Date.now());
   const back =
-    announcement && (justFinished || announcement.at > openedAt - RETURN_OFFER_MS)
+    onBackToHost && announcement && (justFinished || announcement.at > openedAt - RETURN_OFFER_MS)
       ? backToHost(announcement.returnTo)
       : null;
   const backButton = back && (
@@ -142,7 +160,7 @@ export default function ExportScreen() {
         label={back.label}
         icon="arrow.uturn.backward"
         truncate="never"
-        onPress={() => void Linking.openURL(back.url).catch(() => {})}
+        onPress={() => onBackToHost?.(back.url)}
       />
       {back.unusualHost && (
         <ThemedText type="footnote" themeColor="warning">
@@ -151,11 +169,7 @@ export default function ExportScreen() {
       )}
     </>
   );
-  const close = useCallback(() => {
-    if (!uploading) closeToHome();
-    else if (router.canDismiss()) router.dismissAll();
-    else router.replace('/');
-  }, [uploading]);
+  const close = useCallback(() => onClose({ draftLocked: uploading }), [onClose, uploading]);
   // Android's back button would otherwise pop straight to the recorder.
   useEffect(() => {
     if (!uploading) return;
@@ -202,15 +216,13 @@ export default function ExportScreen() {
           {/* The section is already titled Upload: the icon and the destination say the rest.
               Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
           <PrimaryButton
-            label={state.status === 'merging' ? 'Preparing video…' : selectedName || 'Upload'}
+            label={actions.primary.label}
             icon="icloud.and.arrow.up"
             busy={state.status === 'merging'}
             truncate={state.status !== 'merging' ? 'middle' : undefined}
             onPress={() => void upload.claim(upload.selectedId)}
             disabled={!upload.selectedId || !uploadReady}
-            accessibilityLabel={
-              selected ? `Upload to ${destinationSpokenName(selected)}` : 'Upload'
-            }
+            accessibilityLabel={actions.primary.accessibilityLabel}
           />
         </>
       )}
@@ -220,7 +232,7 @@ export default function ExportScreen() {
   return (
     <ThemedView type="groupedBackground" style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-        <CloseButton onPress={close} />
+        <CloseButton onClose={close} />
       </View>
 
       {/* Bottom padding tracks the home indicator instead of a fixed 64pt — the difference
@@ -251,92 +263,103 @@ export default function ExportScreen() {
               note={<CaptionsNote captions={captions} />}
             />
 
-            {/* Embedded in another app: hand the video back to it. */}
-            {embedded && (
+            {/* Inside a host: hand the video back to it. */}
+            {primaryAction.kind === 'use-video' && (
               <PrimaryButton
-                label="Use this video"
+                label={actions.primary.label}
                 icon="checkmark"
+                accessibilityLabel={actions.primary.accessibilityLabel}
                 onPress={() =>
-                  void finishWithVideo(draftId ?? '', state.outputPath, state.durationMs)
+                  primaryAction.onUse({
+                    draftId,
+                    path: state.outputPath,
+                    durationMs: state.durationMs,
+                  })
                 }
               />
             )}
 
             {/* Compact inline row — these are secondary actions; the upload button(s) below
                 own the vertical space. */}
-            <View style={styles.actionsRow}>
-              <Pressable
-                onPress={runShare}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityLabel={busy ? 'Sharing' : 'Share'}
-                accessibilityState={{ disabled: busy, busy }}
-                // 34pt pill + 5 each side = a 44pt tap target.
-                hitSlop={5}
-                // No disabled dimming while busy: the spinner stays at full strength, like
-                // Photos and Files beside it.
-                style={({ pressed }) => [
-                  styles.smallButton,
-                  elementSurface,
-                  pressed && styles.pressed,
-                ]}>
-                {busy ? (
-                  <ActivityIndicator size="small" color={theme.text} />
-                ) : (
-                  <>
-                    <Icon
-                      name="square.and.arrow.up"
-                      size={14}
-                      tintColor={theme.text}
-                      scalesWithText
-                    />
-                    <ThemedText type="subheadline">Share</ThemedText>
-                  </>
+            {(actions.share || actions.saveToPhotos) && (
+              <View style={styles.actionsRow}>
+                {actions.share && (
+                  <Pressable
+                    onPress={runShare}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel={busy ? 'Sharing' : 'Share'}
+                    accessibilityState={{ disabled: busy, busy }}
+                    // 34pt pill + 5 each side = a 44pt tap target.
+                    hitSlop={5}
+                    // No disabled dimming while busy: the spinner stays at full strength, like
+                    // Photos and Files beside it.
+                    style={({ pressed }) => [
+                      styles.smallButton,
+                      elementSurface,
+                      pressed && styles.pressed,
+                    ]}>
+                    {busy ? (
+                      <ActivityIndicator size="small" color={theme.text} />
+                    ) : (
+                      <>
+                        <Icon
+                          name="square.and.arrow.up"
+                          size={14}
+                          tintColor={theme.text}
+                          scalesWithText
+                        />
+                        <ThemedText type="subheadline">Share</ThemedText>
+                      </>
+                    )}
+                  </Pressable>
                 )}
-              </Pressable>
 
-              <Pressable
-                onPress={() => void photos.save(toFileUri(state.outputPath))}
-                disabled={photos.status !== 'idle'}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  photos.status === 'saved'
-                    ? 'Saved to Photos'
-                    : photos.status === 'saving'
-                      ? 'Saving to Photos'
-                      : 'Save to Photos'
-                }
-                accessibilityState={{
-                  disabled: photos.status !== 'idle',
-                  busy: photos.status === 'saving',
-                }}
-                // 34pt pill + 5 each side = a 44pt tap target.
-                hitSlop={5}
-                style={({ pressed }) => [
-                  styles.smallButton,
-                  elementSurface,
-                  pressed && styles.pressed,
-                ]}>
-                {photos.status === 'saving' ? (
-                  <ActivityIndicator size="small" color={theme.text} />
-                ) : photos.status === 'saved' ? (
-                  <>
-                    <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
-                    <ThemedText type="subheadline">Saved</ThemedText>
-                  </>
-                ) : (
-                  <>
-                    <Icon
-                      name="square.and.arrow.down"
-                      size={14}
-                      tintColor={theme.text}
-                      scalesWithText
-                    />
-                    <ThemedText type="subheadline">Photos</ThemedText>
-                  </>
+                {actions.saveToPhotos && (
+                  <Pressable
+                    onPress={() => void photos.save(toFileUri(state.outputPath))}
+                    disabled={photos.status !== 'idle'}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      photos.status === 'saved'
+                        ? 'Saved to Photos'
+                        : photos.status === 'saving'
+                          ? 'Saving to Photos'
+                          : 'Save to Photos'
+                    }
+                    accessibilityState={{
+                      disabled: photos.status !== 'idle',
+                      busy: photos.status === 'saving',
+                    }}
+                    // 34pt pill + 5 each side = a 44pt tap target.
+                    hitSlop={5}
+                    style={({ pressed }) => [
+                      styles.smallButton,
+                      elementSurface,
+                      pressed && styles.pressed,
+                    ]}>
+                    {photos.status === 'saving' ? (
+                      <ActivityIndicator size="small" color={theme.text} />
+                    ) : photos.status === 'saved' ? (
+                      <>
+                        <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
+                        <ThemedText type="subheadline">Saved</ThemedText>
+                      </>
+                    ) : (
+                      <>
+                        <Icon
+                          name="square.and.arrow.down"
+                          size={14}
+                          tintColor={theme.text}
+                          scalesWithText
+                        />
+                        <ThemedText type="subheadline">Photos</ThemedText>
+                      </>
+                    )}
+                  </Pressable>
                 )}
-              </Pressable>
-            </View>
+              </View>
+            )}
           </>
         )}
 
@@ -360,74 +383,75 @@ export default function ExportScreen() {
             line that says to open a new link for it). A previously-uploaded draft with nothing to
             pick shows no upload UI at all (§ post-upload UX — no persistent buttons), but for
             the way back to the host its upload just came from. */}
-        {(upload.destinations.length > 0 ||
-          upload.reopen ||
-          uState.status === 'uploading' ||
-          finished ||
-          back) && (
-          <View style={styles.uploadSection}>
-            <SectionHeader title="Upload" />
+        {pool &&
+          (upload.destinations.length > 0 ||
+            upload.reopen ||
+            uState.status === 'uploading' ||
+            finished ||
+            back) && (
+            <View style={styles.uploadSection}>
+              <SectionHeader title="Upload" />
 
-            {uState.status === 'uploading' ? (
-              <View style={[styles.uploadingBar, elementSurface]}>
-                <ActivityIndicator color={theme.text} />
-                {/* Phase-aware label — names the step in flight (preparing, captions,
+              {uState.status === 'uploading' ? (
+                <View style={[styles.uploadingBar, elementSurface]}>
+                  <ActivityIndicator color={theme.text} />
+                  {/* Phase-aware label — names the step in flight (preparing, captions,
                     manifest, thumbnail, video) instead of sitting at a
                     generic "Uploading… 0%" through all the pre-video work. It fills the row
                     (one line, tabular digits), so the spinner stays left and the ✕ stays put
                     as the percentage ticks. */}
-                <ThemedText numberOfLines={1} style={styles.uploadingLabel}>
-                  {uploadPhaseLabel(uState)}
-                </ThemedText>
-                <Pressable
-                  onPress={() => void upload.cancel()}
-                  // 16pt glyph + 14 each side = a 44pt tap target.
-                  hitSlop={14}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel upload"
-                  style={({ pressed }) => pressed && styles.pressedIcon}>
-                  <Icon name="xmark" size={16} tintColor={theme.textSecondary} />
-                </Pressable>
-              </View>
-            ) : finished ? (
-              // Side by side in one 52pt row — the same space the Upload button took, so the
-              // preview doesn't shrink when the upload finishes. The "link copied" toast
-              // covers what the old note under these buttons said. An upload to the draft's own
-              // place adds "Back to <app>" above them, the step the person most likely wants next.
-              <View style={styles.finishedStack}>
-                {backButton}
-                <View style={styles.finishedRow}>
-                  <PrimaryButton
-                    variant={back ? 'card' : 'filled'}
-                    label="Watch"
-                    icon="play.fill"
-                    onPress={() => void watchUpload(finished.link.url)}
-                    style={styles.rowButton}
-                  />
-                  {/* Only a link that's safe to share — never one carrying the upload token. */}
-                  {finished.link.shareable && (
+                  <ThemedText numberOfLines={1} style={styles.uploadingLabel}>
+                    {uploadPhaseLabel(uState)}
+                  </ThemedText>
+                  <Pressable
+                    onPress={() => void upload.cancel()}
+                    // 16pt glyph + 14 each side = a 44pt tap target.
+                    hitSlop={14}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel upload"
+                    style={({ pressed }) => pressed && styles.pressedIcon}>
+                    <Icon name="xmark" size={16} tintColor={theme.textSecondary} />
+                  </Pressable>
+                </View>
+              ) : finished ? (
+                // Side by side in one 52pt row — the same space the Upload button took, so the
+                // preview doesn't shrink when the upload finishes. The "link copied" toast
+                // covers what the old note under these buttons said. An upload to the draft's own
+                // place adds "Back to <app>" above them, the step the person most likely wants next.
+                <View style={styles.finishedStack}>
+                  {backButton}
+                  <View style={styles.finishedRow}>
                     <PrimaryButton
-                      variant="card"
-                      label="Share link"
-                      icon="square.and.arrow.up"
-                      onPress={() => void shareUploadLink(finished.link.url).catch(() => {})}
+                      variant={back ? 'card' : 'filled'}
+                      label="Watch"
+                      icon="play.fill"
+                      onPress={() => void watchUpload(finished.link.url)}
                       style={styles.rowButton}
                     />
-                  )}
+                    {/* Only a link that's safe to share — never one carrying the upload token. */}
+                    {finished.link.shareable && (
+                      <PrimaryButton
+                        variant="card"
+                        label="Share link"
+                        icon="square.and.arrow.up"
+                        onPress={() => void shareUploadLink(finished.link.url).catch(() => {})}
+                        style={styles.rowButton}
+                      />
+                    )}
+                  </View>
                 </View>
-              </View>
-            ) : back ? (
-              // An upload that finished before this screen was opened again: its way back, then
-              // whatever there is to upload to next.
-              <View style={styles.finishedStack}>
-                {backButton}
-                {selectorAndUpload}
-              </View>
-            ) : (
-              selectorAndUpload
-            )}
-          </View>
-        )}
+              ) : back ? (
+                // An upload that finished before this screen was opened again: its way back, then
+                // whatever there is to upload to next.
+                <View style={styles.finishedStack}>
+                  {backButton}
+                  {selectorAndUpload}
+                </View>
+              ) : (
+                selectorAndUpload
+              )}
+            </View>
+          )}
       </View>
     </ThemedView>
   );

@@ -1,18 +1,25 @@
 import { Icon } from '@/components/icon';
+import { createContext, useContext } from 'react';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { GlassPill } from '@/components/glass-pill';
 import { ControlScrim, Opacity } from '@/constants/theme';
 import { useThemeMode } from '@/hooks/use-theme';
-import { closeToHome } from '@/utils/navigation';
+
+/**
+ * What a ✕ does when its parent can't pass `onClose` down: the permission gate's, whose screen
+ * provides it. Without either, the button does nothing (a shell always gives the screen a way out).
+ */
+export const CloseAction = createContext<(() => void) | null>(null);
 
 export function CloseButton({
-  onPress,
+  onClose,
   style,
   overVideo = false,
   label = 'Close',
 }: {
-  onPress?: () => void;
+  /** Leaves the screen; the shell decides where to (this button never navigates). */
+  onClose?: () => void;
   style?: StyleProp<ViewStyle>;
   /**
    * True when the button floats over live/video content (the recorder) — renders the Liquid
@@ -26,10 +33,12 @@ export function CloseButton({
   label?: string;
 }) {
   const mode = useThemeMode();
+  const inherited = useContext(CloseAction);
+  const close = onClose ?? inherited ?? undefined;
   const icon = <Icon name="xmark" size={22} weight="semibold" tintColor="#fff" />;
   return (
     <Pressable
-      onPress={onPress ?? closeToHome}
+      onPress={close}
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={label}

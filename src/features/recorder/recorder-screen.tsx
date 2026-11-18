@@ -1,4 +1,3 @@
-import { type Href, router, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
@@ -13,7 +12,7 @@ import {
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedView } from '@/components/themed-view';
-import { ScreenFocusProvider, useScreenFocusEffect } from '@/core/navigation/focus';
+import { useScreenFocusEffect } from '@/core/navigation/focus';
 import { useStatusBarStyle } from '@/core/status-bar/status-bar';
 import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
@@ -21,7 +20,7 @@ import { Spacing } from '@/constants/theme';
 import { flushDraftWrites } from '@/features/editor/draft-writes';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { ExportButton } from '@/components/export-button';
-import { CloseButton } from '@/features/recorder/close-button';
+import { CloseAction, CloseButton } from '@/features/recorder/close-button';
 import { EditButton } from '@/features/recorder/edit-button';
 import { ImportButton } from '@/features/recorder/import-button';
 import {
@@ -34,20 +33,19 @@ import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
-import { peekRecorderPlace, takeRecorderPlace } from '@/features/recorder/link-place';
 import { type MountedRecorder, registerRecorder } from '@/features/recorder/recorder-presence';
 import { useRecorder } from '@/features/recorder/use-recorder';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
 import { useRecorderPermissions } from '@/features/recorder/use-recorder-permissions';
 import { RecordingTimer } from '@/features/recorder/recording-timer';
+import type { RecorderScreenProps } from '@/features/recorder/contract';
 import { setClipQueuePaused } from '@/features/transcription/clip-queue';
 import { useClipTranscription } from '@/features/transcription/use-clip-transcription';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
 import { muteHaptics } from '@/utils/haptics';
-import { closeToHome } from '@/utils/navigation';
 
 /**
  * Lens chips from each lens's focal length, for Android, where CameraX names every lens
@@ -115,37 +113,23 @@ const SESSION_ERROR_ESCALATION_MS = 3000;
 // write clobber it right back.
 const AUDIO_HANDOFF_SETTLE_MS = 50;
 
-/** The route: tells the screen (through the focus port) whether it is the one on top. */
-export default function RecorderRoute() {
-  const focused = useIsFocused();
-  return (
-    <ScreenFocusProvider focused={focused}>
-      <RecorderScreen />
-    </ScreenFocusProvider>
-  );
-}
-
-function RecorderScreen() {
+/**
+ * The camera, the clip bar and the way on to the editor and Export. It never navigates: the shell
+ * opens the next screen from `onEdit` / `onExport` and leaves from `onClose`, and tells the screen
+ * through the focus port whether it is the one on top.
+ */
+export function RecorderScreen({
+  draftId: initialDraftId,
+  newDraft: newDraftProp,
+  onEdit,
+  onExport,
+  onClose,
+}: RecorderScreenProps) {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
   const textSizeKey = useTextSizeKey();
-  // A link for a place opens the recorder for that place: a draft made here is recorded for it,
-  // and named with the link's `name`, if it has one. The place comes from memory, never from the
-  // route (see `link-place.ts`): `forLink` only says this recorder was opened for a link. A
-  // recorder opened for a new draft takes a place still on offer too — the one a link paired
-  // during the welcome screen left for the first recording.
-  const { draftId: draftIdParam, forLink } = useLocalSearchParams<{
-    draftId?: string;
-    forLink?: string;
-  }>();
-  const [linkPlace] = useState(() => (forLink || !draftIdParam ? peekRecorderPlace() : null));
-  useEffect(() => {
-    if (linkPlace) takeRecorderPlace(linkPlace);
-  }, [linkPlace]);
-  const [newDraft] = useState(() => ({
-    name: linkPlace?.name ?? null,
-    context: linkPlace?.context ?? null,
-  }));
+  // What a draft made here starts with (a place's name and context), read once like the draft id.
+  const [newDraft] = useState(() => newDraftProp);
   const permissions = useRecorderPermissions();
   const {
     cameraRef,
@@ -181,7 +165,7 @@ function RecorderScreen() {
     cycleStabilization,
     deleteSegment,
     reorderSegments,
-  } = useRecorder(draftIdParam, newDraft);
+  } = useRecorder(initialDraftId, newDraft);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
@@ -190,7 +174,7 @@ function RecorderScreen() {
   // While the editor or Export is presented over this one, the recorder is unfocused — drop the
   // camera session so it isn't capturing (and burning power) behind the modal. Restored on return.
   const [focused, setFocused] = useState(true);
-  // One screen opened per tap: router.push always adds a screen, and two taps before it's shown
+  // One screen opened per tap: the shell adds a screen each time, and two taps before it's shown
   // would stack two editors over the same draft. Open again once back on this screen. Edits an
   // editor just closed is still storing land first (export reads the stored clips).
   const opening = useRef(false);
@@ -206,10 +190,10 @@ function RecorderScreen() {
   // recorder stays mounted under the editor and Export, which get the root's style back.
   const cameraShown = permissions.ready && permissions.granted && prefsReady;
   useStatusBarStyle(focused && cameraShown ? 'light' : null);
-  const open = (href: Href) => {
+  const open = (go: () => void) => {
     if (opening.current) return;
     opening.current = true;
-    void flushDraftWrites().then(() => router.push(href));
+    void flushDraftWrites().then(go);
   };
 
   // Navigation from outside (a link opening its place's recorder) finalizes an in-flight take
@@ -569,7 +553,11 @@ function RecorderScreen() {
 
   if (!permissions.ready) return <ThemedView style={styles.fill} />;
   if (!permissions.granted) {
-    return <PermissionGate blocked={permissions.blocked} onRequest={permissions.request} />;
+    return (
+      <CloseAction.Provider value={() => onClose({ draftId })}>
+        <PermissionGate blocked={permissions.blocked} onRequest={permissions.request} />
+      </CloseAction.Provider>
+    );
   }
   // Hold the camera until persisted prefs load, so the first frame uses the saved facing.
   if (!prefsReady) return <ThemedView style={styles.fill} />;
@@ -585,10 +573,10 @@ function RecorderScreen() {
   // the editor closes until the recording session config is back (see the handoff above).
   const cameraActive = !audioHandoff && focused && (appActive || isRecording) && !recovering;
 
-  // Close: finalize any in-flight clip (saving it into the draft) before navigating home, so the
+  // Close: finalize any in-flight clip (saving it into the draft) before the shell leaves, so the
   // segment isn't lost when the camera unmounts. (Hooks above the early returns register the same
   // finalize for navigation from outside, see `registerRecorder`.)
-  const handleClose = () => void finalizeRecording().then(closeToHome);
+  const handleClose = () => void finalizeRecording().then(() => onClose({ draftId }));
 
   return (
     <View style={styles.fill} onStartShouldSetResponderCapture={closeTips}>
@@ -663,7 +651,7 @@ function RecorderScreen() {
             { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
           ]}>
           <View style={styles.topBarSide}>
-            <CloseButton onPress={handleClose} overVideo label="Close recorder" />
+            <CloseButton onClose={handleClose} overVideo label="Close recorder" />
           </View>
           {/* The running total, on glass over the live camera. */}
           <GlassPill style={styles.timerPill}>
@@ -679,10 +667,7 @@ function RecorderScreen() {
               the timer stays centred either way. */}
           <View style={[styles.topBarSide, styles.topBarEnd]}>
             {draftId && segments.length > 0 && (
-              <ExportButton
-                onPress={() => open({ pathname: '/export', params: { draftId } })}
-                disabled={isRecording}
-              />
+              <ExportButton onPress={() => open(() => onExport(draftId))} disabled={isRecording} />
             )}
           </View>
         </View>
@@ -742,7 +727,7 @@ function RecorderScreen() {
                   <EditButton
                     onPress={() => {
                       editTip.retire();
-                      open({ pathname: '/editor', params: { draftId } });
+                      open(() => onEdit(draftId));
                     }}
                     disabled={isRecording || dragging}
                   />
@@ -781,10 +766,7 @@ function RecorderScreen() {
             // A tapped clip opens the editor on it (in the view last used there).
             onSelect={(id) => {
               if (!isRecording && draftId) {
-                open({
-                  pathname: '/editor',
-                  params: { draftId, clipId: id },
-                });
+                open(() => onEdit(draftId, id));
               }
             }}
           />
