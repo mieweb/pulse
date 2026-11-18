@@ -78,14 +78,18 @@ struct PulseKitInbox {
     }
   }
 
-  /// Write `result` unless Pulse JS already wrote one: write `<id>.json.part`, then move it into
-  /// place, the same atomic pattern as Pulse JS. A result JS writes later replaces it.
+  /// Write `result` unless Pulse JS already wrote one: write a temp file, then move it into place,
+  /// the same atomic pattern as Pulse JS. The temp name is the facade's own
+  /// (`<id>.json.native-<uuid>.part`), never JS's `<id>.json.part`, so a forced close that races
+  /// Pulse JS writing its real result can't delete or overwrite JS's temp file. The move fails if
+  /// JS got there first, and JS's result wins; a result JS writes later replaces this one.
   func writeIfAbsent(_ result: JSONValue, requestId: String) {
     guard pulseIsPlainName(requestId) else { return }
     let fm = FileManager.default
     let dest = dir.appendingPathComponent(requestId + ".json")
     guard !fm.fileExists(atPath: dest.path) else { return }
-    let part = dir.appendingPathComponent(requestId + ".json.part")
+    let part = dir.appendingPathComponent(
+      "\(requestId).json.native-\(UUID().uuidString.lowercased()).part")
     do {
       try fm.createDirectory(at: dir, withIntermediateDirectories: true)
       try Data(result.serialized.utf8).write(to: part)
