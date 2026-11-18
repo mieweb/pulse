@@ -115,4 +115,26 @@ describe('createFocusController', () => {
     c.setEffect(effect);
     expect(log).toEqual(['run fx', 'cleanup fx', 'run fx']);
   });
+
+  it('does not run a new effect that arrives with a blur in the same update', () => {
+    const c = createFocusController();
+    const a = tracked('a');
+    const b = tracked('b');
+    c.update(true, a.effect);
+    c.update(false, b.effect);
+    expect(a.log).toEqual(['run a', 'cleanup a']);
+    expect(b.log).toEqual([]);
+    c.update(true, b.effect);
+    expect(b.log).toEqual(['run b']);
+  });
+
+  it('runs the effect once when focus and effect arrive in the same update', () => {
+    const c = createFocusController();
+    const { log, effect } = tracked();
+    c.update(true, effect);
+    c.update(true, effect);
+    expect(log).toEqual(['run fx']);
+    c.update(false, effect);
+    expect(log).toEqual(['run fx', 'cleanup fx']);
+  });
 });

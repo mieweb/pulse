@@ -41,18 +41,30 @@ export function createFocusController() {
     destroy?.();
   };
 
+  const setFocused = (next: boolean) => {
+    if (next === focused) return;
+    focused = next;
+    if (next) start();
+    else stop();
+  };
+  const setEffect = (next: FocusEffect | null) => {
+    if (next === effect) return;
+    stop();
+    effect = next;
+    start();
+  };
+
   return {
-    setFocused(next: boolean) {
-      if (next === focused) return;
-      focused = next;
-      if (next) start();
-      else stop();
-    },
-    setEffect(next: FocusEffect | null) {
-      if (next === effect) return;
-      stop();
-      effect = next;
-      start();
+    setFocused,
+    setEffect,
+    /**
+     * One render's focus and effect together. A blur lands before a new effect, so a callback
+     * that changes as the screen loses focus never runs (as with expo-router's `useFocusEffect`).
+     */
+    update(nextFocused: boolean, nextEffect: FocusEffect | null) {
+      if (!nextFocused) setFocused(false);
+      setEffect(nextEffect);
+      setFocused(nextFocused);
     },
     dispose() {
       stop();
@@ -90,10 +102,7 @@ export function useScreenFocusEffect(effect: FocusEffect): void {
   const focused = useScreenFocused();
   const [controller] = useState(createFocusController);
   useEffect(() => {
-    controller.setEffect(effect);
-  }, [controller, effect]);
-  useEffect(() => {
-    controller.setFocused(focused);
-  }, [controller, focused]);
+    controller.update(focused, effect);
+  }, [controller, focused, effect]);
   useEffect(() => () => controller.dispose(), [controller]);
 }
