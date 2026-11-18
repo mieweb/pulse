@@ -1,5 +1,6 @@
 /**
- * @mieweb/pulse-embed/testing: a scripted in-memory Pulse (createFakePulse).
+ * @mieweb/pulse-embed/testing: a scripted in-memory Pulse (createFakePulse) and the host contract
+ * as a framework-agnostic suite (runPulseContract).
  *
  * A host's tests use the fake's client directly; a test build installs its adapter before the
  * page's first getPulse(), so the app runs unchanged against it (Playwright, a dev server):
@@ -18,4 +19,11 @@ export {
   type FakeStep,
   type FakeUploadEvent,
 } from './fake';
+export {
+  runPulseContract,
+  type PulseContractMaker,
+  type PulseContractSetup,
+  type PulseContractSubject,
+  type PulseContractTest,
+} from './contract-suite';
 export type { FetchInitLike, FetchLike, FetchResponseLike } from './tus';
