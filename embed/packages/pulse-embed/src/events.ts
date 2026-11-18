@@ -15,9 +15,11 @@ export function isEventName(name: unknown): name is PulseEventName {
 
 type Listener<E extends PulseEventName> = (payload: PulseEvents[E]) => void;
 
-// A flowResult that arrives with nobody listening waits here for the first listener, as the plugins
-// retain it natively until a subscriber attaches (native-bridge.md §7). The inbox keeps it anyway;
-// this only saves the host a pendingResults round trip after a reload.
+// A flowResult that arrives with nobody listening waits here, as the plugins retain it natively until
+// a subscriber attaches (native-bridge.md §7). It goes out a microtask after the first listener
+// attaches, to every flowResult listener there by then, so a host handler and a usePresent store that
+// attach in the same turn both get it. The inbox keeps it anyway; this only saves the host a
+// pendingResults round trip after a reload.
 const RETAINED_MAX = 32;
 // How many flowResults are remembered for de-duplication.
 const SEEN_MAX = 64;
@@ -36,6 +38,8 @@ function report(e: unknown): void {
 export function createEmitter(): Emitter {
   const listeners = new Map<PulseEventName, Set<(p: unknown) => void>>();
   const retained: unknown[] = [];
+  // True from the first flowResult listener's `on` until the backlog has gone out.
+  let draining = false;
   // requestId → the last flowResult delivered for it, as text. The facade may send a result twice
   // (the open reply's echo, a retained copy after a reload); the same text again is dropped. A
   // *different* result for the same requestId still goes out: the facade replaces its own fallback
@@ -50,6 +54,18 @@ export function createEmitter(): Emitter {
         report(e);
       }
     }
+  }
+
+  function drainSoon(): void {
+    if (draining) return;
+    draining = true;
+    // Not inside `on`: a React subscribe or a store must finish attaching first, and the others
+    // attaching in the same turn should get the backlog too.
+    void Promise.resolve().then(() => {
+      draining = false;
+      if ((listeners.get('flowResult')?.size ?? 0) === 0) return;
+      for (const p of retained.splice(0)) deliver('flowResult', p);
+    });
   }
 
   function firstSeen(payload: unknown): boolean {
@@ -70,21 +86,7 @@ export function createEmitter(): Emitter {
       if (!set) listeners.set(event, (set = new Set()));
       const fn = cb as (p: unknown) => void;
       set.add(fn);
-      if (event === 'flowResult' && retained.length > 0) {
-        const backlog = retained.splice(0);
-        // Not inside `on`: a React subscribe or a store must finish attaching first.
-        Promise.resolve().then(() => {
-          for (const p of backlog) {
-            if (set.has(fn)) {
-              try {
-                fn(p);
-              } catch (e) {
-                report(e);
-              }
-            } else retained.push(p);
-          }
-        });
-      }
+      if (event === 'flowResult' && retained.length > 0) drainSoon();
       return () => {
         set.delete(fn);
       };
@@ -94,7 +96,8 @@ export function createEmitter(): Emitter {
       if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return;
       if (name === 'flowResult') {
         if (!firstSeen(payload)) return;
-        if ((listeners.get('flowResult')?.size ?? 0) === 0) {
+        // While a backlog waits to go out, a newer result queues behind it, in order.
+        if (draining || (listeners.get('flowResult')?.size ?? 0) === 0) {
           retained.push(payload);
           if (retained.length > RETAINED_MAX) retained.shift();
           return;

@@ -36,7 +36,7 @@ function messageOf(e: unknown): string {
  * FileRef.webUrl is '' on the wire (the facade can't know the WebView's scheme); the adapter makes
  * it loadable, with `?v=` from the nearest DraftSummary's `updatedAt` (or the FlowResult's
  * `endedAt`) so a re-exported file at the same path isn't served from the WebView's cache. Copies
- * as it goes: an adapter's own objects (the fake's) are never changed.
+ * as it goes: an adapter's own objects (the fake's) are never changed. A `context` is left as is.
  */
 function fillWebUrls(value: unknown, toWebUrl: (path: string) => string, stamp?: number): unknown {
   if (Array.isArray(value)) return value.map((v) => fillWebUrls(v, toWebUrl, stamp));
@@ -48,7 +48,14 @@ function fillWebUrls(value: unknown, toWebUrl: (path: string) => string, stamp?:
         ? value.endedAt
         : stamp;
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) out[k] = fillWebUrls(v, toWebUrl, own);
+  for (const [k, v] of Object.entries(value)) {
+    // A PulseContext is the host's own, returned verbatim (its `data` may hold anything); a copy,
+    // as JSON, so the adapter's object still isn't shared.
+    out[k] =
+      k === 'context' && isObject(v)
+        ? (JSON.parse(JSON.stringify(v)) as unknown)
+        : fillWebUrls(v, toWebUrl, own);
+  }
   const ref = value as Partial<FileRef>;
   if (
     typeof ref.rel === 'string' &&
@@ -67,6 +74,15 @@ function fillWebUrls(value: unknown, toWebUrl: (path: string) => string, stamp?:
     }
   }
   return out;
+}
+
+/** Freezes a parsed reply all the way down (it's a copy fillWebUrls made, never an adapter's own). */
+function deepFreeze<T>(v: T): T {
+  if (typeof v === 'object' && v !== null && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const x of Object.values(v)) deepFreeze(x);
+  }
+  return v;
 }
 
 function asJson(v: unknown): Json {
@@ -155,7 +171,8 @@ export function createPulseClient(o: CreateClientOptions = {}): PulseClient {
         callId,
       );
     }
-    return raw as unknown as PulseInfo;
+    // Frozen: one cached object goes to every caller, so none of them can change it for the rest.
+    return deepFreeze(raw) as unknown as PulseInfo;
   }
 
   function getInfo(): Promise<PulseInfo> {
@@ -168,6 +185,17 @@ export function createPulseClient(o: CreateClientOptions = {}): PulseClient {
       });
     }
     return info;
+  }
+
+  /**
+   * After the account changes (setAccount, purge) the facade's `namespace` may have too, so the next
+   * getInfo() asks again. A gating read in flight keeps the old answer; its method list can't change.
+   */
+  function afterAccountChange<T>(p: Promise<T>): Promise<T> {
+    return p.then((v) => {
+      info = null;
+      return v;
+    });
   }
 
   async function call<T>(method: MethodName, args: Json, noTimeout = false): Promise<T> {
@@ -236,7 +264,7 @@ export function createPulseClient(o: CreateClientOptions = {}): PulseClient {
       ),
     getInfo,
     configure: (c) => voidCall('configure', asJson(c)),
-    setAccount: (a) => call<AccountState>('setAccount', asJson(a)),
+    setAccount: (a) => afterAccountChange(call<AccountState>('setAccount', asJson(a))),
     prewarm: () => voidCall('prewarm', {}),
 
     open,
@@ -261,7 +289,7 @@ export function createPulseClient(o: CreateClientOptions = {}): PulseClient {
     resumeOutbox: () => voidCall('resumeOutbox', {}),
     usage: () => call<Usage>('usage', {}),
     listNamespaces: () => call<NamespaceInfo[]>('listNamespaces', {}),
-    purge: (p) => voidCall('purge', asJson(p)),
+    purge: (p) => afterAccountChange(voidCall('purge', asJson(p))),
     logFile: () => call<FileRef>('logFile', {}),
 
     setHostServices: (s) => hostRequests.setServices(s),

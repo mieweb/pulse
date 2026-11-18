@@ -197,6 +197,31 @@ describe('results pass through', () => {
     expect(file.export.webUrl).toBe('');
   });
 
+  it("leaves the host's context verbatim, even a FileRef-shaped object in its data", async () => {
+    const context = {
+      ...ctx,
+      data: {
+        clip: { rel: 'mine', path: '/host/thing', webUrl: '' },
+        list: [{ rel: 'a', path: 'b' }],
+      },
+    };
+    const file = {
+      ...sent,
+      context,
+      mode: 'file',
+      export: { rel: 'results/r-1.mp4', path: '/lib/results/r-1.mp4', webUrl: '' },
+    };
+    const f = fakeAdapter({
+      answer: (_m, _a, callId) =>
+        buildReply({ ok: true, callId, result: [file] as unknown as Json }),
+    });
+    const client = createPulseClient({ adapter: f.adapter });
+    const [r] = (await client.pendingResults()) as unknown as (typeof file)[];
+    expect(r.context).toEqual(context);
+    expect(r.context).not.toBe(context);
+    expect(r.export.webUrl).toMatch(/^capacitor:\/\/localhost\/_capacitor_file_\/lib\/results/);
+  });
+
   it('fills webUrl in flowResult events too', async () => {
     const f = fakeAdapter();
     const client = createPulseClient({ adapter: f.adapter });
@@ -258,6 +283,30 @@ describe('gating by info()', () => {
     await client.prewarm();
     await client.isOpen();
     expect(f.methods()).toEqual(['info', 'prewarm', 'isOpen']);
+  });
+
+  it('asks info() again after setAccount or purge, so namespace follows the account', async () => {
+    const o: { info: PulseInfo } = { info: makeInfo({ namespace: null }) };
+    const f = fakeAdapter(o);
+    const client = createPulseClient({ adapter: f.adapter });
+    expect((await client.getInfo()).namespace).toBeNull();
+    o.info = makeInfo({ namespace: 'h-1' });
+    expect((await client.getInfo()).namespace).toBeNull();
+    await client.setAccount({ serverOrigin: 'https://h', userId: 'u' });
+    expect((await client.getInfo()).namespace).toBe('h-1');
+    o.info = makeInfo({ namespace: null });
+    await client.purge({ namespace: 'h-1' });
+    expect((await client.getInfo()).namespace).toBeNull();
+    expect(f.methods()).toEqual(['info', 'setAccount', 'info', 'purge', 'info']);
+  });
+
+  it('hands every caller the same frozen info, so one caller cannot change it for the rest', async () => {
+    const client = createPulseClient({ adapter: fakeAdapter().adapter });
+    const a = await client.getInfo();
+    expect(Object.isFrozen(a)).toBe(true);
+    expect(Object.isFrozen(a.methods)).toBe(true);
+    expect(() => (a.methods as string[]).push('x')).toThrow(TypeError);
+    expect(await client.getInfo()).toBe(a);
   });
 });
 
@@ -610,6 +659,26 @@ describe('events', () => {
     client.on('flowResult', (r) => got.push(r));
     await Promise.resolve();
     expect(got).toHaveLength(1);
+  });
+
+  it('hands a kept flowResult to every listener that attaches in the same turn, in order', async () => {
+    const f = fakeAdapter();
+    const client = createPulseClient({ adapter: f.adapter });
+    f.emit('flowResult', sent);
+    const store: string[] = [];
+    const host: string[] = [];
+    client.on('flowResult', (r) => store.push(r.status));
+    client.on('flowResult', (r) => host.push(r.status));
+    // Arrives after the listeners attached but before the backlog went out: it stays behind it.
+    f.emit('flowResult', { ...sent, status: 'canceled', reason: 'host' });
+    expect(host).toEqual([]);
+    await Promise.resolve();
+    expect(store).toEqual(['completed', 'canceled']);
+    expect(host).toEqual(['completed', 'canceled']);
+    const late: unknown[] = [];
+    client.on('flowResult', (r) => late.push(r));
+    await Promise.resolve();
+    expect(late).toEqual([]);
   });
 
   it('a listener that throws does not stop the others', () => {
