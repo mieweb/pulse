@@ -132,9 +132,13 @@ describe('readSourceStamps', () => {
     expect(fromSource.contractMinor).toBe(CONTRACT.minor);
     expect(fromSource.formatVersion).toBe(PROJECT_VERSION);
     expect(fromSource.dbSchema).toBe(APP_SCHEMA_VERSION);
-    const pkg = JSON.parse(
-      fs.readFileSync(path.join(repoRoot, 'embed/packages/pulse-embed/package.json'), 'utf8'),
+    const readVersion = (rel: string) =>
+      (JSON.parse(fs.readFileSync(path.join(repoRoot, rel), 'utf8')) as { version: string })
+        .version;
+    // PulseKitVersion is the app version it was built from (AD18), not pulse-embed's own.
+    expect(fromSource.version).toBe(readVersion('package.json'));
+    expect(fromSource.embedPackageVersion).toBe(
+      readVersion('embed/packages/pulse-embed/package.json'),
     );
-    expect(fromSource.version).toBe(pkg.version);
   });
 });

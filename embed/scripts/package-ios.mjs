@@ -51,7 +51,8 @@ Options:
                     is deleted; anything else in --out stops the run.
   --vendored <dir>  An extra xcframework to ship when --input lacks it; repeatable
                     (default: ${VENDORED.join(', ')}).
-  --version <v>     PulseKitVersion (default: embed/packages/pulse-embed/package.json version).
+  --version <v>     PulseKitVersion (default: the app version in the root package.json, which
+                    PulseKit and @mieweb/pulse-embed share, AD18).
   --build <n>       PulseKitBuild (default: $GITHUB_RUN_NUMBER, else the commit count).
   --git-sha <sha>   PulseKitGitSha (default: git rev-parse HEAD).
   --dry-run         Print every step and write nothing.
@@ -149,7 +150,13 @@ function main() {
   }
 
   const stamps = (() => {
-    const fromSource = readSourceStamps(repoRoot);
+    const { embedPackageVersion, ...fromSource } = readSourceStamps(repoRoot);
+    if (values.version === undefined && embedPackageVersion !== fromSource.version) {
+      console.warn(
+        `package-ios: warning: @mieweb/pulse-embed is ${embedPackageVersion} but the app is ` +
+          `${fromSource.version}; PulseKitVersion uses the app version (AD18: they share one).`,
+      );
+    }
     return validateStamps({
       ...fromSource,
       version: values.version ?? fromSource.version,

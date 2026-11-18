@@ -9,7 +9,8 @@ import { buildPlist, parsePlist, rootDict } from './plist.mjs';
 
 /**
  * @typedef {object} Stamps
- * @property {string} version      PulseKit's version (the pulse-embed package's version, AD18).
+ * @property {string} version      PulseKit's version: the Pulse app version it was built from
+ *   (root package.json; PulseKit, the app and the pulse-embed package share one version, AD18).
  * @property {string} build        Build number.
  * @property {string} gitSha       The commit the build came from.
  * @property {number} contractMinor The contract minor the facade answers (CONTRACT.minor).
@@ -65,9 +66,11 @@ export function stampPlist(xml, stamps) {
 /**
  * Reads the numbers the stamps take from the source tree, so they can't drift from the code:
  * CONTRACT.minor (embed/packages/pulse-embed/src/index.ts), PROJECT_VERSION (src/db/project.ts)
- * and APP_SCHEMA_VERSION (the last `when` in drizzle/meta/_journal.json), plus the
- * pulse-embed package version.
+ * and APP_SCHEMA_VERSION (the last `when` in drizzle/meta/_journal.json), plus the app version
+ * (root package.json) and @mieweb/pulse-embed's version, which AD18 says must match it.
  * @param {string} repoRoot
+ * @returns {{ version: string, embedPackageVersion: string, contractMinor: number,
+ *   formatVersion: number, dbSchema: number }}
  */
 export function readSourceStamps(repoRoot) {
   const read = (/** @type {string} */ rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
@@ -88,10 +91,13 @@ export function readSourceStamps(repoRoot) {
   if (!last) throw new Error('drizzle/meta/_journal.json has no migrations');
 
   /** @type {{ version: string }} */
-  const pkg = JSON.parse(read('embed/packages/pulse-embed/package.json'));
+  const app = JSON.parse(read('package.json'));
+  /** @type {{ version: string }} */
+  const embedPkg = JSON.parse(read('embed/packages/pulse-embed/package.json'));
 
   return {
-    version: pkg.version,
+    version: app.version,
+    embedPackageVersion: embedPkg.version,
     contractMinor: Number(contract[1]),
     formatVersion: Number(project[1]),
     dbSchema: last.when,
