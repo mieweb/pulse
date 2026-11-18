@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  cordova-plugin-pulse: the transport between @mieweb/pulse-embed and PulseKit
+  (native-bridge.md §7.2). window.PulseKit = { call(json), subscribe(cb) }.
+  iOS: PulseKit's xcframeworks come from PulseKit.podspec. Android: a stub that reports
+  unsupported, with no dependencies and no permissions (AD20).
+  The version follows the other embed packages (lockstep); the release workflow stamps it.
+-->
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0" id="cordova-plugin-pulse" version="0.0.0-dev">
+  <name>Pulse</name>
+  <description>Record and edit Pulse videos inside a Cordova app (iOS).</description>
+
+  <engines>
+    <engine name="cordova-ios" version=">=8.0.0" />
+  </engines>
+
+  <js-module src="www/pulse.js" name="Pulse">
+    <clobbers target="PulseKit" />
+  </js-module>
+
+  <platform name="ios">
+    <config-file target="config.xml" parent="/*">
+      <feature name="Pulse">
+        <param name="ios-package" value="PulseCordova" />
+        <param name="onload" value="true" />
+      </feature>
+    </config-file>
+    <source-file src="src/ios/PulseCordova.swift" />
+    <source-file src="src/ios/CordovaPulseKitLink.swift" />
+    <podspec>
+      <config>
+        <source url="https://cdn.cocoapods.org/" />
+      </config>
+      <pods use-frameworks="true">
+        <!-- Relative to the host's platforms/ios, where the Podfile lives. -->
+        <pod name="PulseKit" podspec="../../plugins/cordova-plugin-pulse/PulseKit.podspec" />
+      </pods>
+    </podspec>
+  </platform>
+
+  <platform name="android">
+    <config-file target="res/xml/config.xml" parent="/*">
+      <feature name="Pulse">
+        <param name="android-package" value="com.mieweb.pulse.cordova.PulseCordova" />
+      </feature>
+    </config-file>
+    <source-file src="src/android/PulseCordova.java" target-dir="src/com/mieweb/pulse/cordova" />
+    <source-file src="src/android/PulseUnsupported.java" target-dir="src/com/mieweb/pulse/cordova" />
+  </platform>
+</plugin>
