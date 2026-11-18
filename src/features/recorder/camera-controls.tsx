@@ -9,7 +9,7 @@ import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Accent, Opacity, Spacing } from '@/constants/theme';
 import { haptics } from '@/utils/haptics';
 import { CONTROLS_FADE } from './record-button';
-import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
+import type { CameraFacing, StabilizationMode } from './use-recorder';
 
 const STABILIZATION_LABELS: Record<StabilizationMode, string> = {
   off: 'Off',

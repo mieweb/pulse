@@ -126,8 +126,8 @@ export type RecorderPrefs = {
   muted: boolean;
 };
 
-// Local validation list (kept in sync with StabilizationMode in core/types/recorder-prefs.ts) so we can
-// reject corrupt/legacy stored values without a runtime import from the recorder module.
+// Local validation list (kept in sync with StabilizationMode in core/types/recorder-prefs.ts)
+// so we can reject corrupt/legacy stored values without a runtime import from the recorder module.
 const STABILIZATION_VALUES: readonly StabilizationMode[] = ['off', 'standard', 'cinematic', 'auto'];
 
 /** Read the persisted recorder preferences, falling back to defaults for missing/unexpected values. */
