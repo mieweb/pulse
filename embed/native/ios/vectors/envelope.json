@@ -347,6 +347,62 @@
       "requestId": "r-1",
       "presenter": "detached",
       "expect": "busy"
+    },
+    {
+      "name": "the requestId's result is still in the inbox: delivered, nothing presented",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "idle",
+      "pending": true,
+      "expect": "delivered"
+    },
+    {
+      "name": "a result in the inbox answers even when the presenter is busy",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "presenting",
+      "pending": true,
+      "expect": "delivered"
+    },
+    {
+      "name": "a result in the inbox answers even with nothing to present from",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "none",
+      "pending": true,
+      "expect": "delivered"
+    },
+    {
+      "name": "no requestId never matches the inbox: start",
+      "open": null,
+      "requestId": null,
+      "presenter": "idle",
+      "pending": true,
+      "expect": "start"
+    },
+    {
+      "name": "same requestId while open: join, even if its result is already written",
+      "open": "r-1",
+      "requestId": "r-1",
+      "presenter": "presenting",
+      "pending": true,
+      "expect": "join"
+    },
+    {
+      "name": "another requestId with a result in the inbox while a flow is open: busy",
+      "open": "r-1",
+      "requestId": "r-2",
+      "presenter": "presenting",
+      "pending": true,
+      "expect": "busy"
+    },
+    {
+      "name": "no result in the inbox: start as before",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "idle",
+      "pending": false,
+      "expect": "start"
     }
   ],
   "inbox": [

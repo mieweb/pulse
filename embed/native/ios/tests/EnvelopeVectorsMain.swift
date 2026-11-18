@@ -135,7 +135,8 @@ struct EnvelopeVectors {
       return check(false, name, "bad presenter")
     }
     let decision = PulseOpenGate.decide(
-      openRequestId: v["open"]?.string, requestId: v["requestId"]?.string, presenter: presenter)
+      openRequestId: v["open"]?.string, requestId: v["requestId"]?.string, presenter: presenter,
+      pending: v["pending"]?.bool ?? false)
     check(decision.rawValue == v["expect"]?.string, name, decision.rawValue)
   }
 

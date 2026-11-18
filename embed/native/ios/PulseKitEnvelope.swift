@@ -486,15 +486,22 @@ public enum PulseOpenDecision: String {
   case busy
   /// There is nothing to present from.
   case noPresenter
+  /// This requestId already ended and its result is still in the inbox (not acknowledged):
+  /// answer with that result and present nothing. A new flow under the same id would be answered
+  /// with the old file, and its own result would replace one the host hasn't seen.
+  case delivered
 }
 
 public enum PulseOpenGate {
   /// The open flow comes first: its own presentation makes the presenter look busy, and the same
-  /// requestId must still join it.
+  /// requestId must still join it. Then an unacknowledged result for the requestId (`pending`)
+  /// answers the open, whatever the presenter is doing, since nothing is presented.
   public static func decide(
-    openRequestId: String?, requestId: String?, presenter: PulsePresenterState
+    openRequestId: String?, requestId: String?, presenter: PulsePresenterState,
+    pending: Bool = false
   ) -> PulseOpenDecision {
     if let open = openRequestId { return requestId == open ? .join : .busy }
+    if pending, requestId != nil { return .delivered }
     switch presenter {
     case .none: return .noPresenter
     case .presenting, .detached: return .busy

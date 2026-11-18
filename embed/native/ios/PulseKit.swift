@@ -183,8 +183,21 @@ public final class PulseKit: NSObject {
     } else {
       state = .none
     }
+    // requestId idempotency outlives the flow: while its result sits unacknowledged in the inbox,
+    // the same requestId gets that result back. Presenting again would answer the new flow with
+    // the old file (and skip the facade's own fallback), and the new flow's result would replace
+    // one the host hasn't seen (AD15).
+    let stored: JSONValue? =
+      flow == nil
+      ? args.requestId.flatMap { id in (try? PulseKitRoots(namespace: namespace))?.inbox.read(id) }
+      : nil
     let decision = PulseOpenGate.decide(
-      openRequestId: flow?.requestId, requestId: args.requestId, presenter: state)
+      openRequestId: flow?.requestId, requestId: args.requestId, presenter: state,
+      pending: stored != nil)
+    if decision == .delivered, let stored {
+      log("open \(callId): \(args.requestId ?? "?") already ended; answering from the inbox")
+      return respond(.success(callId, stored))
+    }
     if decision == .join, let flow {
       log("open \(callId): joins \(flow.requestId)")
       flow.waiters.append((callId, respond))

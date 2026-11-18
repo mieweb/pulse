@@ -29,7 +29,7 @@ native-bridge.md §2 (envelopes), §3 (methods and the busy matrix) and §6.2 (r
 | `requests`    | `request` (object) or `requestText` (raw text), optional `supported: false` | Routing: `expect.route` is `native` (with `method` and the `args` it gets) or `reply` (with `callId` and `error.code` / `error.recoverable`). Unknown fields are ignored; major mismatch wins over everything after the callId. |
 | `replies`     | `build` + `expectText`, or `parse` + `expect`                               | Reply envelopes: `result: null` for void methods, integers stay integers, an error carries the callId, and unknown result fields pass through.                                                           |
 | `open`        | `args`                                                                      | `open`'s argument checks before anything is presented (`invalid_options`).                                                                                                                               |
-| `busy`        | `open` (the open requestId or null), `requestId`, `presenter`               | The one-flow gate: `start`, `join` (same requestId), `busy`, or `noPresenter`. `presenter` is `none`, `idle`, `presenting` or `detached` (not in a window).                                      |
+| `busy`        | `open` (the open requestId or null), `requestId`, `presenter`, optional `pending` | The one-flow gate: `start`, `join` (same requestId), `busy`, `noPresenter`, or `delivered` (the requestId's result is still unacknowledged in the inbox: the open is answered with it and nothing is presented). `presenter` is `none`, `idle`, `presenting` or `detached` (not in a window); `pending` (default false) says the inbox holds a result for `requestId`. |
 | `inbox`       | `files` (`name`, `modified` in seconds)                                     | `pendingResults` order: `*.json` except `*.project.json`, oldest first, ties by name; names that aren't plain ids are skipped.                                                                           |
 | `acknowledge` | `requestId`                                                                 | The files `acknowledge` deletes.                                                                                                                                                                         |
 | `namespace`   | `bundleId`                                                                  | PR1's namespace, `<sanitised bundle id>-local`.                                                                                                                                                          |
@@ -73,6 +73,25 @@ That result is a fallback. If Pulse JS writes its own `results/<requestId>.json`
 the facade's file and the facade emits a second `flowResult` for the same requestId (the `open`
 reply has already gone with the first). Hosts treat `flowResult` as idempotent by requestId and
 act on the latest; `pendingResults` always returns the file as it is now.
+
+### `open` with a requestId whose result is still in the inbox
+
+§3 makes `open` idempotent per requestId while the flow is open; the facade keeps that until the
+host acknowledges the result. While `results/<requestId>.json` exists, `open` with that requestId
+replies with that result at once and presents nothing (the `delivered` busy vectors), even if the
+presenter is busy or missing. Presenting again would answer the new flow with the old file, skip
+the facade's own fallback result, and let the new flow's result replace one the host hasn't seen
+(AD15). To record again under the same requestId, acknowledge it first. Nothing is emitted:
+`flowResult` already went out when the flow ended.
+
+### Where PR1 differs from the contract's wording
+
+- `logFile` with `policy.logs: 'off'` replies `not_found` ("Logs are off"). §3 lists no errors for
+  `logFile`, but the d.ts says `'off'` means neither `log` events nor `logFile()`, so there is no
+  file to hand out.
+- `info().namespace` is PR1's real namespace, `<hostId>-local`, not `null`. The d.ts says "null
+  before `setAccount` (PR2)", but PR1 has no accounts and already stores everything under that
+  namespace, so the facade reports where the files are. PR2 replaces it with the account's.
 
 ## Changing them
 
