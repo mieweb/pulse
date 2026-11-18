@@ -1,5 +1,4 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -62,8 +61,10 @@ function statusLine(status: ReturnType<typeof useTranscriptionStatus>): string |
  * weights/contexts (`applyModelSelection`); the editor downloads the new model once the sheet
  * closes, not the sheet — so selecting records intent without blocking on a download. A large model not on disk yet asks first, in the sheet itself. The active model can be
  * removed here to free disk. Same sheet style as the pairing and destinations sheets.
+ *
+ * No router: `onDismiss` takes the sheet down (the standalone route goes back).
  */
-export function OnDeviceAiSheet() {
+export function OnDeviceAiSheet({ onDismiss }: { onDismiss: () => void }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { data } = useLiveQuery(selectedModelQuery, []);
@@ -72,7 +73,7 @@ export function OnDeviceAiSheet() {
   const status = useTranscriptionStatus();
   const busy = statusLine(status);
   const { showToast } = useToast();
-  const close = () => router.back();
+  const close = onDismiss;
   // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
   const [scrolls] = useState(() => !tallSheetFits());
   // A large model not on disk yet: the sheet asks first, in place of the list. Choosing it doesn't
