@@ -5,9 +5,21 @@
       "@/*": ["../src/*"],
       "@/assets/*": ["../assets/*"],
       "whisper.rn": ["../node_modules/whisper.rn/lib/typescript/index"],
-      "@mieweb/pulse-editor": ["../modules/pulse-editor/src/index.tsx"]
+      "@mieweb/pulse-editor": ["../modules/pulse-editor/src/index.tsx"],
+      "@mieweb/pulse-embed": ["./packages/pulse-embed/src/index.ts"],
+      "@mieweb/pulse-embed/react": ["./packages/pulse-embed/src/react/index.ts"],
+      "@mieweb/pulse-embed/testing": ["./packages/pulse-embed/src/testing/index.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx", "../src/**/*.ts", "../src/**/*.tsx", "../expo-env.d.ts"],
-  "exclude": ["node_modules", "ios", "android"]
+  // Same reasons as the root tsconfig's embed excludes.
+  "exclude": [
+    "node_modules",
+    "ios",
+    "android",
+    "hosts",
+    "packages/capacitor-pulse",
+    "packages/cordova-plugin-pulse",
+    "packages/*/dist"
+  ]
 }

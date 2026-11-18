@@ -10,9 +10,25 @@
       // `main` fallback; this points TS at the published declarations.
       "whisper.rn": ["./node_modules/whisper.rn/lib/typescript/index"],
       // Local native module (git submodule, autolinked from modules/ — see metro.config.js).
-      "@mieweb/pulse-editor": ["./modules/pulse-editor/src/index.tsx"]
+      "@mieweb/pulse-editor": ["./modules/pulse-editor/src/index.tsx"],
+      // The host package (embed/packages/pulse-embed) from source; jest.config.js maps the same.
+      "@mieweb/pulse-embed": ["./embed/packages/pulse-embed/src/index.ts"],
+      "@mieweb/pulse-embed/react": ["./embed/packages/pulse-embed/src/react/index.ts"],
+      "@mieweb/pulse-embed/testing": ["./embed/packages/pulse-embed/src/testing/index.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
-  "exclude": ["node_modules", "modules", "tmp", "pulse-mieweb", "pulsevault-mieweb"]
+  // The test hosts and the Capacitor/Cordova plugins import @capacitor/core and cordova, which Pulse
+  // doesn't install, and `cap sync` copies a web bundle into the hosts; they typecheck on their own.
+  "exclude": [
+    "node_modules",
+    "modules",
+    "tmp",
+    "pulse-mieweb",
+    "pulsevault-mieweb",
+    "embed/hosts",
+    "embed/packages/capacitor-pulse",
+    "embed/packages/cordova-plugin-pulse",
+    "embed/packages/*/dist"
+  ]
 }

@@ -1,0 +1,27 @@
+{
+  // Standalone check of the package (`npx tsc --noEmit -p embed/packages/pulse-embed`): no
+  // Expo base, no app path aliases, so nothing in src can lean on the Pulse app.
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowJs": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "types": [],
+    // Tests import the package by name, as a host does; this resolves it to src here too.
+    "paths": {
+      "@mieweb/pulse-embed": ["./src/index.ts"],
+      "@mieweb/pulse-embed/react": ["./src/react/index.ts"],
+      "@mieweb/pulse-embed/testing": ["./src/testing/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["dist"]
+}

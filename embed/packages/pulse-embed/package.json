@@ -1,0 +1,21 @@
+{
+  "name": "@mieweb/pulse-embed",
+  "version": "0.0.0-dev",
+  "description": "Host contract and JS client for embedding Pulse (PulseKit) in a Capacitor or Cordova app.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react/index.ts",
+    "./testing": "./src/testing/index.ts",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  }
+}
