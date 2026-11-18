@@ -11,6 +11,7 @@
 //   3. Copy the dSYMs out (or make them with dsymutil), then `strip -x` each binary.
 //   4. Stamp PulseKit.framework's Info.plist (PulseKitVersion, PulseKitBuild, PulseKitGitSha,
 //      PulseKitContractMinor, PulseKitFormatVersion, PulseKitDbSchema).
+// Before anything: refuse an --out that is, contains or sits inside what it reads (see lib/out-dir).
 // Then: add the vendored frameworks the brownfield CLI leaves out (whisper.rn's rnwhisper), check
 // that every @rpath framework a binary loads ships, zip, write SHA256SUMS and the size report.
 
@@ -21,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { formatSha256Sums, sha256File } from './lib/checksums.mjs';
+import { assertSafeOut, foreignOutEntries, OUT_ENTRIES } from './lib/out-dir.mjs';
 import { frameworkName, planSlices, prunedManifest, sharedEntries } from './lib/platforms.mjs';
 import { buildPlist, isBinaryPlist, parsePlist } from './lib/plist.mjs';
 import { readSourceStamps, stampPlist, STAMP_KEYS, validateStamps } from './lib/plist-stamp.mjs';
@@ -43,8 +45,10 @@ Packages expo-brownfield's iOS xcframeworks into PulseKit release assets.
 Options:
   --input <dir>     expo-brownfield's output folder of *.xcframework (default: embed/artifacts)
   --out <dir>       Where to write (default: embed/artifacts/pulsekit-ios). It must be empty
-                    or absent, unless --clean is given.
-  --clean           Delete --out first.
+                    or absent, unless --clean is given. It may not be, contain, or sit inside
+                    an xcframework it reads, and may not be or contain --input or the repo.
+  --clean           Delete --out first. Only an earlier run's output (${OUT_ENTRIES.join(', ')})
+                    is deleted; anything else in --out stops the run.
   --vendored <dir>  An extra xcframework to ship when --input lacks it; repeatable
                     (default: ${VENDORED.join(', ')}).
   --version <v>     PulseKitVersion (default: embed/packages/pulse-embed/package.json version).
@@ -123,6 +127,27 @@ function main() {
     sources.push({ name, dir, vendored: true });
   }
 
+  // Nothing has been written yet; refuse an --out that `--clean` or the copies would damage.
+  assertSafeOut(out, [
+    { path: input, label: '--input', allowInside: true },
+    { path: repoRoot, label: 'the repo', allowInside: true },
+    { path: path.join(repoRoot, '.git'), label: "the repo's .git" },
+    ...sources.map((s) => ({ path: s.dir, label: `the input ${s.name}` })),
+  ]);
+  if (fs.existsSync(out) && !fs.statSync(out).isDirectory()) {
+    throw new Error(`--out ${out} is a file`);
+  }
+  const outEntries = fs.existsSync(out) ? fs.readdirSync(out) : [];
+  if (outEntries.length > 0) {
+    if (!values.clean) throw new Error(`--out ${out} is not empty (pass --clean to replace it)`);
+    const foreign = foreignOutEntries(outEntries);
+    if (foreign.length > 0) {
+      throw new Error(
+        `--clean deletes only an earlier run's output, and ${out} also holds: ${foreign.join(', ')}`,
+      );
+    }
+  }
+
   const stamps = (() => {
     const fromSource = readSourceStamps(repoRoot);
     return validateStamps({
@@ -186,10 +211,7 @@ function main() {
     );
   }
 
-  if (fs.existsSync(out) && fs.readdirSync(out).length > 0) {
-    if (!values.clean) throw new Error(`--out ${out} is not empty (pass --clean to replace it)`);
-    runner.remove(out);
-  }
+  if (outEntries.length > 0) runner.remove(out); // checked above: only an earlier run's output
 
   const frameworksDir = path.join(out, 'xcframeworks');
   const dsymsDir = path.join(out, 'dSYMs');
