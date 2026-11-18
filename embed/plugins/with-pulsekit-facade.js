@@ -14,6 +14,30 @@ const FILES = [
   'PulseKitBackground.swift',
 ];
 
+// The facade's class is named like its module (`PulseKit.PulseKit`, native-bridge.md §8). The
+// target builds with BUILD_LIBRARY_FOR_DISTRIBUTION, so Swift writes a .swiftinterface, and there
+// every module-qualified name (`PulseKit.JSONValue`) would resolve against the class instead of
+// the module: Xcode's interface verification fails, and so would a host on another compiler
+// (swift#56573). This flag makes the interface name the module by an alias that can't clash.
+const ALIAS_FLAG = '-Xfrontend -alias-module-names-in-module-interface';
+
+/** Appends ALIAS_FLAG to OTHER_SWIFT_FLAGS in each of the target's build configurations. */
+function addAliasFlag(project, target) {
+  const lists = project.pbxXCConfigurationList();
+  const configs = project.pbxXCBuildConfigurationSection();
+  const list = lists[target.buildConfigurationList];
+  if (!list || !list.buildConfigurations) {
+    throw new Error(`with-pulsekit-facade: the ${TARGET} target has no build configurations.`);
+  }
+  for (const { value } of list.buildConfigurations) {
+    const settings = configs[value] && configs[value].buildSettings;
+    if (!settings) continue;
+    const current = String(settings.OTHER_SWIFT_FLAGS || '$(inherited)').replace(/^"|"$/g, '');
+    if (current.includes(ALIAS_FLAG)) continue;
+    settings.OTHER_SWIFT_FLAGS = `"${current} ${ALIAS_FLAG}"`;
+  }
+}
+
 /**
  * Adds the host-facing facade (native/ios/PulseKit*.swift, `@objc(PulseKit)`) to the PulseKit
  * framework that expo-brownfield generates, so hosts call one Pulse class and never React Native
@@ -34,6 +58,7 @@ module.exports = function withPulseKitFacade(config) {
       fs.copyFileSync(path.join(__dirname, '../native/ios', name), path.join(dir, name));
       if (!project.hasFile(name)) project.addSourceFile(name, { target: targetUuid }, groupKey);
     }
+    addAliasFlag(project, target);
     return cfg;
   });
 };
