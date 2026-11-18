@@ -164,10 +164,43 @@ enum PulseKitPresenter {
   /// Dismiss from the presenting side (M1 finding 4): Pulse may have presented screens of its own
   /// on top of the container, and dismissing the container itself would only close the topmost.
   /// VoiceOver then moves to the host's screen.
+  ///
+  /// `completion` runs exactly once. UIKit refuses a dismissal while the container is still being
+  /// presented (a `pulse.error` or a fatal during the Reduce Motion crossfade) and then never calls
+  /// back, so that case waits for the presentation to finish first; and if UIKit still hasn't
+  /// called back after 3 s, the completion runs anyway, so every waiting `open` gets its reply.
   static func dismiss(_ container: UIViewController, completion: @escaping () -> Void) {
+    let once = Once()
     let done = {
+      guard !once.called else { return }
+      once.called = true
       UIAccessibility.post(notification: .screenChanged, argument: nil)
       completion()
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+      guard !once.called else { return }
+      NSLog("[PulseKit] the dismissal didn't complete in 3 s; ending the flow anyway")
+      done()
+    }
+    dismissWhenSettled(container, attemptsLeft: 20, done)
+  }
+
+  private final class Once { var called = false }
+
+  private static func dismissWhenSettled(
+    _ container: UIViewController, attemptsLeft: Int, _ done: @escaping () -> Void
+  ) {
+    if container.isBeingPresented, attemptsLeft > 0 {
+      if let coordinator = container.transitionCoordinator {
+        coordinator.animate(alongsideTransition: nil) { _ in
+          DispatchQueue.main.async { dismissWhenSettled(container, attemptsLeft: 0, done) }
+        }
+      } else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+          dismissWhenSettled(container, attemptsLeft: attemptsLeft - 1, done)
+        }
+      }
+      return
     }
     guard !container.isBeingDismissed, let presenting = container.presentingViewController else {
       return done()
@@ -194,8 +227,10 @@ struct PulseKitAudioState {
 
   /// Put the category back, and when other audio was playing, deactivate with
   /// `notifyOthersOnDeactivation` so that app resumes. The recorder's camera and mic may still be
-  /// stopping when the dismissal completes, and then deactivating fails as busy: it is retried
-  /// twice, 300 ms apart, as long as `stillClosed()` says no new flow owns the session.
+  /// stopping when the dismissal completes (they stop once React unmounts on the JS thread), and
+  /// then deactivating fails as busy: it is retried after 0.3, 0.6 and 1.0 s (about 1.9 s in all,
+  /// inside the 2 s the device check allows), as long as `stillClosed()` says no new flow owns
+  /// the session.
   func restore(while stillClosed: @escaping () -> Bool) {
     let s = AVAudioSession.sharedInstance()
     do {
@@ -203,21 +238,27 @@ struct PulseKitAudioState {
     } catch {
       NSLog("[PulseKit] couldn't restore the audio category: %@", "\(error)")
     }
-    if otherAudioWasPlaying { Self.deactivate(attemptsLeft: 3, stillClosed) }
+    if otherAudioWasPlaying { Self.deactivate(retryDelays: [0.3, 0.6, 1.0], stillClosed) }
   }
 
-  private static func deactivate(attemptsLeft: Int, _ stillClosed: @escaping () -> Bool) {
+  private static func deactivate(
+    retryDelays: ArraySlice<Double>, _ stillClosed: @escaping () -> Bool
+  ) {
     guard stillClosed() else { return }
     do {
       try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     } catch {
-      let left = attemptsLeft - 1
+      guard let delay = retryDelays.first else {
+        NSLog(
+          "[PulseKit] couldn't hand the audio session back (%@); giving up, other audio won't resume",
+          "\(error)")
+        return
+      }
       NSLog(
-        "[PulseKit] couldn't hand the audio session back (%@)%@", "\(error)",
-        left > 0 ? "; retrying in 300 ms" : "; giving up, other audio won't resume")
-      guard left > 0 else { return }
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-        Self.deactivate(attemptsLeft: left, stillClosed)
+        "[PulseKit] couldn't hand the audio session back (%@); retrying in %.1f s", "\(error)",
+        delay)
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+        Self.deactivate(retryDelays: retryDelays.dropFirst(), stillClosed)
       }
     }
   }
