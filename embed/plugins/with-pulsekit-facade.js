@@ -3,12 +3,21 @@ const path = require('path');
 const { withXcodeProject } = require('expo/config-plugins');
 
 const TARGET = 'PulseKit';
-const FILES = ['PulseEmbed.swift'];
+// The facade (native-bridge.md §8). Only these files: native/ios/tests and native/ios/vectors
+// are macOS-run checks, never part of the framework.
+const FILES = [
+  'PulseKit.swift',
+  'PulseKitEnvelope.swift',
+  'PulseKitInfo.swift',
+  'PulseKitInbox.swift',
+  'PulseKitPresenter.swift',
+  'PulseKitBackground.swift',
+];
 
 /**
- * Adds the host-facing facade (native/ios/PulseEmbed.swift) to the PulseKit framework that
- * expo-brownfield generates, so hosts call one Pulse class and never React Native directly.
- * Needs the expo-brownfield plugin's PulseKit target to exist when it runs.
+ * Adds the host-facing facade (native/ios/PulseKit*.swift, `@objc(PulseKit)`) to the PulseKit
+ * framework that expo-brownfield generates, so hosts call one Pulse class and never React Native
+ * directly. Needs the expo-brownfield plugin's PulseKit target to exist when it runs.
  */
 module.exports = function withPulseKitFacade(config) {
   return withXcodeProject(config, (cfg) => {
