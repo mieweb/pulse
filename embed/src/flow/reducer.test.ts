@@ -1,0 +1,418 @@
+import { describe, expect, it } from '@jest/globals';
+import type { OpenRequest, PulseContext, PulseErrorInfo } from '@mieweb/pulse-embed';
+
+import { flowReducer, initFlow, topScreen, type FlowEvent, type FlowState } from './reducer';
+
+const context: PulseContext = {
+  key: 'ticket:t-42',
+  kind: 'ticket',
+  id: 'T-42',
+  label: 'Fix login',
+};
+
+const recordNew: OpenRequest = { entry: 'record', context };
+const exportRef = { rel: 'results/r1.mp4', path: '/docs/results/r1.mp4', webUrl: 'x://r1.mp4' };
+const failure: PulseErrorInfo = {
+  code: 'permission.camera',
+  message: 'Camera access was denied.',
+  recoverable: false,
+  callId: 'c1',
+};
+
+function run(state: FlowState, ...events: FlowEvent[]): FlowState {
+  return events.reduce(flowReducer, state);
+}
+
+/** A record flow with one clip landed on draft d1. */
+function recorded(): FlowState {
+  return run(
+    initFlow('r1', recordNew),
+    { type: 'mounted' },
+    { type: 'record' },
+    { type: 'stop', draftId: 'd1', clipCount: 1 },
+  );
+}
+
+describe('initFlow', () => {
+  it('opens each entry on its first screen', () => {
+    expect(initFlow('r1', recordNew).stack).toEqual(['recorder']);
+    expect(initFlow('r1', { entry: 'edit', draftId: 'd1' }).stack).toEqual(['editor']);
+    expect(initFlow('r1', { entry: 'export', draftId: 'd1' }).stack).toEqual(['export']);
+  });
+
+  it('starts a new recording with no draft and the request context', () => {
+    const s = initFlow('r1', recordNew);
+    expect(s).toMatchObject({
+      draftId: null,
+      newDraft: true,
+      clipCount: 0,
+      stage: 'none',
+      context,
+      mounted: false,
+      end: null,
+    });
+  });
+
+  it('continues an existing draft as one the flow did not make', () => {
+    const s = initFlow(
+      'r1',
+      { ...recordNew, draft: { continue: 'd9' } },
+      {
+        context,
+        clipCount: 3,
+      },
+    );
+    expect(s).toMatchObject({ draftId: 'd9', newDraft: false, clipCount: 3 });
+  });
+
+  it('takes the context of an opened draft from the draft', () => {
+    const s = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 2 });
+    expect(s).toMatchObject({ context, draftId: 'd1', clipCount: 2, newDraft: false });
+  });
+});
+
+describe('record and stop', () => {
+  it('records a take only on the recorder', () => {
+    const s = run(initFlow('r1', recordNew), { type: 'record' });
+    expect(s.recording).toBe(true);
+    const editor = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 1 });
+    expect(flowReducer(editor, { type: 'record' })).toBe(editor);
+  });
+
+  it('a landed take sets the draft, the count and the stage', () => {
+    expect(recorded()).toMatchObject({
+      recording: false,
+      draftId: 'd1',
+      clipCount: 1,
+      changed: true,
+      stage: 'recorded',
+    });
+  });
+
+  it('a dropped take changes nothing but the recording flag', () => {
+    const s = run(initFlow('r1', recordNew), { type: 'record' }, { type: 'stop' });
+    expect(s).toMatchObject({ recording: false, draftId: null, clipCount: 0, changed: false });
+  });
+
+  it('ignores navigation and X while a take runs', () => {
+    const s = run(recorded(), { type: 'record' });
+    for (const type of ['edit', 'close', 'back', 'export', 'addClips'] as const) {
+      expect(flowReducer(s, { type })).toBe(s);
+    }
+  });
+
+  it('a stop with no take running does nothing', () => {
+    const s = recorded();
+    expect(flowReducer(s, { type: 'stop', draftId: 'd1', clipCount: 5 })).toBe(s);
+  });
+});
+
+describe('navigation', () => {
+  it('goes recorder → editor → export and back again', () => {
+    let s = run(recorded(), { type: 'edit' });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    s = run(s, { type: 'export' });
+    expect(s.stack).toEqual(['recorder', 'editor', 'export']);
+    expect(topScreen(s)).toBe('export');
+    s = run(s, { type: 'back' });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    s = run(s, { type: 'back' });
+    expect(s.stack).toEqual(['recorder']);
+    expect(s.end).toBeNull();
+  });
+
+  it('needs a clip before the editor or Export', () => {
+    const s = run(initFlow('r1', recordNew), { type: 'mounted' });
+    expect(flowReducer(s, { type: 'edit' })).toBe(s);
+    const empty = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 0 });
+    expect(flowReducer(empty, { type: 'export' })).toBe(empty);
+  });
+
+  it('only moves from the screen each step belongs to', () => {
+    const onRecorder = recorded();
+    expect(flowReducer(onRecorder, { type: 'export' })).toBe(onRecorder);
+    expect(flowReducer(onRecorder, { type: 'addClips' })).toBe(onRecorder);
+    const onEditor = run(onRecorder, { type: 'edit' });
+    expect(flowReducer(onEditor, { type: 'edit' })).toBe(onEditor);
+  });
+
+  it('addClips round trip from a record flow returns to the same recorder and editor', () => {
+    let s = run(recorded(), { type: 'edit' }, { type: 'addClips' });
+    expect(s.stack).toEqual(['recorder']);
+    s = run(s, { type: 'record' }, { type: 'stop', draftId: 'd1', clipCount: 2 }, { type: 'edit' });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    expect(s.clipCount).toBe(2);
+  });
+
+  it('addClips round trip from an edit flow pushes the recorder and pops back', () => {
+    let s = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 1 });
+    s = run(s, { type: 'mounted' }, { type: 'addClips' });
+    expect(s.stack).toEqual(['editor', 'recorder']);
+    s = run(s, { type: 'record' }, { type: 'stop', draftId: 'd1', clipCount: 2 }, { type: 'edit' });
+    expect(s.stack).toEqual(['editor']);
+    expect(s).toMatchObject({ clipCount: 2, changed: true, end: null });
+  });
+
+  it('back from an added recorder returns to the editor without ending', () => {
+    let s = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 1 });
+    s = run(s, { type: 'addClips' }, { type: 'back' });
+    expect(s.stack).toEqual(['editor']);
+    expect(s.end).toBeNull();
+  });
+});
+
+describe('stage', () => {
+  it('advances recorded → edited → exported, and a later change makes the export stale', () => {
+    let s = run(recorded(), { type: 'edit' }, { type: 'edited', clipCount: 1 });
+    expect(s.stage).toBe('edited');
+    s = run(s, { type: 'export' }, { type: 'merged' });
+    expect(s.stage).toBe('exported');
+    s = run(s, { type: 'back' }, { type: 'edited', clipCount: 1 });
+    expect(s.stage).toBe('edited');
+    s = run(s, { type: 'addClips' }, { type: 'record' }, { type: 'stop', draftId: 'd1' });
+    expect(s).toMatchObject({ stage: 'edited', clipCount: 2 });
+  });
+});
+
+describe('X with clips: the keep/discard sheet', () => {
+  it('X on a new draft with a clip shows the sheet instead of ending', () => {
+    const s = run(recorded(), { type: 'close' });
+    expect(s.sheet).toBe('exit');
+    expect(s.end).toBeNull();
+  });
+
+  it('back at the root means X', () => {
+    expect(run(recorded(), { type: 'back' }).sheet).toBe('exit');
+  });
+
+  it('Keep ends closed with the draft', () => {
+    const s = run(recorded(), { type: 'edit' }, { type: 'close' }, { type: 'keep' });
+    expect(s.end).toEqual({ status: 'closed', reason: 'user', draftId: 'd1' });
+    expect(s).toMatchObject({ sheet: null, deleteDraft: null });
+    expect(topScreen(s)).toBe('editor');
+  });
+
+  it('Discard ends canceled and deletes the draft', () => {
+    const s = run(recorded(), { type: 'close' }, { type: 'discard' });
+    expect(s.end).toEqual({ status: 'canceled', reason: 'user' });
+    expect(s.deleteDraft).toBe('d1');
+  });
+
+  it('Cancel (and back) dismisses the sheet and the flow goes on', () => {
+    for (const type of ['dismissSheet', 'back'] as const) {
+      const s = run(recorded(), { type: 'close' }, { type });
+      expect(s).toMatchObject({ sheet: null, end: null });
+      expect(run(s, { type: 'edit' }).stack).toEqual(['recorder', 'editor']);
+    }
+  });
+
+  it('nothing else moves while the sheet is up', () => {
+    const s = run(recorded(), { type: 'close' });
+    for (const type of ['edit', 'record', 'close', 'export'] as const) {
+      expect(flowReducer(s, { type })).toBe(s);
+    }
+  });
+
+  it('the sheet answers do nothing without a sheet', () => {
+    const s = recorded();
+    for (const type of ['keep', 'discard', 'dismissSheet'] as const) {
+      expect(flowReducer(s, { type })).toBe(s);
+    }
+  });
+});
+
+describe('X with zero clips', () => {
+  it('ends canceled with no draft and nothing to delete', () => {
+    const s = run(initFlow('r1', recordNew), { type: 'mounted' }, { type: 'close' });
+    expect(s.end).toEqual({ status: 'canceled', reason: 'user' });
+    expect(s.deleteDraft).toBeNull();
+  });
+
+  it('after a dropped take, still canceled with no draft', () => {
+    const s = run(
+      initFlow('r1', recordNew),
+      { type: 'record' },
+      { type: 'stop' },
+      { type: 'close' },
+    );
+    expect(s.end).toEqual({ status: 'canceled', reason: 'user' });
+  });
+
+  it('a new draft whose clips were all deleted is canceled and deleted, no sheet', () => {
+    const s = run(
+      recorded(),
+      { type: 'edit' },
+      { type: 'edited', clipCount: 0 },
+      { type: 'close' },
+    );
+    expect(s.end).toEqual({ status: 'canceled', reason: 'user' });
+    expect(s.deleteDraft).toBe('d1');
+  });
+});
+
+describe('X on a draft the flow opened', () => {
+  const opened = () =>
+    run(initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 2 }), {
+      type: 'mounted',
+    });
+
+  it('unchanged: canceled with its draftId, nothing deleted, no sheet', () => {
+    const s = run(opened(), { type: 'close' });
+    expect(s.end).toEqual({ status: 'canceled', reason: 'user', draftId: 'd1' });
+    expect(s.deleteDraft).toBeNull();
+  });
+
+  it('changed: closed (kept), no sheet', () => {
+    const s = run(opened(), { type: 'edited', clipCount: 2 }, { type: 'close' });
+    expect(s.end).toEqual({ status: 'closed', reason: 'user', draftId: 'd1' });
+  });
+
+  it('a merge alone is not a change', () => {
+    const s = run(
+      initFlow('r1', { entry: 'export', draftId: 'd1' }, { context, clipCount: 1 }),
+      { type: 'merged' },
+      { type: 'close' },
+    );
+    expect(s.end).toEqual({ status: 'canceled', reason: 'user', draftId: 'd1' });
+    expect(s.stage).toBe('exported');
+  });
+
+  it('record continue with a new clip closes kept', () => {
+    const s = run(
+      initFlow('r1', { ...recordNew, draft: { continue: 'd9' } }, { context, clipCount: 1 }),
+      { type: 'record' },
+      { type: 'stop', draftId: 'd9', clipCount: 2 },
+      { type: 'close' },
+    );
+    expect(s.end).toEqual({ status: 'closed', reason: 'user', draftId: 'd9' });
+  });
+});
+
+describe('completion', () => {
+  it('Use this video completes in file mode from Export', () => {
+    const s = run(
+      recorded(),
+      { type: 'edit' },
+      { type: 'export' },
+      { type: 'useVideo', export: exportRef, durationMs: 4200 },
+    );
+    expect(s.end).toEqual({
+      status: 'completed',
+      mode: 'file',
+      draftId: 'd1',
+      export: exportRef,
+      durationMs: 4200,
+    });
+    expect(s.stage).toBe('exported');
+  });
+
+  it('Send completes in pulse mode from Export', () => {
+    const s = run(
+      recorded(),
+      { type: 'edit' },
+      { type: 'export' },
+      { type: 'send', sentAt: 1000, clientKey: 'i:d1:abcd', draftKey: 'i:d1' },
+    );
+    expect(s.end).toEqual({
+      status: 'completed',
+      mode: 'pulse',
+      draftId: 'd1',
+      sentAt: 1000,
+      clientKey: 'i:d1:abcd',
+      draftKey: 'i:d1',
+    });
+  });
+
+  it('completes only from Export', () => {
+    const s = run(recorded(), { type: 'edit' });
+    expect(flowReducer(s, { type: 'useVideo', export: exportRef, durationMs: 1 })).toBe(s);
+    expect(flowReducer(s, { type: 'send', sentAt: 1, clientKey: 'k', draftKey: 'd' })).toBe(s);
+  });
+});
+
+describe('host close', () => {
+  it('without discard keeps the take: closed{host}, even over the sheet or a running take', () => {
+    expect(run(recorded(), { type: 'hostClose' }).end).toEqual({
+      status: 'closed',
+      reason: 'host',
+      draftId: 'd1',
+    });
+    expect(run(recorded(), { type: 'close' }, { type: 'hostClose' }).end).toMatchObject({
+      status: 'closed',
+    });
+    const midTake = run(recorded(), { type: 'record' }, { type: 'hostClose' });
+    expect(midTake).toMatchObject({ recording: false, end: { status: 'closed', reason: 'host' } });
+  });
+
+  it('with discard deletes the take: canceled{host}', () => {
+    const s = run(recorded(), { type: 'hostClose', discard: true });
+    expect(s.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(s.deleteDraft).toBe('d1');
+  });
+
+  it('with no clip: canceled{host}, no draft, with or without discard', () => {
+    for (const discard of [false, true]) {
+      const s = run(initFlow('r1', recordNew), { type: 'hostClose', discard });
+      expect(s.end).toEqual({ status: 'canceled', reason: 'host' });
+      expect(s.deleteDraft).toBeNull();
+    }
+  });
+
+  it('on an opened draft: kept if changed, untouched if not, deleted with discard', () => {
+    const opened = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 2 });
+    expect(run(opened, { type: 'hostClose' }).end).toEqual({
+      status: 'canceled',
+      reason: 'host',
+      draftId: 'd1',
+    });
+    expect(run(opened, { type: 'edited', clipCount: 2 }, { type: 'hostClose' }).end).toEqual({
+      status: 'closed',
+      reason: 'host',
+      draftId: 'd1',
+    });
+    const discarded = run(opened, { type: 'hostClose', discard: true });
+    expect(discarded.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(discarded.deleteDraft).toBe('d1');
+  });
+});
+
+describe('error', () => {
+  it('fails keeping a draft that had a clip', () => {
+    const s = run(recorded(), { type: 'error', error: failure });
+    expect(s.end).toEqual({ status: 'failed', error: failure, draftId: 'd1' });
+    expect(s.deleteDraft).toBeNull();
+  });
+
+  it('fails with no draft when nothing was recorded', () => {
+    const s = run(initFlow('r1', recordNew), { type: 'error', error: failure });
+    expect(s.end).toEqual({ status: 'failed', error: failure });
+    expect(s.mounted).toBe(false);
+  });
+
+  it('keeps an opened draft', () => {
+    const s = run(initFlow('r1', { entry: 'export', draftId: 'd1' }), {
+      type: 'error',
+      error: failure,
+    });
+    expect(s.end).toEqual({ status: 'failed', error: failure, draftId: 'd1' });
+  });
+
+  it('ends even over the sheet', () => {
+    const s = run(recorded(), { type: 'close' }, { type: 'error', error: failure });
+    expect(s).toMatchObject({ sheet: null, end: { status: 'failed' } });
+  });
+});
+
+describe('after the end', () => {
+  it('ignores every event: one result per flow', () => {
+    const ended = run(recorded(), { type: 'close' }, { type: 'keep' });
+    const events: FlowEvent[] = [
+      { type: 'hostClose', discard: true },
+      { type: 'error', error: failure },
+      { type: 'record' },
+      { type: 'close' },
+      { type: 'discard' },
+    ];
+    for (const e of events) expect(flowReducer(ended, e)).toBe(ended);
+  });
+});
