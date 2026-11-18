@@ -1,0 +1,16 @@
+{
+  // The published build (`npm run build`, or `npx tsc -p embed/packages/pulse-embed/tsconfig.build.json`
+  // from the repo root): src → dist as ES modules with .d.ts, so a host never type-checks our .ts.
+  // Inside the Pulse repo the path aliases and jest keep resolving the package to src.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowJs": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "paths": {}
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "src/**/*.test.ts", "src/__fixtures__"]
+}
