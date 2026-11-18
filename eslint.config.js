@@ -3,14 +3,27 @@ const { defineConfig } = require('eslint/config');
 const expoConfig = require('eslint-config-expo/flat');
 const prettier = require('eslint-config-prettier');
 
-// --- Boundary rules (docs: the embed plan's §4.2, rules 1, 3 and 4) -----------------------------
-// Feature, core, db and utils code runs in both shells: the standalone app (src/app, on
-// expo-router) and the embed (embed/, inside another app: no router, no status bar of its own, no
-// deep links). So that code never reaches for a shell. src/app and src/shell/standalone are the
-// standalone shell itself, and are exempt.
+// --- Boundary rules (docs: the embed plan's §4.2, rules 1-4) ------------------------------------
+// Feature, core, db and utils code (and the components and hooks they draw with) runs in both
+// shells: the standalone app (src/app, on expo-router) and the embed (embed/, inside another app:
+// no router, no status bar of its own, no deep links). So that code never reaches for a shell.
+// src/app and src/shell/standalone are the standalone shell itself, and are exempt.
+//
+// Rule 4 (embed-root.tsx) is in the config below, but `npm run lint` (`expo lint` with no paths)
+// lints only src/, app/ and components/, so lint doesn't see embed/src until that script names it
+// (`expo lint src embed/src`). Until then lint-zones.test.ts lints the real embed-root.tsx with
+// this config, so `npm test` holds it.
 
 /** Code both shells run. */
-const SHARED = ['src/features/**', 'src/core/**', 'src/db/**', 'src/utils/**'];
+const SHARED = [
+  'src/features/**',
+  'src/core/**',
+  'src/db/**',
+  'src/utils/**',
+  'src/components/**',
+  'src/hooks/**',
+  'src/constants/**',
+];
 /** The layers under the features, which never import a feature. */
 const BELOW_FEATURES = ['src/core/**', 'src/db/**', 'src/utils/**'];
 
@@ -27,6 +40,24 @@ const ROUTER_UNTIL_PR2B = [
   // Home's paired-destinations float pushes /destinations, the pairing sheet's route.
   'src/features/upload/destinations-float.tsx',
 ];
+/**
+ * Rule 2: the features the embed runs never import a standalone-only one (the plan's B6 list:
+ * onboarding, About, and .pulse transfer and library backup). Home (drafts) and the screen
+ * recorder are standalone screens too, but as screens: nothing imports them.
+ */
+const CORE_FEATURES = [
+  'recorder',
+  'editor',
+  'export',
+  'transcription',
+  'upload',
+  'tips',
+  'toast',
+  'logs',
+  'embed',
+].map((f) => `./src/features/${f}`);
+const STANDALONE_FEATURES = ['onboarding', 'about', 'draft-transfer'];
+
 /** Pairing: the only feature code that listens for incoming links (until PR2-B, as above). */
 const PAIRING = [
   'src/features/upload/destinations-sheet.tsx',
@@ -44,11 +75,14 @@ const PACKAGES = {
 };
 const LINK_LISTENERS = 'getInitialURL|addEventListener|useURL|useLinkingURL';
 const LISTENER_MESSAGE = 'Only pairing listens for incoming links.';
+const LINKING_ALIAS_MESSAGE =
+  'Use Linking under its own name, so the link-listener rule can see what it is used for.';
 
 /**
- * The boundary rules for one group of files. `allow` lifts the expo-router, expo-linking or
- * link-listener rule; `belowFeatures` adds "no feature imports". A later group's rules replace an
- * earlier one's for the files both match, so each group states all of its rules.
+ * The boundary rules for one group of files. `allow` lifts the expo-router, expo-linking,
+ * link-listener or standalone-feature rule; `belowFeatures` adds "no feature imports". A later
+ * group's rules replace an earlier one's for the files both match, so each group states all of its
+ * rules.
  */
 function boundaries({ allow = [], belowFeatures = false } = {}) {
   const zone = (from, message) => ({ target: './src', from, message });
@@ -75,6 +109,13 @@ function boundaries({ allow = [], belowFeatures = false } = {}) {
           ...(belowFeatures
             ? [zone('./src/features', 'core, db and utils never import a feature.')]
             : []),
+          ...(allow.includes('standalone-features')
+            ? []
+            : STANDALONE_FEATURES.map((f) => ({
+                target: CORE_FEATURES,
+                from: `./src/features/${f}`,
+                message: `${f} is standalone-only: a feature the embed runs never imports it.`,
+              }))),
         ],
       },
     ],
@@ -91,6 +132,16 @@ function boundaries({ allow = [], belowFeatures = false } = {}) {
             selector: `ImportDeclaration[source.value='expo-linking'] > ImportSpecifier[imported.name=/^(${LINK_LISTENERS})$/]`,
             message: LISTENER_MESSAGE,
           },
+          // `const { addEventListener } = Linking`
+          {
+            selector: `VariableDeclarator[init.name='Linking'] > ObjectPattern > Property[key.name=/^(${LINK_LISTENERS})$/]`,
+            message: LISTENER_MESSAGE,
+          },
+          // `import { Linking as L } from 'react-native'`, which the rules above can't follow.
+          {
+            selector: `ImportSpecifier[imported.name='Linking'][local.name!='Linking']`,
+            message: LINKING_ALIAS_MESSAGE,
+          },
         ],
   };
 }
@@ -102,6 +153,14 @@ const boundaryConfigs = [
   {
     files: PAIRING,
     rules: boundaries({ allow: ['expo-router', 'expo-linking', 'link-listeners'] }),
+  },
+  // Shows each paired server's compatibility with About's labels until PR2-B moves the
+  // destinations sheet behind the standalone shell (it is pairing, and pairing is standalone).
+  {
+    files: ['src/features/upload/destinations-sheet.tsx'],
+    rules: boundaries({
+      allow: ['expo-router', 'expo-linking', 'link-listeners', 'standalone-features'],
+    }),
   },
   // Opens an upload's link with expo-linking's openURL; the listener rule still holds there.
   {

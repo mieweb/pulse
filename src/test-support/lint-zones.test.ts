@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from '@jest/globals';
 import { ESLint } from 'eslint';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 // The boundary rules in eslint.config.js, run on seeded files at real paths. The config is passed
@@ -46,6 +47,14 @@ describe('lint zones', () => {
     ]);
   });
 
+  it('holds the components, hooks and constants the features draw with to the same rules', async () => {
+    for (const file of ['src/components/x.tsx', 'src/hooks/x.ts', 'src/constants/x.ts']) {
+      expect(await boundaryHits(file, ROUTER)).toEqual([
+        expect.stringContaining('expo-router belongs to the standalone shell'),
+      ]);
+    }
+  });
+
   it('passes the same imports in the standalone shell', async () => {
     expect(await boundaryHits('src/app/x.tsx', ROUTER)).toEqual([]);
     expect(await boundaryHits('src/app/x.tsx', STATUS_BAR)).toEqual([]);
@@ -74,6 +83,30 @@ describe('lint zones', () => {
       ]);
     }
     expect(await boundaryHits('src/features/export/x.ts', FEATURE)).toEqual([]);
+  });
+
+  it('fails a feature the embed runs importing a standalone-only one (rule 2)', async () => {
+    const transfer =
+      "import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';\n" +
+      'export const t = useDraftTransfer;\n';
+    const about =
+      "import { compatLabel } from '@/features/about/details';\nexport const c = compatLabel;\n";
+    const onboarding =
+      "import { OnboardingScreen } from '@/features/onboarding/onboarding-screen';\n" +
+      'export const O = OnboardingScreen;\n';
+    for (const [file, code, name] of [
+      ['src/features/editor/x.tsx', transfer, 'draft-transfer'],
+      ['src/features/recorder/x.tsx', onboarding, 'onboarding'],
+      ['src/features/upload/x.tsx', about, 'about'],
+      ['src/features/export/x.tsx', about, 'about'],
+    ]) {
+      expect(await boundaryHits(file, code)).toEqual([
+        expect.stringContaining(`${name} is standalone-only`),
+      ]);
+    }
+    // Home is a standalone screen: it may. So may the destinations sheet, until PR2-B.
+    expect(await boundaryHits('src/features/drafts/x.tsx', transfer)).toEqual([]);
+    expect(await boundaryHits('src/features/upload/destinations-sheet.tsx', about)).toEqual([]);
   });
 
   it('lets the listed pairing and onboarding files use expo-router until PR2-B', async () => {
@@ -114,6 +147,21 @@ describe('lint zones', () => {
       expect.stringContaining('Only pairing listens for incoming links'),
     ]);
     expect(await boundaryHits('src/features/upload/pairing-sheet.tsx', expoLinking)).toEqual([]);
+
+    // Destructured or renamed, a listener is still a listener.
+    const destructured =
+      "import { Linking } from 'react-native';\n" +
+      'const { addEventListener } = Linking;\n' +
+      'export const on = () => addEventListener("url", () => {});\n';
+    expect(await boundaryHits('src/features/editor/x.ts', destructured)).toEqual([
+      expect.stringContaining('Only pairing listens for incoming links'),
+    ]);
+    const renamed =
+      "import { Linking as L } from 'react-native';\n" +
+      'export const first = () => L.getInitialURL();\n';
+    expect(await boundaryHits('src/features/editor/x.ts', renamed)).toEqual([
+      expect.stringContaining('Use Linking under its own name'),
+    ]);
   });
 
   it('keeps the embed entry to its one static import (rule 4)', async () => {
@@ -122,6 +170,18 @@ describe('lint zones', () => {
     const more = "import { CONTRACT } from '@/features/embed/host';\nexport const c = CONTRACT;\n";
     expect(await boundaryHits('embed/src/embed-root.tsx', roots)).toEqual([]);
     expect(await boundaryHits('embed/src/embed-root.tsx', more)).toEqual([
+      expect.stringContaining('embed-root.tsx statically imports only'),
+    ]);
+  });
+
+  // `npm run lint` doesn't lint embed/src yet (see eslint.config.js), so this holds rule 4 on the
+  // file itself: as it is, it passes; one more static import of Pulse code, and it fails.
+  it('holds the real embed-root.tsx to rule 4', async () => {
+    const file = 'embed/src/embed-root.tsx';
+    const source = readFileSync(path.join(root, file), 'utf8');
+    expect(await boundaryHits(file, source)).toEqual([]);
+    const withMore = "import { log } from '@/features/logs/logger';\nvoid log;\n" + source;
+    expect(await boundaryHits(file, withMore)).toEqual([
       expect.stringContaining('embed-root.tsx statically imports only'),
     ]);
   });
