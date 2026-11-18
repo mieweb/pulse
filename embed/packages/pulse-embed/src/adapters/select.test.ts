@@ -135,6 +135,32 @@ describe('selectAdapter', () => {
   });
 });
 
+describe('one platform adapter per page', () => {
+  it('gives the same Capacitor or Cordova adapter for the same globals', () => {
+    const g: PageGlobals = { Capacitor: nativeCapacitor() };
+    expect(selectAdapter(g)).toBe(selectAdapter(g));
+    const c: PageGlobals = { cordova: { exec: () => {}, plugins: {} } };
+    expect(selectAdapter(c)).toBe(selectAdapter(c));
+    // Another page (or another Capacitor) gets its own.
+    expect(selectAdapter({ Capacitor: nativeCapacitor() })).not.toBe(selectAdapter(g));
+  });
+
+  it('attaches one native listener for every default client on the page', () => {
+    const addListener = jest.fn(() => ({ remove: () => {} }));
+    const page = globalThis as unknown as PageGlobals;
+    page.Capacitor = nativeCapacitor({
+      registerPlugin: () => ({ call: async () => ({ json: '{}' }), addListener }),
+    });
+    try {
+      createPulseClient();
+      createPulseClient();
+      expect(addListener).toHaveBeenCalledTimes(1);
+    } finally {
+      delete page.Capacitor;
+    }
+  });
+});
+
 describe('the null adapter', () => {
   it('is not present, and a client over it is unavailable', async () => {
     const a = createNullAdapter();
