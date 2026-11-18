@@ -1,3 +1,4 @@
+// @ts-check
 // K3: the build stamps PulseKit.framework's Info.plist carries. PulseKitInfo.swift reads them for
 // `info()`: PulseKitVersion, PulseKitBuild and PulseKitGitSha as strings, PulseKitContractMinor,
 // PulseKitFormatVersion and PulseKitDbSchema as integers.

@@ -1,3 +1,4 @@
+// @ts-check
 // The @rpath closure: every `@rpath/X.framework/X` a shipped binary loads must be a framework
 // the release ships. expo-brownfield left out whisper.rn's vendored rnwhisper.xcframework, and
 // PulseKit then crashed in dyld at launch; this check catches the next one at packaging time.

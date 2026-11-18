@@ -1,3 +1,4 @@
+// @ts-check
 // Symlinks a shipped xcframework must not contain. expo-brownfield's hermesvm.xcframework had
 // absolute links into the producer's Pods folder; they break on every other machine and survive
 // zipping as dangling links. A relative link that climbs out of the tree breaks the same way.

@@ -1,3 +1,4 @@
+// @ts-check
 // Which slices of an xcframework PulseKit ships: iOS devices and the iOS Simulator. The others
 // (macOS, Mac Catalyst, tvOS, visionOS, watchOS) are pruned. hermesvm's macOS and Catalyst slices
 // are the ones whose symlinks point into the producer's Pods folder, so pruning them is also how

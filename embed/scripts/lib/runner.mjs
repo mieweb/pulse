@@ -1,3 +1,4 @@
+// @ts-check
 // The one place the packaging script changes anything: tool calls (ditto, dsymutil, lipo, strip,
 // otool, plutil) and file writes. With `dryRun` it prints each one as a shell line instead, so
 // `--dry-run` shows the whole plan and writes nothing.

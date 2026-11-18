@@ -1,3 +1,4 @@
+// @ts-check
 // The size report each packaging run writes next to the zips: per xcframework, the download
 // (zip), what it unpacks to, and the stripped iOS device binary, which is what an app ships.
 

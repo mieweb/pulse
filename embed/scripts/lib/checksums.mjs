@@ -1,3 +1,4 @@
+// @ts-check
 // SHA256SUMS for the release zips. `swift package compute-checksum` is the SHA-256 of the file's
 // bytes as lowercase hex, so the same value goes into SHA256SUMS and into Package.swift's
 // `.binaryTarget(url:checksum:)`. The file is in shasum's text format, so

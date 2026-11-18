@@ -1,3 +1,4 @@
+// @ts-check
 // A small XML property-list reader and writer, enough for Info.plist files: the xcframework
 // manifests (AvailableLibraries) and a framework's own Info.plist, where the build stamps go.
 //
@@ -6,7 +7,7 @@
 // keep their text as { real }, { date } and { data } so a round trip doesn't change them.
 // Binary plists (bplist00) aren't parsed here; the packaging script converts them with plutil.
 
-/** @typedef {string | number | bigint | boolean | { real: string } | { date: string } | { data: string } | PlistValue[] | Map<string, PlistValue>} PlistValue */
+/** @typedef {import('./plist-value').PlistValue} PlistValue (a JSDoc typedef can't recurse) */
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 
