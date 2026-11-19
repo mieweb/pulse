@@ -4,6 +4,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { PulseCore } from '@/core/pulse-core';
 import type { FatalStorage } from '@/core/recovery/types';
+import { useCatalogWriter } from '@/features/drafts/catalog-writer';
 import { installLogCapture } from '@/features/logs/logger';
 import { ToastProvider } from '@/features/toast/toast-provider';
 
@@ -41,10 +42,16 @@ export function EmbedApp(props: EmbedProps & { requestId: string }) {
   }, [plan, requestId]);
 
   if (!plan.ok) return <View style={styles.blank} />;
-  return <EmbedFlow plan={plan} />;
+  return <EmbedFlow plan={plan} namespace={props.namespace} />;
 }
 
-function EmbedFlow({ plan }: { plan: OpenPlan }) {
+/** Keeps the namespace's catalog.json in step with the library, from the first flow on. */
+function CatalogWriter({ namespace }: { namespace: string | undefined }) {
+  useCatalogWriter(namespace);
+  return null;
+}
+
+function EmbedFlow({ plan, namespace }: { plan: OpenPlan; namespace: string | undefined }) {
   const { requestId, request, config } = plan;
   const [store] = useState(() =>
     createFlowStore({ requestId, request, onEnd: (state) => void finish(state) }),
@@ -95,6 +102,8 @@ function EmbedFlow({ plan }: { plan: OpenPlan }) {
       wrap={ToastProvider}
       onBoot={installLogCapture}
       onFatalStorage={onFatalStorage}>
+      {/* Under the library gate: the migrations have run. */}
+      <CatalogWriter namespace={namespace} />
       <FlowStack
         store={store}
         controller={controller}
