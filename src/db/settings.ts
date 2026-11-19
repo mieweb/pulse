@@ -102,6 +102,28 @@ export async function setSetting(key: string, value: string): Promise<void> {
     .onConflictDoUpdate({ target: settings.key, set: { value } });
 }
 
+/** Captions turned off for one draft (the embed's per-video switch, O6): `captions.off:<id>`. */
+const CAPTIONS_OFF_KEY_PREFIX = 'captions.off:';
+
+/** Live-queryable: the draft's captions-off row (none while its captions are on). */
+export function captionsOffQuery(draftId: string) {
+  return db
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, CAPTIONS_OFF_KEY_PREFIX + draftId));
+}
+
+/** Whether the draft's captions are turned off (they're on unless turned off). */
+export async function isCaptionsOff(draftId: string): Promise<boolean> {
+  return (await getSetting(CAPTIONS_OFF_KEY_PREFIX + draftId)) === 'true';
+}
+
+/** Turn the draft's captions off, or back on (which removes the row). */
+export async function setCaptionsOff(draftId: string, off: boolean): Promise<void> {
+  if (off) await setSetting(CAPTIONS_OFF_KEY_PREFIX + draftId, 'true');
+  else await db.delete(settings).where(eq(settings.key, CAPTIONS_OFF_KEY_PREFIX + draftId));
+}
+
 /** The timeline editor's last view: the one it opens in next time. */
 const EDITOR_VIEW_KEY = 'editor.view';
 export type EditorView = 'clips' | 'timeline';

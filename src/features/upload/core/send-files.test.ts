@@ -47,6 +47,7 @@ jest.mock('@/utils/video', () => ({
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { expoDb } from '@/db/client';
+import { setCaptionsOff } from '@/db/settings';
 import { env } from '@/test-support/expo-fs-node';
 import { generateCoverFile } from '@/utils/video';
 import { sendDirRelPath, writeSendFiles } from './send-files';
@@ -199,6 +200,19 @@ describe('writeSendFiles', () => {
     expect(readFileSync(docPath('drafts/d1/send/thumbnail.jpg'), 'utf8')).toBe('small');
     // The earlier Send's captions are gone with it.
     expect(existsSync(docPath('drafts/d1/send/captions.vtt'))).toBe(false);
+  });
+
+  it('sends no captions part when the person turned the video’s captions off', async () => {
+    addDraft();
+    await setCaptionsOff('d1', true);
+    try {
+      const { parts } = await writeSendFiles('d1', 12_000);
+      expect(parts.map((p) => p.role)).toEqual(['manifest', 'video']);
+    } finally {
+      await setCaptionsOff('d1', false);
+    }
+    const { parts } = await writeSendFiles('d1', 12_000);
+    expect(parts.map((p) => p.role)).toEqual(['captions', 'manifest', 'video']);
   });
 
   it('sends no cover when there is none, and refuses without the export', async () => {
