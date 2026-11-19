@@ -74,12 +74,11 @@ function ThemedNavigation() {
   // The full-screen screens (recorder, editor, export, welcome) appear and go at once, like a
   // camera app's: no slide up from the bottom. The sheets keep the system's own presentation.
   const fullScreen = { presentation: 'fullScreenModal', animation: 'none' } as const;
-  // The upload manager runs for the app's lifetime, with the app's toast and clipboard.
-  const { showToast } = useToast();
-  useEffect(() => startUploads({ showToast, copyLink: copyToClipboard }), [showToast]);
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
+      {/* First, so the upload manager has its toast before any link or screen starts an upload. */}
+      <UploadsStarter />
       <UploadDeepLinkProvider>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="recorder" options={fullScreen} />
@@ -129,6 +128,16 @@ function ThemedNavigation() {
       <StandaloneStatusBar fallback={isDark ? 'light' : 'dark'} />
     </ThemeProvider>
   );
+}
+
+/**
+ * Runs the upload manager for the app's lifetime, with the app's toast and clipboard. A leaf of its
+ * own: the toast context changes with every toast, and the navigation tree shouldn't re-render.
+ */
+function UploadsStarter() {
+  const { showToast } = useToast();
+  useEffect(() => startUploads({ showToast, copyLink: copyToClipboard }), [showToast]);
+  return null;
 }
 
 /** The standalone implementation of the status-bar port: the style a screen asks for (the newest
