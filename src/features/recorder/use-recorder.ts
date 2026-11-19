@@ -807,6 +807,9 @@ export function useRecorder(
     appActive,
     reportMicPriorityError,
     onCameraReady: () => setCameraReady(true),
+    // A new <Camera> (Android, see camera-holder.ts) starts gated, as a flip does there: zoom,
+    // torch and the record gestures wait for the new session's `onStarted`.
+    onCameraRemount: () => setCameraReady(false),
     // Wire to <Camera onConfigured>: fires whenever the session's connections are (re)formed —
     // cold open, enableAudio output rebuild, camera flip. Bumping the epoch re-arms the H.264
     // pin for the NEW video connection (the codec is applied per-connection natively, so it

@@ -19,6 +19,7 @@ import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
 import { flushDraftWrites } from '@/features/editor/draft-writes';
 import { CameraControls } from '@/features/recorder/camera-controls';
+import { holdsCamera, releaseCamera, takeCamera } from '@/features/recorder/camera-holder';
 import { ExportButton } from '@/components/export-button';
 import { CloseAction, CloseButton } from '@/features/recorder/close-button';
 import { EditButton } from '@/features/recorder/edit-button';
@@ -151,6 +152,7 @@ export function RecorderScreen({
     appActive,
     reportMicPriorityError,
     onCameraReady,
+    onCameraRemount,
     onSessionConfigured,
     toggleRecording,
     finalizeRecording,
@@ -268,10 +270,21 @@ export function RecorderScreen({
   // regains focus already holds the camera off. Muted / in-call returns skip the hold — they
   // restart video-only, and a category can't break a session with no mic input.
   const [audioHandoff, setAudioHandoff] = useState(false);
+  // Android: another recorder opened over this one (Add clips) unbound this one's camera, so back
+  // on top it mounts a new <Camera> (`cameraKey`) that binds again; restarting the old session
+  // would open nothing (see camera-holder.ts). Same commit as the focus, like the handoff.
+  const [cameraHolder] = useState(() => ({}));
+  const [cameraKey, setCameraKey] = useState(0);
+  useEffect(() => takeCamera(cameraHolder), [cameraHolder, cameraKey]);
+  useEffect(() => () => releaseCamera(cameraHolder), [cameraHolder]);
   const [wasFocused, setWasFocused] = useState(focused);
   if (wasFocused !== focused) {
     setWasFocused(focused);
     if (focused && !muted && !callActive) setAudioHandoff(true);
+    if (focused && Platform.OS === 'android' && !holdsCamera(cameraHolder)) {
+      setCameraKey((key) => key + 1);
+      onCameraRemount();
+    }
   }
   useEffect(() => {
     if (!audioHandoff) return;
@@ -582,6 +595,7 @@ export function RecorderScreen({
     <View style={styles.fill} onStartShouldSetResponderCapture={closeTips}>
       {device && (
         <Camera
+          key={cameraKey}
           ref={cameraRef}
           style={StyleSheet.absoluteFill}
           device={device}
