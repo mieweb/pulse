@@ -37,6 +37,26 @@ export function isBinaryPlist(input) {
 }
 
 /**
+ * `text` without every span from `open` to the next `close` (an unclosed one runs to the end).
+ * A plain scan, so nothing removed can join with what's around it into a new `open`.
+ * @param {string} text
+ * @param {string} open
+ * @param {string} close
+ */
+function cut(text, open, close) {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const start = text.indexOf(open, at);
+    if (start < 0) return out + text.slice(at);
+    out += text.slice(at, start);
+    const end = text.indexOf(close, start + open.length);
+    if (end < 0) return out;
+    at = end + close.length;
+  }
+}
+
+/**
  * Parses an XML plist into JS values (see the mapping at the top of this file).
  * @param {string} xml
  * @returns {PlistValue}
@@ -44,15 +64,8 @@ export function isBinaryPlist(input) {
 export function parsePlist(xml) {
   if (isBinaryPlist(xml)) throw new Error('plist: binary plist; convert it to XML first');
   // Tags and the text between them. Comments, the XML declaration and the DOCTYPE are dropped.
-  // Repeated until nothing changes, so removing one comment can't leave another behind.
-  let body = xml;
-  for (let prev = ''; prev !== body;) {
-    prev = body;
-    body = body
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/<\?[\s\S]*?\?>/g, '')
-      .replace(/<!DOCTYPE[^>]*>/g, '');
-  }
+  let body = cut(cut(xml, '<!--', '-->'), '<?', '?>');
+  body = cut(body, '<!DOCTYPE', '>');
   const tokens = body.match(/<[^>]+>|[^<]+/g) ?? [];
   let i = 0;
   const END = Symbol('end');
