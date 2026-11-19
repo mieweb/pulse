@@ -4,7 +4,14 @@
 //
 // The release workflow stamps that version into the embed packages, embed/app.json and the Cordova
 // plugin.xml inside its own checkout (nothing is committed), then checks after packaging that the
-// tag, every package and PulseKit.framework's Info.plist agree. The check runs only in that tag
+// tag, every package and PulseKit.framework's Info.plist agree.
+//
+// One exception, the marketing version: App Store Connect takes only `X.Y.Z` (at most three
+// integers) for CFBundleShortVersionString, in embedded frameworks too (ITMS-90060), so a host
+// that embeds an RC PulseKit would fail its upload. expo-brownfield sets PulseKit's
+// CFBundleShortVersionString from app.json's `expo.ios.version` (falling back to `expo.version`),
+// so stamping writes the numeric core there and the full version (with -rc.N) everywhere else,
+// including PulseKitVersion. The check runs only in that tag
 // workflow, never on PRs, so an app release PR that bumps the root version can't turn CI red.
 
 import fs from 'node:fs';
@@ -63,6 +70,15 @@ export function assertVersion(version) {
 }
 
 /**
+ * The marketing version (CFBundleShortVersionString) for a release version: its numeric core,
+ * `2.8.0` for both `2.8.0` and `2.8.0-rc.3`.
+ * @param {string} version
+ */
+export function marketingVersion(version) {
+  return assertVersion(version).split('-')[0];
+}
+
+/**
  * The embed's npm package.json files, relative to the repo, sorted.
  * @param {string} repoRoot
  */
@@ -90,7 +106,8 @@ const PLUGIN_VERSION_RE = /(<plugin\b[^>]*?\sversion=")([^"]*)(")/;
 
 /**
  * Writes `version` into every embed package.json, embed/app.json (`expo.version`) and the Cordova
- * plugin.xml. Returns the files it wrote, relative to the repo.
+ * plugin.xml, and its marketing version into app.json's `expo.ios.version` (what PulseKit's
+ * CFBundleShortVersionString comes from). Returns the files it wrote, relative to the repo.
  * @param {string} repoRoot
  * @param {string} version
  */
@@ -110,6 +127,7 @@ export function stampVersion(repoRoot, version) {
   const app = readJson(appFile);
   if (!app.expo || typeof app.expo !== 'object') throw new Error(`${APP_JSON} has no "expo" key`);
   app.expo.version = version;
+  app.expo.ios = { ...app.expo.ios, version: marketingVersion(version) };
   writeJson(appFile, app);
   written.push(APP_JSON);
 
@@ -126,20 +144,30 @@ export function stampVersion(repoRoot, version) {
 }
 
 /**
- * Where the lockstep version lives in the checkout: each embed package, embed/app.json and the
- * Cordova plugin.xml. Values are as found (null when the field is missing).
+ * One place a version lives. `marketing` marks a CFBundleShortVersionString-style value, which
+ * must be the tag's numeric core (`marketingVersion`) rather than the full version.
+ * @typedef {{ file: string, version: string | null, marketing?: boolean }} FoundVersion
+ */
+
+/**
+ * Where the lockstep version lives in the checkout: each embed package, embed/app.json
+ * (`expo.version`, and `expo.ios.version` as the marketing version) and the Cordova plugin.xml.
+ * Values are as found (null when the field is missing).
  * @param {string} repoRoot
- * @returns {{ file: string, version: string | null }[]}
+ * @returns {FoundVersion[]}
  */
 export function readStampedVersions(repoRoot) {
-  /** @type {{ file: string, version: string | null }[]} */
+  /** @type {FoundVersion[]} */
   const found = packageFiles(repoRoot).map((rel) => ({
     file: rel,
     version: readJson(path.join(repoRoot, rel)).version ?? null,
   }));
+  const app = readJson(path.join(repoRoot, APP_JSON));
+  found.push({ file: APP_JSON, version: app.expo?.version ?? null });
   found.push({
-    file: APP_JSON,
-    version: readJson(path.join(repoRoot, APP_JSON)).expo?.version ?? null,
+    file: `${APP_JSON} expo.ios.version`,
+    version: app.expo?.ios?.version ?? null,
+    marketing: true,
   });
   const xmlFile = path.join(repoRoot, CORDOVA_PLUGIN_XML);
   if (fs.existsSync(xmlFile)) {
@@ -150,10 +178,11 @@ export function readStampedVersions(repoRoot) {
 }
 
 /**
- * The PulseKitVersion in each PulseKit.framework Info.plist under a packaged xcframeworks folder
- * (package-ios.mjs's `<out>/xcframeworks`; it leaves those plists as XML).
+ * The PulseKitVersion and CFBundleShortVersionString (`marketing`) in each PulseKit.framework
+ * Info.plist under a packaged xcframeworks folder (package-ios.mjs's `<out>/xcframeworks`; it
+ * leaves those plists as XML).
  * @param {string} xcframeworksDir
- * @returns {{ file: string, version: string | null }[]}
+ * @returns {FoundVersion[]}
  */
 export function readPulseKitVersions(xcframeworksDir) {
   const xcframework = path.join(xcframeworksDir, 'PulseKit.xcframework');
@@ -164,28 +193,39 @@ export function readPulseKitVersions(xcframeworksDir) {
     .map((e) => path.join(xcframework, e.name, 'PulseKit.framework', 'Info.plist'))
     .filter((file) => fs.existsSync(file))
     .sort()
-    .map((file) => {
-      const value = rootDict(parsePlist(fs.readFileSync(file, 'utf8'))).get('PulseKitVersion');
-      return {
-        file: path.relative(xcframeworksDir, file),
-        version: typeof value === 'string' ? value : null,
+    .flatMap((file) => {
+      const dict = rootDict(parsePlist(fs.readFileSync(file, 'utf8')));
+      const text = (/** @type {string} */ key) => {
+        const value = dict.get(key);
+        return typeof value === 'string' ? value : null;
       };
+      const rel = path.relative(xcframeworksDir, file);
+      return [
+        { file: rel, version: text('PulseKitVersion') },
+        {
+          file: `${rel} CFBundleShortVersionString`,
+          version: text('CFBundleShortVersionString'),
+          marketing: true,
+        },
+      ];
     });
 }
 
 /**
- * Every place whose version is not the tag's. Empty when the release is in lockstep. Also a
- * problem: no PulseKit Info.plist at all (`pulseKit` given but empty).
+ * Every place whose version is not the tag's (its numeric core for a `marketing` value). Empty
+ * when the release is in lockstep. Also a problem: no PulseKit Info.plist at all (`pulseKit`
+ * given but empty).
  * @param {string} version  The tag's version.
- * @param {{ file: string, version: string | null }[]} stamped  From `readStampedVersions`.
- * @param {{ file: string, version: string | null }[]} [pulseKit]  From `readPulseKitVersions`.
+ * @param {FoundVersion[]} stamped  From `readStampedVersions`.
+ * @param {FoundVersion[]} [pulseKit]  From `readPulseKitVersions`.
  */
 export function lockstepProblems(version, stamped, pulseKit) {
+  const core = marketingVersion(version);
   /** @type {string[]} */
   const problems = [];
   for (const s of [...stamped, ...(pulseKit ?? [])]) {
-    if (s.version !== version)
-      problems.push(`${s.file} is ${s.version ?? '(none)'}, not ${version}`);
+    const want = s.marketing ? core : version;
+    if (s.version !== want) problems.push(`${s.file} is ${s.version ?? '(none)'}, not ${want}`);
   }
   if (pulseKit && pulseKit.length === 0) problems.push('no PulseKit.framework Info.plist to check');
   return problems;

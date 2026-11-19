@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   cli,
   lockstepProblems,
+  marketingVersion,
   packageFiles,
   parseReleaseTag,
   publishProblems,
@@ -88,12 +89,23 @@ describe('stampVersion', () => {
     const written = stampVersion(dir, '2.8.0-rc.3');
 
     expect(written.sort()).toEqual([...STAMPED].sort());
-    expect(readStampedVersions(dir).map((s) => s.version)).toEqual(Array(5).fill('2.8.0-rc.3'));
+    expect(readStampedVersions(dir)).toEqual([
+      { file: 'embed/packages/capacitor-pulse/package.json', version: '2.8.0-rc.3' },
+      { file: 'embed/packages/cordova-plugin-pulse/package.json', version: '2.8.0-rc.3' },
+      { file: 'embed/packages/pulse-embed/package.json', version: '2.8.0-rc.3' },
+      { file: 'embed/app.json', version: '2.8.0-rc.3' },
+      { file: 'embed/app.json expo.ios.version', version: '2.8.0', marketing: true },
+      { file: 'embed/packages/cordova-plugin-pulse/plugin.xml', version: '2.8.0-rc.3' },
+    ]);
     for (const rel of packageFiles(dir)) {
       expect(readJson(rel)).toEqual({ ...before[rel], version: '2.8.0-rc.3' });
     }
+    // The marketing version (PulseKit's CFBundleShortVersionString, via expo-brownfield) is the
+    // numeric core: App Store Connect refuses `2.8.0-rc.3` there (ITMS-90060).
     const app = before['embed/app.json'];
-    expect(readJson('embed/app.json')).toEqual({ expo: { ...app.expo, version: '2.8.0-rc.3' } });
+    expect(readJson('embed/app.json')).toEqual({
+      expo: { ...app.expo, version: '2.8.0-rc.3', ios: { ...app.expo.ios, version: '2.8.0' } },
+    });
     const xmlAfter = fs.readFileSync(path.join(dir, STAMPED[3]), 'utf8');
     expect(xmlAfter).toBe(
       xmlBefore.replace(
@@ -101,6 +113,14 @@ describe('stampVersion', () => {
         'id="cordova-plugin-pulse" version="2.8.0-rc.3"',
       ),
     );
+  });
+
+  it('writes a final release’s version as its own marketing version', () => {
+    stampVersion(dir, '2.8.0');
+    expect(readJson('embed/app.json').expo).toMatchObject({
+      version: '2.8.0',
+      ios: { version: '2.8.0' },
+    });
   });
 
   it('finds every embed package in the repo', () => {
@@ -117,12 +137,21 @@ describe('stampVersion', () => {
   });
 });
 
+describe('marketingVersion', () => {
+  it('is the numeric core of a release version', () => {
+    expect(marketingVersion('2.8.0')).toBe('2.8.0');
+    expect(marketingVersion('2.8.0-rc.3')).toBe('2.8.0');
+    expect(() => marketingVersion('2.8')).toThrow(/semver/);
+  });
+});
+
 describe('lockstep', () => {
-  const plist = (version: string) =>
+  const plist = (version: string, short = version.split('-')[0]) =>
     `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n` +
     `\t<key>CFBundleName</key>\n\t<string>PulseKit</string>\n` +
+    `\t<key>CFBundleShortVersionString</key>\n\t<string>${short}</string>\n` +
     `\t<key>PulseKitVersion</key>\n\t<string>${version}</string>\n</dict>\n</plist>\n`;
-  const writePlist = (slice: string, version: string) => {
+  const writePlist = (slice: string, version: string, short?: string) => {
     const file = path.join(
       dir,
       'xc',
@@ -132,16 +161,63 @@ describe('lockstep', () => {
       'Info.plist',
     );
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, plist(version));
+    fs.writeFileSync(file, plist(version, short));
   };
+  const infoPlist = (slice: string) =>
+    path.join('PulseKit.xcframework', slice, 'PulseKit.framework', 'Info.plist');
 
   it('passes when the tag, every package and both PulseKit slices agree', () => {
     stampVersion(dir, '2.8.0');
     writePlist('ios-arm64', '2.8.0');
     writePlist('ios-arm64_x86_64-simulator', '2.8.0');
     const pulseKit = readPulseKitVersions(path.join(dir, 'xc'));
-    expect(pulseKit).toHaveLength(2);
+    expect(pulseKit).toHaveLength(4);
     expect(lockstepProblems('2.8.0', readStampedVersions(dir), pulseKit)).toEqual([]);
+  });
+
+  it('on an RC, wants the full version in PulseKitVersion and the core in the marketing version', () => {
+    stampVersion(dir, '2.8.0-rc.3');
+    writePlist('ios-arm64', '2.8.0-rc.3');
+    writePlist('ios-arm64_x86_64-simulator', '2.8.0-rc.3');
+    expect(readPulseKitVersions(path.join(dir, 'xc'))).toEqual([
+      { file: infoPlist('ios-arm64'), version: '2.8.0-rc.3' },
+      {
+        file: `${infoPlist('ios-arm64')} CFBundleShortVersionString`,
+        version: '2.8.0',
+        marketing: true,
+      },
+      { file: infoPlist('ios-arm64_x86_64-simulator'), version: '2.8.0-rc.3' },
+      {
+        file: `${infoPlist('ios-arm64_x86_64-simulator')} CFBundleShortVersionString`,
+        version: '2.8.0',
+        marketing: true,
+      },
+    ]);
+    expect(
+      lockstepProblems(
+        '2.8.0-rc.3',
+        readStampedVersions(dir),
+        readPulseKitVersions(path.join(dir, 'xc')),
+      ),
+    ).toEqual([]);
+  });
+
+  it('refuses an RC PulseKit whose CFBundleShortVersionString carries the -rc suffix', () => {
+    stampVersion(dir, '2.8.0-rc.3');
+    writePlist('ios-arm64', '2.8.0-rc.3', '2.8.0-rc.3');
+    const app = readJson('embed/app.json');
+    app.expo.ios.version = '2.8.0-rc.3';
+    fs.writeFileSync(path.join(dir, 'embed/app.json'), JSON.stringify(app));
+    expect(
+      lockstepProblems(
+        '2.8.0-rc.3',
+        readStampedVersions(dir),
+        readPulseKitVersions(path.join(dir, 'xc')),
+      ),
+    ).toEqual([
+      'embed/app.json expo.ios.version is 2.8.0-rc.3, not 2.8.0',
+      `${infoPlist('ios-arm64')} CFBundleShortVersionString is 2.8.0-rc.3, not 2.8.0`,
+    ]);
   });
 
   it('names every place that differs from the tag', () => {
@@ -156,7 +232,8 @@ describe('lockstep', () => {
     );
     expect(problems).toEqual([
       `${pkg} is 2.8.1, not 2.8.0`,
-      `${path.join('PulseKit.xcframework', 'ios-arm64', 'PulseKit.framework', 'Info.plist')} is 2.7.9, not 2.8.0`,
+      `${infoPlist('ios-arm64')} is 2.7.9, not 2.8.0`,
+      `${infoPlist('ios-arm64')} CFBundleShortVersionString is 2.7.9, not 2.8.0`,
     ]);
   });
 
