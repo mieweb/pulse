@@ -28,13 +28,11 @@ const BELOW_FEATURES = ['src/core/**', 'src/db/**', 'src/utils/**'];
 
 /**
  * Standalone-only code that still navigates with expo-router itself: allowed until onboarding
- * moves behind the standalone shell. Home's paired-destinations float pushes /destinations, the
- * pairing sheet's route.
+ * moves behind the standalone shell.
  */
-const ROUTER_ONLY = [
+const ROUTER_UNTIL_ONBOARDING = [
   'src/features/onboarding/onboarding-screen.tsx',
   'src/features/onboarding/use-onboarding-redirect.ts',
-  'src/features/upload/pairing/destinations-float.tsx',
 ];
 /**
  * Rule 2: the features the embed runs never import a standalone-only one (the plan's B6 list:
@@ -46,9 +44,7 @@ const CORE_FEATURES = [
   'editor',
   'export',
   'transcription',
-  // Pairing too: the export screen imports its destination picker and link helpers, so the embed
-  // bundles them. The pairing files below that only the Pulse app mounts lift what they need.
-  'upload',
+  'upload/core',
   'tips',
   'toast',
   'logs',
@@ -57,17 +53,20 @@ const CORE_FEATURES = [
 const STANDALONE_FEATURES = ['onboarding', 'about', 'draft-transfer'];
 
 /**
- * The pairing files only the Pulse app mounts: the only feature code that listens for incoming
- * links, and it may navigate with expo-router. Not all of upload/pairing: the export screen, which
- * the embed runs, imports the destination picker and link helpers, and they keep every rule.
+ * Pairing (links, the paired pool and its sheets): standalone-only, and out of the embed's bundle
+ * (`npm run check:embed`). The only feature code that listens for incoming links, and it may
+ * navigate with expo-router. Only the standalone side imports it: the shell (src/app,
+ * src/shell/standalone) and the standalone-only screens (Home, onboarding, About, transfer). The
+ * code the embed runs takes its upload targets from the shell's provider instead
+ * (`useUploadTargets`, UploadStrategyContext).
  */
-const PAIRING = [
-  'src/features/upload/pairing/pairing-sheet.tsx',
-  'src/features/upload/pairing/upload-deep-link-provider.tsx',
-];
-/** The upload engine both shells run, which never imports pairing. */
-const UPLOAD_CORE = './src/features/upload/core';
+const PAIRING = ['src/features/upload/pairing/**'];
 const UPLOAD_PAIRING = './src/features/upload/pairing';
+/** What may never import pairing: the features the embed runs, and what they draw with. */
+const NOT_PAIRING = [...CORE_FEATURES, './src/components', './src/hooks', './src/constants'];
+const PAIRING_MESSAGE =
+  'upload/pairing is standalone-only: code the embed runs never imports it. Take the upload ' +
+  'targets from the shell (useUploadTargets, UploadStrategyContext) instead.';
 
 const SHELL_ONLY = 'belongs to the standalone shell (src/app): take a callback or a port instead.';
 const PACKAGES = {
@@ -160,13 +159,7 @@ function boundaries({ allow = [], belowFeatures = false } = {}) {
           ...(belowFeatures
             ? [zone('./src/features', 'core, db and utils never import a feature.')]
             : []),
-          {
-            target: UPLOAD_CORE,
-            from: UPLOAD_PAIRING,
-            message:
-              'upload/core runs in both shells and never imports upload/pairing, which is ' +
-              'standalone-only: take the target from the shell (UploadStrategyContext) instead.',
-          },
+          { target: NOT_PAIRING, from: UPLOAD_PAIRING, message: PAIRING_MESSAGE },
           ...(allow.includes('standalone-features')
             ? []
             : STANDALONE_FEATURES.map((f) => ({
@@ -187,27 +180,27 @@ function boundaries({ allow = [], belowFeatures = false } = {}) {
 const boundaryConfigs = [
   { files: SHARED, rules: boundaries() },
   { files: BELOW_FEATURES, rules: boundaries({ belowFeatures: true }) },
-  { files: ROUTER_ONLY, rules: boundaries({ allow: ['expo-router'] }) },
+  { files: ROUTER_UNTIL_ONBOARDING, rules: boundaries({ allow: ['expo-router'] }) },
   {
     files: PAIRING,
     rules: boundaries({ allow: ['expo-router', 'expo-linking', 'link-listeners'] }),
   },
-  // The destinations sheet (the /destinations route, standalone-only) shows each paired server's
-  // compatibility with About's labels.
-  {
-    files: ['src/features/upload/pairing/destinations-sheet.tsx'],
-    rules: boundaries({
-      allow: ['expo-router', 'expo-linking', 'link-listeners', 'standalone-features'],
-    }),
-  },
-  // Opens an upload's link with expo-linking's openURL; the listener rule still holds there.
-  {
-    files: ['src/features/upload/pairing/link-actions.ts'],
-    rules: boundaries({ allow: ['expo-linking'] }),
-  },
   // A round trip of the library backup through the draft-transfer feature. Tests are in neither
   // bundle.
   { files: ['src/db/persistence.test.ts'], rules: boundaries() },
+  // The embed shell never imports pairing either.
+  {
+    files: ['embed/src/**'],
+    rules: {
+      'import/no-restricted-paths': [
+        'error',
+        {
+          basePath: __dirname,
+          zones: [{ target: './embed/src', from: UPLOAD_PAIRING, message: PAIRING_MESSAGE }],
+        },
+      ],
+    },
+  },
   // Rule 4: the embed's entry statically imports only the storage roots, and requires the rest of
   // the runtime once the roots are set.
   {
