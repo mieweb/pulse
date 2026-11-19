@@ -1,6 +1,6 @@
 // The library's rules for a host app that embeds Pulse: the coded errors its writes refuse with,
-// whether the library is read-only, and the host place a draft is for (its `PulseContext`), as the
-// library stores it in four `drafts` columns. No database here, so every writer (and every test
+// whether a newer Pulse migrated the library, and the host place a draft is for (its
+// `PulseContext`), as the library stores it in four `drafts` columns. No database here, so every writer (and every test
 // that stands in for the client) gets the same rules.
 
 /**
@@ -21,27 +21,32 @@ export class LibraryError extends Error {
   }
 }
 
-let readOnly = false;
+let newerSchema = false;
 
 /**
- * Make the library read-only for the rest of this runtime: a newer Pulse migrated it (the
- * downgrade guard, `openReadOnlyIfNewer` in client.ts, which also stops SQLite writing).
+ * Mark this runtime's library as one a newer Pulse migrated (the downgrade guard,
+ * `guardNewerSchema` in client.ts). Its migrations are additive, so this build can still list, send and delete its
+ * drafts; it refuses only what creates or edits one (AD34: a read-only library would strand
+ * unsent videos).
  */
-export function markLibraryReadOnly(): void {
-  readOnly = true;
+export function markNewerSchema(): void {
+  newerSchema = true;
 }
 
-/** Whether this runtime's library is read-only. */
-export function libraryReadOnly(): boolean {
-  return readOnly;
+/** Whether this runtime's library was migrated by a newer Pulse (the catalog's `readOnly`). */
+export function libraryNewerSchema(): boolean {
+  return newerSchema;
 }
 
-/** Throw `storage.newer_schema` when the library is read-only: the start of every library write. */
-export function assertWritable(): void {
-  if (readOnly) {
+/**
+ * Throw `storage.newer_schema` when a newer Pulse migrated the library: the start of every write
+ * that creates or edits a draft. Listing, sending and deleting never call it.
+ */
+export function assertEditable(): void {
+  if (newerSchema) {
     throw new LibraryError(
       'storage.newer_schema',
-      'The library was written by a newer version of Pulse; update Pulse to change it.',
+      'The library was written by a newer version of Pulse; update Pulse to edit it.',
     );
   }
 }

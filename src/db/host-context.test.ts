@@ -122,15 +122,15 @@ describe('utf8Length', () => {
   });
 });
 
-describe('read-only library', () => {
-  it('lets writes through until the library is marked read-only, then refuses them', () => {
+describe('a library a newer Pulse migrated', () => {
+  it('lets edits through until the library is marked newer, then refuses them', () => {
     jest.isolateModules(() => {
       const h = jest.requireActual<typeof import('./host-context')>('./host-context');
-      expect(h.libraryReadOnly()).toBe(false);
-      expect(() => h.assertWritable()).not.toThrow();
-      h.markLibraryReadOnly();
-      expect(h.libraryReadOnly()).toBe(true);
-      const e = refusal(() => h.assertWritable());
+      expect(h.libraryNewerSchema()).toBe(false);
+      expect(() => h.assertEditable()).not.toThrow();
+      h.markNewerSchema();
+      expect(h.libraryNewerSchema()).toBe(true);
+      const e = refusal(() => h.assertEditable());
       expect(e.code).toBe('storage.newer_schema');
     });
   });

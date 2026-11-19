@@ -327,13 +327,21 @@ describe('host context', () => {
   });
 });
 
-describe('a library a newer Pulse wrote (read-only)', () => {
-  it('refuses every draft write with storage.newer_schema, writing nothing', async () => {
+describe('a library a newer Pulse migrated (AD34)', () => {
+  /** drafts.ts on a fresh registry whose library is marked newer, with that registry's file mocks. */
+  function newerSchemaDrafts() {
     let d!: typeof import('./drafts');
+    let files!: typeof import('@/utils/file-store');
     jest.isolateModules(() => {
-      jest.requireActual<typeof import('./host-context')>('./host-context').markLibraryReadOnly();
+      jest.requireActual<typeof import('./host-context')>('./host-context').markNewerSchema();
       d = jest.requireActual<typeof import('./drafts')>('./drafts');
+      files = jest.requireMock<typeof import('@/utils/file-store')>('@/utils/file-store');
     });
+    return { d, files };
+  }
+
+  it('refuses every write that creates or edits a draft with storage.newer_schema', async () => {
+    const { d, files } = newerSchemaDrafts();
     const writes: [string, () => Promise<unknown>][] = [
       ['createDraft', () => d.createDraft({ hostContext: TICKET, createdVia: 'host' })],
       ['setDraftContext', () => d.setDraftContext('d1', TICKET)],
@@ -347,8 +355,6 @@ describe('a library a newer Pulse wrote (read-only)', () => {
       ['reorderSegments', () => d.reorderSegments(['s1'])],
       ['renameDraft', () => d.renameDraft('d1', 'New name')],
       ['duplicateDraft', () => d.duplicateDraft('d1')],
-      ['deleteDraft', () => d.deleteDraft('d1')],
-      ['setMergedExport', () => d.setMergedExport('d1', null)],
     ];
     for (const [name, write] of writes) {
       mockSelects.length = 0;
@@ -358,6 +364,20 @@ describe('a library a newer Pulse wrote (read-only)', () => {
       });
     }
     expect(mockWrites).toEqual([]);
-    expect(deleteDraftDir).not.toHaveBeenCalled();
+    expect(files.deleteDraftDir).not.toHaveBeenCalled();
+  });
+
+  it('still deletes a draft and records the export Send merged', async () => {
+    const { d, files } = newerSchemaDrafts();
+    mockSelects.push([{ status: null }]); // not uploading
+    await d.deleteDraft('d1');
+    expect(mockWrites.map((w) => w.op)).toEqual(['delete']);
+    expect(files.deleteDraftDir).toHaveBeenCalledWith('d1');
+
+    mockWrites.length = 0;
+    await d.setMergedExport('d1', { signature: 'sig', durationMs: 5 });
+    expect(mockWrites).toEqual([
+      { op: 'update', set: { mergedSignature: 'sig', mergedDurationMs: 5 } },
+    ]);
   });
 });

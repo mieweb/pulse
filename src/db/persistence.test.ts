@@ -63,6 +63,11 @@ jest.mock('./secure-token', () => ({ deleteSavedLink: async () => {} }));
 jest.mock('expo-crypto', () => ({
   randomUUID: () => jest.requireActual<typeof import('node:crypto')>('node:crypto').randomUUID(),
 }));
+// Only for the migration gate (`./migrate`): its screens, which the tests here never render.
+jest.mock('@/components/primary-button', () => ({}));
+jest.mock('@/components/state-message', () => ({}));
+jest.mock('@/core/recovery/screen', () => ({}));
+jest.mock('@/utils/relative-date', () => ({ formatDateTime: () => '' }));
 
 // Each test works on "devices": a temp folder with the app's documents, cache and SQLite dirs.
 const ROOT = mkdtempSync(join(tmpdir(), 'pulse-persistence-'));
@@ -1416,12 +1421,16 @@ function appLibrary() {
     client: typeof import('./client');
     drafts: typeof import('./drafts');
     host: typeof import('./host-context');
+    settings: typeof import('./local-settings');
+    gate: typeof import('./migrate');
   };
   jest.isolateModules(() => {
     mods = {
+      gate: jest.requireActual<typeof import('./migrate')>('./migrate'),
       client: jest.requireActual<typeof import('./client')>('./client'),
       drafts: jest.requireActual<typeof import('./drafts')>('./drafts'),
       host: jest.requireActual<typeof import('./host-context')>('./host-context'),
+      settings: jest.requireActual<typeof import('./local-settings')>('./local-settings'),
     };
   });
   return mods;
@@ -1441,37 +1450,84 @@ describe('a library a newer Pulse migrated (downgrade guard)', () => {
   }
   const clip = { id: 'seg-new', originalFilename: 'drafts/x/segments/seg-new.mp4', durationMs: 1 };
 
-  it('embedded: opens read-only, still lists, and refuses an edit with storage.newer_schema', async () => {
+  it('embedded: still lists, sends and deletes, and refuses an edit with storage.newer_schema', async () => {
     const before = await newerLibrary();
-    const { client, drafts, host } = appLibrary();
+    const { client, drafts, host, settings } = appLibrary();
     try {
       expect(isNewerSchema(client.expoDb)).toBe(true);
-      expect(client.openReadOnlyIfNewer('embedded')).toBe(true);
-      expect(host.libraryReadOnly()).toBe(true);
+      expect(client.guardNewerSchema('embedded')).toBe(true);
+      expect(host.libraryNewerSchema()).toBe(true);
 
+      // List.
       expect((await drafts.draftListQuery).map((r) => r.id).sort()).toEqual([D, D2]);
+
+      // Edit: refused, nothing written.
       await expect(drafts.addSegment(D, clip)).rejects.toMatchObject({
         code: 'storage.newer_schema',
       });
       await expect(drafts.renameDraft(D, 'Renamed')).rejects.toMatchObject({
         code: 'storage.newer_schema',
       });
-      // Writes the library makes elsewhere are refused by SQLite on this connection.
-      expect(() =>
-        client.expoDb.execSync("INSERT INTO settings (key, value) VALUES ('k', 'v')"),
-      ).toThrow(/readonly/i);
+      await expect(
+        drafts.setDraftContext(D2, { key: 'ticket:t-7', label: 'Other ticket' }),
+      ).rejects.toMatchObject({ code: 'storage.newer_schema' });
+      await expect(drafts.createDraft({ createdVia: 'host' })).rejects.toMatchObject({
+        code: 'storage.newer_schema',
+      });
+      expect(dump(client.expoDb)).toEqual(before);
+
+      // Send: the export is recorded, this install's id is made and the job is queued.
+      await drafts.setMergedExport(D2, { signature: 'sig-b', durationMs: 900 });
+      const install = settings.installationId();
+      client.db
+        .insert(schema.uploadJobs)
+        .values({
+          draftId: D2,
+          state: 'queued',
+          clientKey: `${install}:${D2}:sig-b`,
+          draftKey: `${install}:${D2}`,
+          mergedSignature: 'sig-b',
+          sentAt: 5,
+        })
+        .run();
+      const jobs = () =>
+        client.expoDb.getAllSync('SELECT draft_id FROM upload_jobs ORDER BY draft_id');
+      expect(jobs()).toEqual([{ draft_id: D }, { draft_id: D2 }]); // the fixture's job, and this one
+
+      // Delete: the draft goes, and its job with it.
+      await drafts.deleteDraft(D2);
+      expect((await drafts.draftListQuery).map((r) => r.id)).toEqual([D]);
+      expect(jobs()).toEqual([{ draft_id: D }]);
+
+      // No migration ran: the newer one is still the library's last.
+      expect(dump(client.expoDb, ['__drizzle_migrations'])).toEqual({
+        __drizzle_migrations: before.__drizzle_migrations,
+      });
+    } finally {
+      client.expoDb.closeSync();
+    }
+  });
+
+  it('embedded: the migration gate runs no migration or housekeeping on it', async () => {
+    const before = await newerLibrary();
+    const { client, gate, host } = appLibrary();
+    const afterMigrations = jest.fn();
+    try {
+      await gate.runMigrations('embedded', afterMigrations);
+      expect(host.libraryNewerSchema()).toBe(true);
+      expect(afterMigrations).not.toHaveBeenCalled(); // no housekeeping either
       expect(dump(client.expoDb)).toEqual(before);
     } finally {
       client.expoDb.closeSync();
     }
   });
 
-  it('standalone: the Pulse app keeps today’s behaviour (writable)', async () => {
+  it('standalone: the Pulse app keeps today’s behaviour (editable)', async () => {
     await newerLibrary();
     const { client, drafts, host } = appLibrary();
     try {
-      expect(client.openReadOnlyIfNewer('standalone')).toBe(false);
-      expect(host.libraryReadOnly()).toBe(false);
+      expect(client.guardNewerSchema('standalone')).toBe(false);
+      expect(host.libraryNewerSchema()).toBe(false);
       await drafts.renameDraft(D2, 'Renamed');
       expect(
         client.expoDb.getFirstSync<{ name: string }>(`SELECT name FROM drafts WHERE id = '${D2}'`),
@@ -1481,13 +1537,13 @@ describe('a library a newer Pulse migrated (downgrade guard)', () => {
     }
   });
 
-  it('embedded, a library this build migrated: writable', async () => {
+  it('embedded, a library this build migrated: editable', async () => {
     (await openMigrated()).closeSync();
     const { client, host } = appLibrary();
     try {
       expect(isNewerSchema(client.expoDb)).toBe(false);
-      expect(client.openReadOnlyIfNewer('embedded')).toBe(false);
-      expect(host.libraryReadOnly()).toBe(false);
+      expect(client.guardNewerSchema('embedded')).toBe(false);
+      expect(host.libraryNewerSchema()).toBe(false);
     } finally {
       client.expoDb.closeSync();
     }

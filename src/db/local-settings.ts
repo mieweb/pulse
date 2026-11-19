@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import { db } from './client';
-import { assertWritable } from './host-context';
 import { localSettings } from './schema';
 
 // This install's own values (`local_settings`): never in a backup or a `.pulse` file, and a restore
@@ -30,7 +29,6 @@ function read(key: string): string | null {
 export function installationId(): string {
   const stored = read(INSTALLATION_ID);
   if (stored) return stored;
-  assertWritable();
   db.insert(localSettings)
     .values({ key: INSTALLATION_ID, value: Crypto.randomUUID() })
     .onConflictDoNothing()
@@ -47,7 +45,6 @@ export function wifiOnlyUploads(): boolean {
 export function setWifiOnlyUploads(on: boolean): void {
   const value = on ? '1' : '0';
   if (read(WIFI_ONLY_UPLOADS) === value) return;
-  assertWritable();
   db.insert(localSettings)
     .values({ key: WIFI_ONLY_UPLOADS, value })
     .onConflictDoUpdate({ target: localSettings.key, set: { value } })

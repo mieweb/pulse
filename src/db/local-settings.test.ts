@@ -65,17 +65,20 @@ describe('installationId', () => {
     expect(conn.getAllSync('SELECT * FROM settings')).toEqual([]);
   });
 
-  it('refuses to make one in a read-only library, but still reads a stored one', () => {
+  it('still makes one in a library a newer Pulse migrated: Send needs it (AD34)', () => {
     jest.isolateModules(() => {
       const h = jest.requireActual<typeof import('./host-context')>('./host-context');
       const ls = jest.requireActual<typeof import('./local-settings')>('./local-settings');
-      h.markLibraryReadOnly();
-      expect(() => ls.installationId()).toThrow(
-        expect.objectContaining({ code: 'storage.newer_schema' }),
-      );
-      expect(rows()).toEqual([]);
-      conn.execSync("INSERT INTO local_settings (key, value) VALUES ('installationId', 'kept')");
-      expect(ls.installationId()).toBe('kept');
+      // This registry's own in-memory library (the client mock runs again in it).
+      const own = jest.requireMock<typeof import('./client')>('./client')
+        .expoDb as unknown as typeof conn;
+      h.markNewerSchema();
+      const id = ls.installationId();
+      expect(own.getAllSync('SELECT key, value FROM local_settings')).toEqual([
+        { key: 'installationId', value: id },
+      ]);
+      ls.setWifiOnlyUploads(true);
+      expect(ls.wifiOnlyUploads()).toBe(true);
     });
   });
 });

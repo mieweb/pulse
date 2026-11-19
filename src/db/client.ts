@@ -3,7 +3,7 @@ import { openDatabaseSync, type SQLiteDatabase } from 'expo-sqlite';
 
 import type { PulseMode } from '@/core/recovery/types';
 import { readDurability } from './durability';
-import { markLibraryReadOnly } from './host-context';
+import { markNewerSchema } from './host-context';
 import { isNewerSchema } from './project';
 import * as schema from './schema';
 import { openLibrary, type OpenedLibrary } from './snapshots';
@@ -38,16 +38,16 @@ if (!library.failed) console.log('[db] durability', JSON.stringify(readDurabilit
 export const db = drizzle(expoDb, { schema });
 
 /**
- * The downgrade guard (C1). An embedded library a newer PulseKit already migrated is opened
- * read-only: its migrations are skipped (it has every one this build ships), SQLite refuses every
- * write on the connection (`query_only`), and the library's own writes reject with
- * `storage.newer_schema` (`assertWritable`). Returns whether it did; the caller then skips the
- * migrations. The Pulse app keeps its behaviour: this never applies to `standalone`.
+ * The downgrade guard (C1, AD34). An embedded library a newer PulseKit already migrated keeps
+ * working with what its additive migrations allow: its migrations are skipped (it has every one
+ * this build ships), listing, sending and deleting go on as before, and only the writes that
+ * create or edit a draft reject with `storage.newer_schema` (`assertEditable`). A read-only
+ * library would strand the unsent videos in it. Returns whether it applied; the caller then skips
+ * the migrations. The Pulse app keeps its behaviour: this never applies to `standalone`.
  */
-export function openReadOnlyIfNewer(mode: PulseMode, conn: SQLiteDatabase = expoDb): boolean {
+export function guardNewerSchema(mode: PulseMode, conn: SQLiteDatabase = expoDb): boolean {
   if (mode !== 'embedded' || !isNewerSchema(conn)) return false;
-  conn.execSync('PRAGMA query_only = ON');
-  markLibraryReadOnly();
-  console.warn('[db] the library was written by a newer Pulse: opened read-only');
+  markNewerSchema();
+  console.warn('[db] the library was written by a newer Pulse: editing is off');
   return true;
 }

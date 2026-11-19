@@ -15,7 +15,7 @@ import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/v
 import { parseCaptionEdit } from './captions';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
-import { assertWritable, hostContextColumns, LibraryError, type HostContext } from './host-context';
+import { assertEditable, hostContextColumns, LibraryError, type HostContext } from './host-context';
 import type { Draft, Segment } from './schema';
 import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
 import { deleteSavedLink } from './secure-token';
@@ -123,7 +123,7 @@ export async function createDraft(
     createdVia?: 'app' | 'host';
   } = {},
 ): Promise<string> {
-  assertWritable();
+  assertEditable();
   const host = opts.hostContext ? hostContextColumns(opts.hostContext, opts.uploadType) : null;
   const id = Crypto.randomUUID();
   await db.insert(drafts).values({
@@ -147,7 +147,7 @@ export async function setDraftContext(
   context: HostContext,
   uploadType?: unknown,
 ): Promise<void> {
-  assertWritable();
+  assertEditable();
   const columns = hostContextColumns(context, uploadType);
   await assertNotUploading(draftId);
   db.transaction((tx) => {
@@ -342,7 +342,7 @@ export async function addSegmentCover(
 }
 
 async function beginClipMutation(draftId: string): Promise<void> {
-  assertWritable();
+  assertEditable();
   await assertNotUploading(draftId);
 }
 
@@ -371,7 +371,8 @@ export async function setMergedExport(
   draftId: string,
   merged: { signature: string; durationMs: number } | null,
 ): Promise<void> {
-  assertWritable();
+  // No `assertEditable`: Send merges and records the export, and a library a newer Pulse migrated
+  // still sends (AD34). Edits clear it only after their own check.
   await db
     .update(drafts)
     .set({
@@ -591,7 +592,7 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
 export async function renameDraft(draftId: string, name: string | null): Promise<void> {
   // Locked too — the name rides the upload as the video's title. The video itself doesn't
   // change, so the persisted export stays valid.
-  assertWritable();
+  assertEditable();
   await assertNotUploading(draftId);
   await db.update(drafts).set({ name, lastModified: now }).where(eq(drafts.id, draftId));
 }
@@ -605,7 +606,7 @@ export async function renameDraft(draftId: string, name: string | null): Promise
  * Returns the new draft's id.
  */
 export async function duplicateDraft(draftId: string): Promise<string> {
-  assertWritable();
+  assertEditable();
   const source = await getDraftForExport(draftId);
   if (!source) throw new Error(`duplicateDraft: draft ${draftId} not found`);
   const copyId = Crypto.randomUUID();
@@ -688,7 +689,7 @@ export async function duplicateDraft(draftId: string): Promise<string> {
 
 /** Delete a draft (segments cascade), its on-disk directory (clips + export) and its saved link. */
 export async function deleteDraft(draftId: string): Promise<void> {
-  assertWritable();
+  // No `assertEditable`: a library a newer Pulse migrated still deletes (AD34).
   await assertNotUploading(draftId);
   await db.delete(drafts).where(eq(drafts.id, draftId));
   deleteDraftDir(draftId);
@@ -708,7 +709,6 @@ export async function setUploadDestination(
   draftId: string,
   destination: Pick<PairedDestination, 'server' | 'artifactId'>,
 ): Promise<void> {
-  assertWritable();
   await db
     .update(drafts)
     .set({
@@ -799,7 +799,7 @@ export async function insertImportedDraft(
   draft: typeof drafts.$inferInsert,
   segmentRows: (typeof segments.$inferInsert)[],
 ): Promise<void> {
-  assertWritable();
+  assertEditable();
   db.transaction((tx) => {
     tx.insert(drafts).values(draft).run();
     if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
