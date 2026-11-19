@@ -5,7 +5,10 @@ cordova-ios 8 or later. It passes JSON requests and replies through unchanged an
 PulseKit's events to your page. It holds no Pulse logic; your page calls Pulse through
 `@mieweb/pulse-embed`, never this plugin directly.
 
-Setup steps are in the Pulse repo's [docs/embedding/cordova.md](../../../docs/embedding/cordova.md).
+Setup steps are in the Pulse repo's [docs/embedding/](../../../docs/embedding/README.md), with
+what is specific to Cordova (deployment target, `SwiftVersion`, `config.xml` purpose strings) in
+[cordova.md](../../../docs/embedding/cordova.md). Releases are prereleases on the npm `rc` tag;
+install both packages at the same exact version.
 
 ```sh
 npm install --save-exact @mieweb/pulse-embed@rc

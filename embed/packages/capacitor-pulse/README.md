@@ -5,7 +5,9 @@ It passes JSON requests and replies through unchanged and delivers PulseKit's ev
 It holds no Pulse logic; your page calls Pulse through `@mieweb/pulse-embed`, never this plugin
 directly.
 
-Setup steps are in the Pulse repo's [docs/embedding/capacitor.md](../../../docs/embedding/capacitor.md).
+Setup steps are in the Pulse repo's [docs/embedding/](../../../docs/embedding/README.md), with
+what is specific to Capacitor in [capacitor.md](../../../docs/embedding/capacitor.md). Releases are
+prereleases on the npm `rc` tag; install both packages at the same exact version.
 
 ```sh
 npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc
@@ -16,7 +18,8 @@ npx cap sync ios
 
 - **iOS:** PulseKit's xcframeworks come from the PulseKit GitHub Release as Swift Package Manager
   binary targets, each checked against its SHA-256 (`Package.swift`). Pulse runs on iPhone with
-  iOS 16.4 or later.
+  iOS 16.4 or later. The plugin has no podspec, so the host's iOS project must use Swift Package
+  Manager (Capacitor 8's `ios/App/CapApp-SPM`).
 - **Android:** a stub. It adds no permissions and no dependencies; `getInfo()` reports
   `supported: false` and every other call answers `unsupported`.
 

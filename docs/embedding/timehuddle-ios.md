@@ -3,7 +3,7 @@
 > **UNTESTED.** These steps come from TimeHuddle's `scripts/patch-ios-spm.py` and
 > `scripts/check-native-sync.sh` and from the Capacitor test host's runs. They have not been run in
 > TimeHuddle's own iOS project yet. Update this page with the findings from the first TimeHuddle
-> dev build against a PulseKit release candidate (milestones M1 and V0.4).
+> dev build against a PulseKit release candidate.
 
 TimeHuddle is a Capacitor app, so [capacitor.md](capacitor.md) applies. This page covers what is
 different about TimeHuddle's project: its SwiftPM patch, its native-sync check and its CI.

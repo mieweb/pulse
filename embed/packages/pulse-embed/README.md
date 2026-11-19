@@ -4,8 +4,17 @@ The JavaScript side of embedding Pulse (PulseKit) in a Capacitor or Cordova app:
 as TypeScript types, the client your page calls, React hooks, and a scripted fake for your tests.
 It needs one native plugin next to it: `@mieweb/capacitor-pulse` or `cordova-plugin-pulse`.
 
-How to add Pulse to an app, and the full contract, are in the Pulse repo's
+How to add Pulse to an app, step by step, and the full contract are in the Pulse repo's
 [docs/embedding](../../../docs/embedding/README.md).
+
+```sh
+npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc   # Capacitor
+npm install --save-exact @mieweb/pulse-embed@rc                              # Cordova, then:
+npx cordova plugin add cordova-plugin-pulse@rc
+```
+
+Releases are prereleases on the npm `rc` tag. Install the client and the plugin at the same exact
+version.
 
 ## What's here
 
@@ -28,11 +37,22 @@ const result = await pulse.record({
 });
 ```
 
+PulseKit needs `uploadMode: 'file'` in this version: the default, `'pulse'`, ends every flow
+`failed` with `unsupported`. Read `pendingResults()` on every page load, and `acknowledge()` each
+result once you've handled it.
+
 The client picks its transport itself: `window.__PULSE_ADAPTER__` (test builds), then Capacitor's
 `Pulse` plugin, then Cordova's `window.PulseKit`, and otherwise an adapter that reports Pulse as
 unavailable, so the same code runs in a desktop browser.
 
-## The fake's server mode
+## The fake
+
+`createFakePulse` models the whole contract, the minor-1 methods (drafts, accounts, Pulse uploads)
+included, and its default flow ends as a Pulse upload. To match the PulseKit that is released, pass
+`flows: [{ result: 'file' }]` and the minor-0 method list as `info.methods`
+([example](../../../docs/embedding/README.md#test-without-a-phone)).
+
+### Server mode
 
 With `createFakePulse({ server: … })` the fake uploads for real: it asks your `HostServices` for an
 upload target, sends the video over TUS with `fetch` (a create, then a PATCH per part) and polls the

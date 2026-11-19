@@ -2,7 +2,8 @@
 
 A Capacitor 8 app for trying the Pulse plugin (`embed/packages/capacitor-pulse`) on a Simulator or a
 phone. Its one page (`www/`) sends raw request envelopes through the plugin and prints every reply and
-event (native-bridge.md §2), so it tests the transport without `@mieweb/pulse-embed`.
+event ([the wire format](../../../docs/embedding/contract.md#on-the-wire)), so it tests the transport
+without `@mieweb/pulse-embed`.
 
 Only the sources are committed. `node_modules/`, `ios/` and `android/` are generated (see
 `embed/hosts/.gitignore`). The plugin comes from this repo through a relative `file:` dependency.

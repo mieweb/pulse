@@ -176,10 +176,43 @@ The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this ap
 
 ## Pulse inside another app
 
-PulseKit is Pulse packaged for other iOS apps: a Capacitor or Cordova app opens Pulse to record,
-edit or export one video and gets the result back. The host's side is `@mieweb/pulse-embed` plus
-one plugin; the setup guide, contract and support matrix are in
-[docs/embedding/](docs/embedding/README.md), and how the two shells share one codebase is in
+PulseKit is Pulse packaged for other apps: a Capacitor or Cordova app opens Pulse full screen to
+record, edit or export one video, and gets one result back with the finished MP4, which the app
+uploads its own way. It runs on iPhone with iOS 16.4 or later. On Android both plugins are stubs:
+`isAvailable()` is false there, and the app shows its own fallback.
+
+| Package                                                        | Used by        | What it is                                                         |
+| -------------------------------------------------------------- | -------------- | ------------------------------------------------------------------ |
+| [`@mieweb/pulse-embed`](embed/packages/pulse-embed/)           | Every host     | The client your page calls, its types, React hooks and a test fake |
+| [`@mieweb/capacitor-pulse`](embed/packages/capacitor-pulse/)   | Capacitor 8    | The native plugin, through Swift Package Manager                   |
+| [`cordova-plugin-pulse`](embed/packages/cordova-plugin-pulse/) | cordova-ios 8+ | The native plugin, through CocoaPods                               |
+
+The three are published together, at one version, as release candidates (prereleases) on the npm
+`rc` tag. In a Capacitor app:
+
+```sh
+npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc
+npx cap sync ios
+```
+
+```ts
+import { contextKey, getPulse } from '@mieweb/pulse-embed';
+
+const pulse = getPulse();
+await pulse.configure({ uploadMode: 'file', hostName: 'TimeHuddle' });
+
+const id = 'TH-482'; // check pulse.isAvailable() before showing a Pulse button
+const context = { key: contextKey('ticket', id), kind: 'ticket', id, label: 'Fix login' };
+const result = await pulse.record(context);
+if (result.status === 'completed' && result.mode === 'file') await upload(result.export); // yours
+await pulse.acknowledge(result.requestId);
+```
+
+That is the shape, not a complete integration: your app also needs the `Info.plist` purpose
+strings, and has to read `pendingResults()` on every page load, because a reload drops the
+`record()` promise. [docs/embedding/](docs/embedding/README.md) has the full step-by-step path for
+Capacitor and Cordova, with a checklist to verify it. The reference hosts are in
+[`embed/hosts/`](embed/hosts/), and how the Pulse app and PulseKit share one codebase is in
 [docs/architecture.md](docs/architecture.md).
 
 ## Development
