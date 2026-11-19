@@ -14,6 +14,10 @@ const FILES = [
   'PulseKitBackground.swift',
 ];
 
+// PulseKit's privacy manifest (K2), a resource at the framework's root, where Apple's privacy
+// report reads it. package-ios.mjs writes the same file into the packaged framework too.
+const PRIVACY_MANIFEST = 'PrivacyInfo.xcprivacy';
+
 // The facade's class is named like its module (`PulseKit.PulseKit`, native-bridge.md §8). The
 // target builds with BUILD_LIBRARY_FOR_DISTRIBUTION, so Swift writes a .swiftinterface, and there
 // every module-qualified name (`PulseKit.JSONValue`) would resolve against the class instead of
@@ -39,9 +43,28 @@ function addAliasFlag(project, target) {
 }
 
 /**
+ * Adds `name` (already copied into the target's folder) to the target's Copy Bundle Resources.
+ * The host app has a PrivacyInfo.xcprivacy of its own, so this looks in the PulseKit group only.
+ */
+function addResource(project, targetUuid, groupKey, name) {
+  const group = project.getPBXGroupByKey(groupKey);
+  if (group && (group.children || []).some((child) => child.comment === name)) return;
+  if (!project.pbxResourcesBuildPhaseObj(targetUuid)) {
+    project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', targetUuid);
+  }
+  // The xcode library doesn't know .xcprivacy; Xcode files it as XML (UTF-8).
+  project.addResourceFile(
+    name,
+    { target: targetUuid, lastKnownFileType: 'text.xml', defaultEncoding: 4 },
+    groupKey,
+  );
+}
+
+/**
  * Adds the host-facing facade (native/ios/PulseKit*.swift, `@objc(PulseKit)`) to the PulseKit
  * framework that expo-brownfield generates, so hosts call one Pulse class and never React Native
- * directly. Needs the expo-brownfield plugin's PulseKit target to exist when it runs.
+ * directly, plus PulseKit's privacy manifest. Needs the expo-brownfield plugin's PulseKit target to
+ * exist when it runs.
  */
 module.exports = function withPulseKitFacade(config) {
   return withXcodeProject(config, (cfg) => {
@@ -58,6 +81,11 @@ module.exports = function withPulseKitFacade(config) {
       fs.copyFileSync(path.join(__dirname, '../native/ios', name), path.join(dir, name));
       if (!project.hasFile(name)) project.addSourceFile(name, { target: targetUuid }, groupKey);
     }
+    fs.copyFileSync(
+      path.join(__dirname, '../native/ios', PRIVACY_MANIFEST),
+      path.join(dir, PRIVACY_MANIFEST),
+    );
+    addResource(project, targetUuid, groupKey, PRIVACY_MANIFEST);
     addAliasFlag(project, target);
     return cfg;
   });

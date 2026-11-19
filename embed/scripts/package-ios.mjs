@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Packages expo-brownfield's iOS output (embed/artifacts) into what a PulseKit release ships:
-// one zip per xcframework, SHA256SUMS, the dSYMs and a size report (plan V0.2 = K1, K3).
+// one zip per xcframework, an all-in-one zip for CocoaPods, SHA256SUMS, the dSYMs and a size
+// report (plan V0.2 = K1, K3), with privacy manifests and, given --sign, signatures (K2).
 // It replaces embed-spike's stage.sh. Run it on a Mac (ditto, dsymutil, lipo, strip, otool,
 // plutil); `--dry-run` prints every step instead and writes nothing.
 //
@@ -11,9 +12,12 @@
 //   3. Copy the dSYMs out (or make them with dsymutil), then `strip -x` each binary.
 //   4. Stamp PulseKit.framework's Info.plist (PulseKitVersion, PulseKitBuild, PulseKitGitSha,
 //      PulseKitContractMinor, PulseKitFormatVersion, PulseKitDbSchema).
+//   5. Write the privacy manifest into each framework that needs one (lib/release-privacy).
+//   6. With --sign, `codesign --timestamp` the xcframework (after everything inside it is final).
 // Before anything: refuse an --out that is, contains or sits inside what it reads (see lib/out-dir).
 // Then: add the vendored frameworks the brownfield CLI leaves out (whisper.rn's rnwhisper), check
-// that every @rpath framework a binary loads ships, zip, write SHA256SUMS and the size report.
+// that every @rpath framework a binary loads ships, zip, copy the --attach files, write SHA256SUMS
+// (every asset) and the size report.
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -27,6 +31,12 @@ import { assertSafeOut, foreignOutEntries, OUT_ENTRIES } from './lib/out-dir.mjs
 import { frameworkName, planSlices, prunedManifest, sharedEntries } from './lib/platforms.mjs';
 import { buildPlist, isBinaryPlist, parsePlist } from './lib/plist.mjs';
 import { readSourceStamps, stampPlist, STAMP_KEYS, validateStamps } from './lib/plist-stamp.mjs';
+import { DSYMS_ZIP, XCFRAMEWORKS_ZIP } from './lib/release-assets.mjs';
+import {
+  PRIVACY_MANIFESTS,
+  privacyDestinations,
+  privacyManifestProblems,
+} from './lib/release-privacy.mjs';
 import { missingRpathDependencies, rpathFrameworks } from './lib/rpath.mjs';
 import { createRunner } from './lib/runner.mjs';
 import { buildSizeReport, formatSizeReport, treeSize } from './lib/size-report.mjs';
@@ -36,7 +46,6 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 
 /** Frameworks PulseKit loads that expo-brownfield doesn't put in its output. */
 const VENDORED = ['node_modules/whisper.rn/ios/rnwhisper.xcframework'];
-const DSYMS_ZIP = 'PulseKit-dSYMs.zip';
 const ZIP_FLAGS = ['-c', '-k', '--norsrc', '--noextattr', '--noqtn', '--noacl', '--keepParent'];
 
 const HELP = `Usage: node embed/scripts/package-ios.mjs [options]
@@ -58,13 +67,19 @@ Options:
                     PulseKit and @mieweb/pulse-embed share, AD18).
   --build <n>       PulseKitBuild (default: $GITHUB_RUN_NUMBER, else the commit count).
   --git-sha <sha>   PulseKitGitSha (default: git rev-parse HEAD).
+  --sign <identity> codesign --timestamp each packaged xcframework with this identity (a name or
+                    SHA-1, as \`security find-identity\` prints it). Without it nothing is signed.
+  --keychain <path> The keychain holding --sign's identity (default: the search list).
+  --attach <file>   Copy a file into release/ and list it in SHA256SUMS (the source map, the
+                    notices); repeatable.
   --dry-run         Print every step and write nothing.
   -h, --help        Show this help.
 
 Writes:
   <out>/xcframeworks/   the packaged xcframeworks (what a local host links against)
   <out>/dSYMs/          debug symbols, per xcframework and slice
-  <out>/release/        <Name>.xcframework.zip per xcframework, ${DSYMS_ZIP}, SHA256SUMS,
+  <out>/release/        <Name>.xcframework.zip per xcframework, ${XCFRAMEWORKS_ZIP} (all of
+                        them, for CocoaPods), ${DSYMS_ZIP}, the --attach files, SHA256SUMS,
                         size-report.md, size-report.json
 Check a download with: cd <out>/release && shasum -a 256 -c SHA256SUMS
 `;
@@ -112,6 +127,9 @@ function main() {
       version: { type: 'string' },
       build: { type: 'string' },
       'git-sha': { type: 'string' },
+      sign: { type: 'string' },
+      keychain: { type: 'string' },
+      attach: { type: 'string', multiple: true },
       'dry-run': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -207,8 +225,43 @@ function main() {
         problems.push(`${src.name}/${lib.id}/${lib.binaryPath}: binary missing`);
       }
     }
-    return { ...src, manifest, keep, drop, shared };
+    /** @type {string | undefined} */
+    const privacySource =
+      PRIVACY_MANIFESTS[/** @type {keyof typeof PRIVACY_MANIFESTS} */ (src.name)];
+    /** @type {{ xml: string, destinations: string[] } | null} */
+    let privacy = null;
+    if (privacySource) {
+      const xml = fs.readFileSync(path.join(repoRoot, privacySource), 'utf8');
+      problems.push(...privacyManifestProblems(xml).map((p) => `${privacySource}: ${p}`));
+      privacy = { xml, destinations: privacyDestinations(src.name, keep) };
+    }
+    return { ...src, manifest, keep, drop, shared, privacy };
   });
+  for (const name of Object.keys(PRIVACY_MANIFESTS)) {
+    if (!jobs.some((j) => j.name === name)) {
+      console.warn(
+        `package-ios: warning: ${name} isn't in this build; its privacy manifest is skipped`,
+      );
+    }
+  }
+  const attachments = (values.attach ?? []).map((file) => path.resolve(file));
+  /** @type {Set<string>} */
+  const releaseNames = new Set([
+    ...jobs.map((j) => `${j.name}.zip`),
+    XCFRAMEWORKS_ZIP,
+    DSYMS_ZIP,
+    'SHA256SUMS',
+    'size-report.md',
+    'size-report.json',
+  ]);
+  for (const file of attachments) {
+    const name = path.basename(file);
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile())
+      problems.push(`--attach ${file}: no such file`);
+    else if (releaseNames.has(name))
+      problems.push(`--attach ${file}: release/ already has a ${name}`);
+    releaseNames.add(name);
+  }
   if (problems.length > 0) {
     throw new Error(`Can't package:\n  ${problems.join('\n  ')}`);
   }
@@ -293,6 +346,9 @@ function main() {
       buildPlist(prunedManifest(job.manifest, job.keep)),
       `AvailableLibraries: ${kept}`,
     );
+    for (const dest of job.privacy?.destinations ?? []) {
+      runner.writeFile(path.join(staged, dest), job.privacy?.xml ?? '', 'privacy manifest (K2)');
+    }
   }
 
   // --- What ships has no unsafe symlinks ------------------------------------------------------
@@ -307,6 +363,27 @@ function main() {
   } else {
     console.log('# (symlinks are checked again on the packaged copies in a real run)');
   }
+
+  // --- Sign: last, because any change inside an xcframework breaks its signature ---------------
+  if (values.sign) {
+    runner.step(`Sign every xcframework (codesign --timestamp) as ${values.sign}`);
+    const keychain = values.keychain ? ['--keychain', path.resolve(values.keychain)] : [];
+    for (const job of jobs) {
+      const staged = path.join(frameworksDir, job.name);
+      runner.run('codesign', [
+        '--force',
+        '--timestamp',
+        '--sign',
+        values.sign,
+        ...keychain,
+        staged,
+      ]);
+      runner.inspect('codesign', ['--verify', '--strict', '--verbose=2', staged]);
+    }
+  } else {
+    console.log('# not signed (no --sign); a release signs with the distribution identity');
+  }
+
   // --- Zips, SHA256SUMS, size report --------------------------------------------------------
   runner.step('Zip, checksum and size report');
   runner.mkdir(releaseDir);
@@ -315,10 +392,19 @@ function main() {
     runner.run('ditto', [...ZIP_FLAGS, path.join(frameworksDir, job.name), zip]);
     return { job, zip };
   });
+  // Without --keepParent: the xcframeworks sit at the zip's top level, where the podspec's
+  // `vendored_frameworks = '*.xcframework'` looks.
+  const allZip = path.join(releaseDir, XCFRAMEWORKS_ZIP);
+  runner.run('ditto', [...ZIP_FLAGS.filter((f) => f !== '--keepParent'), frameworksDir, allZip]);
   const dsymsZip = path.join(releaseDir, DSYMS_ZIP);
   runner.run('ditto', [...ZIP_FLAGS, dsymsDir, dsymsZip]);
+  const attached = attachments.map((file) => {
+    const dest = path.join(releaseDir, path.basename(file));
+    runner.run('ditto', [file, dest]);
+    return dest;
+  });
 
-  const assets = [...zips.map((z) => z.zip), dsymsZip];
+  const assets = [...zips.map((z) => z.zip), allZip, dsymsZip, ...attached];
   runner.writeFile(
     path.join(releaseDir, 'SHA256SUMS'),
     dryRun
@@ -326,7 +412,7 @@ function main() {
       : formatSha256Sums(
           assets.map((file) => ({ name: path.basename(file), sha256: sha256File(file) })),
         ),
-    `SHA-256 of ${assets.length} zips (= swift package compute-checksum)`,
+    `SHA-256 of ${assets.length} assets (a zip's = swift package compute-checksum)`,
   );
 
   const report = buildSizeReport([
