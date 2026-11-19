@@ -312,6 +312,9 @@ class BackgroundUploadManager {
    * left in the iOS background session, clear upload temp files, and fail every
    * draft still marked `uploading` — the app was killed mid-upload. What that upload
    * created on the server is left to retention (its URLs died with the process).
+   * A draft with an outbox job (`upload_jobs`, the embed's) is never failed here: that
+   * job is its only upload state, and the outbox's launch rule resumes it (AD33;
+   * `getUploadingDraftIds` leaves it out).
    * Idempotent: every call returns the same promise.
    */
   prepareLaunch(): Promise<void> {

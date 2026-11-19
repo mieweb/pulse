@@ -19,6 +19,7 @@ import { assertEditable, hostContextColumns, LibraryError, type HostContext } fr
 import type { Draft, Segment } from './schema';
 import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
 import { deleteSavedLink } from './secure-token';
+import { isLockedJobState, type JobState } from './upload-jobs';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
@@ -286,10 +287,28 @@ export async function getDraftUploadStatus(draftId: string): Promise<Draft['uplo
  * A draft is LOCKED while it uploads: it goes up exactly as it was when Upload was tapped, and
  * cancelling is the only way back to editing. The UI never offers an edit on an uploading draft,
  * so this throwing is a backstop, not a user-reachable path.
+ *
+ * Two upload states, one per shell, read in one query (AD33): the Pulse app's `upload_status`
+ * ('uploading' locks), and an embedded draft's outbox job, which locks while it prepares, uploads
+ * or delivers and refuses with `draft.locked` (a queued, paused or failed job is cancelled by the
+ * edit instead: the outbox's `cancelJob`, called before the edit).
  */
 export async function assertNotUploading(draftId: string): Promise<void> {
-  if ((await getDraftUploadStatus(draftId)) === 'uploading') {
+  const [row] = await db
+    .select({
+      status: drafts.uploadStatus,
+      jobState: sql<JobState | null>`(select ${uploadJobs.state} from ${uploadJobs} where ${uploadJobs.draftId} = ${drafts.id})`,
+    })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+  if (row?.status === 'uploading') {
     throw new Error(`Draft ${draftId} is uploading — cancel the upload to edit it`);
+  }
+  if (row?.jobState && isLockedJobState(row.jobState)) {
+    throw new LibraryError(
+      'draft.locked',
+      `Draft ${draftId} is uploading (${row.jobState}): it goes up as it was at Send.`,
+    );
   }
 }
 
@@ -770,12 +789,20 @@ export async function getUploadedDraftIds(): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
-/** Drafts marked `uploading` — at launch, the uploads a killed app never finished. */
+/**
+ * Drafts marked `uploading` — at launch, the uploads a killed app never finished. Never one with
+ * an outbox job: that upload is the embed's, and its own launch rule resumes it (AD33).
+ */
 export async function getUploadingDraftIds(): Promise<string[]> {
   const rows = await db
     .select({ id: drafts.id })
     .from(drafts)
-    .where(eq(drafts.uploadStatus, 'uploading'));
+    .where(
+      and(
+        eq(drafts.uploadStatus, 'uploading'),
+        sql`not exists (select 1 from ${uploadJobs} where ${uploadJobs.draftId} = ${drafts.id})`,
+      ),
+    );
   return rows.map((r) => r.id);
 }
 

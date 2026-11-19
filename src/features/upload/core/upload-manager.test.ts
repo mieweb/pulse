@@ -6,7 +6,7 @@
  * the draft and DELETEs what the run created; the database decides a cancel/finish race; a kill
  * fails the draft at the next launch.
  */
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { Segment } from '@/db/schema';
 
@@ -52,6 +52,37 @@ jest.mock('@/db/drafts', () => {
     ),
     getDraftName: jest.fn(async () => 'My Draft'),
   };
+});
+
+// The real library (migrations on node:sqlite) for the outbox cases at the end, which run the real
+// `@/db/drafts` on it; everything above uses the stand-in drafts module.
+jest.mock(
+  'expo-sqlite',
+  () =>
+    jest.requireActual<typeof import('@/test-support/expo-sqlite-node')>(
+      '@/test-support/expo-sqlite-node',
+    ).mockModule,
+);
+jest.mock('@/db/client', () => {
+  const { readdirSync, readFileSync } = jest.requireActual<typeof import('node:fs')>('node:fs');
+  const { join } = jest.requireActual<typeof import('node:path')>('node:path');
+  const { SQLiteDatabase } = jest.requireActual<typeof import('@/test-support/expo-sqlite-node')>(
+    '@/test-support/expo-sqlite-node',
+  );
+  const { drizzle } =
+    jest.requireActual<typeof import('drizzle-orm/expo-sqlite')>('drizzle-orm/expo-sqlite');
+  const conn = new SQLiteDatabase(':memory:');
+  const dir = join(__dirname, '../../../../drizzle');
+  for (const file of readdirSync(dir)
+    .filter((f) => /^\d{4}_.*\.sql$/.test(f))
+    .sort()) {
+    for (const statement of readFileSync(join(dir, file), 'utf8').split(
+      '--> statement-breakpoint',
+    )) {
+      if (statement.trim()) conn.execSync(statement);
+    }
+  }
+  return { expoDb: conn, db: drizzle(conn as never) };
 });
 
 jest.mock('@/db/destinations', () => {
@@ -1053,5 +1084,106 @@ describe('the way back to the host', () => {
     await eventually(() => db.log.includes('burn:back4'));
     expect(uploads.getAnnouncement('back4')).toBeNull();
     expect(db.status.get('back4')).toBeNull();
+  });
+});
+
+// The embed's outbox jobs on the real library (AD33): the Pulse app's launch check fails only its
+// own interrupted uploads, and the lock reads both upload states.
+describe('outbox jobs', () => {
+  type Drafts = typeof import('@/db/drafts');
+  type Library = {
+    run: (sql: string, ...params: unknown[]) => void;
+    get: (sql: string, ...params: unknown[]) => Record<string, unknown> | null;
+  };
+
+  // The stand-in drafts module is shared with the cases above: its launch queries are swapped for
+  // the real ones here and put back after each case.
+  const stand = jest.requireMock<Record<string, unknown>>('@/db/drafts');
+  const LAUNCH_QUERIES = ['getUploadingDraftIds', 'burnUploadPairing', 'getUploadedDraftIds'];
+  const standIns = Object.fromEntries(LAUNCH_QUERIES.map((name) => [name, stand[name]]));
+  afterEach(() => {
+    Object.assign(stand, standIns);
+  });
+
+  /**
+   * A fresh manager (a new launch) on a fresh library, with the real drafts queries the launch
+   * check and the lock run.
+   */
+  function launchWithLibrary() {
+    let manager!: typeof uploads;
+    let drafts!: Drafts;
+    let library!: Library;
+    native.cancelOrphans = async () => 0;
+    jest.isolateModules(() => {
+      const real = jest.requireActual<Drafts>('@/db/drafts');
+      for (const name of LAUNCH_QUERIES) stand[name] = real[name as keyof Drafts];
+      const { expoDb } = jest.requireMock<{
+        expoDb: { runSync: Library['run']; getFirstSync: Library['get'] };
+      }>('@/db/client');
+      library = {
+        run: (sql, ...params) => expoDb.runSync(sql, ...params),
+        get: (sql, ...params) => expoDb.getFirstSync(sql, ...params),
+      };
+      drafts = real;
+      manager = jest.requireActual<{ uploads: typeof uploads }>('./upload-manager').uploads;
+    });
+    return { manager, drafts, library };
+  }
+
+  function addDraft(library: Library, id: string, uploadStatus: string | null) {
+    library.run('INSERT INTO drafts (id, upload_status) VALUES (?, ?)', id, uploadStatus);
+  }
+  function addJob(library: Library, draftId: string, state: string) {
+    library.run(
+      `INSERT INTO upload_jobs (draft_id, state, client_key, draft_key, merged_signature, sent_at)
+       VALUES (?, ?, ?, ?, 'sig', 1)`,
+      draftId,
+      state,
+      `i:${draftId}:k`,
+      `i:${draftId}`,
+    );
+  }
+
+  it('an embedded job survives the launch check; a standalone upload a kill left is failed', async () => {
+    const { manager, library } = launchWithLibrary();
+    addDraft(library, 'standalone', 'uploading');
+    // Embedded drafts never write upload_status (AD33); this one does, to prove the check skips
+    // a draft with a job whatever its columns say.
+    addDraft(library, 'embedded', 'uploading');
+    addJob(library, 'embedded', 'uploading');
+
+    await manager.prepareLaunch();
+
+    expect(library.get(`SELECT upload_status FROM drafts WHERE id = 'standalone'`)).toEqual({
+      upload_status: null,
+    });
+    expect(library.get(`SELECT upload_status FROM drafts WHERE id = 'embedded'`)).toEqual({
+      upload_status: 'uploading',
+    });
+    expect(library.get(`SELECT state FROM upload_jobs WHERE draft_id = 'embedded'`)).toEqual({
+      state: 'uploading',
+    });
+  });
+
+  it('assertNotUploading blocks while a job prepares, uploads or delivers, not while it waits', async () => {
+    const { drafts, library } = launchWithLibrary();
+    for (const state of ['preparing', 'uploading', 'delivering']) {
+      addDraft(library, state, null);
+      addJob(library, state, state);
+      await expect(drafts.assertNotUploading(state)).rejects.toMatchObject({
+        name: 'LibraryError',
+        code: 'draft.locked',
+      });
+    }
+    for (const state of ['queued', 'needs_credentials', 'failed']) {
+      addDraft(library, state, null);
+      addJob(library, state, state);
+      await expect(drafts.assertNotUploading(state)).resolves.toBeUndefined();
+    }
+    // The Pulse app's own lock is unchanged.
+    addDraft(library, 'standalone', 'uploading');
+    await expect(drafts.assertNotUploading('standalone')).rejects.toThrow(/uploading/);
+    addDraft(library, 'idle', null);
+    await expect(drafts.assertNotUploading('idle')).resolves.toBeUndefined();
   });
 });
