@@ -2,13 +2,18 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import type { Segment } from '@/db/schema';
 
-import { startUpload, type UploadTarget, type UploadTargetProvider } from './target-provider';
+import {
+  NO_TARGETS,
+  startUpload,
+  type UploadTarget,
+  type UploadTargetProvider,
+} from './target-provider';
 import type { UploadClaim } from './types';
 
 /** A provider that records each claim it is handed. */
 function recordingProvider() {
   const claim = jest.fn(async (_claim: UploadClaim) => {});
-  const provider: UploadTargetProvider = { kind: 'host', claim };
+  const provider: UploadTargetProvider = { kind: 'host', claim, Targets: () => null };
   return { provider, claim };
 }
 
@@ -67,5 +72,18 @@ describe('startUpload', () => {
     expect(started).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('set no upload targets'));
     warn.mockRestore();
+  });
+});
+
+describe('NO_TARGETS', () => {
+  it('offers nothing to pick, claim, go back to or open', async () => {
+    expect(NO_TARGETS.available).toBe(false);
+    expect(NO_TARGETS.picker).toBeNull();
+    expect(NO_TARGETS.picked).toBeNull();
+    expect(NO_TARGETS.reopen).toBeNull();
+    expect(await NO_TARGETS.resolvePicked()).toBeNull();
+    expect(
+      NO_TARGETS.backToHost({ url: 'https://huddle.example.test/ticket/12', app: 'Huddle' }),
+    ).toBeNull();
   });
 });

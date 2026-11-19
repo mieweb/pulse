@@ -9,9 +9,9 @@ import { useDraftUploadState } from './use-uploads';
 /**
  * The export screen's binding to the background upload system — a thin
  * controller: `claim` a target the person picked (spend it, pair the draft and
- * start uploading, in one tap) and `cancel`. Which targets there are and how one
- * is spent is the shell's (`UploadStrategyContext`); picking one is the screen's
- * (the Pulse app's pool: `usePoolTargets` in upload/pairing). It hands the actual
+ * start uploading, in one tap) and `cancel`. Which targets there are, the picker
+ * and how one is spent are the shell's provider's (`UploadStrategyContext`; the
+ * picked target comes from `useUploadTargets`). It hands the actual
  * upload to the module-scope `uploads` manager (see `upload-manager.ts`):
  * leaving the screen doesn't abort the upload. There is no retry: a failed
  * upload unpairs the draft, and a new target is the retry.

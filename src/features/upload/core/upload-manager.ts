@@ -235,7 +235,7 @@ class BackgroundUploadManager {
   private launch: Promise<void> | null = null;
 
   /**
-   * Foreground failure surface, registered by the upload provider at startup
+   * Foreground failure surface, registered by the shell at startup (`startUploads`)
    * (inverted dependency — this module stays React-free). A failure is a toast
    * in the foreground and `uploadNotify.failed` in the background (which no-ops
    * in the foreground, so they never double up).
@@ -820,5 +820,5 @@ class BackgroundUploadManager {
   }
 }
 
-/** The app-wide singleton. Imported by `upload-deep-link-provider` so it registers for the app's lifetime. */
+/** The app-wide singleton. The shell starts it for the app's lifetime (`start-uploads.ts`). */
 export const uploads = new BackgroundUploadManager();

@@ -4,10 +4,13 @@ import type { UploadClaim } from '@/features/upload/core/types';
 import { uploads } from '@/features/upload/core/upload-manager';
 
 import { poolProvider } from './pool-provider';
+import { PoolTargets } from './pool-targets';
 
 jest.mock('@/features/upload/core/upload-manager', () => ({
   uploads: { claim: jest.fn(async () => {}) },
 }));
+// The picker's hooks read the database; this test only needs its identity.
+jest.mock('./pool-targets', () => ({ PoolTargets: () => null }));
 
 const claim = uploads.claim as jest.MockedFunction<typeof uploads.claim>;
 
@@ -25,8 +28,9 @@ const CLAIM: UploadClaim = {
 };
 
 describe('poolProvider', () => {
-  it('is the paired pool', () => {
+  it('is the paired pool, picked with the pool’s own picker', () => {
     expect(poolProvider.kind).toBe('pool');
+    expect(poolProvider.Targets).toBe(PoolTargets);
   });
 
   it('delegates to the upload manager’s claim with the same args', async () => {
