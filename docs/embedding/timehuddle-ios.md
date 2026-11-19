@@ -16,8 +16,14 @@ On TimeHuddle's Pulse branch (draft PR mieweb/timehuddle#881):
   `UIViewControllerBasedStatusBarAppearance` is `YES`.
 - **`AppDelegate.swift`** forwards `application(_:handleEventsForBackgroundURLSession:completionHandler:)`
   to PulseKit, looked up by its Objective-C name at run time, so the app builds with or without
-  PulseKit. PulseKit doesn't upload in the background yet; the forwarding is in place for when it
-  does.
+  PulseKit. PulseKit runs each upload in its own background session
+  (`com.mieweb.pulsekit.upload.<namespace>`), and this forwarding is how iOS hands those sessions'
+  events back after it relaunched the app. PulseKit answers `true` for its own sessions and calls
+  the completion handler once their events are delivered; the app handles any other session.
+- **Not there yet (recommended):** a call to `PulseKit.prepareBackgroundUploads` (the class
+  method, by selector like `shared`) from `application(_:didFinishLaunchingWithOptions:)`. It
+  reattaches uploads iOS kept running even in a launch where Pulse never opens. The first
+  `PulseKit.shared` access does the same, so the hook is a safeguard, not a requirement.
 - **`@mieweb/pulse-embed`** comes from a vendored tarball, `vendor/mieweb-pulse-embed.tgz`, through
   a `file:` dependency, the same way as `@mieweb/ui`.
 

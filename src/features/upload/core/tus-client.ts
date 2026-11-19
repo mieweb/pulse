@@ -64,6 +64,12 @@ export type TusUploadOptions = {
    * created (e.g. to `DELETE` it on cancel) without waiting for the whole upload to finish.
    */
   onResourceCreated?: (resourceUrl: string) => void;
+  /**
+   * The upload this artifact already has (its URL from an earlier `onResourceCreated`, kept across
+   * launches): nothing is created, and the transfer resumes from the server's `HEAD` offset. A
+   * `404` there means the server no longer has it (terminal, `statusCode` 404).
+   */
+  resumeUrl?: string;
   signal?: AbortSignal;
   onProgress?: (progress: TusUploadProgress) => void;
   /**
@@ -481,9 +487,15 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
       opts.kind,
     );
 
-  // Every call creates its own upload and only ever resumes within itself — there is no resume
-  // input. (A create retried after its 201 was lost meets its own reservation as a terminal 409;
-  // only an idempotent create on the server could tell the two apart.)
+  if (opts.resumeUrl) {
+    opts.log?.info(`${opts.kind}: resuming the upload for ${shortId(opts.artifactId)}`);
+    await transfer(opts.resumeUrl);
+    return { resourceUrl: opts.resumeUrl };
+  }
+
+  // Without `resumeUrl`, a call creates its own upload and only resumes within itself. (A create
+  // retried after its 201 was lost meets its own reservation as a terminal 409; only an idempotent
+  // create on the server could tell the two apart.)
   const resourceUrl = await withRetry(
     () => createUpload(opts, fetchImpl),
     opts.signal,

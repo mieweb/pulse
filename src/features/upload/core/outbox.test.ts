@@ -356,6 +356,15 @@ describe('nextJobState: pulse-schema.md §3.3', () => {
       ctx(),
     );
     expect(again).toMatchObject({ set: { attempts: 2, nextAttemptAt: NOW + 10_000 } });
+    // A server that says when: at least that long, and the backoff when it is longer.
+    const told = (attempts: number) =>
+      nextJobState(
+        job('uploading', { attempts }),
+        { type: 'retryableError', code: 'upload.conflict', message: 'x', retryAfterMs: 310_000 },
+        ctx(),
+      );
+    expect(told(1)).toMatchObject({ set: { attempts: 1, nextAttemptAt: NOW + 310_000 } });
+    expect(told(9)).toMatchObject({ set: { attempts: 9, nextAttemptAt: NOW + 900_000 } });
   });
 
   it('delivering retires on the outcome', () => {

@@ -95,7 +95,11 @@ export type JobEvent =
   | { type: 'credentialsLost'; code: CredentialsCode; message: string }
   /** Foreground, `resumeOutbox`, or a host answer: try a paused job again. */
   | { type: 'resume' }
-  | { type: 'retryableError'; code: string; message: string }
+  /**
+   * `retryAfterMs`: the server said when trying again can work (a create meets an upload of its
+   * own that PulseVault reclaims only once it has been idle long enough); the wait is at least that.
+   */
+  | { type: 'retryableError'; code: string; message: string; retryAfterMs?: number }
   | { type: 'permanentError'; code: PermanentCode; message: string }
   /** While uploading: a part was created or finished, or the video moved (not its end). */
   | { type: 'partsProgress'; parts: UploadPart[]; bytesSent?: number }
@@ -287,7 +291,7 @@ export function nextJobState(
       const attempts = job.state === 'queued' ? job.attempts + 1 : Math.max(job.attempts, 1);
       return update('queued', {
         attempts,
-        nextAttemptAt: now + backoffMs(attempts - 1),
+        nextAttemptAt: now + Math.max(backoffMs(attempts - 1), event.retryAfterMs ?? 0),
         lastErrorCode: event.code,
         lastErrorMessage: event.message,
       });

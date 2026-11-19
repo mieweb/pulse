@@ -468,6 +468,52 @@ describe('uploadViaTus', () => {
     expect(lines[2]).toBe('info video: resuming, the server has 12 B of 20 B');
   });
 
+  it('resumes an upload it already has from the HEAD offset, without creating one', async () => {
+    const file = fakeFile(100);
+    const resumeUrl = `${SERVER}/upload/abc`;
+    const { fetchImpl, calls } = createFetchStub({
+      HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '60' } })],
+    });
+    const { uploadChunk, calls: chunks } = createChunkStub([chunkOk(100)]);
+
+    const result = await uploadViaTus({
+      server: SERVER,
+      token: 'fresh-token',
+      artifactId: ARTIFACT_ID,
+      filename: 'video.mp4',
+      kind: 'video',
+      file: file as never,
+      resumeUrl,
+      fetchImpl,
+      uploadChunk,
+    });
+
+    expect(result.resourceUrl).toBe(resumeUrl);
+    expect(calls.map((c) => c.init?.method)).toEqual(['HEAD']);
+    expect(chunks).toEqual([expect.objectContaining({ offset: 60, chunkBytes: 40 })]);
+    expect(chunks[0].headers.Authorization).toBe('Bearer fresh-token');
+  });
+
+  it('fails a resume terminally with 404 when the server no longer has the upload', async () => {
+    const { fetchImpl, calls } = createFetchStub({ HEAD: [new Response(null, { status: 404 })] });
+    const { uploadChunk } = createChunkStub([]);
+    const failure = await uploadViaTus({
+      server: SERVER,
+      token: 't',
+      artifactId: ARTIFACT_ID,
+      filename: 'video.mp4',
+      kind: 'video',
+      file: fakeFile(10) as never,
+      resumeUrl: `${SERVER}/upload/gone`,
+      fetchImpl,
+      uploadChunk,
+    }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(TusUploadError);
+    expect((failure as TusUploadError).statusCode).toBe(404);
+    expect((failure as TusUploadError).retryable).toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+
   it('treats a create 409 as terminal', async () => {
     const file = fakeFile(20);
     const { fetchImpl, calls } = createFetchStub({
