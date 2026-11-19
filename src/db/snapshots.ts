@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 
 import { toFileUri } from '@/utils/file-store';
 import { applyDurability, quickCheckOk } from './durability';
-import { APP_SCHEMA_VERSION, schemaVersion } from './project';
+import { APP_SCHEMA_VERSION, carryLocalTables, schemaVersion } from './project';
 import { documentDir } from '@/utils/storage-root';
 import { databaseDir } from './database-dir';
 
@@ -253,6 +253,7 @@ export function openLibrary(now: number, ios = Platform.OS === 'ios'): OpenedLib
       if (!isSound(conn)) conn = setAsideDamaged(conn, now, ios);
       const source = openBackup(PENDING_RESTORE);
       try {
+        carryLocalTables(conn, source); // this phone's receipts and local settings stay
         copyDatabase(source, conn); // one transaction: the old library or the new one, never half
       } finally {
         source.closeSync();
