@@ -52,7 +52,14 @@ export function CloseButton({
       {({ pressed }) =>
         overVideo ? (
           <GlassPill style={styles.button}>
-            <View style={pressed && styles.pressed}>{icon}</View>
+            {/* Not collapsable: without a style this view is flattened away, so a press would move
+                the glyph into a new native parent. The ✕ pops the screen in the same frame, and on
+                Android the popped screen's views are already held for its exit animation by then:
+                the move crashed (`addViewAt ... already has a parent`). Kept as a view, a press is
+                only an opacity change. */}
+            <View collapsable={false} style={pressed && styles.pressed}>
+              {icon}
+            </View>
           </GlassPill>
         ) : (
           <View style={[styles.button, styles.scrim, ControlScrim[mode]]}>{icon}</View>
