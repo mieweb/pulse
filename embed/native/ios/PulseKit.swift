@@ -47,10 +47,15 @@ public final class PulseKit: NSObject {
   private var fatalHandlerInstalled = false
   /// Set by a fatal JS error: the next open starts a fresh React Native instance.
   private var runtimeBroken = false
+  /// Set once Pulse JS let go of its library for a purge (`releaseLibrary`): its database is
+  /// closed and `@/db/client` can't reopen it in that runtime, so the next open starts a fresh
+  /// React Native instance too.
+  private var runtimeReleased = false
   private let accounts = PulseKitAccounts()
   /// The namespace whose folders Pulse JS was given (the first open's): its storage roots and
   /// database are fixed for the runtime's life, so setAccount for another one is
-  /// `restart_required` (§4). nil before that, and again once a fatal error means a fresh runtime.
+  /// `restart_required` (§4). nil before that, and again once a fatal error or a purge of that
+  /// namespace means a fresh runtime.
   private var runtimeNamespace: String?
   /// A purge waiting for Pulse JS to let go of the library: open, setAccount and purge are busy.
   private var purging: String?
@@ -163,15 +168,26 @@ public final class PulseKit: NSObject {
       if config["policy"]?["logs"]?.string == "off" {
         return respond(.failure("not_found", "Logs are off (policy.logs).", callId: callId))
       }
-      withRoots(callId, respond) { roots in
-        let url = roots.logFile
+      // §3 lists no errors for logFile (minor 0): never no_account. The log is the one the
+      // runtime writes (its namespace, even while restart_required lets reads answer for
+      // another account), else the active account's; with neither, there is no log.
+      guard let ns = runtimeNamespace ?? accounts.namespace else {
+        return respond(.failure("not_found", "There is no log yet (no account).", callId: callId))
+      }
+      do {
+        let url = try PulseKitStorage.roots(ns).logFile
         try? FileManager.default.createDirectory(
           at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber
-        return .object([
-          "rel": .string("logs/pulse.log"), "path": .string(url.path), "webUrl": .string(""),
-          "bytes": .int(size?.int64Value ?? 0),
-        ])
+        respond(
+          .success(
+            callId,
+            .object([
+              "rel": .string("logs/pulse.log"), "path": .string(url.path), "webUrl": .string(""),
+              "bytes": .int(size?.int64Value ?? 0),
+            ])))
+      } catch {
+        respond(.failure("unknown", "Pulse's folders aren't available: \(error)", callId: callId))
       }
     case "setAccount":
       setAccount(req, respond: respond)
@@ -380,6 +396,12 @@ public final class PulseKit: NSObject {
       answered = true
       self.purging = nil
       if reply["ok"]?.bool == true {
+        // That runtime's database is closed for good (§4: fixed per runtime): no namespace is
+        // bound any more (so a restart_required for another account is lifted), and the next
+        // open starts a fresh instance, which opens the library afresh.
+        self.runtimeReleased = true
+        self.runtimeNamespace = nil
+        self.log("purge \(callId): Pulse let go of \(ns); the next open starts a fresh runtime")
         remove()
       } else {
         self.log("purge \(callId): releaseLibrary failed: \(reply["error"]?.serialized ?? "")")
@@ -653,15 +675,19 @@ public final class PulseKit: NSObject {
 
   // MARK: - Pulse JS
 
-  /// Boot React Native once; after a fatal error, a fresh instance for the next root.
+  /// Boot React Native once; after a fatal error, or once Pulse JS let go of its library for a
+  /// purge, a fresh instance for the next root.
   private func startRuntime() {
     let host = ReactNativeHostManager.shared
     host.initialize()
-    if runtimeBroken {
-      log("starting a fresh React Native instance after a fatal error")
+    if runtimeBroken || runtimeReleased {
+      log(
+        "starting a fresh React Native instance after "
+          + (runtimeBroken ? "a fatal error" : "a purge released the library"))
       host.cleanupPreviousInstance()
       host.initializeInstance()
       runtimeBroken = false
+      runtimeReleased = false
       // A fresh JS runtime takes new storage roots: no namespace is bound until the next open.
       runtimeNamespace = nil
     }

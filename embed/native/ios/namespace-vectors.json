@@ -67,6 +67,10 @@
     "PR1-era <hostId>-local with no drafts: the first setAccount deletes it (both roots). With drafts: it stays; listNamespaces reports it (serverOrigin \"\", active false, unsent = its draft folders); it is never adopted into the signed-in account; purge({namespace: \"<hostId>-local\"}) deletes it.",
     "listNamespaces lists every Library/PulseKit/*/account.json namespace (A and B above), active only for the signed-in one.",
     "purge() of the active namespace after an open: Pulse JS answers releaseLibrary first, then both roots go; with no namespace left, Library/PulseKit/.shared and the empty PulseKit folders go too (a container diff shows nothing of Pulse's).",
-    "Library/PulseKit is excluded from backups (isExcludedFromBackup), and files under a namespace are NSFileProtectionCompleteUntilFirstUserAuthentication."
+    "Library/PulseKit is excluded from backups (isExcludedFromBackup), and files under a namespace are NSFileProtectionCompleteUntilFirstUserAuthentication.",
+    "purge() of the active namespace after an open, still signed in, then open again: the log shows 'starting a fresh React Native instance after a purge released the library', Pulse opens on an empty library (no database error), and records into it.",
+    "After an open on A, setAccount B (restart_required), then purge({namespace: A}): Pulse JS answers releaseLibrary, A's roots go, and open now opens for B in a fresh runtime (no restart_required).",
+    "Seed drafts with posters and an export, open once so catalog.json is written, then install a new build over the app (or restore from a device backup) so the data container path changes: before any open, listDrafts and getDraft give poster and export paths under the new container (each path ends with its rel and the file exists).",
+    "logFile signed out with no open yet: not_found (never no_account). After an open on A then setAccount B (restart_required): logFile is A's logs/pulse.log, the one the runtime writes."
   ]
 }
