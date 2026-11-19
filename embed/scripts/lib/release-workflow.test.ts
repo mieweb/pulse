@@ -17,10 +17,12 @@ describe('release-embed.yml', () => {
     expect(lines.filter((l) => /^\s+shell:/.test(l) && !/shell: bash\s*$/.test(l))).toEqual([]);
   });
 
-  it('pins every action to a commit SHA', () => {
+  it('pins every action to a commit SHA, with the exact version it is in a comment', () => {
     const uses = lines.filter((l) => /^\s*(- )?uses:/.test(l));
     expect(uses.length).toBeGreaterThan(0);
-    const unpinned = uses.filter((l) => !/uses: [\w.-]+\/[\w./-]+@[0-9a-f]{40}( #.*)?$/.test(l));
+    const unpinned = uses.filter(
+      (l) => !/uses: [\w.-]+\/[\w./-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/.test(l),
+    );
     expect(unpinned).toEqual([]);
   });
 
