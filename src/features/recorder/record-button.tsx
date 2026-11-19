@@ -59,6 +59,7 @@ export function RecordButton({
   isRecording,
   cameraReady,
   dragging,
+  testID,
 }: {
   gesture: ComposedGesture;
   holdActive: SharedValue<boolean>;
@@ -69,6 +70,8 @@ export function RecordButton({
   isRecording: boolean;
   cameraReady: boolean;
   dragging: boolean;
+  /** For UI automation: start and stop are the same control. */
+  testID?: string;
 }) {
   // Each state animates its own 0→1 progress and the styles multiply them, so a press, a hold
   // and the recording morph can overlap without one transform cancelling another.
@@ -125,6 +128,7 @@ export function RecordButton({
       <Animated.View
         accessibilityRole="button"
         accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
+        testID={testID}
         style={[CONTROLS_FADE, { opacity: dragging ? 0 : cameraReady ? 1 : Opacity.disabled }]}>
         <Animated.View style={[styles.recordOuter, ringStyle]}>
           <Animated.View style={[styles.recordInner, innerStyle]} />

@@ -651,7 +651,12 @@ export function RecorderScreen({
             { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
           ]}>
           <View style={styles.topBarSide}>
-            <CloseButton onClose={handleClose} overVideo label="Close recorder" />
+            <CloseButton
+              onClose={handleClose}
+              overVideo
+              label="Close recorder"
+              testID="recorder.close"
+            />
           </View>
           {/* The running total, on glass over the live camera. */}
           <GlassPill style={styles.timerPill}>
@@ -667,7 +672,11 @@ export function RecorderScreen({
               the timer stays centred either way. */}
           <View style={[styles.topBarSide, styles.topBarEnd]}>
             {draftId && segments.length > 0 && (
-              <ExportButton onPress={() => open(() => onExport(draftId))} disabled={isRecording} />
+              <ExportButton
+                onPress={() => open(() => onExport(draftId))}
+                disabled={isRecording}
+                testID="recorder.export"
+              />
             )}
           </View>
         </View>
@@ -713,6 +722,7 @@ export function RecorderScreen({
               isRecording={(isRecording && recordStoppedAt == null) || startQueued}
               cameraReady={cameraReady}
               dragging={dragging}
+              testID="recorder.record"
             />
             {recordTip.mounted && (
               <View style={styles.recordTip} pointerEvents="none">
@@ -730,6 +740,7 @@ export function RecorderScreen({
                       open(() => onEdit(draftId));
                     }}
                     disabled={isRecording || dragging}
+                    testID="recorder.edit"
                   />
                   {editTip.mounted && (
                     <View style={StyleSheet.absoluteFill} pointerEvents="none">

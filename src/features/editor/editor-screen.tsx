@@ -806,10 +806,17 @@ export function EditorScreen({
         style={[styles.root, { paddingTop: insets.top, backgroundColor: theme.background }]}>
         {/* Off-clip space, like every black area around the controls: a tap lets a selection go. */}
         <Pressable style={styles.header} onPress={deselect} accessible={false}>
-          <HeaderButton icon="xmark" label="Close" onPress={onClose} />
+          <HeaderButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
           <View style={styles.headerRight}>
             {/* More clips for this draft: the recorder, back here with them on Edit. */}
-            {onAddClips && <HeaderButton icon="plus" label="Add clips" onPress={addClips} />}
+            {onAddClips && (
+              <HeaderButton
+                icon="plus"
+                label="Add clips"
+                onPress={addClips}
+                testID="editor.addClips"
+              />
+            )}
             <HeaderButton
               icon="arrow.uturn.backward"
               label="Undo"
@@ -824,7 +831,7 @@ export function EditorScreen({
             />
             {/* Finished editing: on to the export screen (back returns here). */}
             <View style={styles.export}>
-              <ExportButton onPress={openExport} />
+              <ExportButton onPress={openExport} testID="editor.export" />
             </View>
           </View>
         </Pressable>

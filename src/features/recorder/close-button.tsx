@@ -17,6 +17,7 @@ export function CloseButton({
   style,
   overVideo = false,
   label = 'Close',
+  testID,
 }: {
   /** Leaves the screen; the shell decides where to (this button never navigates). */
   onClose?: () => void;
@@ -31,6 +32,8 @@ export function CloseButton({
   overVideo?: boolean;
   /** Screen-reader label — override when the ✕ means something more specific than "Close". */
   label?: string;
+  /** For UI automation. */
+  testID?: string;
 }) {
   const mode = useThemeMode();
   const inherited = useContext(CloseAction);
@@ -42,6 +45,7 @@ export function CloseButton({
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={label}
+      testID={testID}
       // The glass pill dims only its glyph: a partly transparent ancestor makes iOS draw the
       // glass flat (and it can stay that way). The scrim has no glass, so the whole button dims.
       style={({ pressed }) => [style, pressed && !overVideo && styles.pressed]}>

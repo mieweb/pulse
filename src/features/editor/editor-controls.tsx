@@ -54,11 +54,14 @@ export function HeaderButton({
   label,
   onPress,
   disabled,
+  testID,
 }: {
   icon: IconName;
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  /** For UI automation. */
+  testID?: string;
 }) {
   const theme = useTheme();
   return (
@@ -68,6 +71,7 @@ export function HeaderButton({
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={label}
+      testID={testID}
       style={({ pressed }) => [styles.headerButton, (disabled || pressed) && styles.dim]}>
       <Icon name={icon} size={18} weight="semibold" tintColor={theme.text} />
     </Pressable>

@@ -6,7 +6,16 @@ const HEIGHT = 32;
 
 /** The draft's way on to the export screen, top right in the recorder and the editor: the screen's
  *  primary action, filled in the accent with the app's button corners scaled to its height. */
-export function ExportButton({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {
+export function ExportButton({
+  onPress,
+  disabled,
+  testID,
+}: {
+  onPress: () => void;
+  disabled?: boolean;
+  /** For UI automation. */
+  testID?: string;
+}) {
   return (
     <Pressable
       onPress={onPress}
@@ -15,6 +24,7 @@ export function ExportButton({ onPress, disabled }: { onPress: () => void; disab
       accessibilityRole="button"
       accessibilityLabel="Export"
       accessibilityState={{ disabled }}
+      testID={testID}
       style={({ pressed }) => [
         styles.button,
         disabled ? styles.disabled : pressed && styles.pressed,

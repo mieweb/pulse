@@ -233,7 +233,7 @@ export function ExportScreen({
   return (
     <ThemedView type="groupedBackground" style={styles.fill}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-        <CloseButton onClose={close} />
+        <CloseButton onClose={close} testID="export.close" />
       </View>
 
       {/* Bottom padding tracks the home indicator instead of a fixed 64pt — the difference
