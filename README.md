@@ -174,6 +174,14 @@ The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this ap
 
 **No camera? No problem.** In a dev build, the Home screen has `+ seed` / `clear` buttons that create a "Dev sample" draft from the bundled `assets/dev/` clips — including deliberately mismatched resolution/fps/codec/orientation clips that exercise the export-normalization path — so the full editor is drivable on a simulator. See [assets/dev/README.md](assets/dev/README.md).
 
+## Pulse inside another app
+
+PulseKit is Pulse packaged for other iOS apps: a Capacitor or Cordova app opens Pulse to record,
+edit or export one video and gets the result back. The host's side is `@mieweb/pulse-embed` plus
+one plugin; the setup guide, contract and support matrix are in
+[docs/embedding/](docs/embedding/README.md), and how the two shells share one codebase is in
+[docs/architecture.md](docs/architecture.md).
+
 ## Development
 
 ### Commands
@@ -182,32 +190,43 @@ The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this ap
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `npm start`                               | Start the Metro dev server                                                                                                                       |
 | `npm run ios` / `npm run android`         | Build & run the dev client                                                                                                                       |
-| `npm test`                                | Run the Jest unit-test suite                                                                                                                     |
-| `npm run lint`                            | ESLint via `expo lint`                                                                                                                           |
-| `npx tsc --noEmit`                        | Typecheck                                                                                                                                        |
+| `npm test`                                | Run the Jest unit-test suite (the app's and `embed/`'s)                                                                                          |
+| `npm run lint`                            | ESLint via `expo lint src embed/src`, including the rules that keep shared code out of either shell                                              |
+| `npx tsc --noEmit`                        | Typecheck (also covers `embed/`; `npx tsc --noEmit -p embed` checks it with the embed's own path map)                                            |
 | `npm run format` / `npm run format:check` | Prettier (write / check only)                                                                                                                    |
 | `node scripts/gen-protocol-types.mjs`     | Regenerate `src/features/upload/protocol.gen.ts` from the submodule's schemas and `package.json` `pulseProtocol` (`--check` fails if it's stale) |
+| `npm run check:embed`                     | Check what ships in PulseKit: dependency classification, no SQLite in native code, and PulseKit's iOS and Android JS bundles (no native build)   |
+| `npm run embed:package:ios`               | Package an `expo-brownfield` iOS build in `embed/artifacts` into PulseKit release assets (`--help` for options)                                  |
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, lint, `gen-protocol-types.mjs --check`, and unit tests on every PR, plus the integration suite against both the pinned PulseVault and the latest npm release.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, lint, `gen-protocol-types.mjs --check`, and unit tests on every PR, the embed check (`npm run check:embed`), plus the integration suite against both the pinned PulseVault and the latest npm release. PulseKit releases run from [`release-embed.yml`](.github/workflows/release-embed.yml) on `pulsekit-v*` tags ([releasing](docs/embedding/releasing.md)).
 
 ### Project structure
 
 ```
 src/
-├── app/            # expo-router screens: home, recorder, editor, export, onboarding
-├── features/       # recorder, transcription, export, upload, draft-transfer, home, …
+├── app/            # the Pulse app shell: thin expo-router routes over the feature screens
+├── shell/          # standalone/: navigation helpers only the Pulse app uses
+├── features/       # recorder, editor, export, drafts, transcription, upload, onboarding, …
+├── core/           # PulseCore provider, focus and status-bar ports, recovery
 ├── db/             # Drizzle ORM schema + queries (expo-sqlite)
+├── utils/          # storage roots, files, media helpers
 ├── components/     # shared themed UI
+├── test-support/   # Node stand-ins for native modules, and the lint-zone tests
 └── dev/            # __DEV__-only seed tooling (dead-code-eliminated in release)
-modules/            # custom native modules (expo-call-detector)
+embed/              # PulseKit: the embed shell, Swift facade, release scripts (see embed/README.md)
+└── packages/       # what host apps install: @mieweb/pulse-embed and the Capacitor/Cordova plugins
+modules/            # custom native modules (expo-call-detector) and the pulse-editor submodule
 plugins/            # Expo config plugins
 pulsevault-mieweb/  # self-hosted upload server + protocol spec
 fixtures/           # fixture-regen sources (Big Buck Bunny, CC-BY)
+docs/               # persistence, architecture, embedding guide and research notes
 ```
+
+The layers and the rules between them are in [docs/architecture.md](docs/architecture.md).
 
 ### Testing
 
-Unit tests are co-located with the code and scoped to pure logic — cue reflow, upload/TUS state machines, deep-link parsing, edit history, autosave gating — so they run in a plain Node environment with no native rendering. PulseVault ships its own suite covering the HTTP adapters, capability tokens, and checksum handling.
+Unit tests are co-located with the code and scoped to pure logic — cue reflow, upload/TUS state machines, deep-link parsing, edit history, autosave gating, the embed flow reducer, the host client and its contract — so they run in a plain Node environment with no native rendering. Jest collects `*.test.ts` under both `src/` and `embed/` (not the test hosts or generated native folders). PulseVault ships its own suite covering the HTTP adapters, capability tokens, and checksum handling.
 
 ```bash
 npm test
@@ -221,6 +240,8 @@ A heavier suite is opt-in and skips itself in a plain `npm test`:
 (cd pulsevault-mieweb && npm ci && npm run build)
 PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
 ```
+
+PulseKit's facade rules also run on a Mac without an iOS build, as shared vectors ([embed/native/ios/vectors/README.md](embed/native/ios/vectors/README.md)).
 
 ## License
 
