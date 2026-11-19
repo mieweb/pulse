@@ -143,7 +143,10 @@ export function FlowStack({
               stackAnimation="none"
               gestureEnabled={false}
               nativeBackButtonDismissalEnabled={false}
-              headerConfig={{ hidden: true }}>
+              headerConfig={{ hidden: true }}
+              // Gestures are off, but UIKit can still pop a screen on its own: fold it back into
+              // the reducer (as spike S2 does) so the stack and the flow never disagree.
+              onDismissed={() => void controller.nativePopped(item.key)}>
               <ScreenFocusProvider focused={i === top && !modelSheet}>
                 <FlowScreen
                   item={item}

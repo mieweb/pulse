@@ -176,3 +176,39 @@ describe('attach', () => {
     expect(createFlowController(store, 'r2').attach('nope')).toBe(false);
   });
 });
+
+describe('back and native pops', () => {
+  function deep() {
+    mockDrafts.set('d1', draft('d1', 1));
+    mockOnScreen = { place: null, draftId: 'd1' };
+    const f = flow();
+    f.store.dispatch({ type: 'record' });
+    f.store.dispatch({ type: 'stop', draftId: 'd1', clipCount: 1 });
+    f.store.dispatch({ type: 'edit' });
+    f.store.dispatch({ type: 'export' });
+    return f;
+  }
+  const screens = (f: ReturnType<typeof flow>) => f.store.getSnapshot().items.map((i) => i.screen);
+
+  it('moves one level for a double tap', async () => {
+    const f = deep();
+    expect(screens(f)).toEqual(['recorder', 'editor', 'export']);
+    await Promise.all([f.controller.back(), f.controller.back()]);
+    expect(screens(f)).toEqual(['recorder', 'editor']);
+  });
+
+  it('folds a native pop of the top screens back into the reducer', async () => {
+    const f = deep();
+    const editorKey = f.store.getSnapshot().items[1].key;
+    await f.controller.nativePopped(editorKey);
+    expect(screens(f)).toEqual(['recorder']);
+  });
+
+  it('ignores a native pop of a screen the reducer already removed', async () => {
+    const f = deep();
+    const exportKey = f.store.getSnapshot().items[2].key;
+    await f.controller.back();
+    await f.controller.nativePopped(exportKey);
+    expect(screens(f)).toEqual(['recorder', 'editor']);
+  });
+});

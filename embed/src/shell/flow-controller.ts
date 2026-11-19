@@ -57,6 +57,8 @@ export function createFlowController(store: FlowStore, requestId: string) {
     if (seen) last = seen;
   }
 
+  const topKey = () => store.getSnapshot().items.at(-1)?.key;
+
   /** A take in flight saved, the editor's pending writes stored, and the reducer told. */
   async function settle(): Promise<void> {
     await finalizeRecorders();
@@ -108,15 +110,35 @@ export function createFlowController(store: FlowStore, requestId: string) {
       };
     },
     observe,
-    /** Back: one screen down, or X at the root. */
+    /**
+     * Back: one screen down, or X at the root. It acts only if the screen it was asked from is
+     * still on top after the settle, so a double tap (or a tap plus a native pop) moves one level.
+     */
     async back(): Promise<void> {
+      const from = topKey();
       await settle();
-      store.dispatch({ type: 'back' });
+      if (topKey() === from) store.dispatch({ type: 'back' });
     },
     /** X (and the VoiceOver escape): the keep/discard sheet with a take, else the end. */
     async close(): Promise<void> {
+      const from = topKey();
       await settle();
-      store.dispatch({ type: 'close' });
+      if (topKey() === from) store.dispatch({ type: 'close' });
+    },
+    /**
+     * UIKit popped screens itself (a VoiceOver escape or anything else UINavigationController
+     * does on its own): step the reducer down until `key` is off the stack, so both agree.
+     */
+    async nativePopped(key: string): Promise<void> {
+      // Bounded: each pass removes a screen or the loop stops.
+      for (let n = store.getSnapshot().items.length; n > 0; n--) {
+        if (!store.getSnapshot().items.some((i) => i.key === key)) return;
+        const from = topKey();
+        await settle();
+        if (topKey() !== from) continue;
+        if (store.getSnapshot().items.length <= 1) return;
+        store.dispatch({ type: 'back' });
+      }
     },
     /** The host's `close` (`pulse.cmd close {discard?}`): never the sheet. */
     async hostClose(discard: boolean): Promise<void> {
