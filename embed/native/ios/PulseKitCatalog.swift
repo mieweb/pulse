@@ -60,6 +60,43 @@ public enum PulseCatalog {
     public var writtenAt: Double? { number(raw["writtenAt"]) }
 
     public static let empty = Catalog(raw: [:], drafts: [], receipts: [])
+
+    /// The catalog with every FileRef's `path` rebuilt from its `rel` under `documents` (see
+    /// `PulseCatalog.rebase`).
+    public func rebased(documents: String) -> Catalog {
+      Catalog(
+        raw: raw, drafts: drafts.map { PulseCatalog.rebase($0, documents: documents) },
+        receipts: receipts.map { PulseCatalog.rebase($0, documents: documents) })
+    }
+  }
+
+  // MARK: - File paths
+
+  /// `row` with every FileRef in it (`poster`, `export`, or any other top-level `{rel, path}`
+  /// object) pointing under `documents`, the namespace's documents root now. The writer stores
+  /// `path` as `<root>/<rel>` with the root it had then, and iOS moves the app's data container
+  /// (a new UUID in the path) on an update or a restore: until Pulse JS boots and writes the
+  /// catalog again, the stored paths point into a container that is gone. `rel` is what stays
+  /// true. A FileRef whose `rel` isn't a plain relative path (absolute, empty, or with a `.` or
+  /// `..` part) is left as it is.
+  public static func rebase(_ row: Row, documents: String) -> Row {
+    let base = documents.hasSuffix("/") ? String(documents.dropLast()) : documents
+    var out = row
+    for (key, value) in row {
+      guard var ref = value as? [String: Any], let rel = ref["rel"] as? String,
+        ref["path"] is String, isPlainRelative(rel)
+      else { continue }
+      ref["path"] = base + "/" + rel
+      out[key] = ref
+    }
+    return out
+  }
+
+  static func isPlainRelative(_ rel: String) -> Bool {
+    guard !rel.isEmpty, !rel.hasPrefix("/") else { return false }
+    return !rel.split(separator: "/", omittingEmptySubsequences: false).contains {
+      $0.isEmpty || $0 == "." || $0 == ".."
+    }
   }
 
   // MARK: - Reading

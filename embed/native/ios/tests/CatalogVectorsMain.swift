@@ -196,6 +196,38 @@ struct CatalogVectors {
     check(
       PulseCatalog.countDrafts(unicode, .init(by: .contextKey), on).count == 2,
       "facade: countDrafts keeps canonically equivalent keys apart")
+    // catalog.json written under another container (iOS moved it on an update or a restore): the
+    // reader hands out paths under today's root, rebuilt from `rel`.
+    let now = "/var/mobile/Containers/Data/Application/NEW-UUID/Library/PulseKit/ns"
+    let moved = catalog.rebased(documents: now + "/")
+    let ready = PulseCatalog.getDraft(moved, id: "d-ready", on)
+    let poster = ready?["poster"] as? [String: Any]
+    let export = ready?["export"] as? [String: Any]
+    check(
+      poster?["path"] as? String == now + "/" + (poster?["rel"] as? String ?? "?")
+        && export?["path"] as? String == now + "/drafts/d-ready/export.mp4"
+        && export?["rel"] as? String == "drafts/d-ready/export.mp4",
+      "facade: FileRef paths are rebuilt from rel under the current documents root",
+      "got \(poster ?? [:]) \(export ?? [:])")
+    check(
+      PulseCatalog.listDrafts(moved, .init(states: PulseCatalog.unsent + ["sent"]), on).allSatisfy {
+        row in
+        ["poster", "export"].allSatisfy { key in
+          guard let ref = row[key] as? [String: Any] else { return true }
+          return (ref["path"] as? String)?.hasPrefix(now + "/") == true
+        }
+      } && moved.drafts.count == catalog.drafts.count,
+      "facade: every listed FileRef points under the current root")
+    let odd: PulseCatalog.Row = [
+      "id": "x", "poster": ["rel": "../escape.jpg", "path": "/old/escape.jpg", "webUrl": ""],
+      "export": ["rel": "/abs.mp4", "path": "/old/abs.mp4", "webUrl": ""],
+    ]
+    let oddOut = PulseCatalog.rebase(odd, documents: now)
+    check(
+      (oddOut["poster"] as? [String: Any])?["path"] as? String == "/old/escape.jpg"
+        && (oddOut["export"] as? [String: Any])?["path"] as? String == "/old/abs.mp4",
+      "facade: a rel that isn't a plain relative path is left as it is")
+
     let ties = PulseCatalog.Catalog(
       raw: [:], drafts: [row("b", "k", 5), row("B", "k", 5), row("a", "k", 5)], receipts: [])
     check(

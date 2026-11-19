@@ -266,7 +266,10 @@ public final class PulseKit: NSObject {
   ) {
     let net = netView
     withRoots(callId, respond) { roots in
-      body(PulseCatalog.read(in: roots.documents) ?? .empty, net)
+      // FileRef paths are rebuilt from `rel` under today's container: iOS can move the container
+      // on an update or a restore, and catalog.json keeps the old paths until Pulse JS boots.
+      let catalog = PulseCatalog.read(in: roots.documents) ?? .empty
+      return body(catalog.rebased(documents: roots.documents.path), net)
     }
   }
 
