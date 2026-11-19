@@ -305,6 +305,36 @@ describeIf('pulsevault integration (real server, real wire)', () => {
     ).toHaveLength(1);
   });
 
+  it('answers a second create of an artifact that has an unfinished upload with a 409, not a refusal', async () => {
+    // A create whose 201 the app never saw (killed right after it, or the answer was lost): the
+    // job has no upload URL, so its relaunch creates again. PulseVault takes the idle upload over
+    // only after `reclaim.idleSeconds` (300 s); before that it answers 409, which the job loop
+    // (runner.ts) waits out instead of failing the job.
+    const link = await pair();
+    const video = makeMp4(16 * 1024);
+    const artifact = { artifactId: link.artifactId, filename: 'draft.mp4', kind: 'video' as const };
+    let created = '';
+    const killed = await uploadViaTus({
+      server: link.server,
+      token: link.token,
+      ...artifact,
+      file: { size: video.length } as never,
+      onResourceCreated: (url) => {
+        created = url;
+      },
+      uploadChunk: async () => {
+        throw new TusUploadError('killed', { retryable: false });
+      },
+    }).catch((e: unknown) => e);
+    expect((killed as Error).message).toBe('killed');
+    expect(created).toBeTruthy();
+
+    const again = await upload(link, video, artifact).catch((e: unknown) => e);
+    expect(again).toBeInstanceOf(TusUploadError);
+    expect((again as TusUploadError).statusCode).toBe(409);
+    expect((again as TusUploadError).retryable).toBe(false);
+  });
+
   itSince(2, 2)(
     "mints a read-only view link that opens the video and can't delete it (protocol 2.2+)",
     async () => {

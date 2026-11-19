@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 
 import type { UploadChunk } from './tus-client';
 import { describeError, formatBytes, formatRate, formatSeconds, uploadLog } from './upload-log';
-import { cacheDir } from '@/utils/storage-root';
+import { cacheDir, customDocumentsPath } from '@/utils/storage-root';
 
 function randomId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -50,9 +50,10 @@ type FileSystemNativeModule = { cancelBackgroundUploadTasks?: () => Promise<numb
  *   the Pulse app's kill ends its upload, and an embedded job resumes from the server's offset.
  *   Download tasks share the session and are left alone. 0 when the native method isn't in the
  *   build.
- * - PulseKit's own session (the embed, with `setBackgroundUploads`): only the tasks of uploads not
- *   in `live` go. A task of a live job carries on, and the job's next PATCH attaches to it
- *   (PLAN §6.3 step 1: reattach, don't cancel).
+ * - PulseKit's own session (the embed, with `setBackgroundUploads`): in this runtime's namespace
+ *   only, the tasks of uploads not in `live` go. A task of a live job carries on, and the job
+ *   waits for it (`attachRunningUpload`) before HEADing the upload (PLAN §6.3 step 1: reattach,
+ *   don't cancel).
  */
 export async function cancelOrphanedUploadTasks(live?: readonly string[]): Promise<number> {
   if (Platform.OS !== 'ios') return 0;
@@ -63,10 +64,27 @@ export async function cancelOrphanedUploadTasks(live?: readonly string[]): Promi
   } catch {
     // Best effort.
   }
-  if (live && background && (await background.available())) {
-    cancelled += await background.sweep(live).catch(() => 0);
+  // Only this runtime's namespace: another account's jobs aren't in `live`.
+  const root = customDocumentsPath();
+  if (live && root && background && (await background.available())) {
+    cancelled += await background.sweep(root, live).catch(() => 0);
   }
   return cancelled;
+}
+
+/**
+ * Wait for the PulseKit task still running for `url` (one iOS kept going while Pulse wasn't), if
+ * there is one: resolves its answer once it ends, or null at once when there is none (or no
+ * PulseKit). Call it before HEADing the upload: PulseVault's HEAD takes the upload's lock, which
+ * cuts the PATCH that task is sending. `onProgress` gets the upload's offset as it moves.
+ */
+export async function attachRunningUpload(
+  url: string,
+  file: File,
+  opts: { signal?: AbortSignal; onProgress?: (offset: number) => void } = {},
+): Promise<{ status: number; headers: Record<string, string> } | null> {
+  if (!background || !(await background.available())) return null;
+  return background.attach({ url, path: plainPath(file.uri), ...opts });
 }
 
 // PulseKit's background uploader (embed, iOS) ----------------------------------------------------
@@ -95,7 +113,7 @@ type Waiter = {
  * task iOS kept running is reattached rather than duplicated: a PATCH for an upload that already
  * has a running task attaches to it. Messages (all over the transport):
  *
- *   JS → PulseKit  {type:'pulse.upload', op:'hello'|'patch'|'cancel'|'sweep', id, ...}
+ *   JS → PulseKit  {type:'pulse.upload', op:'hello'|'patch'|'attach'|'cancel'|'sweep', id, ...}
  *   PulseKit → JS  {type:'pulse.upload.progress', id, sent}
  *                  {type:'pulse.upload.end', id, ok, status?, headers?, cancelled?, error?}
  */
@@ -175,9 +193,12 @@ class BackgroundUploads {
     return this.hello;
   }
 
-  /** Cancel PulseKit's tasks of uploads not in `live`; resolves how many went. */
-  async sweep(live: readonly string[]): Promise<number> {
-    const reply = await this.request('sweep', { live: [...live] }).done;
+  /**
+   * Cancel PulseKit's tasks, in the namespace whose documents folder is `root`, of uploads not in
+   * `live`; resolves how many went.
+   */
+  async sweep(root: string, live: readonly string[]): Promise<number> {
+    const reply = await this.request('sweep', { root, live: [...live] }).done;
     return typeof reply.cancelled === 'number' ? reply.cancelled : 0;
   }
 
@@ -191,22 +212,48 @@ class BackgroundUploads {
     signal?: AbortSignal;
     onProgress?: (sent: number) => void;
   }): Promise<{ status: number; headers: Record<string, string> }> {
+    const reply = await this.cancellable('patch', params);
+    return answerOf(reply);
+  }
+
+  /** Wait for the task running for `url`; null when none runs. */
+  async attach(params: {
+    url: string;
+    path: string;
+    signal?: AbortSignal;
+    onProgress?: (offset: number) => void;
+  }): Promise<{ status: number; headers: Record<string, string> } | null> {
+    const reply = await this.cancellable('attach', params);
+    return reply.attached === false ? null : answerOf(reply);
+  }
+
+  /** A request that `signal` cancels (PulseKit cancels the task when nobody else waits for it). */
+  private async cancellable(
+    op: string,
+    params: { signal?: AbortSignal; onProgress?: (sent: number) => void } & Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     const { signal, onProgress, ...args } = params;
     if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
-    const { id, done } = this.request('patch', args, onProgress);
+    const { id, done } = this.request(op, args, onProgress);
     const onAbort = () => this.transport.send({ type: 'pulse.upload', op: 'cancel', id });
     signal?.addEventListener('abort', onAbort);
     try {
-      const reply = await done;
-      const headers =
-        typeof reply.headers === 'object' && reply.headers !== null
-          ? (reply.headers as Record<string, string>)
-          : {};
-      return { status: typeof reply.status === 'number' ? reply.status : 0, headers };
+      return await done;
     } finally {
       signal?.removeEventListener('abort', onAbort);
     }
   }
+}
+
+function answerOf(reply: Record<string, unknown>): {
+  status: number;
+  headers: Record<string, string>;
+} {
+  const headers =
+    typeof reply.headers === 'object' && reply.headers !== null
+      ? (reply.headers as Record<string, string>)
+      : {};
+  return { status: typeof reply.status === 'number' ? reply.status : 0, headers };
 }
 
 let background: BackgroundUploads | null = null;

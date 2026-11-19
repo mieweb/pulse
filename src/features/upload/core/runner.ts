@@ -31,7 +31,11 @@ import {
   type TokenResult,
   type UploadTargetRequest,
 } from './host-services';
-import { cancelOrphanedUploadTasks, uploadChunkNative } from './native-chunk-upload';
+import {
+  attachRunningUpload,
+  cancelOrphanedUploadTasks,
+  uploadChunkNative,
+} from './native-chunk-upload';
 import {
   applyTransition,
   hostErrorEvent,
@@ -56,14 +60,17 @@ import { describeError, shortId, uploadLog, type UploadLog } from './upload-log'
 //
 // Errors: a retryable failure goes back to `queued` with backoff; `destination.gone`,
 // `upload.refused`, `upload.too_large` and a host that answers for another upload fail the job;
+// a create that meets an unfinished upload of the same artifact (its 201 was lost, or a kill came
+// after the server made it) waits until PulseVault reclaims that idle upload (`upload.conflict`);
 // an expired or refused token is refreshed once (`refreshUploadToken`), and a host that doesn't
 // answer pauses the job (`needs_credentials`). A 404 from PulseVault (it forgot the artifact, e.g.
 // after its 24 h partial-upload retention) asks the host again with `renewArtifact`.
 //
 // Launch rule (§6.3), at boot and on `resumeOutbox`: Sends that stopped while preparing go back to
 // drafts; retirements a kill interrupted are finished; background upload tasks that belong to no
-// live job are cancelled (a live job's task carries on, and its next PATCH attaches to it); each
-// uploading job asks the status route first, then HEADs and resumes.
+// live job are cancelled (a live job's task carries on, and the job waits for it before its HEAD);
+// each uploading job asks the status route first, then HEADs and resumes. `boot` and
+// `resumeOutbox` resolve once those steps are done; the uploads themselves go on after.
 
 /** Tokens this close to expiry are refreshed before use. */
 export const TOKEN_MARGIN_MS = 60_000;
@@ -74,6 +81,12 @@ export const PERSIST_INTERVAL_MS = 5_000;
 /** The status route is polled first after this, then less often, up to `POLL_MAX_MS`. */
 export const POLL_BASE_MS = 3_000;
 export const POLL_MAX_MS = 60_000;
+/**
+ * How long a create that met an unfinished upload of the same artifact waits: PulseVault reclaims
+ * such an upload only once it has been idle this long (its `reclaim.idleSeconds`, 300 by
+ * default), and answers 409 until then. A margin on top for clocks.
+ */
+export const CREATE_CONFLICT_RETRY_MS = 5 * 60_000 + 15_000;
 
 /** How the runner reaches the host: the host-service channel by default, a fake in tests. */
 export type RunnerHost = {
@@ -91,6 +104,15 @@ export type RunnerDeps = {
   uploadChunk: UploadChunk;
   /** Cancels background upload tasks of uploads not in `live` (§6.3 step 1). */
   cancelOrphans: (live: readonly string[]) => Promise<number>;
+  /**
+   * Waits for a background task still sending to `url` (§6.3: reattach), before the upload is
+   * HEADed; null at once when there is none. `onProgress` gets the upload's offset.
+   */
+  attachRunning: (
+    url: string,
+    file: File,
+    opts: { signal?: AbortSignal; onProgress?: (offset: number) => void },
+  ) => Promise<{ status: number } | null>;
   /** A part's file, from its path relative to the documents root. */
   openFile: (rel: string) => File;
   /** The video's `md5:<hex>`, sent when its upload is created. */
@@ -126,6 +148,9 @@ const FILENAME: Record<UploadPart['role'], (draftId: string) => string> = {
 };
 
 const isAbort = (e: unknown) => e instanceof Error && e.name === 'AbortError';
+/** tus-client's create answered 409: the artifact id already has an upload (PROTOCOL.md §6.5). */
+const isCreateConflict = (e: unknown) =>
+  e instanceof TusUploadError && e.statusCode === 409 && !e.retryable;
 
 async function md5Of(file: File): Promise<string | undefined> {
   const info = await getInfoAsync(file.uri, { md5: true });
@@ -137,6 +162,7 @@ const DEFAULT_DEPS: RunnerDeps = {
   fetchImpl: (...args) => fetch(...args),
   uploadChunk: uploadChunkNative,
   cancelOrphans: (live) => cancelOrphanedUploadTasks(live),
+  attachRunning: attachRunningUpload,
   openFile: (rel) => new File(absolutize(rel)),
   checksum: md5Of,
   isForeground: () => AppState.currentState === 'active',
@@ -167,13 +193,19 @@ export type JobRunner = {
   runJob(draftId: string): Promise<void>;
   /** Every job that can move now, one at a time, until none can. */
   drain(): Promise<void>;
-  /** The launch rule (§6.3): at runtime start. */
+  /**
+   * The launch rule (§6.3): at runtime start. Resolves once its steps are done (seconds at most);
+   * the jobs then run without being awaited (`idle()` waits for them).
+   */
   boot(): Promise<void>;
   /** The host's `resumeOutbox()`: paused jobs are queued again, then the launch rule. */
   resumeOutbox(): Promise<void>;
+  /** Resolves when no pass is running (tests, and anything that must wait for the uploads). */
+  idle(): Promise<void>;
   /**
    * Whether this runtime's namespace is the signed-in account's. While it isn't, no job runs and
-   * an upload under way stops (it resumes from the server's offset later).
+   * an upload under way stops (it resumes from the server's offset later); once it is again, the
+   * jobs run (when started).
    */
   setAccountActive(active: boolean): void;
   /** Follow the foreground, the network and the outbox; returns the stop. */
@@ -435,6 +467,11 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
         apply(job, { type: 'videoDone', parts });
         return;
       }
+      // A refresh that failed wrote its outcome (paused, retry or failed): this pass ends there,
+      // rather than sending the refused token and asking the host a second time.
+      const current = getUploadJob(job.draftId);
+      if (current?.clientKey !== job.clientKey || current.state !== 'uploading') return;
+      job = current;
       token = host.token(job.uploadId ?? '')?.token ?? token;
     }
 
@@ -471,6 +508,8 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
       const isVideo = part.role === 'video';
       const name = isVideo ? (draftFor(job.draftId)?.name ?? undefined) : undefined;
       try {
+        if (part.tusUrl) await attachRunning(job, part, file, signal);
+        if (signal.aborted) return;
         const result = await uploadViaTus({
           server: job.endpoint,
           token,
@@ -514,8 +553,24 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
         job = next;
         i++;
       } catch (e) {
+        if (signal.aborted || isAbort(e)) return;
+        if (isCreateConflict(e) && !parts[i].tusUrl) {
+          // Our own create, made before a kill or with its 201 lost: PulseVault takes it over once
+          // it has been idle long enough, and answers 409 until then (not a refusal).
+          log.warn(
+            `job ${shortId(job.draftId)}: the ${part.role} upload exists without its URL; ` +
+              'trying again once the server can reclaim it',
+          );
+          apply(job, {
+            type: 'retryableError',
+            code: 'upload.conflict',
+            message: describeError(e),
+            retryAfterMs: CREATE_CONFLICT_RETRY_MS,
+          });
+          return;
+        }
         const failure = classify(e);
-        if (failure.kind === 'stop' || signal.aborted) return;
+        if (failure.kind === 'stop') return;
         if (failure.kind === 'refresh' && !refreshed) {
           refreshed = true;
           const fresh = await tokenFor(job, true);
@@ -544,6 +599,37 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
         apply(job, event);
         return;
       }
+    }
+  }
+
+  /**
+   * §6.3 step 1: a background task iOS kept sending this part's bytes is waited for before the
+   * HEAD (PulseVault's HEAD takes the upload's lock and would cut it). Its outcome doesn't matter
+   * here: the HEAD that follows says where the upload is.
+   */
+  async function attachRunning(
+    job: UploadJob,
+    part: UploadPart,
+    file: File,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!part.tusUrl) return;
+    try {
+      const ended = await deps.attachRunning(part.tusUrl, file, {
+        signal,
+        onProgress:
+          part.role === 'video'
+            ? (offset) => emitProgress(job.draftId, Math.min(offset, part.bytes), part.bytes)
+            : undefined,
+      });
+      if (ended) {
+        log.info(
+          `job ${shortId(job.draftId)}: the ${part.role}'s background task ended (${ended.status})`,
+        );
+      }
+    } catch (e) {
+      if (isAbort(e)) return;
+      log.info(`job ${shortId(job.draftId)}: no background task to wait for: ${describeError(e)}`);
     }
   }
 
@@ -691,7 +777,12 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
       if (job.state === 'uploading' && !running.has(job.draftId)) statusFirst.add(job.draftId);
       if (job.state === 'delivering') polls.delete(job.draftId);
     }
-    await drain();
+    // Not awaited: a whole video upload can be in there, and the host's call answers now.
+    void drain();
+  }
+
+  async function idle(): Promise<void> {
+    while (draining) await draining;
   }
 
   function stopRunning(): void {
@@ -712,6 +803,7 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
     runJob,
     drain,
     boot: launch,
+    idle,
     async resumeOutbox() {
       if (!accountActive) return;
       const resumed = resumePausedJobs();
@@ -726,6 +818,8 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
         stopRunning();
         if (timer) clearTimeout(timer);
         timer = null;
+      } else if (started) {
+        void drain();
       }
     },
     start() {

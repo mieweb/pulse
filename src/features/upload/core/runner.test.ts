@@ -60,6 +60,10 @@ jest.mock('expo-crypto', () => {
   };
 });
 jest.mock('./send-files', () => ({ writeSendFiles: jest.fn() }));
+jest.mock('@/utils/storage-root', () => {
+  const actual = jest.requireActual<typeof import('@/utils/storage-root')>('@/utils/storage-root');
+  return { ...actual, customDocumentsPath: jest.fn(() => null) };
+});
 jest.mock('./upload-log', () => ({
   ...jest.requireActual<typeof import('./upload-log')>('./upload-log'),
   uploadLog: { info: () => {}, warn: () => {} },
@@ -70,6 +74,7 @@ import { expoDb } from '@/db/client';
 import { getReceipt } from '@/db/receipts';
 import { getUploadJob } from '@/db/upload-jobs';
 import { env, File } from '@/test-support/expo-fs-node';
+import { customDocumentsPath } from '@/utils/storage-root';
 
 import {
   HostRequestError,
@@ -78,6 +83,7 @@ import {
   type UploadTargetRequest,
 } from './host-services';
 import {
+  attachRunningUpload,
   BACKGROUND_HELLO_TIMEOUT_MS,
   cancelOrphanedUploadTasks,
   setBackgroundUploads,
@@ -85,7 +91,13 @@ import {
   type BackgroundTransport,
 } from './native-chunk-upload';
 import { cancelJob, sendDraft } from './outbox';
-import { createJobRunner, PERSIST_INTERVAL_MS, type RunnerHost } from './runner';
+import {
+  CREATE_CONFLICT_RETRY_MS,
+  createJobRunner,
+  PERSIST_INTERVAL_MS,
+  type RunnerDeps,
+  type RunnerHost,
+} from './runner';
 import { writeSendFiles } from './send-files';
 import type { UploadChunk } from './tus-client';
 /* eslint-enable import/first */
@@ -98,6 +110,8 @@ const conn = expoDb as unknown as {
 const EP = 'https://vault.test/pulsevault';
 const NOW = 1_790_000_000_000;
 const VIDEO_BYTES = 1000;
+/** PulseVault's default `reclaim.idleSeconds`. */
+const RECLAIM_IDLE_MS = 300_000;
 let clock = NOW;
 
 // ---- an in-memory PulseVault, plus the host server's upload rows -------------------------------
@@ -110,6 +124,8 @@ type VaultUpload = {
   length: number;
   offset: number;
   uploadId: string;
+  /** When it last moved (its create or a PATCH): PulseVault reclaims it only when idle. */
+  updatedAt: number;
 };
 
 type Row = { uploadId: string; clientKey: string; draftKey: string; artifactId: string };
@@ -126,6 +142,8 @@ class Vault {
   tokens = new Map<string, { uploadId: string; exp: number }>();
   patches: { url: string; offset: number; kind: string }[] = [];
   creates: string[] = [];
+  /** Creates answered 409 because the artifact had an unfinished upload not yet idle. */
+  conflicts: string[] = [];
   /** Tokens the server stops taking (e.g. revoked): 403. */
   refused = new Set<string>();
 
@@ -189,9 +207,21 @@ class Vault {
         }),
       );
       if (this.complete.has(meta.artifactId)) return json(409, { error: 'taken' });
-      // PROTOCOL.md §6.5: a create by the same token takes over an unfinished upload.
-      for (const [u, up] of this.uploads)
-        if (up.artifactId === meta.artifactId) this.uploads.delete(u);
+      // PulseVault's reclaim (pulsevaultTus.ts): a create for an artifact that has an unfinished
+      // upload of the same kind and relatedTo takes it over only once it has been idle for
+      // `reclaim.idleSeconds` (300 s); until then the id is taken (409).
+      for (const [u, up] of this.uploads) {
+        if (up.artifactId !== meta.artifactId) continue;
+        const reclaimable =
+          up.kind === meta.kind &&
+          up.relatedTo === (meta.relatedTo ?? null) &&
+          clock - up.updatedAt >= RECLAIM_IDLE_MS;
+        if (!reclaimable) {
+          this.conflicts.push(meta.artifactId);
+          return json(409, { error: 'taken' });
+        }
+        this.uploads.delete(u);
+      }
       const location = `${EP}/upload/u${++this.n}`;
       this.uploads.set(location, {
         url: location,
@@ -201,6 +231,7 @@ class Vault {
         length: Number(headers['Upload-Length']),
         offset: 0,
         uploadId: who,
+        updatedAt: clock,
       });
       this.creates.push(meta.artifactId);
       return new Response(null, { status: 201, headers: { location } });
@@ -239,6 +270,7 @@ class Vault {
     if (up.offset !== p.offset) return { status: 409, headers: {} };
     this.patches.push({ url: up.url, offset: p.offset, kind: up.kind });
     up.offset += bytes;
+    up.updatedAt = clock;
     if (up.offset === up.length) {
       this.complete.set(up.artifactId, up);
       // The host's onUploadComplete records where the video went (huddle-server.md §7).
@@ -264,6 +296,7 @@ function makeProcess(
     foreground?: boolean;
     onTarget?: (r: UploadTargetRequest, t: HostUploadTarget) => HostUploadTarget;
     cancelOrphans?: (live: readonly string[]) => Promise<number>;
+    attachRunning?: RunnerDeps['attachRunning'];
   } = {},
 ) {
   let ops = 0;
@@ -332,6 +365,7 @@ function makeProcess(
     fetchImpl,
     uploadChunk,
     cancelOrphans: opts.cancelOrphans ?? (async () => 0),
+    attachRunning: opts.attachRunning ?? (async () => null),
     checksum: async () => 'md5:00',
     isForeground: () => opts.foreground ?? true,
     canUpload: () => true,
@@ -351,6 +385,27 @@ function makeProcess(
       account = next;
     },
   };
+}
+
+/**
+ * Boot a process (the launch rule), and let its jobs run, including the retries that come due
+ * later: the clock jumps to each one (at most `rounds`).
+ */
+async function bootAndSettle(
+  p: { runner: { boot(): Promise<void>; idle(): Promise<void>; drain(): Promise<void> } },
+  draftId: string,
+  rounds = 3,
+): Promise<number> {
+  await p.runner.boot();
+  await p.runner.idle();
+  let retries = 0;
+  for (; retries < rounds; retries++) {
+    const job = getUploadJob(draftId);
+    if (job?.state !== 'queued' || job.nextAttemptAt == null) break;
+    clock = Math.max(clock, job.nextAttemptAt);
+    await p.runner.drain();
+  }
+  return retries;
 }
 
 /** Let a process run until it is killed (its pass then hangs for good). */
@@ -504,6 +559,10 @@ describe('the job loop', () => {
       if (k % 3 === 1 && k > 1) cases.push([k, 'mid']); // the PATCHes: half the bytes stored
     }
 
+    // The creates (one per part): a kill after the server made the upload leaves the job without
+    // its URL, and the relaunch's create meets it (409) until PulseVault reclaims it.
+    const CREATES = [2, 5, 8, 11];
+
     it.each(cases)('killed at request %i (%s)', async (k, mode) => {
       const id = `d-kill-${k}-${mode}`;
       const sent = await queued(id);
@@ -511,10 +570,14 @@ describe('the job loop', () => {
       void first.runner.drain();
       await untilDead(first);
 
+      const conflictsBefore = vault.conflicts.length;
       const second = makeProcess(vault);
-      await second.runner.boot();
+      const retries = await bootAndSettle(second, id);
 
       expectOneUpload(vault, id, sent.clientKey);
+      const lostCreate = mode === 'after' && CREATES.includes(k);
+      expect(vault.conflicts.length - conflictsBefore).toBe(lostCreate ? 1 : 0);
+      expect(retries).toBe(lostCreate ? 1 : 0);
       if (mode === 'mid') {
         // The relaunch resumed the part from the server's HEAD offset instead of starting over.
         const row = vault.rows.get(sent.clientKey)!;
@@ -582,6 +645,7 @@ describe('the job loop', () => {
 
     const second = makeProcess(vault);
     await second.runner.boot();
+    await second.runner.idle();
 
     expect(second.targetCalls).toEqual([
       expect.objectContaining({ clientKey: sent.clientKey, renewArtifact: true }),
@@ -735,6 +799,7 @@ describe('the job loop', () => {
 
       const foreground = makeProcess(vault);
       await foreground.runner.boot();
+      await foreground.runner.idle();
       expectOneUpload(vault, 'd-bg', sent.clientKey);
     });
 
@@ -779,6 +844,7 @@ describe('the job loop', () => {
       // Relaunched while signed out: the token can't be refreshed, so the job waits.
       const second = makeProcess(vault, { account: 'signed-out' });
       await second.runner.boot();
+      await second.runner.idle();
       expect(getUploadJob('d-back')).toMatchObject({
         state: 'needs_credentials',
         lastErrorCode: 'no_account',
@@ -787,6 +853,7 @@ describe('the job loop', () => {
       // The same person signs in again (the host's setAccount, then resumeOutbox).
       second.setAccount('signed-in');
       await second.runner.resumeOutbox();
+      await second.runner.idle();
       const video = [...vault.uploads.values()].find(
         (u) => u.uploadId === vault.rows.get(sent.clientKey)!.uploadId && u.kind === 'video',
       )!;
@@ -808,8 +875,13 @@ describe('the job loop', () => {
       expect(p.ops()).toBe(0);
       expect(getUploadJob('d-inactive')?.state).toBe('queued');
 
+      // Active again, with the runner started: the jobs run without another call.
+      const stop = p.runner.start();
+      await p.runner.idle();
+      expect(p.ops()).toBe(0);
       p.runner.setAccountActive(true);
-      await p.runner.drain();
+      await p.runner.idle();
+      stop();
       expect(getUploadJob('d-inactive')).toBeNull();
       expect(getReceipt('d-inactive')?.outcome).toBe('done');
     });
@@ -844,6 +916,7 @@ describe('the job loop', () => {
       },
     });
     await second.runner.boot();
+    await second.runner.idle();
     const row = vault.rows.get(sent.clientKey)!;
     const urls = [...vault.uploads.values()]
       .filter((u) => u.uploadId === row.uploadId)
@@ -859,6 +932,121 @@ describe('the job loop', () => {
       'PATCH video',
     ]);
     expectOneUpload(vault, 'd-sweep', sent.clientKey);
+  });
+
+  it('a create whose 201 was lost waits for PulseVault to reclaim it, then finishes with one upload', async () => {
+    const vault = new Vault();
+    const sent = await queued('d-lost-201');
+    // Killed right after the server made the video's upload: the job never learnt its URL.
+    const first = makeProcess(vault, { killAt: 11, mode: 'after' });
+    void first.runner.drain();
+    await untilDead(first);
+    const video = vault.rows.get(sent.clientKey)!.artifactId;
+    expect(vault.creates.filter((a) => a === video)).toHaveLength(1);
+
+    // Relaunched a minute later: the upload isn't idle long enough to reclaim, so 409.
+    clock += 60_000;
+    const second = makeProcess(vault);
+    await second.runner.boot();
+    await second.runner.idle();
+    expect(vault.conflicts).toEqual([video]);
+    const waiting = getUploadJob('d-lost-201')!;
+    expect(waiting).toMatchObject({ state: 'queued', lastErrorCode: 'upload.conflict' });
+    expect(waiting.nextAttemptAt).toBe(clock + CREATE_CONFLICT_RETRY_MS);
+
+    // Nothing moves before then.
+    clock = waiting.nextAttemptAt! - 1;
+    const ops = second.ops();
+    await second.runner.drain();
+    expect(second.ops()).toBe(ops);
+
+    // Then PulseVault takes its own idle upload over, and the video goes once.
+    clock = waiting.nextAttemptAt!;
+    await second.runner.drain();
+    expectOneUpload(vault, 'd-lost-201', sent.clientKey);
+    expect(vault.creates.filter((a) => a === video)).toHaveLength(2);
+    expect(vault.conflicts).toHaveLength(1);
+  });
+
+  it("ends the relaunch's pass when the status route refuses the token and no refresh comes", async () => {
+    const vault = new Vault();
+    const sent = await queued('d-status-refused');
+    const first = makeProcess(vault, { killAt: 13, mode: 'mid' });
+    void first.runner.drain();
+    await untilDead(first);
+
+    const second = makeProcess(vault, { account: 'away' });
+    // The token the new process holds is one the server no longer takes.
+    const stale = vault.mint(vault.rows.get(sent.clientKey)!.uploadId);
+    vault.refused.add(stale.token);
+    second.held.set(vault.rows.get(sent.clientKey)!.uploadId, stale);
+    await second.runner.boot();
+    await second.runner.idle();
+
+    expect(getUploadJob('d-status-refused')).toMatchObject({
+      state: 'needs_credentials',
+      lastErrorCode: 'credentials.expired',
+    });
+    // One refresh asked, and nothing sent with the refused token after it.
+    expect(second.refreshes()).toBe(1);
+    expect(second.labels.filter((l) => !l.startsWith('GET /artifacts/'))).toEqual([]);
+  });
+
+  it('waits for a background task still sending the video before it HEADs the upload', async () => {
+    const vault = new Vault();
+    const sent = await queued('d-attach');
+    const first = makeProcess(vault, { killAt: 13, mode: 'mid' }); // half the video stored
+    void first.runner.drain();
+    await untilDead(first);
+    const firstToken = [...vault.tokens.keys()].at(-1)!;
+
+    const progress: number[] = [];
+    let second: ReturnType<typeof makeProcess>;
+    const attached: string[] = [];
+    second = makeProcess(vault, {
+      // The task iOS kept running sends the rest, with the first process's token, and ends.
+      attachRunning: async (url, _file, opts) => {
+        attached.push(url);
+        second.labels.push('attach');
+        const up = vault.uploads.get(url)!;
+        opts.onProgress?.(up.length);
+        return vault.patch(
+          {
+            resourceUrl: url,
+            kind: 'video',
+            offset: up.offset,
+            chunkBytes: up.length - up.offset,
+            totalBytes: up.length,
+            file: null as never,
+            headers: { Authorization: `Bearer ${firstToken}` },
+          },
+          up.length - up.offset,
+        );
+      },
+    });
+    second.runner.subscribeProgress((e) => progress.push(e.bytesSent));
+    await second.runner.boot();
+    await second.runner.idle();
+
+    const row = vault.rows.get(sent.clientKey)!;
+    const video = [...vault.uploads.values()].find(
+      (u) => u.uploadId === row.uploadId && u.kind === 'video',
+    )!;
+    expect(attached).toEqual([video.url]);
+    expect(second.labels).toEqual([
+      'refresh',
+      `GET /artifacts/${row.artifactId}/status`,
+      'attach',
+      `HEAD ${video.url.replace(EP, '')}`,
+      `GET /artifacts/${row.artifactId}/status`,
+    ]);
+    // The kept task's bytes, and no PATCH of this process's own.
+    expect(vault.patches.filter((x) => x.url === video.url).map((x) => x.offset)).toEqual([
+      0,
+      VIDEO_BYTES / 2,
+    ]);
+    expect(progress).toContain(VIDEO_BYTES);
+    expectOneUpload(vault, 'd-attach', sent.clientKey);
   });
 });
 
@@ -958,22 +1146,62 @@ describe("PulseKit's background uploader (native-chunk-upload.ts)", () => {
     expect(pk.sent.find((m) => m.op === 'cancel')).toMatchObject({ id: patchId });
   });
 
-  it('cancels only the tasks of no live job, through PulseKit', async () => {
+  it("cancels only the tasks of no live job, in this runtime's namespace, through PulseKit", async () => {
     const pk = fakePulseKit((m, reply) => {
       if (m.op === 'hello') reply({ type: 'pulse.upload.end', ok: true });
       if (m.op === 'sweep') reply({ type: 'pulse.upload.end', ok: true, cancelled: 2 });
     });
-    await expect(cancelOrphanedUploadTasks([`${EP}/upload/live`])).resolves.toBe(2);
-    expect(pk.sent.find((m) => m.op === 'sweep')).toMatchObject({ live: [`${EP}/upload/live`] });
+    const root = '/var/app/Library/PulseKit/acct-1';
+    jest.mocked(customDocumentsPath).mockReturnValue(root);
+    try {
+      await expect(cancelOrphanedUploadTasks([`${EP}/upload/live`])).resolves.toBe(2);
+    } finally {
+      jest.mocked(customDocumentsPath).mockReturnValue(null);
+    }
+    expect(pk.sent.find((m) => m.op === 'sweep')).toMatchObject({
+      root,
+      live: [`${EP}/upload/live`],
+    });
+  });
+
+  it('attaches to the task running for an upload, or answers null when none runs', async () => {
+    const pk = fakePulseKit((m, reply) => {
+      if (m.op === 'hello') reply({ type: 'pulse.upload.end', ok: true });
+      if (m.op === 'attach' && m.url === `${EP}/upload/none`) {
+        reply({ type: 'pulse.upload.end', ok: true, attached: false });
+      }
+      if (m.op === 'attach' && m.url === `${EP}/upload/kept`) {
+        reply({ type: 'pulse.upload.progress', sent: 80 });
+        reply({
+          type: 'pulse.upload.end',
+          ok: true,
+          status: 204,
+          headers: { 'Upload-Offset': '100' },
+        });
+      }
+    });
+    const file = videoFile();
+    await expect(attachRunningUpload(`${EP}/upload/none`, file as never)).resolves.toBeNull();
+    const offsets: number[] = [];
+    await expect(
+      attachRunningUpload(`${EP}/upload/kept`, file as never, {
+        onProgress: (n) => offsets.push(n),
+      }),
+    ).resolves.toEqual({ status: 204, headers: { 'Upload-Offset': '100' } });
+    expect(offsets).toEqual([80]);
+    expect(pk.sent.filter((m) => m.op === 'attach')).toEqual([
+      expect.objectContaining({ url: `${EP}/upload/none`, path: file.path }),
+      expect.objectContaining({ url: `${EP}/upload/kept`, path: file.path }),
+    ]);
   });
 
   it("falls back to expo's task when PulseKit doesn't answer", async () => {
     jest.useFakeTimers();
     try {
       const pk = fakePulseKit(() => {});
-      const swept = cancelOrphanedUploadTasks(['x']);
+      const attached = attachRunningUpload('x', videoFile() as never);
       await jest.advanceTimersByTimeAsync(BACKGROUND_HELLO_TIMEOUT_MS);
-      await expect(swept).resolves.toBe(0);
+      await expect(attached).resolves.toBeNull();
       expect(pk.sent.map((m) => m.op)).toEqual(['hello']);
     } finally {
       jest.useRealTimers();
