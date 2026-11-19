@@ -1,30 +1,68 @@
 # @mieweb/pulse-embed
 
-The host contract for embedding Pulse (PulseKit) in a Capacitor or Cordova app, as TypeScript
-types plus the few runtime helpers every caller needs. The JS client, the adapters and the React
-hooks build on it (`./react` and `./testing` are reserved subpaths; they don't exist yet).
+The JavaScript side of embedding Pulse (PulseKit) in a Capacitor or Cordova app: the host contract
+as TypeScript types, the client your page calls, React hooks, and a scripted fake for your tests.
+It needs one native plugin next to it: `@mieweb/capacitor-pulse` or `cordova-plugin-pulse`.
+
+How to add Pulse to an app, step by step, and the full contract are in the Pulse repo's
+[docs/embedding](../../../docs/embedding/README.md).
+
+```sh
+npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc   # Capacitor
+npm install --save-exact @mieweb/pulse-embed@rc                              # Cordova, then:
+npx cordova plugin add cordova-plugin-pulse@rc
+```
+
+Releases are prereleases on the npm `rc` tag. Install the client and the plugin at the same exact
+version.
 
 ## What's here
 
-| Export                 | What it is                                                                                                                                                                                                                                   |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Types (`src/types.ts`) | The contract v1: `PulseClient`, `OpenRequest`, `FlowResult`, `DraftSummary`, `HostServices`, error codes, events and the bridge envelope.                                                                                                    |
-| `CONTRACT`             | `{ major: 1, minor: 0 }`. A client refuses a facade with another major (`contract.unsupported`).                                                                                                                                             |
-| `contextKey(kind, id)` | Builds `PulseContext.key` as `` `${kind}:${id.toLowerCase()}` ``. The kind must be `[a-z0-9._-]`, the id `[A-Za-z0-9._:-]` (checked before lowercasing), and the key at most 128 chars; anything else throws a PulseError `invalid_options`. |
-| `isPulseError(e)`      | True for an error with `name: 'PulseError'`, a `code`, a `message` and a `callId`.                                                                                                                                                           |
+| Import                        | What it gives you                                                                                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@mieweb/pulse-embed`         | `getPulse()` (the page-wide client) and `createPulseClient(options)`; `contextKey(kind, id)`; `isPulseError(e)`; `CONTRACT`; every contract type (`PulseClient`, `OpenRequest`, `FlowResult`, …). |
+| `@mieweb/pulse-embed/react`   | `usePulseAvailability`, `usePresent`, and the drafts hooks `useDrafts`, `useDraft`, `useDraftCounts` (these need contract minor 1). React 18 or later, as an optional peer dependency.            |
+| `@mieweb/pulse-embed/testing` | `createFakePulse(script)`, a scripted in-memory Pulse behind a real adapter, and `runPulseContract(maker, { describe, it, expect })`, the host contract as one suite for Jest or Vitest.          |
 
-## Contract rules
+```ts
+import { contextKey, getPulse } from '@mieweb/pulse-embed';
 
-- Error codes, states, entry names, event names and fields are append-only.
-- Unknown fields are ignored on both sides. A missing required field, or a wrong type, is
-  `invalid_options`.
-- New methods are found through `info().methods`, never by comparing `contract.minor`.
-- Everything that crosses the bridge is JSON. Times are integer milliseconds since the epoch.
+const pulse = getPulse();
+await pulse.configure({ uploadMode: 'file', hostName: 'TimeHuddle' });
+const result = await pulse.record({
+  key: contextKey('ticket', 'TH-482'),
+  kind: 'ticket',
+  id: 'TH-482',
+  label: 'Fix login',
+});
+```
+
+PulseKit needs `uploadMode: 'file'` in this version: the default, `'pulse'`, ends every flow
+`failed` with `unsupported`. Read `pendingResults()` on every page load, and `acknowledge()` each
+result once you've handled it.
+
+The client picks its transport itself: `window.__PULSE_ADAPTER__` (test builds), then Capacitor's
+`Pulse` plugin, then Cordova's `window.PulseKit`, and otherwise an adapter that reports Pulse as
+unavailable, so the same code runs in a desktop browser.
+
+## The fake
+
+`createFakePulse` models the whole contract, the minor-1 methods (drafts, accounts, Pulse uploads)
+included, and its default flow ends as a Pulse upload. To match the PulseKit that is released, pass
+`flows: [{ result: 'file' }]` and the minor-0 method list as `info.methods`
+([example](../../../docs/embedding/README.md#test-without-a-phone)).
+
+### Server mode
+
+With `createFakePulse({ server: … })` the fake uploads for real: it asks your `HostServices` for an
+upload target, sends the video over TUS with `fetch` (a create, then a PATCH per part) and polls the
+status route until there is an outcome. It needs no extra dependency.
 
 ## Versions
 
-The package version is `0.0.0-dev` in the repo. The release workflow stamps the PulseKit version
-(the same as the Pulse app it was built from) from the `pulsekit-v*` tag.
+The version is `0.0.0-dev` in the repo. A `pulsekit-v*` tag stamps the release version into this
+package, the two plugins and PulseKit itself, and they are published together
+([releasing](../../../docs/embedding/releasing.md)). Install all of them at the same exact version.
 
 ## Development
 
@@ -33,5 +71,6 @@ Inside the Pulse repo the package resolves from source: the root and `embed/` ts
 
 ```sh
 npx tsc --noEmit -p embed/packages/pulse-embed   # the package on its own
-npx jest embed/packages/pulse-embed              # its tests
+npx jest embed/packages/pulse-embed              # its tests (also part of npm test)
+(cd embed/packages/pulse-embed && npm run build) # dist/, as npm gets it
 ```

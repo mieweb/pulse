@@ -303,7 +303,7 @@ describe('server mode', () => {
     await fake.idle();
     expect(fake.drafts()[0].state).toBe('failed');
     expect(fake.drafts()[0].upload?.error?.code).toBe('upload.failed');
-    expect(offsite.seen.some((s) => s.url.startsWith('https://evil.test'))).toBe(false);
+    expect(offsite.seen.some((s) => new URL(s.url).host === 'evil.test')).toBe(false);
 
     const refused = vault({ patch: () => res(413) });
     const fake2 = make(refused, {

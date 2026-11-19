@@ -365,8 +365,10 @@ jobs:
       - name: Publish to npm
         env:
           DIST_TAG: ${{ steps.version.outputs.dist_tag }}
-          # Empty unless the bootstrap secret is set; trusted publishing needs no token.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # The first publish of a new package needs a token (trusted publishing can only be set up
+          # for a package that exists): NPM_TOKEN if the repo sets one, else the org's npm secret.
+          # Once trusted publishing is configured on npmjs.com, neither is needed.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NPM_PUBLISH_SECRET }}
         run: |
           for pkg in pulse-embed capacitor-pulse cordova-plugin-pulse; do
             echo "::group::$pkg"

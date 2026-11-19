@@ -26,6 +26,7 @@
       ]
     },
     "plugins": [
+      "./plugins/with-pulsekit-facade",
       [
         "expo-brownfield",
         {
@@ -41,7 +42,6 @@
           }
         }
       ],
-      "./plugins/with-pulsekit-facade",
       "expo-sqlite",
       "expo-video",
       "expo-image",

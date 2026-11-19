@@ -1,6 +1,7 @@
-# PR/push CI: typecheck, lint and the unit tests on every change, plus the cross-repo
-# integration suite — the app's real pairing and upload code against a real pulsevault server —
-# so the wire contract both repos share is checked on every PR, not just on developer machines.
+# PR/push CI: typecheck, lint and the unit tests on every change, the embed bundle check, plus the
+# cross-repo integration suite — the app's real pairing and upload code against a real pulsevault
+# server — so the wire contract both repos share is checked on every PR, not just on developer
+# machines.
 name: CI
 
 on:
@@ -36,6 +37,24 @@ jobs:
         run: node scripts/gen-protocol-types.mjs --check
       - name: Unit tests
         run: npx jest --ci
+
+  # What ships in PulseKit (the embed plan's B5): the embed's iOS and Android JS bundles hold
+  # nothing from the standalone shell or an excluded package, every native dependency is
+  # classified in embed/deps.json, the facade and plugins never open SQLite, and the facade keeps
+  # the names hosts call. JS bundling only, no native build; `npm run check:embed` runs it locally.
+  embed-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true # modules/pulse-editor: the embed bundles it from source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Embed bundle check
+        run: npm run check:embed
 
   # The same suite against two servers:
   # - pinned: the pulsevault commit this app pins in its submodule (what it was built against);
