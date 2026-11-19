@@ -1,0 +1,31 @@
+{
+  "name": "cordova-plugin-pulse",
+  "version": "0.0.0-dev",
+  "description": "Cordova plugin \"Pulse\": the native transport between @mieweb/pulse-embed and PulseKit (iOS; an Android stub that reports unsupported).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mieweb/pulse.git",
+    "directory": "embed/packages/cordova-plugin-pulse"
+  },
+  "keywords": [
+    "cordova",
+    "ecosystem:cordova",
+    "cordova-ios",
+    "cordova-android",
+    "pulse",
+    "video"
+  ],
+  "files": [
+    "plugin.xml",
+    "PulseKit.podspec",
+    "www/pulse.js",
+    "src/"
+  ],
+  "cordova": {
+    "id": "cordova-plugin-pulse",
+    "platforms": [
+      "ios",
+      "android"
+    ]
+  }
+}

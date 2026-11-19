@@ -31,7 +31,7 @@ jest.mock('@/utils/file-store', () => ({
 }));
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
-import { exportSignature, mergedSignature } from './merge-signature';
+import { exportSignature, mergedSignature } from '@/core/media/merge-signature';
 import { resolveMergedExport } from './merged-export';
 /* eslint-enable import/first */
 

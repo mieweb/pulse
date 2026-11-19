@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 
 import { absolutize, thumbRelPath, toFileUri } from '@/utils/file-store';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 import { db } from './client';
 import type { DataMigration } from './data-migrations';
 import { drafts, segments } from './schema';
+import { documentDir } from '@/utils/storage-root';
 
 /**
  * One-shot migration of drafts created by the ORIGINAL Pulse app (mieweb/pulse, ≤ 1.2.x,
@@ -73,7 +74,7 @@ function parseTimestamp(value: string | number | undefined, fallback: number): n
 function legacyFile(uri: string): File {
   if (uri.startsWith('file://')) return new File(uri);
   if (uri.startsWith('/')) return new File(toFileUri(uri));
-  return new File(Paths.document, ...uri.split('/'));
+  return new File(documentDir(), ...uri.split('/'));
 }
 
 function extensionOf(uri: string): string {
@@ -93,7 +94,7 @@ async function migrateDraft(draft: LegacyDraft): Promise<boolean> {
   for (const seg of draft.segments ?? []) {
     if (!seg.id || !seg.uri) continue;
     const relPath = `drafts/${draftId}/segments/${seg.id}.${extensionOf(seg.uri)}`;
-    const dest = new File(Paths.document, ...relPath.split('/'));
+    const dest = new File(documentDir(), ...relPath.split('/'));
 
     if (!dest.exists) {
       const src = legacyFile(seg.uri);
@@ -101,7 +102,7 @@ async function migrateDraft(draft: LegacyDraft): Promise<boolean> {
         console.warn(`[legacy-migration] clip missing, skipping segment ${seg.id} of ${draftId}`);
         continue;
       }
-      new Directory(Paths.document, 'drafts', draftId, 'segments').create({
+      new Directory(documentDir(), 'drafts', draftId, 'segments').create({
         intermediates: true,
         idempotent: true,
       });
@@ -160,7 +161,7 @@ async function migrateDraft(draft: LegacyDraft): Promise<boolean> {
 /** Delete the legacy media tree and every legacy AsyncStorage key. Best-effort. */
 async function cleanupLegacyStorage(): Promise<void> {
   try {
-    const legacyRoot = new Directory(Paths.document, LEGACY_BASE_DIR);
+    const legacyRoot = new Directory(documentDir(), LEGACY_BASE_DIR);
     if (legacyRoot.exists) legacyRoot.delete();
   } catch (e) {
     console.warn('[legacy-migration] could not delete legacy media dir', e);

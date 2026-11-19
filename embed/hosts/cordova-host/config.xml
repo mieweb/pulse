@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<widget id="org.mieweb.cordovahost" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+  <name>CordovaHost</name>
+  <description>Test host for the Pulse Cordova plugin.</description>
+  <content src="index.html" />
+  <preference name="deployment-target" value="16.4" />
+  <preference name="SwiftVersion" value="5" />
+  <allow-intent href="http://*/*" />
+  <allow-intent href="https://*/*" />
+  <platform name="ios">
+    <!-- PulseKit's open refuses with host_misconfigured without the camera and microphone strings;
+         without the Photos add string it drops the saveToPhotos capability. -->
+    <config-file target="*-Info.plist" parent="NSCameraUsageDescription">
+      <string>Pulse records video.</string>
+    </config-file>
+    <config-file target="*-Info.plist" parent="NSMicrophoneUsageDescription">
+      <string>Pulse records sound with the video.</string>
+    </config-file>
+    <config-file target="*-Info.plist" parent="NSPhotoLibraryUsageDescription">
+      <string>Pulse imports videos from Photos.</string>
+    </config-file>
+    <config-file target="*-Info.plist" parent="NSPhotoLibraryAddUsageDescription">
+      <string>Pulse saves videos to Photos.</string>
+    </config-file>
+    <!-- PulseKit's container sets the status bar while Pulse is open. -->
+    <edit-config file="*-Info.plist" mode="overwrite" target="UIViewControllerBasedStatusBarAppearance">
+      <true />
+    </edit-config>
+  </platform>
+</widget>

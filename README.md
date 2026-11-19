@@ -12,13 +12,13 @@
 [![Whisper](https://img.shields.io/badge/Whisper-on--device-4B8BBE)](https://github.com/mybigday/whisper.rn)
 [![VisionCamera](https://img.shields.io/badge/VisionCamera-v5-FF6B6B)](https://react-native-vision-camera.com)
 
-*Capture knowledge before it walks out the door — training walkthroughs, process demos, handoffs — without sending a single frame to a third-party cloud.*
+_Capture knowledge before it walks out the door — training walkthroughs, process demos, handoffs — without sending a single frame to a third-party cloud._
 
 </div>
 
 ---
 
-Pulse is a React Native (Expo) app for capturing institutional knowledge as short-form video. Everything happens on the device: segmented recording, trimming, merging, and even speech-to-text captioning run locally. When you're ready to publish, Pulse uploads to a [**PulseVault**](#pulsevault--self-hosted-uploads) server *you* run — your organization keeps the content on its own infrastructure and owns auth, retention, and quota decisions. No central Pulse service exists.
+Pulse is a React Native (Expo) app for capturing institutional knowledge as short-form video. Everything happens on the device: segmented recording, trimming, merging, and even speech-to-text captioning run locally. When you're ready to publish, Pulse uploads to a [**PulseVault**](#pulsevault--self-hosted-uploads) server _you_ run — your organization keeps the content on its own infrastructure and owns auth, retention, and quota decisions. No central Pulse service exists.
 
 ## Anatomy of a Pulse
 
@@ -26,7 +26,7 @@ Two words show up throughout Pulse — here's what they mean.
 
 ### What is a Pulse?
 
-A **Pulse** is a single short-form video, assembled on-device from an ordered set of clips. Record a few, import a few, reorder them — on export they merge (losslessly where formats match) into one `.mp4`. Publishing a Pulse sends a small bundle: the merged video, its captions (WebVTT), a **beat manifest**, and a thumbnail. On-device each Pulse is a *draft* in your library; drafts move between devices as `.pulse` bundles.
+A **Pulse** is a single short-form video, assembled on-device from an ordered set of clips. Record a few, import a few, reorder them — on export they merge (losslessly where formats match) into one `.mp4`. Publishing a Pulse sends a small bundle: the merged video, its captions (WebVTT), a **beat manifest**, and a thumbnail. On-device each Pulse is a _draft_ in your library; drafts move between devices as `.pulse` bundles.
 
 ```mermaid
 flowchart LR
@@ -174,40 +174,92 @@ The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this ap
 
 **No camera? No problem.** In a dev build, the Home screen has `+ seed` / `clear` buttons that create a "Dev sample" draft from the bundled `assets/dev/` clips — including deliberately mismatched resolution/fps/codec/orientation clips that exercise the export-normalization path — so the full editor is drivable on a simulator. See [assets/dev/README.md](assets/dev/README.md).
 
+## Pulse inside another app
+
+PulseKit is Pulse packaged for other apps: a Capacitor or Cordova app opens Pulse full screen to
+record, edit or export one video, and gets one result back with the finished MP4, which the app
+uploads its own way. It runs on iPhone with iOS 16.4 or later. On Android both plugins are stubs:
+`isAvailable()` is false there, and the app shows its own fallback.
+
+| Package                                                        | Used by        | What it is                                                         |
+| -------------------------------------------------------------- | -------------- | ------------------------------------------------------------------ |
+| [`@mieweb/pulse-embed`](embed/packages/pulse-embed/)           | Every host     | The client your page calls, its types, React hooks and a test fake |
+| [`@mieweb/capacitor-pulse`](embed/packages/capacitor-pulse/)   | Capacitor 8    | The native plugin, through Swift Package Manager                   |
+| [`cordova-plugin-pulse`](embed/packages/cordova-plugin-pulse/) | cordova-ios 8+ | The native plugin, through CocoaPods                               |
+
+The three are published together, at one version, as release candidates (prereleases) on the npm
+`rc` tag. In a Capacitor app:
+
+```sh
+npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc
+npx cap sync ios
+```
+
+```ts
+import { contextKey, getPulse } from '@mieweb/pulse-embed';
+
+const pulse = getPulse();
+await pulse.configure({ uploadMode: 'file', hostName: 'TimeHuddle' });
+
+const id = 'TH-482'; // check pulse.isAvailable() before showing a Pulse button
+const context = { key: contextKey('ticket', id), kind: 'ticket', id, label: 'Fix login' };
+const result = await pulse.record(context);
+if (result.status === 'completed' && result.mode === 'file') await upload(result.export); // yours
+await pulse.acknowledge(result.requestId);
+```
+
+That is the shape, not a complete integration: your app also needs the `Info.plist` purpose
+strings, and has to read `pendingResults()` on every page load, because a reload drops the
+`record()` promise. [docs/embedding/](docs/embedding/README.md) has the full step-by-step path for
+Capacitor and Cordova, with a checklist to verify it. The reference hosts are in
+[`embed/hosts/`](embed/hosts/), and how the Pulse app and PulseKit share one codebase is in
+[docs/architecture.md](docs/architecture.md).
+
 ## Development
 
 ### Commands
 
-| Command | What it does |
-| --- | --- |
-| `npm start` | Start the Metro dev server |
-| `npm run ios` / `npm run android` | Build & run the dev client |
-| `npm test` | Run the Jest unit-test suite |
-| `npm run lint` | ESLint via `expo lint` |
-| `npx tsc --noEmit` | Typecheck |
-| `npm run format` / `npm run format:check` | Prettier (write / check only) |
-| `node scripts/gen-protocol-types.mjs` | Regenerate `src/features/upload/protocol.gen.ts` from the submodule's schemas and `package.json` `pulseProtocol` (`--check` fails if it's stale) |
+| Command                                   | What it does                                                                                                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm start`                               | Start the Metro dev server                                                                                                                       |
+| `npm run ios` / `npm run android`         | Build & run the dev client                                                                                                                       |
+| `npm test`                                | Run the Jest unit-test suite (the app's and `embed/`'s)                                                                                          |
+| `npm run lint`                            | ESLint via `expo lint src embed/src`, including the rules that keep shared code out of either shell                                              |
+| `npx tsc --noEmit`                        | Typecheck (also covers `embed/`; `npx tsc --noEmit -p embed` checks it with the embed's own path map)                                            |
+| `npm run format` / `npm run format:check` | Prettier (write / check only)                                                                                                                    |
+| `node scripts/gen-protocol-types.mjs`     | Regenerate `src/features/upload/protocol.gen.ts` from the submodule's schemas and `package.json` `pulseProtocol` (`--check` fails if it's stale) |
+| `npm run check:embed`                     | Check what ships in PulseKit: dependency classification, no SQLite in native code, and PulseKit's iOS and Android JS bundles (no native build)   |
+| `npm run embed:package:ios`               | Package an `expo-brownfield` iOS build in `embed/artifacts` into PulseKit release assets (`--help` for options)                                  |
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, lint, `gen-protocol-types.mjs --check`, and unit tests on every PR, plus the integration suite against both the pinned PulseVault and the latest npm release.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, lint, `gen-protocol-types.mjs --check`, and unit tests on every PR, the embed check (`npm run check:embed`), plus the integration suite against both the pinned PulseVault and the latest npm release. PulseKit releases run from [`release-embed.yml`](.github/workflows/release-embed.yml) on `pulsekit-v*` tags ([releasing](docs/embedding/releasing.md)).
 
 ### Project structure
 
 ```
 src/
-├── app/            # expo-router screens: home, recorder, editor, export, onboarding
-├── features/       # recorder, transcription, export, upload, draft-transfer, home, …
+├── app/            # the Pulse app shell: thin expo-router routes over the feature screens
+├── shell/          # standalone/: navigation helpers only the Pulse app uses
+├── features/       # recorder, editor, export, drafts, transcription, upload, onboarding, …
+├── core/           # PulseCore provider, focus and status-bar ports, recovery
 ├── db/             # Drizzle ORM schema + queries (expo-sqlite)
+├── utils/          # storage roots, files, media helpers
 ├── components/     # shared themed UI
+├── test-support/   # Node stand-ins for native modules, and the lint-zone tests
 └── dev/            # __DEV__-only seed tooling (dead-code-eliminated in release)
-modules/            # custom native modules (expo-call-detector)
+embed/              # PulseKit: the embed shell, Swift facade, release scripts (see embed/README.md)
+└── packages/       # what host apps install: @mieweb/pulse-embed and the Capacitor/Cordova plugins
+modules/            # custom native modules (expo-call-detector) and the pulse-editor submodule
 plugins/            # Expo config plugins
 pulsevault-mieweb/  # self-hosted upload server + protocol spec
 fixtures/           # fixture-regen sources (Big Buck Bunny, CC-BY)
+docs/               # persistence, architecture, embedding guide and research notes
 ```
+
+The layers and the rules between them are in [docs/architecture.md](docs/architecture.md).
 
 ### Testing
 
-Unit tests are co-located with the code and scoped to pure logic — cue reflow, upload/TUS state machines, deep-link parsing, edit history, autosave gating — so they run in a plain Node environment with no native rendering. PulseVault ships its own suite covering the HTTP adapters, capability tokens, and checksum handling.
+Unit tests are co-located with the code and scoped to pure logic — cue reflow, upload/TUS state machines, deep-link parsing, edit history, autosave gating, the embed flow reducer, the host client and its contract — so they run in a plain Node environment with no native rendering. Jest collects `*.test.ts` under both `src/` and `embed/` (not the test hosts or generated native folders). PulseVault ships its own suite covering the HTTP adapters, capability tokens, and checksum handling.
 
 ```bash
 npm test
@@ -221,6 +273,8 @@ A heavier suite is opt-in and skips itself in a plain `npm test`:
 (cd pulsevault-mieweb && npm ci && npm run build)
 PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
 ```
+
+PulseKit's facade rules also run on a Mac without an iOS build, as shared vectors ([embed/native/ios/vectors/README.md](embed/native/ios/vectors/README.md)).
 
 ## License
 

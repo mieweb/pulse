@@ -1,0 +1,10 @@
+# PulseKit's xcframeworks never go into git: a release downloads them, and development points
+# PULSEKIT_LOCAL at a folder outside this package.
+*.xcframework
+*.xcframework.zip
+ios/Frameworks/
+.build/
+.swiftpm/
+Package.resolved
+android/build/
+android/.gradle/

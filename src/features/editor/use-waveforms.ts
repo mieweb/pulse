@@ -1,6 +1,7 @@
 import { extractAudio } from '@mieweb/pulse-editor';
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import { useEffect, useState } from 'react';
+import { cacheDir } from '@/utils/storage-root';
 
 /** One loudness reading per this many ms of source. */
 export const PEAK_MS = 20;
@@ -24,7 +25,7 @@ const level = (amplitude: number) => {
 const memory = new Map<string, Peaks | null>();
 const failed = new Set<string>();
 
-const cacheDir = () => new Directory(Paths.cache, 'waveforms');
+const waveformsDir = () => new Directory(cacheDir(), 'waveforms');
 
 function hash(s: string): string {
   let h = 2166136261;
@@ -49,7 +50,7 @@ function peaksOf(uri: string): Promise<Peaks | null> {
 }
 
 async function readPeaks(uri: string): Promise<Peaks | null> {
-  const file = new File(cacheDir(), `${hash(uri)}.wave`);
+  const file = new File(waveformsDir(), `${hash(uri)}.wave`);
   if (file.exists) {
     const bytes = await file.bytes();
     return bytes.length ? bytes : null;
@@ -74,7 +75,7 @@ async function readPeaks(uri: string): Promise<Peaks | null> {
     peaks[b * 2 + 1] = level(Math.sqrt(sum / Math.max(1, end - start)));
   }
   try {
-    const dir = cacheDir();
+    const dir = waveformsDir();
     if (!dir.exists) dir.create({ intermediates: true });
     file.create({ overwrite: true });
     file.write(peaks);

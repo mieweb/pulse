@@ -1,7 +1,8 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 
 import { modelUrl, type WhisperModel } from './models';
 import { deleteDownload, downloadWhole, isWholeFile } from './verified-download';
+import { documentDir } from '@/utils/storage-root';
 
 // On-device Whisper model files live under the document directory (so they survive launches) and
 // are downloaded on demand. Only the currently-selected model is kept on disk — switching deletes
@@ -13,11 +14,11 @@ import { deleteDownload, downloadWhole, isWholeFile } from './verified-download'
 // at the model's path, so it's never loaded.
 
 function modelsDir(): Directory {
-  return new Directory(Paths.document, 'models');
+  return new Directory(documentDir(), 'models');
 }
 
 function modelFile(m: WhisperModel): File {
-  return new File(Paths.document, 'models', m.filename);
+  return new File(documentDir(), 'models', m.filename);
 }
 
 /** Whether the given model is fully downloaded. */

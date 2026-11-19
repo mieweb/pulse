@@ -1,0 +1,27 @@
+{
+  "version": 3,
+  "sources": [
+    "__prelude__",
+    "/../node_modules/expo/node_modules/@expo/cli/build/metro-require/require.js",
+    "/../node_modules/@react-native/js-polyfills/console.js",
+    "\u0000polyfill:external-require",
+    "/index.ts",
+    "/src/embed-root.tsx",
+    "/src/shell/flow-stack.tsx",
+    "/src/stubs/linking.ts",
+    "/src/stubs/async-storage.ts",
+    "/../src/features/recorder/recorder-screen.tsx",
+    "/../src/features/upload/deep-link.ts",
+    "/../src/features/upload/upload-manager.ts",
+    "/../src/db/client.ts",
+    "/../modules/pulse-editor/src/index.tsx",
+    "/../node_modules/react-native/index.js",
+    "/../node_modules/react-native/Libraries/Linking/Linking.js",
+    "/../node_modules/expo-sqlite/build/index.js",
+    "/../node_modules/whisper.rn/src/index.ts",
+    "/../node_modules/react-native-screens/src/index.tsx"
+  ],
+  "sourcesContent": ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+  "names": [],
+  "mappings": ""
+}

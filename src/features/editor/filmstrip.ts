@@ -1,12 +1,13 @@
 import { frames as grabFrames } from '@mieweb/pulse-editor';
 import { Skia, type SkImage } from '@shopify/react-native-skia';
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import { useEffect, useSyncExternalStore } from 'react';
 import { PixelRatio, Platform } from 'react-native';
 
 import type { ClipCrop } from '@/utils/segment-window';
 
 import { FILM_HEIGHT } from './clip-tile';
+import { cacheDir } from '@/utils/storage-root';
 
 // The editor's filmstrip: frames of a file at fixed source times, so a trim, a speed change or a
 // reorder only shows more or less of frames already there, and a pinch reuses them. Frames sit on
@@ -80,7 +81,7 @@ function changed() {
   }, NOTIFY_MS);
 }
 
-const cacheRoot = () => new Directory(Paths.cache, 'filmstrip');
+const cacheRoot = () => new Directory(cacheDir(), 'filmstrip');
 
 function hash(s: string): string {
   let h = 2166136261;

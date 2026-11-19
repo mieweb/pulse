@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 
-import type { TranscriptLine } from '@/features/transcription/whisper';
-import { mergedSignature } from '@/features/export/merge-signature';
+import { mergedSignature } from '@/core/media/merge-signature';
+import type { TranscriptLine } from '@/core/types/transcription';
 import { clipRender, effMs, segmentSignature } from '@/utils/segment-window';
 import type { CaptionEdit } from './captions';
 import { db } from './client';

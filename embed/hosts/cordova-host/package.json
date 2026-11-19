@@ -1,0 +1,20 @@
+{
+  "name": "org.mieweb.cordovahost",
+  "displayName": "CordovaHost",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Test host: the Pulse Cordova plugin in a cordova-ios 8 app.",
+  "devDependencies": {
+    "cordova": "^13.0.0",
+    "cordova-ios": "^8.2.0",
+    "cordova-plugin-pulse": "file:../../packages/cordova-plugin-pulse"
+  },
+  "cordova": {
+    "platforms": [
+      "ios"
+    ],
+    "plugins": {
+      "cordova-plugin-pulse": {}
+    }
+  }
+}

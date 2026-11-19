@@ -181,7 +181,11 @@ function Dim({
 }) {
   return (
     <Animated.View style={[CONTROLS_FADE, { opacity: disabled ? Opacity.disabled : 1 }]}>
-      <View style={pressed && styles.pressed}>{children}</View>
+      {/* Not collapsable, like the ✕'s glyph wrapper (close-button.tsx): a press only changes its
+          opacity instead of moving the glyph into a new native parent. */}
+      <View collapsable={false} style={pressed && styles.pressed}>
+        {children}
+      </View>
     </Animated.View>
   );
 }

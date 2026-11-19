@@ -56,3 +56,9 @@ modules/*/android/build/
 # Pages site built locally by scripts/build-compat-page.mjs
 _site/
 assets/dev/speech/.source/
+
+# Embedded build (embed/): generated native projects and artifacts
+/embed/ios
+/embed/android
+/embed/artifacts
+/embed/.expo

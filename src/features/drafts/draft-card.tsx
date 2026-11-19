@@ -91,6 +91,7 @@ export function DraftCard({
     <Pressable
       onPress={editing ? undefined : onPress}
       onLongPress={selectionMode ? undefined : onLongPress}
+      testID="drafts.card"
       style={({ pressed }) => [
         styles.card,
         {

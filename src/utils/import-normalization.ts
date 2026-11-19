@@ -1,4 +1,10 @@
-import type { ConformOptions, MergeAudio, ProbeAudio, ProbeResult, ProbeVideo } from '@mieweb/pulse-editor';
+import type {
+  ConformOptions,
+  MergeAudio,
+  ProbeAudio,
+  ProbeResult,
+  ProbeVideo,
+} from '@mieweb/pulse-editor';
 
 /**
  * Import normalization policy (§ imports).
@@ -31,7 +37,7 @@ import type { ConformOptions, MergeAudio, ProbeAudio, ProbeResult, ProbeVideo } 
  */
 
 /** The app's fixed portrait canvas — every stored segment displays exactly this
- * (reels contract; mirrors REELS_TARGET in merge-signature.ts). */
+ * (reels contract; mirrors REELS_TARGET in core/media/merge-signature.ts). */
 export const CANVAS_WIDTH = 1080;
 export const CANVAS_HEIGHT = 1920;
 /** Re-encode target: the recorder's own frame rate. Also the passthrough gate: a clip whose
@@ -66,8 +72,7 @@ export type RecorderFormat = {
 };
 
 export type ImportDecision =
-  | { action: 'passthrough' }
-  | { action: 'normalize'; options: ConformOptions; reasons: string[] };
+  { action: 'passthrough' } | { action: 'normalize'; options: ConformOptions; reasons: string[] };
 
 /** AAC sample rates, highest first (AAC-LC tops out at 48 kHz). */
 const AAC_RATES = [48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000];
@@ -219,7 +224,9 @@ export function decideImport(
   // the recorder's layout (rate, channels) joins as cheaply without the conform; iOS joins by
   // copy and needs the layout to match. A sound codec the contract rejects is still conformed.
   const audioLayoutOnly =
-    platform === 'android' && audio.length > 0 && audio.every((r) => r.includes('differs from the recorder'));
+    platform === 'android' &&
+    audio.length > 0 &&
+    audio.every((r) => r.includes('differs from the recorder'));
   // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to exactly
   // CANVAS_WxH (display), H.264 8-bit SDR (HDR tone-mapped). With a merge target the pixels are
   // written in the recorder's coded orientation under its rotation tag.
