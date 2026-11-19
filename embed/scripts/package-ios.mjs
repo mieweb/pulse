@@ -33,6 +33,7 @@ import { buildPlist, isBinaryPlist, parsePlist } from './lib/plist.mjs';
 import { readSourceStamps, stampPlist, STAMP_KEYS, validateStamps } from './lib/plist-stamp.mjs';
 import { DSYMS_ZIP, XCFRAMEWORKS_ZIP } from './lib/release-assets.mjs';
 import {
+  missingPrivacyManifests,
   PRIVACY_MANIFESTS,
   privacyDestinations,
   privacyManifestProblems,
@@ -69,6 +70,7 @@ Options:
   --git-sha <sha>   PulseKitGitSha (default: git rev-parse HEAD).
   --sign <identity> codesign --timestamp each packaged xcframework with this identity (a name or
                     SHA-1, as \`security find-identity\` prints it). Without it nothing is signed.
+                    With it, a privacy-manifest framework missing from the build stops the run.
   --keychain <path> The keychain holding --sign's identity (default: the search list).
   --attach <file>   Copy a file into release/ and list it in SHA256SUMS (the source map, the
                     notices); repeatable.
@@ -237,8 +239,12 @@ function main() {
     }
     return { ...src, manifest, keep, drop, shared, privacy };
   });
-  for (const name of Object.keys(PRIVACY_MANIFESTS)) {
-    if (!jobs.some((j) => j.name === name)) {
+  // A release (--sign) must ship every privacy manifest: a framework renamed upstream would
+  // otherwise publish without its manifest. A local, unsigned run only warns.
+  for (const name of missingPrivacyManifests(jobs.map((j) => j.name))) {
+    if (values.sign) {
+      problems.push(`${name} isn't in this build, so its privacy manifest can't ship (--sign)`);
+    } else {
       console.warn(
         `package-ios: warning: ${name} isn't in this build; its privacy manifest is skipped`,
       );

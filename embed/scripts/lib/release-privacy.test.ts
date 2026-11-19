@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import type { Library } from './platforms.mjs';
 import {
+  missingPrivacyManifests,
   PRIVACY_MANIFESTS,
   privacyDestinations,
   privacyManifestProblems,
@@ -38,6 +39,21 @@ describe('the shipped privacy manifests', () => {
       'hermesvm.xcframework',
       'rnwhisper.xcframework',
     ]);
+  });
+});
+
+describe('missingPrivacyManifests', () => {
+  it('is empty when every manifest framework is in the build', () => {
+    expect(
+      missingPrivacyManifests([...Object.keys(PRIVACY_MANIFESTS), 'React.xcframework']),
+    ).toEqual([]);
+  });
+
+  it('names a manifest framework the build lacks (a rename upstream)', () => {
+    const built = Object.keys(PRIVACY_MANIFESTS)
+      .filter((n) => n !== 'hermesvm.xcframework')
+      .concat('hermes.xcframework');
+    expect(missingPrivacyManifests(built)).toEqual(['hermesvm.xcframework']);
   });
 });
 

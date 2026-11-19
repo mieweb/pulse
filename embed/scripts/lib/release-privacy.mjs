@@ -19,6 +19,17 @@ export const PRIVACY_MANIFESTS = /** @type {const} */ ({
 });
 
 /**
+ * The xcframeworks that should carry a privacy manifest but aren't in this build (a rename
+ * upstream, a dropped dependency). A release (package-ios --sign) treats each as a problem, so
+ * it can't ship without a manifest; a local run only warns.
+ * @param {Iterable<string>} built  The xcframework names in the build.
+ */
+export function missingPrivacyManifests(built) {
+  const have = new Set(built);
+  return Object.keys(PRIVACY_MANIFESTS).filter((name) => !have.has(name));
+}
+
+/**
  * The required-reason API categories and the reasons Apple accepts for each (TN: "Describing use
  * of required reason API").
  */
