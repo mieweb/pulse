@@ -97,6 +97,23 @@ describe('checkSend', () => {
         null,
       );
     });
+
+    it('does not hold back a library a newer Pulse migrated (it can’t be named; it still sends)', () => {
+      const check = checkSend({
+        rules: r,
+        name: null,
+        online: true,
+        exportBytes: 1,
+        editable: false,
+      });
+      expect(check).toMatchObject({ block: null, blockText: null });
+      // Its other rules still hold.
+      const offline = rules({ requireName: true, requireOnline: true });
+      expect(
+        checkSend({ rules: offline, name: null, online: false, exportBytes: 1, editable: false })
+          .block,
+      ).toBe('offline');
+    });
   });
 
   describe('requireOnline', () => {

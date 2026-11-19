@@ -76,6 +76,11 @@ export type SendCheckInput = {
   online: boolean;
   /** The merged file's size, or null while unknown (still merging). */
   exportBytes: number | null;
+  /**
+   * Whether the draft can be edited (default true). A library a newer Pulse migrated can't take a
+   * name, and it still sends (only edits are refused), so requireName doesn't hold it back there.
+   */
+  editable?: boolean;
 };
 
 const OK: SendCheck = { block: null, blockText: null, tooLarge: null };
@@ -84,10 +89,16 @@ const OK: SendCheck = { block: null, blockText: null, tooLarge: null };
  * The checks for one render, or for the tap (call it again with the network as it is then: a
  * blocked result at the tap means the action doesn't run).
  */
-export function checkSend({ rules, name, online, exportBytes }: SendCheckInput): SendCheck {
+export function checkSend({
+  rules,
+  name,
+  online,
+  exportBytes,
+  editable = true,
+}: SendCheckInput): SendCheck {
   if (!rules) return OK;
   let block: SendBlock | null = null;
-  if (rules.requireName && !text(name)) block = 'name';
+  if (rules.requireName && editable && !text(name)) block = 'name';
   else if (rules.requireOnline && !online) block = 'offline';
   const tooLarge =
     rules.maxBytes != null && exportBytes != null && exportBytes > rules.maxBytes

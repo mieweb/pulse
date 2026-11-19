@@ -45,6 +45,7 @@ import { isOnline, subscribeNetwork } from '@/core/network';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { captionYQuery } from '@/db/captions';
 import { db } from '@/db/client';
+import { libraryNewerSchema } from '@/db/host-context';
 import { captionsOffQuery, setCaptionsOff } from '@/db/settings';
 import { renameDraft, segmentsForDraft } from '@/db/drafts';
 import { drafts } from '@/db/schema';
@@ -243,10 +244,13 @@ export function ExportScreen({
     () => (rules?.maxBytes != null && outputPath ? fileBytes(outputPath) : null),
     [rules, outputPath],
   );
-  const sendCheck = checkSend({ rules, name: draftName, online, exportBytes });
+  // A library a newer Pulse migrated takes no name (only edits are refused; it still sends), so
+  // the name field goes and requireName doesn't hold it back.
+  const editable = !libraryNewerSchema();
+  const sendCheck = checkSend({ rules, name: draftName, online, exportBytes, editable });
   // Checked again at the tap, with the network as it is then.
   const sendAllowedNow = () =>
-    checkSend({ rules, name: draftName, online: isOnline(), exportBytes }).block === null;
+    checkSend({ rules, name: draftName, online: isOnline(), exportBytes, editable }).block === null;
   const submitName = (input: string) => {
     const name = dropSplitSurrogate(input).trim() || null;
     if (name === draftName) return;
@@ -378,7 +382,7 @@ export function ExportScreen({
             )}
 
             {/* The host's type asks for a name: the field to give one. */}
-            {rules?.requireName && (
+            {rules?.requireName && editable && (
               <TextInput
                 defaultValue={draftName ?? ''}
                 placeholder="Name this video"
@@ -399,6 +403,8 @@ export function ExportScreen({
                 <ThemedText type="footnote" themeColor="warning" style={styles.sendNoteText}>
                   {sendCheck.tooLarge.text}
                 </ThemedText>
+                {/* Back to the editor: the embed's flow always has it under Export (a recorder's
+                    Export goes recorder → editor → Export), and that's where clips are trimmed. */}
                 <Pressable
                   onPress={close}
                   accessibilityRole="button"
