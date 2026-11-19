@@ -1,5 +1,16 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
+import { editedSegmentRelPath, exportRelPath, segmentRelPath } from './media-paths';
+
+export {
+  editCoverRelPath,
+  editedSegmentRelPath,
+  editedThumbRelPath,
+  exportRelPath,
+  segmentRelPath,
+  thumbRelPath,
+} from './media-paths';
+
 // Clips live under the document directory (safe from system eviction). The DB stores
 // relative paths only; we absolutize at runtime so the sandbox container can change
 // between launches without invalidating references (§2.2).
@@ -12,45 +23,6 @@ import { Directory, File, Paths } from 'expo-file-system';
  * that already has a scheme is returned unchanged.
  */
 export const toFileUri = (path: string): string => (path.startsWith('/') ? `file://${path}` : path);
-
-export function segmentRelPath(draftId: string, segmentId: string): string {
-  return `drafts/${draftId}/segments/${segmentId}.mp4`;
-}
-
-/**
- * A baked edit's relative path (older versions re-encoded edits) — coexists with the pristine
- * original. Each
- * edit gets a fresh revision stamp so the path (and thus every path-derived cache key: the
- * segment signature, the expo-video source URI, the expo-image cover URI) changes whenever the
- * content changes. Reusing one fixed path would leave those caches serving the previous edit.
- */
-export function editedSegmentRelPath(draftId: string, segmentId: string, rev: number): string {
-  return `drafts/${draftId}/segments/${segmentId}.edited.${rev}.mp4`;
-}
-
-/** The pristine clip's persisted jpeg thumbnail (relative path). */
-export function thumbRelPath(draftId: string, segmentId: string): string {
-  return `drafts/${draftId}/segments/${segmentId}.thumb.jpg`;
-}
-
-/**
- * The edited clip's persisted jpeg thumbnail (relative path), derived from the edited file's
- * own path (`….mp4` → `….thumb.jpg`). Pairing the thumb to the exact edited revision keeps the
- * rendered URI distinct across edits — otherwise expo-image would serve a stale frame from its
- * cache for an identical URI. Deriving (instead of rebuilding from ids) also resolves the thumb
- * for rows created before revision stamps existed.
- */
-export function editedThumbRelPath(editedRelPath: string): string {
-  return editedRelPath.replace(/\.mp4$/, '.thumb.jpg');
-}
-
-/**
- * An edited clip's cover (relative path), revision-stamped for the same reason as edited files:
- * a fixed path would let expo-image serve the previous edit's frame from its cache.
- */
-export function editCoverRelPath(draftId: string, segmentId: string, rev: number): string {
-  return `drafts/${draftId}/segments/${segmentId}.cover.${rev}.jpg`;
-}
 
 export function absolutize(relPath: string): string {
   return new File(Paths.document, ...relPath.split('/')).uri;
@@ -117,15 +89,6 @@ export function deleteSegmentFile(relPath: string): void {
     const sibling = new File(absolutize(uploadCopyRelPath(relPath)));
     if (sibling.exists) sibling.delete();
   }
-}
-
-/**
- * The draft's persisted merged export (relative path). One per draft, inside the draft dir so
- * `deleteDraftDir` removes it for free; its content key lives on the `drafts` row
- * (`merged_signature`). Never bundled into a `.pulse` transfer — it's derived, re-mergeable data.
- */
-export function exportRelPath(draftId: string): string {
-  return `drafts/${draftId}/export.mp4`;
 }
 
 /** Whether the draft's persisted export file is on disk. */

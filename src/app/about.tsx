@@ -4,7 +4,7 @@ import * as Device from 'expo-device';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -30,6 +30,8 @@ import {
 } from '@/features/about/build-info';
 import { formatDetails, type DeviceInfo } from '@/features/about/details';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
+import { expoDb } from '@/db/client';
+import { createLibraryBackup } from '@/features/draft-transfer/library-backup';
 import { logEntries, logExportText, writeLogExport } from '@/features/logs/logger';
 import { useToast } from '@/features/toast/toast-provider';
 import {
@@ -90,7 +92,7 @@ export default function AboutScreen() {
       }),
     );
   };
-  const [sharing, setSharing] = useState(false);
+  const [sharing, setSharing] = useState<'logs' | 'library' | null>(null);
   const logCount = useMemo(() => logEntries().length, []);
 
   const details = () =>
@@ -113,7 +115,7 @@ export default function AboutScreen() {
 
   const shareLogs = async () => {
     if (sharing) return;
-    setSharing(true);
+    setSharing('logs');
     try {
       if (!(await isAvailableAsync())) throw new Error('Sharing isn’t available on this device.');
       const file = writeLogExport(details());
@@ -126,7 +128,34 @@ export default function AboutScreen() {
         message: userMessage(e, 'Try again.', 'share logs'),
       });
     } finally {
-      setSharing(false);
+      setSharing(null);
+    }
+  };
+
+  // A ref, not the state: two quick taps both see the state before it re-renders, and a second
+  // backup would clear the first one's files mid-zip.
+  const backingUp = useRef(false);
+  const shareLibrary = async () => {
+    if (sharing || backingUp.current) return;
+    backingUp.current = true;
+    setSharing('library');
+    try {
+      if (!(await isAvailableAsync())) throw new Error('Sharing isn’t available on this device.');
+      const uri = await createLibraryBackup(expoDb, Date.now());
+      await shareAsync(uri, {
+        mimeType: 'application/zip',
+        UTI: 'public.data',
+        dialogTitle: 'Share library backup',
+      });
+    } catch (e) {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t share the library backup',
+        message: userMessage(e, 'Try again.', 'library backup'),
+      });
+    } finally {
+      backingUp.current = false;
+      setSharing(null);
     }
   };
 
@@ -243,22 +272,40 @@ export default function AboutScreen() {
           )}
         </Section>
 
-        <Section title="Debug logs" surface={surface}>
+        <Section title="Backups & logs" surface={surface}>
+          <Pressable
+            onPress={() => void shareLibrary()}
+            disabled={sharing !== null}
+            accessibilityRole="button"
+            accessibilityLabel="Share library backup"
+            accessibilityHint="Shares every draft, its videos, captions and settings as one .pulse file. Upload tokens are left out."
+            accessibilityState={{ busy: sharing === 'library', disabled: sharing !== null }}
+            style={({ pressed }) => [
+              styles.inlineButton,
+              pressed && { backgroundColor: theme.backgroundSelected },
+            ]}>
+            {sharing === 'library' ? (
+              <ActivityIndicator size="small" color={theme.accent} />
+            ) : (
+              <Icon name="square.and.arrow.up" size={18} tintColor={theme.accent} scalesWithText />
+            )}
+            <ThemedText themeColor="accent">Share library backup</ThemedText>
+          </Pressable>
           <ThemedText type="footnote" themeColor="textSecondary" style={styles.note}>
             Recent app activity, kept on this device ({formatCount(logCount, 'entry', 'entries')}).
             Upload tokens are removed before anything is saved.
           </ThemedText>
           <Pressable
             onPress={() => void shareLogs()}
-            disabled={sharing}
+            disabled={sharing !== null}
             accessibilityRole="button"
             accessibilityLabel="Share logs"
-            accessibilityState={{ busy: sharing }}
+            accessibilityState={{ busy: sharing === 'logs', disabled: sharing !== null }}
             style={({ pressed }) => [
               styles.inlineButton,
               pressed && { backgroundColor: theme.backgroundSelected },
             ]}>
-            {sharing ? (
+            {sharing === 'logs' ? (
               <ActivityIndicator size="small" color={theme.accent} />
             ) : (
               <Icon name="square.and.arrow.up" size={18} tintColor={theme.accent} scalesWithText />
