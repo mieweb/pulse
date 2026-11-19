@@ -29,7 +29,8 @@ const stubs = {
   '@react-native-async-storage/async-storage': path.join(__dirname, 'src/stubs/async-storage.ts'),
   'expo-clipboard': path.join(__dirname, 'src/stubs/clipboard.ts'),
   'expo-document-picker': path.join(__dirname, 'src/stubs/document-picker.ts'),
-  // Export opens an upload's link with openURL (src/features/upload/link-actions.ts).
+  // Only pairing (src/features/upload/pairing) and the Pulse app's routes use it, and the embed
+  // bundles neither: a guard, should one reach the bundle.
   'expo-linking': path.join(__dirname, 'src/stubs/linking.ts'),
   // The submodule, bundled from its TypeScript source as the app does.
   '@mieweb/pulse-editor': path.join(pulseEditor, 'src/index.tsx'),
