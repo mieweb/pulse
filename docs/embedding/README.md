@@ -47,7 +47,7 @@ of using `@mieweb/pulse-embed`, so copy their project setup, not their page code
 ## Versions
 
 PulseKit is published as release candidates, which are prereleases: GitHub tags
-`pulsekit-v<x.y.z>-rc.<n>`, and the npm dist-tag `rc`. Install with `@rc`. A final release goes to
+`pulsekit-v<x.y.z>-rc.<n>`, and the npm dist-tag `rc`. Install with `@rc`. (The first RC, `0.1.0-rc.4`, is on GitHub; its npm packages go up once their first manual publish is done, see [releasing.md](releasing.md#the-first-npm-version-of-a-new-package). Until then, install from tarballs built from the tag.) A final release goes to
 the npm `latest` tag ([releasing.md](releasing.md#tags-and-versions)).
 
 The three npm packages are released together with the same version. Install them at the same

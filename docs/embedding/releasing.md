@@ -67,8 +67,7 @@ version yet".
 | What                 | Where it comes from                                                                                                                                                                                                                                                         |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Signing certificate  | The org's fastlane match repo, read-only, through mieweb/actions v2.5.0's match setup. Secrets: `APPLE_TEAM_ID`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8_BASE64`, `MATCH_GIT_BASIC_AUTHORIZATION`, `MATCH_PASSWORD` (the same as the app's iOS build). |
-| npm, first publish   | `NPM_TOKEN` if the repo sets one, otherwise the org secret `NPM_PUBLISH_SECRET`. A package's first version needs a token, because trusted publishing can only be set up for a package that exists.                                                                          |
-| npm, later publishes | Trusted publishing (OIDC) on npmjs.com for each package, bound to mieweb/pulse and `release-embed.yml`. Once that is set up, no token is needed.                                                                                                                            |
+| npm                  | Trusted publishing (OIDC), the way mieweb/pulsevault publishes: no token. Each package's trusted publisher on npmjs.com is GitHub Actions, repository `mieweb/pulse`, workflow `release-embed.yml`. A new package's first version is published by hand (below). |
 | The Release          | The workflow's `GITHUB_TOKEN` (`contents: write`, `id-token: write`).                                                                                                                                                                                                       |
 
 ## Symbolicate a crash
@@ -86,8 +85,20 @@ Every release attaches what you need to read a PulseKit crash from a host app:
 > **UNTESTED.** Both procedures are standard for these files, but neither has been tried on a
 > PulseKit crash yet.
 
-## Before the first release candidate of a new package
+## The first npm version of a new package
 
-- Someone has to own the `cordova-plugin-pulse` name on npm (it is unscoped).
-- After the first publish, set up trusted publishing for each package on npmjs.com, so later
-  releases need no token.
+Trusted publishing can only be set up for a package that already exists on npm, so a new package's
+first version goes up by hand, once. This is how `@mieweb/pulsevault` started too.
+
+1. Let the release run publish the GitHub Release. Its npm step fails for a package npm doesn't
+   know yet; nothing is published to npm.
+2. Build the three tarballs exactly as the workflow does, from the tag: stamp the version
+   (`release-version.mjs stamp <version>`), write `Package.swift` and `PulseKit.podspec` from the
+   Release's `SHA256SUMS` (`write-package-swift.mjs`, `write-podspec.mjs`, `--base-url` = the
+   Release's download URL), then `npm pack` each of `embed/packages/{pulse-embed,capacitor-pulse,cordova-plugin-pulse}`.
+3. As a member of the `mieweb` npm org (`npm login`), publish each tarball:
+   `npm publish <file>.tgz --tag rc --access public` (`--tag latest` for a final release).
+   The unscoped `cordova-plugin-pulse` is then owned by that account; add the org's maintainers.
+4. On npmjs.com, for each package: Settings → Trusted publisher → GitHub Actions,
+   organization `mieweb`, repository `pulse`, workflow `release-embed.yml`.
+   From then on the workflow publishes with no token.
