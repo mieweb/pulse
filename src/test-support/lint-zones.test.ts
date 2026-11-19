@@ -207,8 +207,8 @@ describe('lint zones', () => {
     ]);
   });
 
-  // `npm run lint` doesn't lint embed/src yet (see eslint.config.js), so this holds rule 4 on the
-  // file itself: as it is, it passes; one more static import of Pulse code, and it fails.
+  // Rule 4 on the file itself (npm run lint checks it too): as it is, it passes; one more static
+  // import of Pulse code, and it fails.
   it('holds the real embed-root.tsx to rule 4', async () => {
     const file = 'embed/src/embed-root.tsx';
     const source = readFileSync(path.join(root, file), 'utf8');

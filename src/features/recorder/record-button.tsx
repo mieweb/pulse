@@ -126,6 +126,7 @@ export function RecordButton({
   return (
     <GestureDetector gesture={gesture}>
       <Animated.View
+        accessible
         accessibilityRole="button"
         accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
         testID={testID}

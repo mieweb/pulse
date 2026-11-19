@@ -9,10 +9,9 @@ const prettier = require('eslint-config-prettier');
 // no router, no status bar of its own, no deep links). So that code never reaches for a shell.
 // src/app and src/shell/standalone are the standalone shell itself, and are exempt.
 //
-// Rule 4 (embed-root.tsx) is in the config below, but `npm run lint` (`expo lint` with no paths)
-// lints only src/, app/ and components/, so lint doesn't see embed/src until that script names it
-// (`expo lint src embed/src`). Until then lint-zones.test.ts lints the real embed-root.tsx with
-// this config, so `npm test` holds it.
+// Rule 4 (embed-root.tsx) is in the config below. `npm run lint` (`expo lint src embed/src`)
+// checks it, and lint-zones.test.ts also lints the real embed-root.tsx with this config, so
+// `npm test` holds it too.
 
 /** Code both shells run. */
 const SHARED = [
@@ -215,6 +214,8 @@ const boundaryConfigs = [
           ],
         },
       ],
+      // Those require() calls are what this rule asks for.
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
 ];
