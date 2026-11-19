@@ -169,9 +169,14 @@ describe('lockstep', () => {
 });
 
 describe('publishProblems', () => {
+  it('passes on the real checkout: every package can publish from mieweb/pulse', () => {
+    expect(publishProblems(repoRoot, 'mieweb/pulse')).toEqual([]);
+  });
+
   it('needs every package’s repository.url to be the repo the workflow runs in', () => {
     const pkg = 'embed/packages/pulse-embed/package.json';
-    const { repository: _drop, ...rest } = readJson(pkg);
+    const { repository, ...rest } = readJson(pkg);
+    expect(repository).toBeDefined();
     fs.writeFileSync(path.join(dir, pkg), JSON.stringify(rest));
     expect(publishProblems(dir, 'mieweb/pulse')).toEqual([
       `${pkg}: repository.url is (none); provenance needs https://github.com/mieweb/pulse`,

@@ -2,6 +2,11 @@
   "name": "@mieweb/pulse-embed",
   "version": "0.0.0-dev",
   "description": "Host contract and JS client for embedding Pulse (PulseKit) in a Capacitor or Cordova app.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mieweb/pulse.git",
+    "directory": "embed/packages/pulse-embed"
+  },
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
