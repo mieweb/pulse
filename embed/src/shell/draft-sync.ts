@@ -32,6 +32,9 @@ export function syncEvents(
   switch (topScreen(state)) {
     case 'recorder':
       if (seen.draftId === state.draftId && seen.clipCount === state.clipCount) return [];
+      // A new recording's draft row lands before its first clip (and stays empty if that take or
+      // import is dropped; the recorder removes it as it unmounts): no take until a clip is there.
+      if (state.draftId === null && seen.clipCount === 0) return [];
       return [
         { type: 'record' },
         { type: 'stop', draftId: seen.draftId, clipCount: seen.clipCount },

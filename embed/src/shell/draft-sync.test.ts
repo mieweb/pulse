@@ -37,6 +37,21 @@ describe('syncEvents', () => {
     expect(syncEvents(after, seen(), seen())).toEqual([]);
   });
 
+  it('waits for the first clip of a new recording, so an empty draft row is no take', () => {
+    const s = run(initFlow('r1', record), { type: 'mounted' });
+    const empty = seen({ clipCount: 0 });
+    expect(syncEvents(s, empty, null)).toEqual([]);
+    // The take or import was dropped: X ends the flow with no clip and no stage.
+    const closed = run(sync(s, empty), { type: 'close' });
+    expect(closed.end).toEqual({ status: 'canceled', reason: 'user' });
+    expect(closed.stage).toBe('none');
+    // The clip lands: now it's a take.
+    expect(syncEvents(s, seen(), empty)).toEqual([
+      { type: 'record' },
+      { type: 'stop', draftId: 'd1', clipCount: 1 },
+    ]);
+  });
+
   it('follows a take deleted from the recorder’s clip bar, so X with none left creates no draft', () => {
     let s = sync(run(initFlow('r1', record), { type: 'mounted' }), seen());
     s = sync(s, seen({ clipCount: 0, lastModified: 200 }), seen());
