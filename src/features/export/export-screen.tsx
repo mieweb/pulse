@@ -45,6 +45,7 @@ import { isOnline, subscribeNetwork } from '@/core/network';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { captionYQuery } from '@/db/captions';
 import { db } from '@/db/client';
+import { captionsOffQuery, setCaptionsOff } from '@/db/settings';
 import { renameDraft, segmentsForDraft } from '@/db/drafts';
 import { drafts } from '@/db/schema';
 import type { ExportScreenProps } from '@/features/export/contract';
@@ -61,6 +62,7 @@ import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { useToast } from '@/features/toast/toast-provider';
 import { SkiaCaption } from '@/features/transcription/skia-caption';
 import { captionStyleFor } from '@/features/transcription/caption-style';
+import { captionsModelPolicy } from '@/features/transcription/model-policy';
 import { type DraftCaptions, useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import type { TranscriptLine } from '@/features/transcription/whisper';
 import { uploadPhaseLabel } from '@/features/upload/core/phase-label';
@@ -74,6 +76,9 @@ import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration } from '@/utils/format';
 import { effMs } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
+
+/** No clips: a draft whose captions are off asks for none. */
+const NO_CLIPS: readonly never[] = [];
 
 /** How long after an upload finished its way back to the host is still offered here. */
 const RETURN_OFFER_MS = 10 * 60_000;
@@ -140,9 +145,25 @@ export function ExportScreen({
       state.status === 'done' ? { path: state.outputPath, durationMs: state.durationMs } : null;
   }, [state]);
 
+  // Embedded, the person can turn captions off for this video (O6): its clips aren't
+  // transcribed for it from then on, and it goes without them (getDraftCaptions). The Pulse app
+  // never shows the switch, so its drafts keep their captions as before.
+  const captionsSwitch = captionsModelPolicy.embedded();
+  const { data: captionsOffRows } = useLiveQuery(captionsOffQuery(draftId), [draftId]);
+  const captionsOff = captionsOffRows[0]?.value === 'true';
+  const toggleCaptions = () => {
+    setCaptionsOff(draftId, !captionsOff).catch((e) =>
+      showToast({
+        kind: 'error',
+        title: captionsOff ? 'Couldn’t turn captions on' : 'Couldn’t turn captions off',
+        message: userMessage(e, 'Try again.', 'captions'),
+      }),
+    );
+  };
+
   // The draft's captions, composed from its clips (made and edited in the editor), where they
-  // were moved to there. No wait for the merge.
-  const captions = useDraftCaptions(draftId, clips);
+  // were moved to there. No wait for the merge. Turned off, none are asked for or shown.
+  const captions = useDraftCaptions(draftId, captionsOff ? NO_CLIPS : clips);
   const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionY = captionRows[0]?.captionY ?? null;
 
@@ -321,11 +342,40 @@ export function ExportScreen({
               uri={state.outputPath}
               // What the upload will carry: the captions once every clip that speaks has its
               // words (getDraftCaptions sends none before), so the preview never shows more.
-              lines={uploadCarries(captions) ? captions.lines : []}
+              lines={!captionsOff && uploadCarries(captions) ? captions.lines : []}
               captionY={captionY}
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
-              note={<CaptionsNote captions={captions} />}
+              note={captionsOff ? null : <CaptionsNote captions={captions} />}
             />
+
+            {/* Embedded: captions for this video, on unless the person turns them off. */}
+            {captionsSwitch && (
+              <Pressable
+                onPress={toggleCaptions}
+                disabled={uploading}
+                accessibilityRole="switch"
+                accessibilityLabel="Captions"
+                accessibilityState={{ checked: !captionsOff, disabled: uploading }}
+                testID="export.captions"
+                // 34pt pill + 5 each side = a 44pt tap target.
+                hitSlop={5}
+                style={({ pressed }) => [
+                  styles.smallButton,
+                  elementSurface,
+                  uploading && styles.disabled,
+                  pressed && styles.pressed,
+                ]}>
+                <Icon
+                  name={captionsOff ? 'captions.bubble' : 'captions.bubble.fill'}
+                  size={14}
+                  tintColor={theme.text}
+                  scalesWithText
+                />
+                <ThemedText type="subheadline">
+                  {captionsOff ? 'Captions off' : 'Captions on'}
+                </ThemedText>
+              </Pressable>
+            )}
 
             {/* The host's type asks for a name: the field to give one. */}
             {rules?.requireName && (
@@ -813,6 +863,7 @@ const styles = StyleSheet.create({
   },
   uploadingLabel: { flex: 1, fontVariant: ['tabular-nums'] },
   pressed: { opacity: Opacity.pressed },
+  disabled: { opacity: Opacity.disabled },
   // The host type's name field: a card like the secondary buttons, as tall as a row.
   nameInput: {
     alignSelf: 'stretch',

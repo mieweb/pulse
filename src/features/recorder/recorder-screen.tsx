@@ -1,3 +1,4 @@
+import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { Paths } from 'expo-file-system';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
@@ -15,7 +16,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { ThemedView } from '@/components/themed-view';
 import { useScreenFocusEffect } from '@/core/navigation/focus';
 import { useStatusBarStyle } from '@/core/status-bar/status-bar';
-import { getSetting, setSetting } from '@/db/settings';
+import { captionsOffQuery, getSetting, setSetting } from '@/db/settings';
 import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
@@ -317,8 +318,13 @@ export function RecorderScreen({
 
   // Captions: each clip is transcribed in the background between takes (never while recording:
   // the model would compete with the capture, so the queue pauses and resumes after the take).
-  // In the embed the host can turn that off (`configure({captions: {autoGenerate: false}})`).
-  useClipTranscription(segments, focused && !isRecording && captionsModelPolicy.autoGenerate());
+  // In the embed the host can turn that off (`configure({captions: {autoGenerate: false}})`), and
+  // the person can for one video (Export's Captions switch, stored on the draft).
+  const { data: captionsOffRows } = useLiveQuery(captionsOffQuery(draftId ?? ''), [draftId]);
+  const takesGetCaptions = captionsModelPolicy.takeGetsCaptions(
+    captionsOffRows[0]?.value === 'true',
+  );
+  useClipTranscription(segments, focused && !isRecording && takesGetCaptions);
   useEffect(() => {
     setClipQueuePaused(isRecording);
   }, [isRecording]);

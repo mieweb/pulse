@@ -19,6 +19,8 @@ import { modelsFor, resolveSelectedModel, setModelsBaseUrl, type WhisperModel } 
  * - Offline it waits, and tries once the network is back.
  * - A download that fails while online shows "Captions need a download that your network
  *   blocked". Recording is never held up: nothing waits for the download.
+ * - The person can turn captions off for one video (Export's Captions switch, stored per draft):
+ *   its clips aren't transcribed from then on and it's sent without captions (`takeGetsCaptions`).
  *
  * The host can turn the automatic download off (`configure({captions: {autoDownload: 'never'}})`)
  * and point the downloads at its own mirror (`configure({models: {baseUrl}})`). The Pulse app
@@ -56,6 +58,14 @@ export function embeddedPolicyOf(config: CaptionsConfig): CaptionsPolicy {
     autoDownload: captions.autoDownload === 'never' ? 'never' : 'wifi',
     autoGenerate: captions.autoGenerate !== false,
   };
+}
+
+/**
+ * Whether a draft's clips are transcribed as they're recorded: the policy's automatic captions,
+ * unless the person turned them off for this video (`draftOff`, the embed's per-video switch).
+ */
+export function takeGetsCaptions(policy: CaptionsPolicy, draftOff: boolean): boolean {
+  return policy.autoGenerate && !draftOff;
 }
 
 export type NetworkNow = { online: boolean; wifi: boolean | null };
@@ -226,6 +236,14 @@ export function createCaptionsModelPolicy(deps: ModelPolicyDeps) {
     /** Whether takes get captions on their own (the recorder's clip transcription). */
     autoGenerate(): boolean {
       return policy.autoGenerate;
+    },
+    /** Whether a draft's takes are transcribed, given its own captions switch. */
+    takeGetsCaptions(draftOff: boolean): boolean {
+      return takeGetsCaptions(policy, draftOff);
+    },
+    /** Configured by an embed (a host app): its per-video Captions switch shows. */
+    embedded(): boolean {
+      return policy.embedded;
     },
     /**
      * Start following the network and act on the model now. Each open starts it once and stops

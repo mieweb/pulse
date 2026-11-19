@@ -8,6 +8,7 @@ import {
   embeddedPolicyOf,
   modelDownloadStep,
   STANDALONE_POLICY,
+  takeGetsCaptions,
   type ModelPolicyDeps,
 } from './model-policy';
 import {
@@ -130,6 +131,22 @@ describe('embeddedPolicyOf', () => {
       autoDownload: 'never',
       autoGenerate: false,
     });
+  });
+});
+
+describe('takeGetsCaptions', () => {
+  it('captions every take in the embed until the person turns them off for the video', () => {
+    expect(takeGetsCaptions(embeddedPolicyOf({}), false)).toBe(true);
+    expect(takeGetsCaptions(embeddedPolicyOf({}), true)).toBe(false);
+  });
+
+  it('keeps the host’s autoGenerate: false whatever the switch says', () => {
+    const off = embeddedPolicyOf({ captions: { autoGenerate: false } });
+    expect(takeGetsCaptions(off, false)).toBe(false);
+  });
+
+  it('leaves the Pulse app as it is (no switch is ever set there)', () => {
+    expect(takeGetsCaptions(STANDALONE_POLICY, false)).toBe(true);
   });
 });
 
@@ -287,6 +304,8 @@ describe('the captions model policy', () => {
     expect(app.downloads).toEqual([]);
     expect(p.state()).toEqual({ kind: 'idle' });
     expect(p.autoGenerate()).toBe(true);
+    expect(p.embedded()).toBe(false);
+    expect(p.takeGetsCaptions(false)).toBe(true);
 
     const off = fakeDeps();
     const q = started(off.deps, { captions: { autoDownload: 'never', autoGenerate: false } });
@@ -294,6 +313,8 @@ describe('the captions model policy', () => {
     expect(off.downloads).toEqual([]);
     expect(off.store.selected).toBeNull();
     expect(q.autoGenerate()).toBe(false);
+    expect(q.embedded()).toBe(true);
+    expect(q.takeGetsCaptions(false)).toBe(false);
   });
 
   it('downloads from the host’s base URL', () => {
