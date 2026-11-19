@@ -257,6 +257,13 @@ describe('projectCatalog', () => {
     });
     expect(draftIn(catalog, host)?.upload).not.toHaveProperty('progress');
 
+    // Started, no byte sent yet: still no progress (absent before the first byte).
+    db.update(uploadJobs)
+      .set({ state: 'uploading', bytesTotal: 200, bytesSent: 0 })
+      .where(eq(uploadJobs.draftId, host))
+      .run();
+    expect(draftIn(project(), host)?.upload).not.toHaveProperty('progress');
+
     const later = Date.now() + 60_000;
     db.update(uploadJobs)
       .set({

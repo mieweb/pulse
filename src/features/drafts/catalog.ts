@@ -183,8 +183,10 @@ function hasCaptions(
 }
 
 function uploadOf(job: UploadJob): CatalogUpload {
+  // Absent before the first byte (DraftUpload.progress), so a job that has sent nothing yet
+  // reads the same as one that hasn't started.
   const progress =
-    job.bytesSent != null && job.bytesTotal != null && job.bytesTotal > 0
+    job.bytesSent != null && job.bytesSent > 0 && job.bytesTotal != null && job.bytesTotal > 0
       ? Math.min(1, job.bytesSent / job.bytesTotal)
       : undefined;
   return {
