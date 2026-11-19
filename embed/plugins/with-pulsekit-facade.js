@@ -60,6 +60,26 @@ function addResource(project, targetUuid, groupKey, name) {
   );
 }
 
+/** A pbxproj name without the quotes the xcode library may keep around it (`"PulseKit"`). */
+const unquote = (value) => String(value ?? '').replace(/^"(.*)"$/, '$1');
+
+/**
+ * expo-brownfield's PulseKit target and group. It adds both with quoted names, so the xcode
+ * library's exact-name lookups (pbxTargetByName, findPBXGroupKey) don't find them on a clean
+ * prebuild.
+ */
+function findPulseKit(project) {
+  const entries = (section) =>
+    Object.entries(section || {}).filter(([key]) => !key.endsWith('_comment'));
+  const [targetUuid, target] =
+    entries(project.pbxNativeTargetSection()).find(([, t]) => unquote(t.name) === TARGET) ?? [];
+  const [groupKey] =
+    entries(project.hash.project.objects.PBXGroup).find(
+      ([, g]) => unquote(g.name) === TARGET || (!g.name && unquote(g.path) === TARGET),
+    ) ?? [];
+  return { targetUuid, target, groupKey };
+}
+
 /**
  * Adds the host-facing facade (native/ios/PulseKit*.swift, `@objc(PulseKit)`) to the PulseKit
  * framework that expo-brownfield generates, so hosts call one Pulse class and never React Native
@@ -69,9 +89,7 @@ function addResource(project, targetUuid, groupKey, name) {
 module.exports = function withPulseKitFacade(config) {
   return withXcodeProject(config, (cfg) => {
     const project = cfg.modResults;
-    const target = project.pbxTargetByName(TARGET);
-    const targetUuid = target && project.findTargetKey(TARGET);
-    const groupKey = project.findPBXGroupKey({ name: TARGET });
+    const { targetUuid, target, groupKey } = findPulseKit(project);
     if (!targetUuid || !groupKey) {
       throw new Error(`with-pulsekit-facade: the ${TARGET} target or group isn't there yet.`);
     }
