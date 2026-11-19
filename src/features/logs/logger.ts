@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 
 import { formatEntry, LogBuffer, type LogLevel, MAX_ENTRIES, splitEntries } from './log-buffer';
 import { logFile, readLogFile, rewriteLogFile, writeLogBatch } from './log-file';
-import { redact } from './redact';
+import { redactEntry } from './redact';
 import { cacheDir } from '@/utils/storage-root';
 
 export { logFile };
@@ -12,7 +12,7 @@ export { logFile };
  * The debug log behind the About page's Share logs (#155). `installLogCapture` (called once at
  * startup) copies every console message and uncaught error into it, so existing `console.*`
  * calls need no changes. Every entry goes through `redact()` (tokens, Authorization headers,
- * capability-token-shaped strings) as it's recorded, is kept in memory, and is appended to the
+ * capability-token-shaped strings) as it's recorded, is cut to 16 KB, is kept in memory, and is appended to the
  * rolling `logs/pulse.log` (log-file.ts) so it survives a crash or relaunch.
  */
 
@@ -39,7 +39,7 @@ export function flushLogs(): void {
 }
 
 export function log(level: LogLevel, ...args: unknown[]): void {
-  const entry = redact(formatEntry(level, args, new Date()));
+  const entry = redactEntry(formatEntry(level, args, new Date()));
   buffer.push(entry);
   pending.push(entry);
   if (!flushTimer) flushTimer = setTimeout(flushLogs, FLUSH_DELAY_MS);
@@ -61,7 +61,7 @@ export function installLogCapture(): void {
     const text = readLogFile();
     if (text !== null) {
       // Redacted again: a file an older build wrote may hold what today's rules blank out.
-      buffer.load(splitEntries(text).map(redact));
+      buffer.load(splitEntries(text).map(redactEntry));
       // Start the file over with just the kept entries, so it can't grow across launches.
       rewriteLogFile(buffer.all());
       entriesInFile = buffer.size;

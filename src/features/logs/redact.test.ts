@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { REDACTED, redact } from './redact';
+import { randomBytes, randomUUID } from 'node:crypto';
+
+import { MAX_ENTRY_CHARS, REDACTED, redact, redactEntry } from './redact';
 
 // A capability token as PulseVault issues it: base64url(JSON claims).signature.
 const CLAIMS = Buffer.from(JSON.stringify({ ref: 'ticket:42', exp: 1_900_000_000 })).toString(
@@ -81,5 +83,41 @@ describe('redact', () => {
       const once = redact(line);
       expect(redact(once)).toBe(once);
     }
+  });
+
+  it('still finds credential keys with a prefix', () => {
+    expect(redact('{"pulse_vault_upload_token":"abc"}')).toBe(
+      `{"pulse_vault_upload_token":"${REDACTED}"}`,
+    );
+    expect(redact('x-pulse-capability-token=abc')).toBe(`x-pulse-capability-token=${REDACTED}`);
+  });
+
+  it('takes linear time on long tokens with dots and dashes', () => {
+    // Before the key prefix was bounded, 200K of joined UUIDs took seconds (quadratic).
+    const uuids = Array.from({ length: 6000 }, () => randomUUID()).join('.');
+    const b64 = randomBytes(200_000).toString('base64url');
+    const started = Date.now();
+    expect(redact(uuids)).toBe(uuids);
+    expect(redact(b64)).toBe(b64);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe('redactEntry', () => {
+  it('leaves a short entry as redact does', () => {
+    expect(redactEntry('{"token":"abc"}')).toBe(`{"token":"${REDACTED}"}`);
+  });
+
+  it('cuts a huge entry to the cap, saying how long it was', () => {
+    const entry = redactEntry(`dump ${'a'.repeat(100_000)}`);
+    expect(entry.length).toBeLessThan(MAX_ENTRY_CHARS + 40);
+    expect(entry).toContain('[100005 characters, cut]');
+  });
+
+  it('blanks a credential that crosses the cut', () => {
+    const secret = 's3cr3t'.repeat(10);
+    const text = `${'x '.repeat(MAX_ENTRY_CHARS / 2 - 8)}{"token":"${secret}"} ${'y'.repeat(50_000)}`;
+    const entry = redactEntry(text);
+    expect(entry).not.toContain('s3cr3t');
   });
 });

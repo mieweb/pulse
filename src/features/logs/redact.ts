@@ -16,8 +16,13 @@
 
 export const REDACTED = '[redacted]';
 
-/** Key names whose values are credentials. Matched at the end of a key: not `tokenExpiresAt`. */
-const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*?(?:token|secret|password|passwd|api[_-]?key|cookie|signature|authorization|credential)`;
+/**
+ * Key names whose values are credentials. Matched at the end of a key: not `tokenExpiresAt`. The
+ * part before the credential word is bounded (40 characters): unbounded, it was retried from every
+ * word boundary to the end of a long token (base64url, joined UUIDs), which made one large logged
+ * string take seconds.
+ */
+const SECRET_KEY = String.raw`[A-Za-z0-9_.-]{0,40}?(?:token|secret|password|passwd|api[_-]?key|cookie|signature|authorization|credential)`;
 
 /** `"uploadToken": "…"` and `'token': '…'`: a quoted key, then a quoted value. */
 const JSON_FIELD = new RegExp(
@@ -45,6 +50,21 @@ const SCHEME = /\b(Bearer|Basic)(\s+)[A-Za-z0-9._~+/=-]{8,}/g;
 
 /** A capability token or JWT: base64url JSON (`eyJ…`) and at least one more dotted part. */
 const TOKEN_SHAPED = /\beyJ[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]+){1,2}/g;
+
+/** The longest entry kept (16 KB of text): a logged JSON dump or blob is cut to this. */
+export const MAX_ENTRY_CHARS = 16 * 1024;
+
+/**
+ * An entry as the log keeps it: redacted, and cut to `MAX_ENTRY_CHARS`. Redaction runs on a
+ * stretch twice that long before the cut, so a credential that crosses the cut is still found
+ * whole and blanked rather than left half-matched; the rest of a huge string is never scanned.
+ */
+export function redactEntry(text: string): string {
+  if (text.length <= MAX_ENTRY_CHARS) return redact(text);
+  const cleaned = redact(text.slice(0, MAX_ENTRY_CHARS * 2));
+  if (cleaned.length <= MAX_ENTRY_CHARS) return cleaned;
+  return `${cleaned.slice(0, MAX_ENTRY_CHARS)}… [${text.length} characters, cut]`;
+}
 
 export function redact(text: string): string {
   return text
