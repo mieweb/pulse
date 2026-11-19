@@ -196,6 +196,14 @@ function FlowScreen({
   config: ConfigureOptions;
   onOpenModelSheet: () => void;
 }) {
+  // A draft the recorder makes is for the flow's place (stored with its upload type), and the
+  // recorder shows that place's banner. Read once, as the recorder reads it.
+  const [newDraft] = useState<RecorderNewDraft>(() => {
+    const context = store.state().context;
+    return context
+      ? { name: null, context: null, hostContext: { ...context }, createdVia: 'host' }
+      : NEW_DRAFT;
+  });
   // The recorder's exits come after its take is saved and its pending writes are stored, so the
   // library is current: read the draft it names, then move.
   const recorderEdit = useCallback(
@@ -244,7 +252,7 @@ function FlowScreen({
         <RecorderScreen
           // Read once, as it mounts: a new recording has none until its first take.
           draftId={draftId ?? undefined}
-          newDraft={NEW_DRAFT}
+          newDraft={newDraft}
           onEdit={recorderEdit}
           onExport={recorderExport}
           onClose={recorderClose}
@@ -261,15 +269,21 @@ function FlowScreen({
           onOpenModelSheet={onOpenModelSheet}
         />
       ) : null;
-    case 'export':
+    case 'export': {
+      // Trim steps back to the editor, which a recorder's Export always has under it. A flow the
+      // host opened straight on Export (entry 'export') has none, so Export shows no Trim.
+      const stack = store.getSnapshot().items;
+      const editorUnder = stack.length > 1 && stack[stack.length - 2]?.screen === 'editor';
       return draftId ? (
         <ExportScreen
           draftId={draftId}
           primaryAction={primaryAction}
           policy={policy}
           onClose={exportClose}
+          onTrim={editorUnder ? exportClose : undefined}
         />
       ) : null;
+    }
   }
 }
 

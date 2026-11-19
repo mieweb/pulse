@@ -122,6 +122,7 @@ export function ExportScreen({
   policy,
   photosAddPurpose = true,
   onClose,
+  onTrim,
   onBackToHost,
 }: ExportScreenProps) {
   const insets = useSafeAreaInsets();
@@ -403,18 +404,20 @@ export function ExportScreen({
                 <ThemedText type="footnote" themeColor="warning" style={styles.sendNoteText}>
                   {sendCheck.tooLarge.text}
                 </ThemedText>
-                {/* Back to the editor: the embed's flow always has it under Export (a recorder's
-                    Export goes recorder → editor → Export), and that's where clips are trimmed. */}
-                <Pressable
-                  onPress={close}
-                  accessibilityRole="button"
-                  hitSlop={12}
-                  testID="export.trim"
-                  style={({ pressed }) => pressed && styles.pressed}>
-                  <ThemedText type="footnote" themeColor="accent" style={styles.trimLabel}>
-                    {TRIM_LABEL}
-                  </ThemedText>
-                </Pressable>
+                {/* Trim only where the shell can take the person to the editor (onTrim). A flow
+                    opened straight on Export has none: the warning stays, Send isn't blocked. */}
+                {onTrim && (
+                  <Pressable
+                    onPress={onTrim}
+                    accessibilityRole="button"
+                    hitSlop={12}
+                    testID="export.trim"
+                    style={({ pressed }) => pressed && styles.pressed}>
+                    <ThemedText type="footnote" themeColor="accent" style={styles.trimLabel}>
+                      {TRIM_LABEL}
+                    </ThemedText>
+                  </Pressable>
+                )}
               </View>
             )}
 

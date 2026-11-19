@@ -39,6 +39,11 @@ export type ExportScreenProps = {
   photosAddPurpose?: boolean;
   onClose: (result: ExportCloseResult) => void;
   /**
+   * "Too large to send · Trim": take the person to the editor for this draft. Without it the
+   * Trim action is hidden (the warning stays).
+   */
+  onTrim?: () => void;
+  /**
    * Go back to the page a place's link came from, once its upload is in. Without it the screen
    * offers no way back.
    */
