@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from '@jest/globals';
 
 import {
   checkDiskForRecording,
+  installLowDiskDebugHook,
   LOW_DISK_BYTES,
+  LOW_DISK_DEBUG_HOOK,
   lowDiskThreshold,
   setLowDiskThreshold,
 } from './low-disk';
@@ -56,5 +58,26 @@ describe('checkDiskForRecording', () => {
     expect(lowDiskThreshold()).toBe(LOW_DISK_BYTES);
     setLowDiskThreshold(-5);
     expect(lowDiskThreshold()).toBe(LOW_DISK_BYTES);
+  });
+});
+
+describe('installLowDiskDebugHook', () => {
+  afterEach(() => setLowDiskThreshold(null));
+
+  it('lets a debug build set the threshold from the console', () => {
+    const target: Record<string, unknown> = {};
+    installLowDiskDebugHook(target, true);
+    const hook = target[LOW_DISK_DEBUG_HOOK] as (bytes: number | null) => void;
+    hook(1e15);
+    expect(lowDiskThreshold()).toBe(1e15);
+    expect(checkDiskForRecording(() => 1e12).ok).toBe(false);
+    hook(null);
+    expect(lowDiskThreshold()).toBe(LOW_DISK_BYTES);
+  });
+
+  it('sets nothing in a release build', () => {
+    const target: Record<string, unknown> = {};
+    installLowDiskDebugHook(target, false);
+    expect(target).toEqual({});
   });
 });

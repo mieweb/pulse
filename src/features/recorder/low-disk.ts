@@ -24,6 +24,24 @@ export function setLowDiskThreshold(bytes: number | null): void {
   thresholdOverride = bytes != null && Number.isFinite(bytes) && bytes >= 0 ? bytes : null;
 }
 
+/** The global debug builds set, for the owner's device check. */
+export const LOW_DISK_DEBUG_HOOK = '__pulseSetLowDiskThreshold';
+
+/**
+ * Debug builds only: put `setLowDiskThreshold` on the JS runtime's global, so the device check
+ * reaches it without a code change. In React Native DevTools' console on the embedded runtime
+ * (or a Hermes CDP evaluate), `__pulseSetLowDiskThreshold(1e15)` takes the low-disk path on the
+ * next take, and `__pulseSetLowDiskThreshold(null)` puts the threshold back. Release builds
+ * never set it.
+ */
+export function installLowDiskDebugHook(
+  target: object = globalThis,
+  dev: boolean = typeof __DEV__ !== 'undefined' && __DEV__,
+): void {
+  if (dev) (target as Record<string, unknown>)[LOW_DISK_DEBUG_HOOK] = setLowDiskThreshold;
+}
+installLowDiskDebugHook();
+
 /** The threshold in force. */
 export function lowDiskThreshold(): number {
   return thresholdOverride ?? LOW_DISK_BYTES;
