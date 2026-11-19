@@ -12,13 +12,13 @@
 [![Whisper](https://img.shields.io/badge/Whisper-on--device-4B8BBE)](https://github.com/mybigday/whisper.rn)
 [![VisionCamera](https://img.shields.io/badge/VisionCamera-v5-FF6B6B)](https://react-native-vision-camera.com)
 
-*Capture knowledge before it walks out the door — training walkthroughs, process demos, handoffs — without sending a single frame to a third-party cloud.*
+_Capture knowledge before it walks out the door — training walkthroughs, process demos, handoffs — without sending a single frame to a third-party cloud._
 
 </div>
 
 ---
 
-Pulse is a React Native (Expo) app for capturing institutional knowledge as short-form video. Everything happens on the device: segmented recording, trimming, merging, and even speech-to-text captioning run locally. When you're ready to publish, Pulse uploads to a [**PulseVault**](#pulsevault--self-hosted-uploads) server *you* run — your organization keeps the content on its own infrastructure and owns auth, retention, and quota decisions. No central Pulse service exists.
+Pulse is a React Native (Expo) app for capturing institutional knowledge as short-form video. Everything happens on the device: segmented recording, trimming, merging, and even speech-to-text captioning run locally. When you're ready to publish, Pulse uploads to a [**PulseVault**](#pulsevault--self-hosted-uploads) server _you_ run — your organization keeps the content on its own infrastructure and owns auth, retention, and quota decisions. No central Pulse service exists.
 
 ## Anatomy of a Pulse
 
@@ -26,7 +26,7 @@ Two words show up throughout Pulse — here's what they mean.
 
 ### What is a Pulse?
 
-A **Pulse** is a single short-form video, assembled on-device from an ordered set of clips. Record a few, import a few, reorder them — on export they merge (losslessly where formats match) into one `.mp4`. Publishing a Pulse sends a small bundle: the merged video, its captions (WebVTT), a **beat manifest**, and a thumbnail. On-device each Pulse is a *draft* in your library; drafts move between devices as `.pulse` bundles.
+A **Pulse** is a single short-form video, assembled on-device from an ordered set of clips. Record a few, import a few, reorder them — on export they merge (losslessly where formats match) into one `.mp4`. Publishing a Pulse sends a small bundle: the merged video, its captions (WebVTT), a **beat manifest**, and a thumbnail. On-device each Pulse is a _draft_ in your library; drafts move between devices as `.pulse` bundles.
 
 ```mermaid
 flowchart LR
@@ -178,15 +178,15 @@ The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this ap
 
 ### Commands
 
-| Command | What it does |
-| --- | --- |
-| `npm start` | Start the Metro dev server |
-| `npm run ios` / `npm run android` | Build & run the dev client |
-| `npm test` | Run the Jest unit-test suite |
-| `npm run lint` | ESLint via `expo lint` |
-| `npx tsc --noEmit` | Typecheck |
-| `npm run format` / `npm run format:check` | Prettier (write / check only) |
-| `node scripts/gen-protocol-types.mjs` | Regenerate `src/features/upload/protocol.gen.ts` from the submodule's schemas and `package.json` `pulseProtocol` (`--check` fails if it's stale) |
+| Command                                   | What it does                                                                                                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm start`                               | Start the Metro dev server                                                                                                                       |
+| `npm run ios` / `npm run android`         | Build & run the dev client                                                                                                                       |
+| `npm test`                                | Run the Jest unit-test suite                                                                                                                     |
+| `npm run lint`                            | ESLint via `expo lint`                                                                                                                           |
+| `npx tsc --noEmit`                        | Typecheck                                                                                                                                        |
+| `npm run format` / `npm run format:check` | Prettier (write / check only)                                                                                                                    |
+| `node scripts/gen-protocol-types.mjs`     | Regenerate `src/features/upload/protocol.gen.ts` from the submodule's schemas and `package.json` `pulseProtocol` (`--check` fails if it's stale) |
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, lint, `gen-protocol-types.mjs --check`, and unit tests on every PR, plus the integration suite against both the pinned PulseVault and the latest npm release.
 
