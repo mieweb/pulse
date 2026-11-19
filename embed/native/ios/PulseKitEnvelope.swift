@@ -323,8 +323,11 @@ public enum PulseRoute: Equatable {
 
 public enum PulseRouter {
   /// Decide what happens to one request envelope. `supported` is `info().supported`: when it is
-  /// false every method except `info` is `unsupported`.
-  public static func route(_ text: String, supported: Bool = true) -> PulseRoute {
+  /// false every method except `info` is `unsupported`. `methods` are the ones the facade answers
+  /// (default: contract minor 0's); any other is `method.unsupported`.
+  public static func route(
+    _ text: String, supported: Bool = true, methods: [String] = PulseContract.nativeMethods
+  ) -> PulseRoute {
     guard let value = JSONValue.parse(text), let top = value.object else {
       return .reply(.failure("invalid_options", "The request isn't a JSON object.", callId: ""))
     }
@@ -368,7 +371,7 @@ public enum PulseRouter {
       default: return fail("invalid_options", "args must be an object.")
       }
     }
-    guard PulseContract.nativeMethods.contains(method) else {
+    guard methods.contains(method) else {
       return fail("method.unsupported", "This PulseKit doesn't answer \(method).")
     }
     if !supported && method != "info" {
