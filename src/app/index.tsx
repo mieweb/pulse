@@ -2,7 +2,6 @@ import { router, useIsFocused } from 'expo-router';
 
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { DraftsScreen } from '@/features/drafts/drafts-screen';
-import { cancelEmbedSession, useEmbedded } from '@/features/embed/host';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
 
 const record = () => router.push('/recorder');
@@ -16,16 +15,9 @@ const openAbout = () => router.push('/about');
 export default function HomeRoute() {
   useOnboardingRedirect();
   const focused = useIsFocused();
-  // M1's embed slice: embedded in another app, Home offers Close (back to it without a video).
-  const embedded = useEmbedded();
   return (
     <ScreenFocusProvider focused={focused}>
-      <DraftsScreen
-        onRecord={record}
-        onOpenDraft={openDraft}
-        onAbout={openAbout}
-        onClose={embedded ? cancelEmbedSession : undefined}
-      />
+      <DraftsScreen onRecord={record} onOpenDraft={openDraft} onAbout={openAbout} />
     </ScreenFocusProvider>
   );
 }
