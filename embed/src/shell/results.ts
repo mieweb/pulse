@@ -105,8 +105,9 @@ export async function saveExportForHost(opts: {
 }
 
 /**
- * The result of a request that never showed a screen: refused (`invalid_options`, `unsupported`),
- * its draft missing (`not_found`), or its library unusable before the flow could start.
+ * The result of a request that was refused (`invalid_options`, `unsupported`): it never became a
+ * flow, so it ran for no context. A flow that ends before its first screen (its draft missing,
+ * its library unusable) ends through the flow store, which carries the request's context.
  */
 export function startupFailure(opts: {
   requestId: string;

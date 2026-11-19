@@ -1,4 +1,4 @@
-import type { FlowScreen, OpenRequest } from '@mieweb/pulse-embed';
+import type { FlowScreen, OpenRequest, PulseErrorInfo } from '@mieweb/pulse-embed';
 
 import {
   flowReducer,
@@ -86,6 +86,16 @@ export function createFlowStore(opts: {
       const { state } = snapshot;
       if (state.mounted || state.end) return;
       set({ state: initFlow(requestId, request, draft), items: snapshot.items });
+    },
+    /**
+     * The draft the entry opens doesn't exist: the flow ends `failed{error}` before any screen,
+     * naming no draft (the reducer's failure would name the missing one). Ending the store, not
+     * just writing a result, keeps a host `close` that comes after it from ending the flow again.
+     */
+    missing(error: PulseErrorInfo): void {
+      const { state } = snapshot;
+      if (state.mounted || state.end) return;
+      set({ state: { ...state, end: { status: 'failed', error } }, items: snapshot.items });
     },
     /** Feed `event` to the reducer; a new editor it shows opens on `clipId`. */
     dispatch(event: FlowEvent, extra?: { clipId?: string }): void {

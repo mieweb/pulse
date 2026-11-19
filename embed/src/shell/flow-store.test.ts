@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
-import type { OpenRequest, PulseContext } from '@mieweb/pulse-embed';
+import type { OpenRequest, PulseContext, PulseErrorInfo } from '@mieweb/pulse-embed';
 
 import type { FlowState } from '../flow/reducer';
+import { flowResult } from '../flow/result';
 import { createFlowStore, stackItems, type StackItem } from './flow-store';
 
 const context: PulseContext = {
@@ -92,5 +93,32 @@ describe('createFlowStore', () => {
     s.dispatch({ type: 'hostClose' });
     expect(ended.map((e) => e.end)).toEqual([{ status: 'canceled', reason: 'user' }]);
     expect(order).toEqual(['changed', 'ended']);
+  });
+
+  it('ends a flow whose draft is missing once, with the request’s context and no draft', () => {
+    const { s, ended } = store({ entry: 'record', context, draft: { continue: 'gone' } });
+    const error: PulseErrorInfo = {
+      code: 'not_found',
+      message: 'Pulse has no draft gone.',
+      recoverable: false,
+      callId: '',
+      requestId: 'r1',
+    };
+    s.missing(error);
+    // The host's close comes in after: the flow has already ended.
+    s.dispatch({ type: 'hostClose' });
+    s.missing(error);
+    expect(ended).toHaveLength(1);
+    expect(flowResult(ended[0], 9)).toEqual({
+      requestId: 'r1',
+      entry: 'record',
+      endedOn: null,
+      stage: 'none',
+      context,
+      endedAt: 9,
+      status: 'failed',
+      error,
+    });
+    expect(ended[0].deleteDraft).toBeNull();
   });
 });

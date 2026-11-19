@@ -83,8 +83,10 @@ function EmbedFlow({ plan }: { plan: OpenPlan }) {
       callId: '',
       requestId,
     };
-    deliver(startupFailure({ requestId, entry: request.entry, error, endedAt: Date.now() }));
-  }, [plan.draftId, requestId, request.entry]);
+    // Through the store, so the result carries the request's context and a late host close
+    // finds the flow already ended.
+    store.missing(error);
+  }, [plan.draftId, requestId, store]);
 
   return (
     <PulseCore
