@@ -1,12 +1,21 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import migrations from '../../../drizzle/migrations';
 import { env, File } from '@/test-support/expo-fs-node';
 import type { CatalogFile } from './catalog';
+import { readCatalogFile } from './catalog-filter';
 
 jest.mock('expo-file-system', () => jest.requireActual('@/test-support/expo-fs-node'));
 // The node stand-in for expo-sqlite has no change events: the test fires them, as SQLite's update
@@ -73,10 +82,33 @@ afterAll(async () => {
 });
 
 const readCatalog = () => JSON.parse(readFileSync(CATALOG, 'utf8')) as CatalogFile;
+/** What PulseKit's reader finds, by the rule it mirrors (readCatalogFile). */
+const readerFinds = () =>
+  readCatalogFile((name) => {
+    const path = join(NS, name);
+    return existsSync(path) ? readFileSync(path, 'utf8') : null;
+  });
 const change = (tableName: string) => mockChangeListeners.forEach((l) => l({ tableName }));
+
+/**
+ * expo-file-system's move, as it runs on a phone (FileSystemPath.move on iOS, CopyMoveStrategy on
+ * Android): with `overwrite` it deletes the destination, and only then moves the file in. The Node
+ * stand-in renames over it in one step, which would hide the gap between the two.
+ */
+function nativeMove(this: File, dest: File, opts?: { overwrite?: boolean }) {
+  if (existsSync(dest.path)) {
+    if (!opts?.overwrite) throw new Error('destination exists');
+    rmSync(dest.path);
+  }
+  renameSync(this.path, dest.path);
+  this.path = dest.path;
+}
 /** Every catalog the writer moved into place. */
-const moves = jest.spyOn(File.prototype, 'moveSync');
+const moves = jest.spyOn(File.prototype, 'moveSync').mockImplementation(nativeMove);
 const writes = () => moves.mock.calls.filter(([dest]) => dest.path === CATALOG).length;
+/** Only setTimeout and friends: the database's promises and Node's own queues run as usual. */
+const fakeTimers = () =>
+  jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitForWrites(n: number) {
   for (let i = 0; i < 100 && writes() < n; i++) await sleep(10);
@@ -123,21 +155,33 @@ describe('catalog writer', () => {
   it('debounce: a burst of writes makes one catalog, and other tables make none', async () => {
     const [draft] = readCatalog().drafts;
     await lib.drafts.renameDraft(draft.id, 'First take');
-    for (let i = 0; i < 20; i++) change(i % 2 ? 'drafts' : 'segments');
-    change('upload_jobs');
-    await sleep(100);
-    expect(writes()).toBe(1); // still inside the 250 ms
+    fakeTimers();
+    try {
+      for (let i = 0; i < 20; i++) change(i % 2 ? 'drafts' : 'segments');
+      change('upload_jobs');
+      expect(jest.getTimerCount()).toBe(1); // the whole burst waits on one timer
+      jest.advanceTimersByTime(lib.writer.CATALOG_DEBOUNCE_MS - 1);
+      expect(writes()).toBe(1); // still inside the window
+      expect(jest.getTimerCount()).toBe(1);
+      jest.advanceTimersByTime(1); // the window ends: one write starts
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
     await waitForWrites(2);
     expect(readCatalog().drafts[0].name).toBe('First take');
-    await sleep(400);
-    expect(writes()).toBe(2); // the burst made one
 
-    change('local_settings'); // not projected: no write
-    change('upload_destinations');
-    await sleep(400);
-    expect(writes()).toBe(2);
-
-    change('upload_receipts');
+    fakeTimers();
+    try {
+      change('local_settings'); // not projected: no write
+      change('upload_destinations');
+      expect(jest.getTimerCount()).toBe(0);
+      change('upload_receipts');
+      expect(jest.getTimerCount()).toBe(1);
+      jest.advanceTimersByTime(lib.writer.CATALOG_DEBOUNCE_MS);
+    } finally {
+      jest.useRealTimers();
+    }
     await waitForWrites(3);
   });
 
@@ -164,6 +208,58 @@ describe('catalog writer', () => {
     expect(existsSync(PART)).toBe(false);
   });
 
+  it('mid-swap, after catalog.json is deleted and before the .part is moved in, a reader finds the new catalog', async () => {
+    const [draft] = readCatalog().drafts;
+    await lib.drafts.renameDraft(draft.id, 'Third take');
+    let found: CatalogFile | null | undefined;
+    moves.mockImplementationOnce(function (this: File, dest: File) {
+      rmSync(dest.path);
+      found = readerFinds(); // the gap
+      renameSync(this.path, dest.path);
+      this.path = dest.path;
+    });
+    await lib.writer.startCatalogWriter({ namespace: 'com.example.host-0123456789abcdef' });
+    expect(found?.drafts[0].name).toBe('Third take');
+    expect(readCatalog().drafts[0].name).toBe('Third take');
+  });
+
+  it('a kill inside the swap keeps the .part as the catalog, and the next write moves it in first', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const [draft] = readCatalog().drafts;
+    await lib.drafts.renameDraft(draft.id, 'Fourth take');
+    // catalog.json is deleted, then the move fails before the .part is in place.
+    moves.mockImplementationOnce(function (this: File, dest: File) {
+      rmSync(dest.path);
+      throw new Error('killed');
+    });
+    await lib.writer.startCatalogWriter({ namespace: 'com.example.host-0123456789abcdef' });
+    expect(warn).toHaveBeenCalledWith('[catalog] could not write the catalog', expect.any(Error));
+    warn.mockRestore();
+    expect(existsSync(CATALOG)).toBe(false);
+    expect(existsSync(PART)).toBe(true); // the only catalog left, kept
+    expect(readerFinds()?.drafts[0].name).toBe('Fourth take');
+
+    // The next write: while its own .part is written, readers already have catalog.json again.
+    await lib.drafts.renameDraft(draft.id, 'Fifth take');
+    let whileWriting: string | null = null;
+    jest.spyOn(File.prototype, 'write').mockImplementationOnce(function (this: File, text) {
+      whileWriting = existsSync(CATALOG) ? readCatalog().drafts[0].name : null;
+      writeFileSync(this.path, String(text));
+    });
+    await lib.writer.startCatalogWriter({ namespace: 'com.example.host-0123456789abcdef' });
+    expect(whileWriting).toBe('Fourth take');
+    expect(readCatalog().drafts[0].name).toBe('Fifth take');
+    expect(existsSync(PART)).toBe(false);
+
+    // A .part cut short with no catalog.json beside it (a first write killed) is dropped, not moved in.
+    rmSync(CATALOG);
+    writeFileSync(PART, '{"format":"pulse-cat');
+    expect(readerFinds()).toBeNull();
+    await lib.writer.startCatalogWriter({ namespace: 'com.example.host-0123456789abcdef' });
+    expect(readCatalog().drafts[0].name).toBe('Fifth take');
+    expect(existsSync(PART)).toBe(false);
+  });
+
   it('a library a newer Pulse migrated is written with readOnly: true', async () => {
     lib.host.markNewerSchema();
     await lib.writer.startCatalogWriter({ namespace: 'com.example.host-0123456789abcdef' });
@@ -173,8 +269,13 @@ describe('catalog writer', () => {
   it('stopped, changes no longer write it', async () => {
     await lib.writer.stopCatalogWriter();
     const n = writes();
-    change('drafts');
-    await sleep(400);
+    fakeTimers();
+    try {
+      change('drafts');
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
     expect(writes()).toBe(n);
   });
 });

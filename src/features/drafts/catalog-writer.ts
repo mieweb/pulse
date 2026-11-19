@@ -16,6 +16,7 @@ import { exportRelPath } from '@/utils/media-paths';
 import { customDocumentsPath, documentDir } from '@/utils/storage-root';
 
 import { projectCatalog, type CatalogFile } from './catalog';
+import { CATALOG_FILE, CATALOG_PART, parseCatalog } from './catalog-filter';
 
 // Writes the embed's catalog.json (native-bridge.md §6.1) under the namespace's documents root, so
 // PulseKit can answer listDrafts, getDraft and countDrafts without starting Pulse. Only the embedded
@@ -23,12 +24,12 @@ import { projectCatalog, type CatalogFile } from './catalog';
 //
 // It is rewritten at boot and after every change to the tables it is projected from, at most once
 // per CATALOG_DEBOUNCE_MS. Each write goes to `catalog.json.part` and is then moved over
-// `catalog.json`, so a reader never sees half a file and a write killed midway leaves the previous
-// one. expo-file-system has no rename-over call: its move with `overwrite` deletes the old file
-// and then moves (results.ts says more). A kill between the two leaves only the finished `.part`;
-// the reader then finds no catalog and the next boot writes it again.
+// `catalog.json`, so a write killed midway leaves the previous catalog. expo-file-system has no
+// rename-over call: its move with `overwrite` deletes `catalog.json` and then moves the `.part` in
+// (results.ts says more). In that gap, and after a kill inside it, the finished `.part` is the only
+// catalog, so the reader reads it whenever `catalog.json` is missing (readCatalogFile), and the next
+// write puts such a `.part` back in place before it starts its own.
 
-export const CATALOG_FILE = 'catalog.json';
 export const CATALOG_DEBOUNCE_MS = 250;
 
 /**
@@ -99,18 +100,31 @@ export async function buildCatalog(opts: {
 /** Write `text` as the namespace's catalog.json: `.part` first, then moved over it. */
 export function writeCatalogText(text: string): void {
   if (rootPath() == null) throw new Error('The catalog is written only inside a host app.');
-  const part = new File(documentDir(), `${CATALOG_FILE}.part`);
-  if (part.exists) part.delete(); // left by a write that was killed
+  const dest = new File(documentDir(), CATALOG_FILE);
+  const part = new File(documentDir(), CATALOG_PART);
+  if (part.exists) {
+    // With no catalog.json beside it, a whole `.part` is the catalog a kill (or a failed move) caught
+    // between deleting catalog.json and moving it in: finish that move first, so readers have a
+    // catalog.json while this write runs. Any other `.part` is a write killed midway.
+    if (!dest.exists && parseCatalog(part.textSync()) != null) part.moveSync(dest);
+    else part.delete();
+  }
+  const next = new File(documentDir(), CATALOG_PART);
   try {
-    part.write(text);
-    part.moveSync(new File(documentDir(), CATALOG_FILE), { overwrite: true });
+    next.write(text);
+    next.moveSync(dest, { overwrite: true });
   } catch (e) {
-    try {
-      if (part.exists) part.delete();
-    } catch {
-      // The next write clears it.
-    }
+    // When the move deleted catalog.json and then failed, the `.part` is the only catalog: keep it.
+    if (dest.exists) discard(next);
     throw e;
+  }
+}
+
+function discard(part: File): void {
+  try {
+    if (part.exists) part.delete();
+  } catch {
+    // The next write clears it.
   }
 }
 
