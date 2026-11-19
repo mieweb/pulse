@@ -1,4 +1,5 @@
 import Foundation
+import Network
 internal import React
 import UIKit
 
@@ -7,10 +8,15 @@ import UIKit
 /// envelope out, plus event envelopes through `onEvent`. A new method therefore needs no plugin
 /// change unless the facade itself must answer it.
 ///
-/// - Contract minor 0 (PR1) is answered here, natively: info, configure, prewarm, open, close,
-///   isOpen, pendingResults, acknowledge, logFile. Anything else is `method.unsupported`.
-/// - Storage: PR1 has no accounts, so everything lives in the namespace `<hostId>-local`, under
-///   `Library/PulseKit/<ns>` and `Library/Caches/PulseKit/<ns>` (PulseKitInbox.swift).
+/// - Answered here, natively: contract minor 0 (info, configure, prewarm, open, close, isOpen,
+///   pendingResults, acknowledge, logFile) and minor 1's account and read methods (setAccount,
+///   listDrafts, getDraft, countDrafts, usage, listNamespaces, purge). Anything else is
+///   `method.unsupported` until the facade forwards it to Pulse JS.
+/// - Accounts (PulseKitAccounts.swift): each signed-in person has a namespace, under
+///   `Library/PulseKit/<ns>` and `Library/Caches/PulseKit/<ns>` (PulseKitStorage.swift). Until
+///   `setAccount`, data calls and `open` fail with `no_account`. PR1's `<hostId>-local` is never
+///   adopted into an account.
+/// - Reads come from catalog.json (PulseKitCatalog.swift) without starting Pulse's runtime.
 /// - One flow at a time: the camera and the audio session belong to the whole process.
 /// - The facade never opens SQLite; it reads only the files Pulse JS writes.
 ///
@@ -18,6 +24,15 @@ import UIKit
 @objc(PulseKit)
 public final class PulseKit: NSObject {
   @objc public static let shared = PulseKit()
+
+  /// The contract minor this facade answers (info().contract.minor).
+  static let contractMinor = 1
+
+  /// What this facade answers (info().methods): minor 0, and minor 1's native methods.
+  static let methods: [String] =
+    PulseContract.nativeMethods + [
+      "setAccount", "listDrafts", "getDraft", "countDrafts", "usage", "listNamespaces", "purge",
+    ]
 
   /// Event envelopes (§2.3), on the main queue. Set by the plugin; one subscriber.
   @objc public var onEvent: ((String) -> Void)?
@@ -32,8 +47,20 @@ public final class PulseKit: NSObject {
   private var fatalHandlerInstalled = false
   /// Set by a fatal JS error: the next open starts a fresh React Native instance.
   private var runtimeBroken = false
+  private let accounts = PulseKitAccounts()
+  /// The namespace whose folders Pulse JS was given (the first open's): its storage roots and
+  /// database are fixed for the runtime's life, so setAccount for another one is
+  /// `restart_required` (§4). nil before that, and again once a fatal error means a fresh runtime.
+  private var runtimeNamespace: String?
+  /// A purge waiting for Pulse JS to let go of the library: open, setAccount and purge are busy.
+  private var purging: String?
+  private let network = PulseKitNetwork()
 
-  private override init() { super.init() }
+  private override init() {
+    super.init()
+    network.onChange = { [weak self] old, new in self?.networkChanged(from: old, to: new) }
+    network.start()
+  }
 
   /// The open flow: one request, presented once, ended by exactly one result.
   private final class Flow {
@@ -87,7 +114,9 @@ public final class PulseKit: NSObject {
   private func handle(
     _ text: String, presenter: UIViewController?, respond: @escaping (PulseReply) -> Void
   ) {
-    switch PulseRouter.route(text, supported: PulseKitInfo.support().supported) {
+    switch PulseRouter.route(
+      text, supported: PulseKitInfo.support().supported, methods: Self.methods)
+    {
     case .reply(let reply):
       log("call \(reply.callId): \(reply.error?.code ?? "ok")")
       respond(reply)
@@ -102,7 +131,7 @@ public final class PulseKit: NSObject {
     let callId = req.callId
     switch req.method {
     case "info":
-      respond(.success(callId, PulseKitInfo.json(namespace: namespace)))
+      respond(.success(callId, info()))
     case "configure":
       if let error = PulseArgs.configure(req.args, callId: callId) {
         return respond(.failure(error))
@@ -124,6 +153,8 @@ public final class PulseKit: NSObject {
       guard let requestId = req.args["requestId"]?.string, pulseIsPlainName(requestId) else {
         return respond(.failure("invalid_options", "acknowledge needs a requestId.", callId: callId))
       }
+      // Signed out there is no inbox to delete from: like an unknown id, a no-op.
+      guard accounts.namespace != nil else { return respond(.success(callId)) }
       withRoots(callId, respond) { roots in
         roots.inbox.acknowledge(requestId)
         return .null
@@ -142,24 +173,257 @@ public final class PulseKit: NSObject {
           "bytes": .int(size?.int64Value ?? 0),
         ])
       }
+    case "setAccount":
+      setAccount(req, respond: respond)
+    case "listDrafts":
+      switch PulseCatalog.Filter.from(foundation(req.args)) {
+      case .failure(let problem):
+        respond(.failure("invalid_options", problem.message, callId: callId))
+      case .success(let filter):
+        withCatalog(callId, respond) { catalog, net in
+          .array(PulseCatalog.listDrafts(catalog, filter, net).map { JSONValue(any: $0) })
+        }
+      }
+    case "getDraft":
+      guard let id = req.args["id"]?.string, !id.isEmpty else {
+        return respond(.failure("invalid_options", "getDraft needs an id.", callId: callId))
+      }
+      withCatalog(callId, respond) { catalog, net in
+        PulseCatalog.getDraft(catalog, id: id, net).map { JSONValue(any: $0) } ?? .null
+      }
+    case "countDrafts":
+      switch PulseCatalog.CountOptions.from(foundation(req.args)) {
+      case .failure(let problem):
+        respond(.failure("invalid_options", problem.message, callId: callId))
+      case .success(let options):
+        withCatalog(callId, respond) { catalog, net in
+          var out: [String: JSONValue] = [:]
+          for group in PulseCatalog.countDrafts(catalog, options, net) {
+            out[group.key] = .int(Int64(group.count))
+          }
+          return .object(out)
+        }
+      }
+    case "usage":
+      withCatalog(callId, respond) { catalog, net in
+        let c = PulseCatalog.counts(catalog, net)
+        let ns = self.accounts.namespace ?? ""
+        return .object([
+          "namespace": .string(ns),
+          "bytes": .int(PulseKitStorage.bytes(of: ns)),
+          "drafts": .int(Int64(c.drafts)),
+          "unsent": .int(Int64(c.unsent)),
+          "uploading": .int(Int64(c.uploading)),
+          "failed": .int(Int64(c.failed)),
+          "receipts": .int(Int64(c.receipts)),
+        ])
+      }
+    case "listNamespaces":
+      respond(.success(callId, .array(accounts.list(net: netView))))
+    case "purge":
+      purge(req, respond: respond)
     default:
       respond(.failure("method.unsupported", "This PulseKit doesn't answer \(req.method).", callId: callId))
     }
   }
 
-  /// PR1's namespace: `<hostId>-local`, hostId from configure or the sanitised bundle id.
-  private var namespace: String {
-    PulseNamespace.local(hostId: config["hostId"]?.string ?? PulseKitInfo.defaultHostId())
+  /// `info()`: the build's stamps (PulseKitInfo.swift) with what this facade answers. The stamped
+  /// contract minor comes from the JS client's CONTRACT; the facade reports at least its own.
+  private func info() -> JSONValue {
+    guard case .object(var o) = PulseKitInfo.json(namespace: accounts.namespace) else {
+      return PulseKitInfo.json(namespace: accounts.namespace)
+    }
+    var contract = o["contract"]?.object ?? [:]
+    contract["minor"] = .int(max(contract["minor"]?.integer ?? 0, Int64(Self.contractMinor)))
+    o["contract"] = .object(contract)
+    o["methods"] = .array(Self.methods.map { .string($0) })
+    return .object(o)
   }
 
+  /// The hostId namespaces start with: configure's, or the sanitised bundle id.
+  private var hostId: String { config["hostId"]?.string ?? PulseKitInfo.defaultHostId() }
+
+  /// The active account's roots, or `no_account`.
   private func withRoots(
     _ callId: String, _ respond: (PulseReply) -> Void, _ body: (PulseKitRoots) -> JSONValue
   ) {
     do {
-      respond(.success(callId, body(try PulseKitRoots(namespace: namespace))))
+      guard let roots = try accounts.activeRoots() else {
+        return respond(noAccount(callId))
+      }
+      respond(.success(callId, body(roots)))
     } catch {
       respond(.failure("unknown", "Pulse's folders aren't available: \(error)", callId: callId))
     }
+  }
+
+  /// The active account's catalog (an empty one when there is none yet, or it can't be read) and
+  /// the network as the host should see it. A `readOnly` catalog (a newer schema) is read like any
+  /// other: such a library still lists, sends and deletes.
+  private func withCatalog(
+    _ callId: String, _ respond: (PulseReply) -> Void,
+    _ body: (PulseCatalog.Catalog, PulseNetworkView) -> JSONValue
+  ) {
+    let net = netView
+    withRoots(callId, respond) { roots in
+      body(PulseCatalog.read(in: roots.documents) ?? .empty, net)
+    }
+  }
+
+  private func noAccount(_ callId: String, requestId: String? = nil) -> PulseReply {
+    .failure("no_account", "No account is set (setAccount).", callId: callId, requestId: requestId)
+  }
+
+  /// JSON args as Foundation values, which the Foundation-only catalog reader takes.
+  private func foundation(_ args: [String: JSONValue]) -> [String: Any] {
+    args.mapValues(\.foundation)
+  }
+
+  // MARK: - Accounts (§4)
+
+  /// The namespace Pulse JS is fixed to, unless a fatal error means the next open starts a fresh
+  /// runtime (which takes new roots).
+  private var boundNamespace: String? { runtimeBroken ? nil : runtimeNamespace }
+
+  private func setAccount(_ req: PulseRequest, respond: (PulseReply) -> Void) {
+    let callId = req.callId
+    switch accounts.set(
+      req.args, hostId: hostId, flowOpen: flow != nil || purging != nil, bound: boundNamespace,
+      callId: callId)
+    {
+    case .failure(let error):
+      log("setAccount \(callId): \(error.code)")
+      respond(.failure(error))
+    case .success(.cleared):
+      log("setAccount \(callId): signed out")
+      respond(.success(callId, .object(["namespace": .null])))
+    case .success(.unchanged(let ns)):
+      respond(.success(callId, .object(["namespace": .string(ns)])))
+    case .success(.switched(let ns)):
+      log("setAccount \(callId): now \(ns)")
+      removeEmptyLocalNamespaces()
+      respond(.success(callId, .object(["namespace": .string(ns)])))
+    case .success(.restartRequired(let ns)):
+      // §4: reads now answer for the new account; open waits for a restart.
+      log("setAccount \(callId): now \(ns) for reads; restart_required for Pulse")
+      removeEmptyLocalNamespaces()
+      respond(
+        .failure(
+          PulseErrorInfo(
+            code: "restart_required",
+            message:
+              "Pulse already opened another account's library in this process; reads answer for the new account, and Pulse opens for it after the app restarts.",
+            callId: callId, details: .object(["namespace": .string(ns)]))))
+    }
+  }
+
+  private func removeEmptyLocalNamespaces() {
+    for removed in PulseKitAccounts.removeEmptyLocalNamespaces(except: runtimeNamespace) {
+      log("removed the empty PR1 namespace \(removed)")
+    }
+  }
+
+  /// `purge({namespace?})`: delete a namespace's drafts, receipts, jobs and files (default: the
+  /// active one). If Pulse JS has that library open, it lets go first (`releaseLibrary`); the
+  /// folders go only after it says so. The shared models go when no namespace is left. The account
+  /// stays signed in: the next call recreates empty folders.
+  private func purge(_ req: PulseRequest, respond: @escaping (PulseReply) -> Void) {
+    let callId = req.callId
+    if flow != nil || purging != nil {
+      return respond(.failure("busy", "Pulse is open; purge after it closes.", callId: callId))
+    }
+    let ns: String
+    switch req.args["namespace"] {
+    case nil, .null?:
+      guard let active = accounts.namespace else { return respond(noAccount(callId)) }
+      ns = active
+    case .string(let s)?:
+      guard PulseKitStorage.isNamespaceName(s) else {
+        return respond(.failure("invalid_options", "\(s) isn't a namespace.", callId: callId))
+      }
+      ns = s
+    default:
+      return respond(.failure("invalid_options", "namespace must be a string.", callId: callId))
+    }
+    let wasActive = ns == accounts.namespace
+    // The rows that go, for the active namespace's draftsChanged.
+    var ids: [JSONValue] = []
+    if wasActive, let lib = try? PulseKitStorage.libraryRoot(),
+      let catalog = PulseCatalog.read(in: lib.appendingPathComponent(ns, isDirectory: true))
+    {
+      ids = (catalog.drafts + catalog.receipts).compactMap { ($0["id"] as? String).map { .string($0) } }
+    }
+    let remove = { [weak self] in
+      guard let self else { return }
+      do {
+        try PulseKitStorage.remove(namespace: ns)
+        self.log("purge \(callId): removed \(ns)")
+        respond(.success(callId))
+        if wasActive {
+          self.emit("draftsChanged", .object(["namespace": .string(ns), "ids": .array(ids)]))
+        }
+      } catch {
+        respond(.failure("unknown", "Pulse couldn't delete \(ns): \(error)", callId: callId))
+      }
+    }
+    guard ns == boundNamespace else { return remove() }
+
+    // Pulse JS has this library open: it closes the database and stops its job loop first.
+    purging = ns
+    var answered = false
+    let commandId = sendCommand("releaseLibrary", args: .object(["namespace": .string(ns)])) {
+      [weak self] reply in
+      guard let self, !answered else { return }
+      answered = true
+      self.purging = nil
+      if reply["ok"]?.bool == true {
+        remove()
+      } else {
+        self.log("purge \(callId): releaseLibrary failed: \(reply["error"]?.serialized ?? "")")
+        respond(
+          .failure(
+            "unknown", "Pulse couldn't close the library; nothing was deleted.", callId: callId))
+      }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+      guard let self, !answered else { return }
+      answered = true
+      self.commands.removeValue(forKey: commandId)
+      self.purging = nil
+      self.log("purge \(callId): Pulse didn't let go of \(ns) in 15 s")
+      respond(
+        .failure(
+          "timeout", "Pulse didn't close the library in time; nothing was deleted.", callId: callId))
+    }
+  }
+
+  // MARK: - Reachability (Q6: PulseKit is the only source)
+
+  /// The network as the catalog reader sees it, with the host's Wi-Fi-only choice.
+  private var netView: PulseNetworkView {
+    let s = network.state
+    return PulseNetworkView(
+      online: s.online, wifi: s.wifi,
+      wifiOnlyUploads: config["policy"]?["wifiOnlyUploads"]?.bool ?? false)
+  }
+
+  /// Every change goes to Pulse JS as `pulse.cmd network` (src/core/network.ts), so Swift and JS
+  /// derive `waiting_network` from the same values. When a queued draft's shown state flips, the
+  /// host hears `draftsChanged` for those drafts.
+  private func networkChanged(from old: PulseKitNetwork.State, to new: PulseKitNetwork.State) {
+    if runtimeNamespace != nil, listening {
+      sendCommand("network", args: new.json, expectReply: false)
+    }
+    let wifiOnly = netView.wifiOnlyUploads
+    let before = PulseNetworkView(online: old.online, wifi: old.wifi, wifiOnlyUploads: wifiOnly)
+    guard PulseCatalog.shownState("queued", before) != PulseCatalog.shownState("queued", netView),
+      let ns = accounts.namespace, let lib = try? PulseKitStorage.libraryRoot(),
+      let catalog = PulseCatalog.read(in: lib.appendingPathComponent(ns, isDirectory: true))
+    else { return }
+    let ids = catalog.drafts.filter { $0["state"] as? String == "queued" }
+      .compactMap { $0["id"] as? String }
+    guard !ids.isEmpty else { return }
+    emit("draftsChanged", .object(["namespace": .string(ns), "ids": .array(ids.map { .string($0) })]))
   }
 
   // MARK: - Flows
@@ -183,13 +447,29 @@ public final class PulseKit: NSObject {
     } else {
       state = .none
     }
+    if flow == nil {
+      // A flow writes into the active account's library: none, or a purge under way, stops it.
+      if purging != nil {
+        return respond(
+          .failure("busy", "Pulse is deleting a library.", callId: callId, requestId: args.requestId))
+      }
+      guard let ns = accounts.namespace else {
+        return respond(noAccount(callId, requestId: args.requestId))
+      }
+      if let bound = boundNamespace, bound != ns {
+        return respond(
+          .failure(
+            "restart_required", "Pulse has another account's library open; restart the app.",
+            callId: callId, requestId: args.requestId))
+      }
+    }
     // requestId idempotency outlives the flow: while its result sits unacknowledged in the inbox,
     // the same requestId gets that result back. Presenting again would answer the new flow with
     // the old file (and skip the facade's own fallback), and the new flow's result would replace
     // one the host hasn't seen (AD15).
     let stored: JSONValue? =
       flow == nil
-      ? args.requestId.flatMap { id in (try? PulseKitRoots(namespace: namespace))?.inbox.read(id) }
+      ? args.requestId.flatMap { id in (try? accounts.activeRoots())?.inbox.read(id) }
       : nil
     let decision = PulseOpenGate.decide(
       openRequestId: flow?.requestId, requestId: args.requestId, presenter: state,
@@ -226,7 +506,11 @@ public final class PulseKit: NSObject {
     }
     let roots: PulseKitRoots
     do {
-      roots = try PulseKitRoots(namespace: namespace)
+      guard let active = try accounts.activeRoots() else {
+        return respond(noAccount(callId, requestId: args.requestId))
+      }
+      roots = active
+      _ = try? accounts.touch()
     } catch {
       return respond(.failure("unknown", "Pulse's folders aren't available: \(error)", callId: callId))
     }
@@ -245,12 +529,16 @@ public final class PulseKit: NSObject {
       "namespace": .string(roots.namespace),
       "config": .object(effectiveConfig(callId: callId)),
       "headless": .bool(false),
+      // Reachability (Q6): PulseKit's NWPathMonitor is Pulse JS's only source; changes follow as
+      // `pulse.cmd network`.
+      "network": network.state.json,
     ]
 
     listen()
     installFatalHandler()
     let audio = PulseKitAudioState.save()
     startRuntime()
+    runtimeNamespace = roots.namespace
     let initialProps: [AnyHashable: Any] = props.mapValues(\.foundation)
     let content = ReactNativeViewController(moduleName: "main", initialProps: initialProps)
     let container = PulseKitContainerViewController(content: content, theme: theme)
@@ -371,6 +659,8 @@ public final class PulseKit: NSObject {
       host.cleanupPreviousInstance()
       host.initializeInstance()
       runtimeBroken = false
+      // A fresh JS runtime takes new storage roots: no namespace is bound until the next open.
+      runtimeNamespace = nil
     }
   }
 
@@ -428,7 +718,9 @@ public final class PulseKit: NSObject {
                   callId: flow.callId, requestId: requestId
                 ).json
               ]))
-      } else if let result = (try? PulseKitRoots(namespace: namespace))?.inbox.read(requestId) {
+      } else if let ns = runtimeNamespace,
+        let result = (try? PulseKitStorage.roots(ns))?.inbox.read(requestId)
+      {
         // A flow the facade already ended (a forced close): the inbox has Pulse's own result now.
         emit("flowResult", result)
       }
@@ -451,23 +743,29 @@ public final class PulseKit: NSObject {
     }
   }
 
-  /// `pulse.cmd` to Pulse JS; its `pulse.reply` goes to `done`.
+  /// `pulse.cmd` to Pulse JS; its `pulse.reply` goes to `done`. With `expectReply: false` (a
+  /// notice such as `network`) nothing waits for one. Returns the command's callId.
+  @discardableResult
   private func sendCommand(
-    _ method: String, args: JSONValue, done: ((JSONValue) -> Void)? = nil
-  ) {
+    _ method: String, args: JSONValue, expectReply: Bool = true,
+    done: ((JSONValue) -> Void)? = nil
+  ) -> String {
     let callId = "n-" + UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
       .prefix(12)
-    flow?.commandIds.append(callId)
-    commands[callId] =
-      done ?? { [weak self] reply in
-        if reply["ok"]?.bool == false {
-          self?.log("pulse.cmd \(method) \(callId) failed: \(reply["error"]?.serialized ?? "")")
+    if expectReply {
+      flow?.commandIds.append(callId)
+      commands[callId] =
+        done ?? { [weak self] reply in
+          if reply["ok"]?.bool == false {
+            self?.log("pulse.cmd \(method) \(callId) failed: \(reply["error"]?.serialized ?? "")")
+          }
         }
-      }
+    }
     let message: [String: Any?] = [
       "type": "pulse.cmd", "callId": callId, "method": method, "args": args.foundation,
     ]
     BrownfieldMessaging.sendMessage(message)
+    return callId
   }
 
   private func emit(_ name: String, _ payload: JSONValue) {
@@ -476,5 +774,43 @@ public final class PulseKit: NSObject {
 
   func log(_ line: String) {
     NSLog("[PulseKit] %@", line)
+  }
+}
+
+/// The device's network, from NWPathMonitor (Q6: no expo-network; this is the only source).
+/// `online`: a usable path. `wifi`: the path runs over Wi-Fi or a wire, not cellular. `expensive`:
+/// the system's own flag (cellular, or a hotspot). Changes arrive on the main queue.
+final class PulseKitNetwork {
+  struct State: Equatable {
+    /// Until the monitor's first answer (it comes at once after `start`), assume a usable network:
+    /// queued drafts then show as queued rather than waiting.
+    var online = true
+    var wifi = true
+    var expensive = false
+
+    var json: JSONValue {
+      .object(["online": .bool(online), "wifi": .bool(wifi), "expensive": .bool(expensive)])
+    }
+  }
+
+  private(set) var state = State()
+  /// Called with the old and the new state, on the main queue, only when something changed.
+  var onChange: ((State, State) -> Void)?
+  private let monitor = NWPathMonitor()
+
+  func start() {
+    monitor.pathUpdateHandler = { [weak self] path in
+      let next = State(
+        online: path.status == .satisfied,
+        wifi: path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet),
+        expensive: path.isExpensive)
+      DispatchQueue.main.async {
+        guard let self, next != self.state else { return }
+        let old = self.state
+        self.state = next
+        self.onChange?(old, next)
+      }
+    }
+    monitor.start(queue: DispatchQueue(label: "com.mieweb.pulsekit.network"))
   }
 }
