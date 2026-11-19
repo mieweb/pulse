@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { micOffer, recorderAllowed } from './mic-denied';
+import { micMuteStep, micOffer, recorderAllowed } from './mic-denied';
 
 describe('micOffer', () => {
   it('offers to record without sound when the microphone is denied', () => {
@@ -45,5 +45,46 @@ describe('recorderAllowed', () => {
       expect(recorderAllowed('denied', mic, true)).toBe(false);
       expect(recorderAllowed('not-determined', mic, true)).toBe(false);
     }
+  });
+});
+
+describe('micMuteStep', () => {
+  const denied = micOffer('authorized', 'denied');
+  const restricted = micOffer('authorized', 'restricted');
+
+  it('mutes once when the microphone is refused', () => {
+    expect(
+      micMuteStep({ offer: denied, micGranted: false, muted: false, mutedForMic: false }),
+    ).toBe('mute');
+    expect(
+      micMuteStep({ offer: restricted, micGranted: false, muted: false, mutedForMic: false }),
+    ).toBe('mute');
+    expect(micMuteStep({ offer: denied, micGranted: false, muted: true, mutedForMic: true })).toBe(
+      'none',
+    );
+  });
+
+  it('leaves a mute the person chose alone', () => {
+    expect(micMuteStep({ offer: denied, micGranted: false, muted: true, mutedForMic: false })).toBe(
+      'none',
+    );
+    expect(micMuteStep({ offer: null, micGranted: true, muted: true, mutedForMic: false })).toBe(
+      'none',
+    );
+  });
+
+  it('unmutes on a later launch once the microphone is allowed', () => {
+    // iOS ended the app when the permission changed: the stored mute reads on, and the stored
+    // flag says it was the microphone's.
+    expect(micMuteStep({ offer: null, micGranted: true, muted: true, mutedForMic: true })).toBe(
+      'unmute',
+    );
+  });
+
+  it('waits while the microphone is not allowed yet', () => {
+    // The camera not allowed (no offer either) or the microphone not asked yet.
+    expect(micMuteStep({ offer: null, micGranted: false, muted: true, mutedForMic: true })).toBe(
+      'none',
+    );
   });
 });

@@ -15,6 +15,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { ThemedView } from '@/components/themed-view';
 import { useScreenFocusEffect } from '@/core/navigation/focus';
 import { useStatusBarStyle } from '@/core/status-bar/status-bar';
+import { getSetting, setSetting } from '@/db/settings';
 import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
@@ -36,7 +37,7 @@ import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { checkDiskForRecording, NOT_ENOUGH_SPACE } from '@/features/recorder/low-disk';
-import { MIC_COPY } from '@/features/recorder/mic-denied';
+import { MIC_COPY, MIC_FORCED_MUTE_KEY, micMuteStep } from '@/features/recorder/mic-denied';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
 import { type MountedRecorder, registerRecorder } from '@/features/recorder/recorder-presence';
 import { useRecorder } from '@/features/recorder/use-recorder';
@@ -188,21 +189,45 @@ export function RecorderScreen({
   // A refused microphone (embedded, PLAN-final §5.3): the recorder records without sound instead
   // of blocking. Denied asks first ("Record without sound?", or Settings); restricted can't be
   // allowed here, so it offers Settings only. The recorder mutes itself while the microphone is
-  // refused (no audio track without access), and unmutes once it's allowed again.
+  // refused (no audio track without access), and unmutes once it's allowed again. That it muted
+  // itself is stored apart from the person's mute (`micMuteStep`): iOS ends the app when the
+  // permission changes in Settings, so the unmute comes on a later launch, which reads the stored
+  // mute as on. Read before acting (null until then); the Pulse app never reads it.
   const micOffer = permissions.micOffer;
   const [withoutSound, setWithoutSound] = useState(false);
   const micQuestion = micOffer?.kind === 'without-sound' && !withoutSound;
-  const mutedForMic = useRef(false);
+  const mutedForMic = useRef<boolean | null>(null);
+  const [micFlagRead, setMicFlagRead] = useState(false);
   useEffect(() => {
-    if (!prefsReady) return;
-    if (micOffer !== null && !muted && !mutedForMic.current) {
-      mutedForMic.current = true;
-      toggleMute();
-    } else if (micOffer === null && mutedForMic.current) {
-      mutedForMic.current = false;
-      if (muted) toggleMute();
-    }
-  }, [prefsReady, micOffer, muted, toggleMute]);
+    if (!embedded) return;
+    let live = true;
+    getSetting(MIC_FORCED_MUTE_KEY)
+      .catch(() => null)
+      .then((value) => {
+        if (!live) return;
+        mutedForMic.current = value === 'true';
+        setMicFlagRead(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [embedded]);
+  useEffect(() => {
+    if (!prefsReady || !micFlagRead || mutedForMic.current === null) return;
+    const step = micMuteStep({
+      offer: micOffer,
+      micGranted: permissions.micGranted,
+      muted,
+      mutedForMic: mutedForMic.current,
+    });
+    if (step === 'none') return;
+    const forced = step === 'mute';
+    mutedForMic.current = forced;
+    void setSetting(MIC_FORCED_MUTE_KEY, String(forced)).catch((e: unknown) =>
+      console.warn(`[recorder] could not store the microphone mute: ${String(e)}`),
+    );
+    if (forced || muted) toggleMute();
+  }, [prefsReady, micFlagRead, micOffer, permissions.micGranted, muted, toggleMute]);
   // Unmuting needs the microphone: ask again (or say why it can't be).
   const onToggleMute = () => {
     if (micOffer === null) toggleMute();

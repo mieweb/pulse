@@ -51,6 +51,8 @@ export function useRecorderPermissions({ micOptional = false }: { micOptional?: 
     request,
     /** What to offer for a refused microphone (only when it's optional). */
     micOffer: micOptional ? micOffer(cam.status, mic.status) : null,
+    /** The microphone is allowed. */
+    micGranted: mic.hasPermission,
     openSettings: () => void Linking.openSettings(),
   };
 }

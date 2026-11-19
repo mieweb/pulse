@@ -46,6 +46,35 @@ export function recorderAllowed(
   return micOptional && (mic === 'denied' || mic === 'restricted');
 }
 
+/**
+ * What the recorder does about its mute while the microphone is refused. It mutes itself (no
+ * audio track without access) and remembers that it did, in the library's settings
+ * (`MIC_FORCED_MUTE_KEY`), apart from the person's own mute preference: iOS ends the app when a
+ * permission changes in Settings, so the unmute after the microphone is allowed happens on a
+ * later launch, which reads the stored mute as on.
+ *
+ * - Refused, not muted: 'mute' (and remember it was for the microphone).
+ * - Refused, already muted by the person: 'none' (it's theirs; nothing to undo later).
+ * - Allowed, muted for the microphone: 'unmute' (and forget it).
+ * - Otherwise (the microphone not asked yet, the camera not allowed): 'none'.
+ */
+export type MicMuteStep = 'mute' | 'unmute' | 'none';
+
+export function micMuteStep(input: {
+  offer: MicOffer;
+  micGranted: boolean;
+  muted: boolean;
+  /** The recorder muted itself for the microphone (stored). */
+  mutedForMic: boolean;
+}): MicMuteStep {
+  const { offer, micGranted, muted, mutedForMic } = input;
+  if (offer !== null) return !muted && !mutedForMic ? 'mute' : 'none';
+  return micGranted && mutedForMic ? 'unmute' : 'none';
+}
+
+/** Settings key: the recorder is muted because the microphone was refused, not by the person. */
+export const MIC_FORCED_MUTE_KEY = 'recorder.mutedForMic';
+
 export const MIC_COPY = {
   title: 'Record without sound?',
   body: 'Pulse can’t use the microphone. Allow it in Settings, or record video only.',
