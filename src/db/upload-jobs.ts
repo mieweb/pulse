@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, notInArray } from 'drizzle-orm';
 
 import { db } from './client';
 import { uploadJobs, type UploadJob } from './schema';
@@ -113,5 +113,50 @@ export function notifyUploadJobs(draftIds: readonly string[]): void {
     } catch (e) {
       console.warn('[upload-jobs] a listener failed', e);
     }
+  }
+}
+
+// Edits take a job out ---------------------------------------------------------------------------
+
+/** Why an edit path takes a job out of the outbox (the host's `releaseUploadTarget` reason). */
+export type JobChangeReason = 'edited' | 'deleted';
+
+let cancelHook: ((draftId: string, reason: JobChangeReason) => void) | null = null;
+
+/**
+ * Install what takes a draft's job out when the draft is edited, moved or deleted: the outbox's
+ * `cancelJob` (features/upload/core/outbox.ts registers it when it loads), which also releases
+ * the host's target and deletes the job's TUS uploads. Kept here so db/ imports no feature code.
+ * `null` uninstalls it (tests).
+ */
+export function setJobCancelHook(
+  hook: ((draftId: string, reason: JobChangeReason) => void) | null,
+): void {
+  cancelHook = hook;
+}
+
+/**
+ * Take the draft's job out before an edit or delete changes the draft (pulse-schema.md §3.3: a
+ * queued, paused or failed job is deleted; the next Send makes a new clientKey). Throws
+ * `draft.locked` if the job locked meanwhile. Called by drafts.ts only when the draft has a job.
+ *
+ * Without the outbox loaded the row is still deleted here, so a queued job can never send the
+ * pre-edit cut; the host isn't told (its server sweeps the abandoned upload).
+ */
+export function cancelJobForChange(draftId: string, reason: JobChangeReason): void {
+  if (cancelHook) {
+    cancelHook(draftId, reason);
+    return;
+  }
+  const gone = db
+    .delete(uploadJobs)
+    .where(
+      and(eq(uploadJobs.draftId, draftId), notInArray(uploadJobs.state, [...LOCKED_JOB_STATES])),
+    )
+    .returning({ draftId: uploadJobs.draftId })
+    .all();
+  if (gone.length > 0) {
+    console.warn(`[upload-jobs] job for ${draftId} dropped (${reason}) without the outbox loaded`);
+    notifyUploadJobs([draftId]);
   }
 }

@@ -13,6 +13,7 @@ import {
   parseParts,
   readJob,
   serializeParts,
+  setJobCancelHook,
   type JobState,
   type UploadJob,
   type UploadPart,
@@ -41,7 +42,9 @@ import { describeError, shortId, uploadLog } from './upload-log';
 //   (none) ──send──► preparing ──prepared──► queued ──target──► uploading ──videoDone──► delivering
 //                      │  └ needs confirm: confirmed ─► queued       │                    │ outcome
 //                      │                  confirmFailed ─► (none)    │ retryable ─► queued ▼
-//                      └ mergeFailed ─► failed                       │                   retire
+//                      ├ sendRefused (too large) ─► (none)           │                   retire
+//                      └ mergeFailed ─► failed                       │ target (renewed) / tokenRefreshed
+//                                                                    └──► uploading
 //   queued, uploading ─ host away / no_account / expired ─► needs_credentials ─resume─► queued
 //   queued, uploading ─ destination.gone / upload.refused / upload.too_large ─► failed
 //   queued, uploading (cancel only), needs_credentials, failed ─ cancel/edit/delete ─► (none)
@@ -73,7 +76,12 @@ export type JobEvent =
   | { type: 'confirmFailed' }
   /** At launch: a Send that was still preparing when the app stopped never happened. */
   | { type: 'interrupted' }
-  /** The host's `getUploadTarget` answered (a renewed artifact included). */
+  /** A check before the confirm refused the Send (over the type's `maxBytes`): nothing queued. */
+  | { type: 'sendRefused' }
+  /**
+   * The host's `getUploadTarget` answered: from `queued`, or from `uploading` when the job loop
+   * asked again mid-upload with `renewArtifact` (PulseVault forgot the artifact, 404).
+   */
   | {
       type: 'targetAnswered';
       uploadId: string;
@@ -82,6 +90,8 @@ export type JobEvent =
       tokenExp: number;
       state?: HostUploadTarget['state'];
     }
+  /** `refreshUploadToken` answered: the new token's expiry (the token stays in memory). */
+  | { type: 'tokenRefreshed'; tokenExp: number }
   | { type: 'credentialsLost'; code: CredentialsCode; message: string }
   /** Foreground, `resumeOutbox`, or a host answer: try a paused job again. */
   | { type: 'resume' }
@@ -231,11 +241,12 @@ export function nextJobState(
 
     case 'confirmFailed':
     case 'interrupted':
+    case 'sendRefused':
       if (job?.state !== 'preparing') return ignore(job, event);
       return { kind: 'delete', effects: [] };
 
     case 'targetAnswered': {
-      if (job?.state !== 'queued') return ignore(job, event);
+      if (job?.state !== 'queued' && job?.state !== 'uploading') return ignore(job, event);
       // The server has the video already (a resend after a kill): straight to its outcome.
       const landed =
         event.state === 'processing' || event.state === 'delivered' || event.state === 'kept';
@@ -245,13 +256,18 @@ export function nextJobState(
         artifactId: event.artifactId,
         endpoint: event.endpoint,
         tokenExp: event.tokenExp,
-        attempts: job.attempts + 1,
+        // `attempts` counts the asks from `queued`; a renewal mid-upload is the same attempt.
+        attempts: job.state === 'queued' ? job.attempts + 1 : job.attempts,
         nextAttemptAt: null,
         lastErrorCode: null,
         lastErrorMessage: null,
         ...(partsJson === undefined ? {} : { partsJson, bytesSent: 0 }),
       });
     }
+
+    case 'tokenRefreshed':
+      if (job?.state !== 'queued' && job?.state !== 'uploading') return ignore(job, event);
+      return update(job.state, { tokenExp: event.tokenExp });
 
     case 'credentialsLost':
       if (job?.state !== 'queued' && job?.state !== 'uploading') return ignore(job, event);
@@ -437,17 +453,43 @@ function refused(t: Extract<Transition, { kind: 'refuse' }>, draftId: string): L
   return new LibraryError(t.code, `Draft ${draftId}: ${t.message}`);
 }
 
+/** Where a Send is, for Export's states ("Clocking out…" is `confirming`). */
+export type SendStage = 'merging' | 'confirming' | 'queued';
+
+export type SendOptions = {
+  /** Called as the Send reaches each stage. */
+  onStage?: (stage: SendStage) => void;
+  /**
+   * Runs once the send files are written, before the host is asked to confirm (or the job is
+   * queued): the type's `maxBytes` gate, say. Throwing (e.g. `upload.too_large`) leaves no job and
+   * the draft unconfirmed; `sendDraft` rejects with that error.
+   */
+  beforeConfirm?: (prepared: { bytesTotal: number }) => void | Promise<void>;
+};
+
+/** Drafts whose `sendDraft` is under way in this process: `recoverInterruptedSends` skips them. */
+const sendsInFlight = new Set<string>();
+
+/** A transition the Send needs that didn't apply: its job went away under it. */
+function sendStopped(draftId: string, t: Transition): LibraryError {
+  return new LibraryError(
+    'not_found',
+    `Draft ${draftId}: the Send stopped before it was queued (${t.kind === 'ignore' || t.kind === 'refuse' ? t.message : t.kind}).`,
+  );
+}
+
 /**
  * Send the draft (PLAN §6.1): freeze it as a `preparing` job keyed by its cut, `merge` it (the
- * persisted export when current), write its send files, then ask the host's `confirmSend` when its
- * upload type wants one and the draft isn't confirmed yet, and queue it. A merge that fails leaves
- * a `failed` job; a confirm that fails leaves no job (the draft stays on Export) and rejects with
- * the host's error. Sending a queued draft again with no edit returns its keys. A library a newer
- * Pulse migrated still sends.
+ * persisted export when current), write its send files, run `beforeConfirm`, then ask the host's
+ * `confirmSend` when its upload type wants one and the draft isn't confirmed yet, and queue it. A
+ * merge that fails leaves a `failed` job; a refusal before the confirm, or a confirm that fails,
+ * leaves no job (the draft stays on Export) and rejects with that error. Sending a queued draft
+ * again with no edit returns its keys. A library a newer Pulse migrated still sends.
  */
 export async function sendDraft(
   draftId: string,
   merge: () => Promise<{ durationMs: number }>,
+  options: SendOptions = {},
 ): Promise<SendResult> {
   const segments = await segmentsForDraft(draftId);
   if (segments.length === 0) throw new LibraryError('not_found', `Draft ${draftId} has no clips.`);
@@ -460,8 +502,23 @@ export async function sendDraft(
     if (!job) throw new LibraryError('not_found', `Draft ${draftId} has no job.`);
     return { draftId, clientKey: job.clientKey, draftKey: job.draftKey, sentAt: job.sentAt };
   }
-  const { sentAt } = sent.draft;
+  sendsInFlight.add(draftId);
+  try {
+    return await prepareAndQueue(draftId, keys, sent.draft.sentAt, merge, options);
+  } finally {
+    sendsInFlight.delete(draftId);
+  }
+}
+
+async function prepareAndQueue(
+  draftId: string,
+  keys: { clientKey: string; draftKey: string },
+  sentAt: number,
+  merge: () => Promise<{ durationMs: number }>,
+  { onStage, beforeConfirm }: SendOptions,
+): Promise<SendResult> {
   uploadLog.info(`send: draft ${shortId(draftId)} preparing`);
+  onStage?.('merging');
 
   let files;
   try {
@@ -471,6 +528,16 @@ export async function sendDraft(
     uploadLog.warn(`send: draft ${shortId(draftId)} couldn't be prepared: ${describeError(e)}`);
     applyTransition(draftId, { type: 'mergeFailed', message: describeError(e) });
     throw e;
+  }
+
+  if (beforeConfirm) {
+    try {
+      await beforeConfirm({ bytesTotal: files.bytesTotal });
+    } catch (e) {
+      uploadLog.warn(`send: draft ${shortId(draftId)} refused: ${describeError(e)}`);
+      applyTransition(draftId, { type: 'sendRefused' });
+      throw e;
+    }
   }
 
   const row: SendColumns | undefined = db
@@ -491,28 +558,33 @@ export async function sendDraft(
     (uploadType as { confirmSend?: unknown }).confirmSend === true;
   // A clock-bound draft's clock action ran at its first Send: it isn't asked again.
   const needsConfirm = wantsConfirm && row?.hostConfirmedAt == null;
-  applyTransition(draftId, { type: 'prepared', ...files, needsConfirm });
+  const prepared = applyTransition(draftId, { type: 'prepared', ...files, needsConfirm });
+  if (prepared.kind !== 'update') throw sendStopped(draftId, prepared);
 
   if (needsConfirm) {
+    onStage?.('confirming');
     const place = row ? placeOf(row) : null;
+    let confirmedAt: number;
     try {
       if (!place) throw new HostRequestError('host_misconfigured', 'The draft has no place.');
-      const { confirmedAt } = await confirmSend({
+      ({ confirmedAt } = await confirmSend({
         draftId,
         draftKey: keys.draftKey,
         context: place,
         uploadType,
         sentAt,
         bytes: files.bytesTotal,
-      });
-      applyTransition(draftId, { type: 'confirmed', confirmedAt });
+      }));
     } catch (e) {
       uploadLog.warn(`send: draft ${shortId(draftId)} not confirmed: ${describeError(e)}`);
       applyTransition(draftId, { type: 'confirmFailed' });
       throw e;
     }
+    const confirmed = applyTransition(draftId, { type: 'confirmed', confirmedAt });
+    if (confirmed.kind !== 'update') throw sendStopped(draftId, confirmed);
   }
   uploadLog.info(`send: draft ${shortId(draftId)} queued`);
+  onStage?.('queued');
   return { draftId, ...keys, sentAt };
 }
 
@@ -528,6 +600,9 @@ export function cancelJob(draftId: string, reason: ReleaseRequest['reason']): vo
   if (t.kind === 'refuse') throw refused(t, draftId);
   if (t.kind === 'delete' && t.effects.length > 0) void runJobEffects(t.effects);
 }
+
+// drafts.ts's edits, Move to… and Delete take a draft's job out through `cancelJob`.
+setJobCancelHook(cancelJob);
 
 /** Carry out a transition's effects: TUS deletes with the upload's token, then the release. */
 export async function runJobEffects(effects: readonly JobEffect[]): Promise<void> {
@@ -553,11 +628,13 @@ export async function runJobEffects(effects: readonly JobEffect[]): Promise<void
 /**
  * At launch, before any job runs: a Send still `preparing` stopped with the app (mid-merge or
  * mid-confirm), so it never happened and the draft is a draft again. A confirm the host already
- * ran is found again by its draftKey at the next Send. Returns how many there were.
+ * ran is found again by its draftKey at the next Send. A Send still running in this process (a
+ * `resumeOutbox` while it waits on `confirmSend`) is left alone. Returns how many there were.
  */
 export function recoverInterruptedSends(): number {
   let n = 0;
   for (const job of listUploadJobs(['preparing'])) {
+    if (sendsInFlight.has(job.draftId)) continue;
     if (applyTransition(job.draftId, { type: 'interrupted' }).kind === 'delete') n++;
   }
   if (n > 0) uploadLog.info(`launch: ${n} Send(s) stopped while preparing; back to drafts`);

@@ -34,7 +34,7 @@ jest.mock('@/db/client', () => {
   return { expoDb: conn, db: drizzle(conn as never) };
 });
 jest.mock('expo-file-system', () => jest.requireActual('@/test-support/expo-fs-node'));
-jest.mock('expo-secure-store', () => ({}));
+jest.mock('expo-secure-store', () => ({ deleteItemAsync: jest.fn(async () => {}) }));
 jest.mock('@/utils/video', () => ({}));
 jest.mock('expo-crypto', () => {
   const { createHash } = jest.requireActual<typeof import('node:crypto')>('node:crypto');
@@ -78,6 +78,7 @@ jest.mock('./upload-log', () => ({
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { expoDb } from '@/db/client';
+import { deleteDraft, renameDraft, reorderSegments, setDraftContext } from '@/db/drafts';
 import { getUploadJob } from '@/db/upload-jobs';
 import {
   applyTransition,
@@ -220,6 +221,20 @@ const TABLE: [string, UploadJob | null, JobEvent, string][] = [
     'failed',
   ],
   ['uploading + video done', job('uploading'), { type: 'videoDone', parts: PARTS }, 'delivering'],
+  // Not rows of the table: what the job loop records between them.
+  [
+    'uploading + renewed target (404)',
+    job('uploading', { artifactId: 'v-0' }),
+    TARGET,
+    'uploading',
+  ],
+  ['queued + token refreshed', job('queued'), { type: 'tokenRefreshed', tokenExp: NOW }, 'queued'],
+  [
+    'uploading + token refreshed',
+    job('uploading'),
+    { type: 'tokenRefreshed', tokenExp: NOW },
+    'uploading',
+  ],
 ];
 
 describe('nextJobState: pulse-schema.md §3.3', () => {
@@ -399,6 +414,43 @@ describe('nextJobState: pulse-schema.md §3.3', () => {
     });
   });
 
+  it('a renewal mid-upload is the same attempt; a refreshed token writes only its expiry', () => {
+    const uploading = job('uploading', {
+      attempts: 2,
+      artifactId: 'v-0',
+      partsJson: JSON.stringify(PARTS.map((p) => ({ ...p, artifactId: `${p.role}-0` }))),
+    });
+    const renewed = nextJobState(uploading, TARGET, ctx());
+    if (renewed.kind !== 'update') throw new Error('expected an update');
+    expect(renewed.set).toMatchObject({ attempts: 2, artifactId: 'v-1', bytesSent: 0 });
+    expect(JSON.parse(renewed.set.partsJson!)).toEqual([
+      { ...PARTS[0], artifactId: 'new-1' },
+      { ...PARTS[1], artifactId: 'v-1' },
+    ]);
+    const refreshed = nextJobState(uploading, { type: 'tokenRefreshed', tokenExp: NOW + 5 }, ctx());
+    expect(refreshed).toMatchObject({
+      kind: 'update',
+      to: 'uploading',
+      set: { state: 'uploading', tokenExp: NOW + 5, updatedAt: NOW },
+    });
+    if (refreshed.kind === 'update') {
+      expect(Object.keys(refreshed.set).sort()).toEqual(['state', 'tokenExp', 'updatedAt']);
+    }
+    for (const state of ['preparing', 'delivering', 'failed', 'needs_credentials'] as const) {
+      expect(nextJobState(job(state), { type: 'tokenRefreshed', tokenExp: NOW }, ctx()).kind).toBe(
+        'ignore',
+      );
+    }
+  });
+
+  it('a Send refused before its confirm leaves no job', () => {
+    expect(nextJobState(job('preparing'), { type: 'sendRefused' }, ctx())).toEqual({
+      kind: 'delete',
+      effects: [],
+    });
+    expect(nextJobState(job('queued'), { type: 'sendRefused' }, ctx()).kind).toBe('ignore');
+  });
+
   it('ignores an event its state doesn’t take (a late answer after a cancel)', () => {
     expect(nextJobState(null, TARGET, ctx()).kind).toBe('ignore');
     expect(nextJobState(job('failed'), TARGET, ctx()).kind).toBe('ignore');
@@ -477,6 +529,27 @@ function editDraft(id: string) {
 const draftRow = (id: string) =>
   conn.getFirstSync('SELECT sent_at, host_confirmed_at FROM drafts WHERE id = ?', id);
 const merge = async () => ({ durationMs: 4000 });
+/** Let fire-and-forget work (a release after a cancel) reach the fake host. */
+async function settle() {
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+}
+/** Sent, given a target, then back in `queued` after a retryable error: the host holds a target. */
+async function queuedWithTarget(id: string, uploadType?: object) {
+  addDraft(id, uploadType);
+  const sent = await sendDraft(id, merge);
+  applyTransition(id, TARGET);
+  applyTransition(id, {
+    type: 'partsProgress',
+    parts: [{ ...PARTS[0], tusUrl: `https://pv/uploads/${id}-c`, done: true }, PARTS[1]],
+  });
+  applyTransition(id, { type: 'retryableError', code: 'upload.failed', message: 'reset' });
+  expect(getUploadJob(id)).toMatchObject({ state: 'queued', uploadId: 'u1' });
+  return sent;
+}
+const releases = () =>
+  asked
+    .filter((p) => p.method === 'releaseUploadTarget')
+    .map((p) => p.args as { clientKey: string; reason: string });
 
 beforeEach(() => {
   conn.execSync('DELETE FROM upload_jobs');
@@ -528,13 +601,120 @@ describe('sendDraft and cancelJob', () => {
   it('an edit on a queued draft deletes its job; the next Send has a new clientKey, same draftKey', async () => {
     addDraft('d1');
     const first = await sendDraft('d1', merge);
-    cancelJob('d1', 'edited');
+    await renameDraft('d1', 'Monday wrap-up');
     expect(getUploadJob('d1')).toBeNull();
     editDraft('d1');
     const second = await sendDraft('d1', merge);
     expect(second.draftKey).toBe(first.draftKey);
     expect(second.clientKey).not.toBe(first.clientKey);
     expect(getUploadJob('d1')).toMatchObject({ state: 'queued', clientKey: second.clientKey });
+  });
+
+  it('edits through drafts.ts take a queued job out and release its target', async () => {
+    const renamed = await queuedWithTarget('d1');
+    const reordered = await queuedWithTarget('d2');
+    const moved = await queuedWithTarget('d3');
+    answer = () => ({ result: null });
+    asked.length = 0;
+
+    await renameDraft('d1', 'Renamed');
+    await reorderSegments(['d2-s1']);
+    await setDraftContext('d3', { key: 'clock:e2', label: 'Tue session', kind: 'clock' });
+
+    for (const id of ['d1', 'd2', 'd3']) expect(getUploadJob(id)).toBeNull();
+    await settle();
+    expect(releases()).toEqual([
+      { uploadId: 'u1', clientKey: renamed.clientKey, reason: 'edited' },
+      { uploadId: 'u1', clientKey: reordered.clientKey, reason: 'edited' },
+      { uploadId: 'u1', clientKey: moved.clientKey, reason: 'edited' },
+    ]);
+    expect(cancelTusUpload).toHaveBeenCalledWith('https://pv/uploads/d1-c', null);
+    // The edits themselves went through.
+    expect(conn.getFirstSync(`SELECT name FROM drafts WHERE id = 'd1'`)).toEqual({
+      name: 'Renamed',
+    });
+    expect(conn.getFirstSync(`SELECT context_key FROM drafts WHERE id = 'd3'`)).toEqual({
+      context_key: 'clock:e2',
+    });
+  });
+
+  it('Delete takes the job out through the outbox: the host is told and the uploads deleted', async () => {
+    const sent = await queuedWithTarget('d1');
+    answer = () => ({ result: null });
+    asked.length = 0;
+
+    await deleteDraft('d1');
+
+    expect(getUploadJob('d1')).toBeNull();
+    expect(conn.getFirstSync(`SELECT id FROM drafts WHERE id = 'd1'`)).toBeNull();
+    await settle();
+    expect(releases()).toEqual([{ uploadId: 'u1', clientKey: sent.clientKey, reason: 'deleted' }]);
+    expect(cancelTusUpload).toHaveBeenCalledWith('https://pv/uploads/d1-c', null);
+  });
+
+  it('an edit while uploading is refused and keeps the job; a clock-bound draft won’t move', async () => {
+    addDraft('d1');
+    await sendDraft('d1', merge);
+    applyTransition('d1', TARGET);
+    await expect(renameDraft('d1', 'x')).rejects.toMatchObject({ code: 'draft.locked' });
+    await expect(deleteDraft('d1')).rejects.toMatchObject({ code: 'draft.locked' });
+    expect(getUploadJob('d1')).toMatchObject({ state: 'uploading' });
+
+    addDraft('d2', CLOCK);
+    answer = () => ({ result: { confirmedAt: 1_790_000_000_500 } });
+    await sendDraft('d2', merge);
+    await expect(
+      setDraftContext('d2', { key: 'clock:e2', label: 'Tue session' }),
+    ).rejects.toMatchObject({ code: 'draft.locked', reason: 'clock_bound' });
+    // The refused move left its Send queued.
+    expect(getUploadJob('d2')).toMatchObject({ state: 'queued' });
+  });
+
+  it('a refusal before the confirm leaves no job and asks the host nothing', async () => {
+    addDraft('d1', CLOCK);
+    const stages: string[] = [];
+    const tooLarge = Object.assign(new Error('Over 500 bytes'), { code: 'upload.too_large' });
+    await expect(
+      sendDraft('d1', merge, {
+        onStage: (stage) => stages.push(stage),
+        beforeConfirm: ({ bytesTotal }) => {
+          if (bytesTotal > 500) throw tooLarge;
+        },
+      }),
+    ).rejects.toBe(tooLarge);
+    expect(asked).toEqual([]);
+    expect(getUploadJob('d1')).toBeNull();
+    expect(draftRow('d1')).toMatchObject({ host_confirmed_at: null });
+    expect(stages).toEqual(['merging']);
+
+    answer = () => ({ result: { confirmedAt: 1_790_000_000_500 } });
+    stages.length = 0;
+    await sendDraft('d1', merge, { onStage: (stage) => stages.push(stage) });
+    expect(stages).toEqual(['merging', 'confirming', 'queued']);
+  });
+
+  it('a launch check while a Send waits on its confirm leaves that Send alone', async () => {
+    addDraft('d1', CLOCK);
+    let reply: (() => void) | undefined;
+    answer = (p) => {
+      reply = () =>
+        respondToHostRequest({
+          hostCallId: p.hostCallId,
+          result: { confirmedAt: 1_790_000_000_500 },
+        });
+      return undefined;
+    };
+    const sending = sendDraft('d1', merge);
+    await settle();
+    expect(asked.map((p) => p.method)).toEqual(['confirmSend']);
+
+    expect(recoverInterruptedSends()).toBe(0);
+    expect(getUploadJob('d1')).toMatchObject({ state: 'preparing' });
+
+    reply!();
+    await sending;
+    expect(getUploadJob('d1')).toMatchObject({ state: 'queued' });
+    expect(draftRow('d1')).toMatchObject({ host_confirmed_at: 1_790_000_000_500 });
   });
 
   it('a merge that fails leaves a failed job with export.failed', async () => {

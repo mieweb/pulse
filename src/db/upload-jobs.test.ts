@@ -34,6 +34,7 @@ jest.mock('./client', () => {
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { expoDb } from './client';
 import {
+  cancelJobForChange,
   getUploadJob,
   isLockedJobState,
   listUploadJobs,
@@ -41,6 +42,7 @@ import {
   notifyUploadJobs,
   parseParts,
   serializeParts,
+  setJobCancelHook,
   subscribeUploadJobs,
   type UploadPart,
 } from './upload-jobs';
@@ -50,6 +52,7 @@ const conn = expoDb as unknown as {
   execSync: (sql: string) => void;
   runSync: (sql: string, params: unknown[]) => void;
   getAllSync: (sql: string) => unknown[];
+  getFirstSync: (sql: string) => unknown;
 };
 
 function addDraft(id: string) {
@@ -141,5 +144,43 @@ describe('upload_jobs', () => {
     stop();
     notifyUploadJobs(['d2']);
     expect(heard).toEqual([['d1']]);
+  });
+
+  it('an edit hands the job to the installed hook (the outbox’s cancelJob)', () => {
+    addDraft('d1');
+    addJob('d1', 'queued', 1);
+    const calls: [string, string][] = [];
+    setJobCancelHook((draftId, reason) => calls.push([draftId, reason]));
+    try {
+      cancelJobForChange('d1', 'deleted');
+    } finally {
+      setJobCancelHook(null);
+    }
+    expect(calls).toEqual([['d1', 'deleted']]);
+    // The hook decides; nothing was deleted here.
+    expect(getUploadJob('d1')).toMatchObject({ state: 'queued' });
+  });
+
+  it('without the outbox loaded, an edit still drops a waiting job, never a locked one', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const heard: (readonly string[])[] = [];
+    const stop = subscribeUploadJobs((ids) => heard.push(ids));
+    try {
+      for (const [id, state] of [
+        ['q', 'queued'],
+        ['p', 'needs_credentials'],
+        ['f', 'failed'],
+        ['u', 'uploading'],
+      ] as const) {
+        addDraft(id);
+        addJob(id, state, 1);
+        cancelJobForChange(id, 'edited');
+      }
+    } finally {
+      stop();
+      warn.mockRestore();
+    }
+    expect(listUploadJobs().map((j) => j.draftId)).toEqual(['u']);
+    expect(heard).toEqual([['q'], ['p'], ['f']]);
   });
 });
