@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { AppState, Platform } from 'react-native';
+import { Platform } from 'react-native';
 
 import { addDestination, placeHoldsLink } from '@/db/destinations';
 import { findOpenDraftForContext } from '@/db/drafts';
@@ -29,8 +29,6 @@ import {
 } from '@/features/upload/core/capabilities';
 import { expiresAtMs, takesOver } from '@/features/upload/core/capability-token';
 import { checkToken } from '@/features/upload/core/token-check';
-import { uploads } from '@/features/upload/core/upload-manager';
-import { copyToClipboard } from '@/utils/clipboard';
 import { hostOf, shortHost } from '@/utils/format';
 import { createPresence } from '@/utils/presence';
 
@@ -156,8 +154,7 @@ const openRecorder = createRecorderOpener({
  * handed over (deferred-pairing.ts): Android's install referrer goes through the same
  * confirmation; iOS shows the sheet's paste variant.
  *
- * It also starts the upload manager for the app's lifetime: the launch check,
- * and the toast an upload failure shows in the foreground.
+ * The upload manager is started by the shell (`startUploads`), not here.
  */
 export function UploadDeepLinkProvider({ children }: { children: React.ReactNode }) {
   // Which deliveries of a link are acted on: not one reported twice at once, nor a plain link
@@ -187,20 +184,6 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
     recorderTarget.current = null;
     openRecorder(target);
   }, [recorderAsked, navigationReady]);
-
-  // At launch, fail the uploads a killed app never finished (see `prepareLaunch`); on every
-  // foreground, poke the drain so an upload whose JS was suspended in the background carries on.
-  useEffect(() => {
-    uploads.registerToast(showToast);
-    // The Pulse app copies a finished upload's link; the embed has no clipboard and never mounts
-    // this provider, so the manager gets the copier only here, before any upload can resume.
-    uploads.setCopyLink(copyToClipboard);
-    void uploads.prepareLaunch();
-    const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') void uploads.ensureRunning();
-    });
-    return () => sub.remove();
-  }, [showToast]);
 
   // Show the sheet for a request once the navigator can take a push (a cold-start link arrives
   // before it's mounted). A second link while it's open replaces what the open sheet shows; one

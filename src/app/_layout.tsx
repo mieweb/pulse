@@ -2,6 +2,7 @@ import { reloadAppAsync } from 'expo';
 import Constants from 'expo-constants';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
 import { PulseCore } from '@/core/pulse-core';
@@ -14,13 +15,15 @@ import {
   restoreLibraryBackup,
 } from '@/features/draft-transfer/library-backup';
 import { installLogCapture } from '@/features/logs/logger';
-import { ToastProvider } from '@/features/toast/toast-provider';
+import { ToastProvider, useToast } from '@/features/toast/toast-provider';
 import { setClientIdentity } from '@/features/upload/core/client-identity';
+import { startUploads } from '@/features/upload/core/start-uploads';
 import { UploadStrategyContext } from '@/features/upload/core/target-provider';
 import { destinationsSheetOptions } from '@/features/upload/pairing/destinations-sheet';
 import { poolProvider } from '@/features/upload/pairing/pool-provider';
 import { UploadDeepLinkProvider } from '@/features/upload/pairing/upload-deep-link-provider';
 import { useThemeMode } from '@/hooks/use-theme';
+import { copyToClipboard } from '@/utils/clipboard';
 import { tallSheetOptions } from '@/utils/sheet-fit';
 
 /** The Pulse app's start-up, run by PulseCore before anything renders. */
@@ -71,6 +74,9 @@ function ThemedNavigation() {
   // The full-screen screens (recorder, editor, export, welcome) appear and go at once, like a
   // camera app's: no slide up from the bottom. The sheets keep the system's own presentation.
   const fullScreen = { presentation: 'fullScreenModal', animation: 'none' } as const;
+  // The upload manager runs for the app's lifetime, with the app's toast and clipboard.
+  const { showToast } = useToast();
+  useEffect(() => startUploads({ showToast, copyLink: copyToClipboard }), [showToast]);
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
