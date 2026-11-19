@@ -1,13 +1,24 @@
 import { useEvent } from 'expo';
+import { eq } from 'drizzle-orm';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
+import { File } from 'expo-file-system';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
   ActivityIndicator,
   BackHandler,
   Pressable,
   StyleSheet,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -25,15 +36,25 @@ import {
   ButtonHeight,
   CardShadow,
   ControlScrim,
+  MaxTextScale,
   Opacity,
   Radius,
   Spacing,
 } from '@/constants/theme';
+import { isOnline, subscribeNetwork } from '@/core/network';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { captionYQuery } from '@/db/captions';
-import { segmentsForDraft } from '@/db/drafts';
+import { db } from '@/db/client';
+import { renameDraft, segmentsForDraft } from '@/db/drafts';
+import { drafts } from '@/db/schema';
 import type { ExportScreenProps } from '@/features/export/contract';
 import { exportActions } from '@/features/export/primary-action';
+import {
+  checkSend,
+  TRIM_LABEL,
+  uploadRulesOf,
+  type UploadRules,
+} from '@/features/export/send-checks';
 import { useExport } from '@/features/export/use-export';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
@@ -48,6 +69,7 @@ import { uploads } from '@/features/upload/core/upload-manager';
 import { useUpload } from '@/features/upload/core/use-upload';
 import { useUploadAnnouncement, useWatchLink } from '@/features/upload/core/use-uploads';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
+import { DRAFT_NAME_MAX_LENGTH, dropSplitSurrogate } from '@/utils/draft-name';
 import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration } from '@/utils/format';
 import { effMs } from '@/utils/segment-window';
@@ -55,6 +77,33 @@ import { userMessage } from '@/utils/user-message';
 
 /** How long after an upload finished its way back to the host is still offered here. */
 const RETURN_OFFER_MS = 10 * 60_000;
+
+/** The draft's own name and its host upload type (embedded drafts only): live, for Send's checks. */
+function draftSendQuery(draftId: string) {
+  return db
+    .select({ name: drafts.name, uploadTypeJson: drafts.uploadTypeJson })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+}
+
+/** The stored upload type's rules, or null (no host context, or a column that doesn't parse). */
+function rulesOf(uploadTypeJson: string | null | undefined): UploadRules | null {
+  if (!uploadTypeJson) return null;
+  try {
+    return uploadRulesOf(JSON.parse(uploadTypeJson));
+  } catch {
+    return null;
+  }
+}
+
+/** The merged file's size, or null when it can't be read. */
+function fileBytes(path: string): number | null {
+  try {
+    return new File(toFileUri(path)).size ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Merges the draft into one video, previews it, and offers the primary action (the pool's Upload,
@@ -161,6 +210,33 @@ export function ExportScreen({
     </>
   );
   const close = useCallback(() => onClose({ draftLocked: uploading }), [onClose, uploading]);
+
+  // A host's upload type (C7): requireName and requireOnline hold the primary action back, and
+  // over its maxBytes a warning comes before Send. A draft without one (the Pulse app) has no rules.
+  const { data: sendRows } = useLiveQuery(draftSendQuery(draftId), [draftId]);
+  const rules = useMemo(() => rulesOf(sendRows[0]?.uploadTypeJson), [sendRows]);
+  const draftName = sendRows[0]?.name ?? null;
+  const online = useSyncExternalStore(subscribeNetwork, isOnline, isOnline);
+  const outputPath = state.status === 'done' ? state.outputPath : null;
+  const exportBytes = useMemo(
+    () => (rules?.maxBytes != null && outputPath ? fileBytes(outputPath) : null),
+    [rules, outputPath],
+  );
+  const sendCheck = checkSend({ rules, name: draftName, online, exportBytes });
+  // Checked again at the tap, with the network as it is then.
+  const sendAllowedNow = () =>
+    checkSend({ rules, name: draftName, online: isOnline(), exportBytes }).block === null;
+  const submitName = (input: string) => {
+    const name = dropSplitSurrogate(input).trim() || null;
+    if (name === draftName) return;
+    renameDraft(draftId, name).catch((e) =>
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t name the video',
+        message: userMessage(e, 'Try again.', 'rename'),
+      }),
+    );
+  };
   // Android's back button would otherwise pop straight to the recorder.
   useEffect(() => {
     if (!uploading) return;
@@ -251,21 +327,69 @@ export function ExportScreen({
               note={<CaptionsNote captions={captions} />}
             />
 
+            {/* The host's type asks for a name: the field to give one. */}
+            {rules?.requireName && (
+              <TextInput
+                defaultValue={draftName ?? ''}
+                placeholder="Name this video"
+                placeholderTextColor={theme.textSecondary}
+                maxLength={DRAFT_NAME_MAX_LENGTH}
+                maxFontSizeMultiplier={MaxTextScale}
+                returnKeyType="done"
+                accessibilityLabel="Video name"
+                onEndEditing={(e) => submitName(e.nativeEvent.text)}
+                style={[styles.nameInput, elementSurface, { color: theme.text }]}
+                testID="export.name"
+              />
+            )}
+
+            {/* Over the host's size cap: said before Send, with the way to make it smaller. */}
+            {sendCheck.tooLarge && (
+              <View style={styles.sendNote} accessibilityLiveRegion="polite">
+                <ThemedText type="footnote" themeColor="warning" style={styles.sendNoteText}>
+                  {sendCheck.tooLarge.text}
+                </ThemedText>
+                <Pressable
+                  onPress={close}
+                  accessibilityRole="button"
+                  hitSlop={12}
+                  testID="export.trim"
+                  style={({ pressed }) => pressed && styles.pressed}>
+                  <ThemedText type="footnote" themeColor="accent" style={styles.trimLabel}>
+                    {TRIM_LABEL}
+                  </ThemedText>
+                </Pressable>
+              </View>
+            )}
+
             {/* Inside a host: hand the video back to it. */}
             {primaryAction.kind === 'use-video' && (
               <PrimaryButton
                 label={actions.primary.label}
                 icon="checkmark"
                 accessibilityLabel={actions.primary.accessibilityLabel}
+                accessibilityHint={sendCheck.blockText ?? undefined}
+                disabled={sendCheck.block !== null}
                 testID="export.primary"
-                onPress={() =>
+                onPress={() => {
+                  if (!sendAllowedNow()) return;
                   primaryAction.onUse({
                     draftId,
                     path: state.outputPath,
                     durationMs: state.durationMs,
-                  })
-                }
+                  });
+                }}
               />
+            )}
+            {/* Why the primary action is held back: a name, or a connection. */}
+            {sendCheck.blockText && (
+              <ThemedText
+                type="footnote"
+                themeColor="textSecondary"
+                accessibilityLiveRegion="polite"
+                testID="export.sendBlocked">
+                {sendCheck.blockText}
+              </ThemedText>
             )}
 
             {/* Compact inline row — these are secondary actions; the upload button(s) below
@@ -689,6 +813,24 @@ const styles = StyleSheet.create({
   },
   uploadingLabel: { flex: 1, fontVariant: ['tabular-nums'] },
   pressed: { opacity: Opacity.pressed },
+  // The host type's name field: a card like the secondary buttons, as tall as a row.
+  nameInput: {
+    alignSelf: 'stretch',
+    minHeight: 44,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Radius.button,
+    borderCurve: 'continuous',
+    fontSize: 17,
+  },
+  sendNote: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+  },
+  sendNoteText: { textAlign: 'center' },
+  trimLabel: { fontWeight: '600' },
   pressedIcon: { opacity: Opacity.pressedGlyph },
   finishedStack: { gap: Spacing.two },
   finishedRow: { flexDirection: 'row', gap: Spacing.two },
