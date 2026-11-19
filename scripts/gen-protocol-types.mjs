@@ -64,7 +64,18 @@ if (
  * object; `tsType` makes it `unknown` instead. Walks nested properties too.
  */
 function markAnyJson(schema) {
-  const CONSTRAINTS = ['type', 'enum', 'const', '$ref', 'properties', 'items', 'anyOf', 'oneOf', 'allOf', 'tsType'];
+  const CONSTRAINTS = [
+    'type',
+    'enum',
+    'const',
+    '$ref',
+    'properties',
+    'items',
+    'anyOf',
+    'oneOf',
+    'allOf',
+    'tsType',
+  ];
   for (const prop of Object.values(schema.properties ?? {})) {
     if (typeof prop !== 'object' || prop === null) continue;
     if (!CONSTRAINTS.some((k) => k in prop)) prop.tsType = 'unknown';
