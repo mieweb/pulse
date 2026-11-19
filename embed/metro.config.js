@@ -15,11 +15,20 @@ config.resolver.disableHierarchicalLookup = true;
 // Drizzle's generated .sql migration files.
 config.resolver.sourceExts.push('sql');
 
-// Modules the embedded build leaves out: the host app owns notifications and background work, and
-// react-native-background-actions' service assumes a React Native host app (it crashes in others).
+// Modules the embedded build leaves out (B6; embed/package.json doesn't link them): the host app
+// owns notifications, background work and incoming links; react-native-background-actions'
+// service assumes a React Native host app (it crashes in others); and async-storage (the old
+// library's one-time move), the clipboard (pairing, the upload announcement) and the document
+// picker (.pulse import, library restore) serve only the Pulse app. Code the embed still reaches
+// gets a stub that does nothing, where the missing native module would crash it as it loads.
 const stubs = {
   'expo-notifications': path.join(__dirname, 'src/stubs/expo-notifications.ts'),
   'react-native-background-actions': path.join(__dirname, 'src/stubs/background-actions.ts'),
+  '@react-native-async-storage/async-storage': path.join(__dirname, 'src/stubs/async-storage.ts'),
+  'expo-clipboard': path.join(__dirname, 'src/stubs/clipboard.ts'),
+  'expo-document-picker': path.join(__dirname, 'src/stubs/document-picker.ts'),
+  // Export opens an upload's link with openURL (src/features/upload/link-actions.ts).
+  'expo-linking': path.join(__dirname, 'src/stubs/linking.ts'),
   // The submodule, bundled from its TypeScript source as the app does.
   '@mieweb/pulse-editor': path.join(pulseEditor, 'src/index.tsx'),
 };

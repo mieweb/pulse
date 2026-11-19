@@ -79,7 +79,6 @@
           }
         }
       ],
-      "expo-status-bar",
       "../plugins/with-disable-script-sandboxing"
     ],
     "experiments": {
