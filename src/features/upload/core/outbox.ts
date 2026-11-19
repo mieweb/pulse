@@ -26,7 +26,7 @@ import {
   uploadToken,
   type HostPlace,
   type ReleaseRequest,
-  type UploadTarget,
+  type HostUploadTarget,
 } from './host-services';
 import { writeSendFiles } from './send-files';
 import { cancelTusUpload } from './tus-client';
@@ -80,7 +80,7 @@ export type JobEvent =
       artifactId: string;
       endpoint: string;
       tokenExp: number;
-      state?: UploadTarget['state'];
+      state?: HostUploadTarget['state'];
     }
   | { type: 'credentialsLost'; code: CredentialsCode; message: string }
   /** Foreground, `resumeOutbox`, or a host answer: try a paused job again. */

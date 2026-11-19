@@ -43,7 +43,8 @@ export type UploadTargetRequest = {
   renewArtifact: boolean;
 };
 
-export type UploadTarget = {
+/** The host's PulseVault target for one upload (not the pool claim `target-provider`'s `UploadTarget`). */
+export type HostUploadTarget = {
   uploadId: string;
   endpoint: string;
   artifactId: string;
@@ -71,7 +72,7 @@ export type ConfirmSendRequest = {
 export type ConfirmSendResult = { confirmedAt: number };
 
 export type HostRequestMap = {
-  getUploadTarget: { args: UploadTargetRequest; result: UploadTarget };
+  getUploadTarget: { args: UploadTargetRequest; result: HostUploadTarget };
   refreshUploadToken: { args: TokenRequest; result: TokenResult };
   releaseUploadTarget: { args: ReleaseRequest; result: null };
   confirmSend: { args: ConfirmSendRequest; result: ConfirmSendResult };
@@ -304,7 +305,7 @@ export function forgetUploadTokens(): void {
 }
 
 /** `getUploadTarget`, keeping the target's token in memory for its upload. */
-export async function getUploadTarget(r: UploadTargetRequest): Promise<UploadTarget> {
+export async function getUploadTarget(r: UploadTargetRequest): Promise<HostUploadTarget> {
   const target = await hostRequest('getUploadTarget', r);
   tokens.set(target.uploadId, { token: target.token, expiresAt: target.expiresAt });
   return target;
