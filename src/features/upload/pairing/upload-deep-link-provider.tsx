@@ -23,12 +23,17 @@ import {
   recordersGone,
 } from '@/features/recorder/recorder-presence';
 import { useToast } from '@/features/toast/toast-provider';
+import {
+  CAPABILITIES_REJECTION_MESSAGE,
+  checkCapabilities,
+} from '@/features/upload/core/capabilities';
+import { expiresAtMs, takesOver } from '@/features/upload/core/capability-token';
+import { checkToken } from '@/features/upload/core/token-check';
+import { uploads } from '@/features/upload/core/upload-manager';
 import { copyToClipboard } from '@/utils/clipboard';
 import { hostOf, shortHost } from '@/utils/format';
 import { createPresence } from '@/utils/presence';
 
-import { CAPABILITIES_REJECTION_MESSAGE, checkCapabilities } from './capabilities';
-import { expiresAtMs, takesOver } from './capability-token';
 import { checkDeferredPairing } from './deferred-pairing';
 import {
   type LinkPlace,
@@ -47,9 +52,7 @@ import {
 } from './link-messages';
 import { createRecorderOpener, HANDOFF_MS, type RecorderTarget } from './open-recorder';
 import { createLinkGate, createSaveOrder, pairLink, screenLink } from './pair-link';
-import { checkToken } from './token-check';
 import { isTrustedServer, trustServer } from './trusted-servers';
-import { uploads } from './upload-manager';
 import { reloadDestinationTokens } from './use-destinations';
 
 const REJECTION_MESSAGE: Record<'unsupported-version' | 'invalid-link', string> = {

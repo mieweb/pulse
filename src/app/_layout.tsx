@@ -15,9 +15,11 @@ import {
 } from '@/features/draft-transfer/library-backup';
 import { installLogCapture } from '@/features/logs/logger';
 import { ToastProvider } from '@/features/toast/toast-provider';
-import { setClientIdentity } from '@/features/upload/client-identity';
-import { destinationsSheetOptions } from '@/features/upload/destinations-sheet';
-import { UploadDeepLinkProvider } from '@/features/upload/upload-deep-link-provider';
+import { setClientIdentity } from '@/features/upload/core/client-identity';
+import { UploadStrategyContext } from '@/features/upload/core/target-provider';
+import { destinationsSheetOptions } from '@/features/upload/pairing/destinations-sheet';
+import { poolProvider } from '@/features/upload/pairing/pool-provider';
+import { UploadDeepLinkProvider } from '@/features/upload/pairing/upload-deep-link-provider';
 import { useThemeMode } from '@/hooks/use-theme';
 import { tallSheetOptions } from '@/utils/sheet-fit';
 
@@ -54,7 +56,10 @@ export default function RootLayout() {
       // Unzipped restores and imports a crash left behind: nothing of this version is writing
       // them yet.
       afterMigrations={removeLeftoverRestores}>
-      <ThemedNavigation />
+      {/* The Pulse app uploads to destinations paired from links. */}
+      <UploadStrategyContext.Provider value={poolProvider}>
+        <ThemedNavigation />
+      </UploadStrategyContext.Provider>
     </PulseCore>
   );
 }

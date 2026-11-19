@@ -2,7 +2,7 @@ import { File } from 'expo-file-system';
 import { strFromU8, unzipSync } from 'fflate';
 
 import { insertImportedDraft } from '@/db/drafts';
-import { describeError } from '@/features/upload/upload-log';
+import { describeError } from '@/features/upload/core/upload-log';
 import { conformToContract } from '@/utils/contract-gate';
 import {
   absolutize,

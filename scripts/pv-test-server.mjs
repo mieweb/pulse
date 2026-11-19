@@ -1,5 +1,5 @@
 // Boots the pulsevault submodule's BUILT core on an ephemeral port for the app's cross-repo
-// integration suite (src/features/upload/pv-integration.test.ts). Configured like a real
+// integration suite (src/features/upload/core/pv-integration.test.ts). Configured like a real
 // deployment: local-FS storage, the checksum + magic-byte validators, capability tokens, and
 // (from protocol 2.2) read-only view links.
 //

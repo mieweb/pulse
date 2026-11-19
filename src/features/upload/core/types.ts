@@ -35,6 +35,19 @@ export type UploadSession = {
   returnTo?: ReturnTo | null;
 };
 
+/**
+ * What spending a target on a draft takes (`uploads.claim`): the target (`destinationId` names the
+ * row it is spent from), the draft's clips and its merged video, and the way back to the host.
+ */
+export type UploadClaim = {
+  draftId: string;
+  destinationId: string;
+  destination: Destination;
+  segments: UploadSession['segments'];
+  merged: UploadSession['merged'];
+  returnTo?: UploadSession['returnTo'];
+};
+
 /** A place link's way back: its `return` URL (as `readReturnUrl` accepts it) and `app` name. */
 export type ReturnTo = { url: string; app: string | null };
 

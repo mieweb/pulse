@@ -2,7 +2,7 @@ import { merge, type MergeClip, type MergeOptions } from '@mieweb/pulse-editor';
 
 import { REELS_TARGET, type ExportAudio } from '@/core/media/merge-signature';
 import type { Segment } from '@/db/schema';
-import type { MergedOutput } from '@/features/upload/types';
+import type { MergedOutput } from '@/features/upload/core/types';
 import { absolutize } from '@/utils/file-store';
 import type { RecorderFormat } from '@/utils/import-normalization';
 import { clipRender } from '@/utils/segment-window';

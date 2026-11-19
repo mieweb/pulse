@@ -3,8 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Platform } from 'react-native';
 
 import { getSetting, isOnboardingComplete, setSetting } from '@/db/settings';
-
-import { uploadLog } from './upload-log';
+import { uploadLog } from '@/features/upload/core/upload-log';
 
 const CHECKED_KEY = 'pairing.deferredChecked';
 /** Launches a look that failed is retried on before giving up (a phone without Play, say). */

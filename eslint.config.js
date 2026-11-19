@@ -27,17 +27,12 @@ const SHARED = [
 const BELOW_FEATURES = ['src/core/**', 'src/db/**', 'src/utils/**'];
 
 /**
- * Standalone-only code that still navigates with expo-router itself: allowed until PR2-B moves
- * pairing into upload/pairing and onboarding behind the standalone shell.
+ * Standalone-only code that still navigates with expo-router itself: allowed until onboarding
+ * moves behind the standalone shell.
  */
-const ROUTER_UNTIL_PR2B = [
-  'src/features/upload/destinations-sheet.tsx',
-  'src/features/upload/pairing-sheet.tsx',
-  'src/features/upload/upload-deep-link-provider.tsx',
+const ONBOARDING_ROUTER = [
   'src/features/onboarding/onboarding-screen.tsx',
   'src/features/onboarding/use-onboarding-redirect.ts',
-  // Home's paired-destinations float pushes /destinations, the pairing sheet's route.
-  'src/features/upload/destinations-float.tsx',
 ];
 /**
  * Rule 2: the features the embed runs never import a standalone-only one (the plan's B6 list:
@@ -49,7 +44,7 @@ const CORE_FEATURES = [
   'editor',
   'export',
   'transcription',
-  'upload',
+  'upload/core',
   'tips',
   'toast',
   'logs',
@@ -57,12 +52,15 @@ const CORE_FEATURES = [
 ].map((f) => `./src/features/${f}`);
 const STANDALONE_FEATURES = ['onboarding', 'about', 'draft-transfer'];
 
-/** Pairing: the only feature code that listens for incoming links (until PR2-B, as above). */
-const PAIRING = [
-  'src/features/upload/destinations-sheet.tsx',
-  'src/features/upload/pairing-sheet.tsx',
-  'src/features/upload/upload-deep-link-provider.tsx',
-];
+/**
+ * Pairing (upload/pairing): the Pulse app's links, the paired pool and its sheets. Standalone-only:
+ * the only feature code that listens for incoming links, and it may navigate with expo-router and
+ * use the standalone-only features (the destinations sheet shows About's compatibility labels).
+ */
+const PAIRING = ['src/features/upload/pairing/**'];
+/** The upload engine both shells run, which never imports pairing. */
+const UPLOAD_CORE = './src/features/upload/core';
+const UPLOAD_PAIRING = './src/features/upload/pairing';
 
 const SHELL_ONLY = 'belongs to the standalone shell (src/app): take a callback or a port instead.';
 const PACKAGES = {
@@ -155,6 +153,13 @@ function boundaries({ allow = [], belowFeatures = false } = {}) {
           ...(belowFeatures
             ? [zone('./src/features', 'core, db and utils never import a feature.')]
             : []),
+          {
+            target: UPLOAD_CORE,
+            from: UPLOAD_PAIRING,
+            message:
+              'upload/core runs in both shells and never imports upload/pairing, which is ' +
+              'standalone-only: take the target from the shell (UploadStrategyContext) instead.',
+          },
           ...(allow.includes('standalone-features')
             ? []
             : STANDALONE_FEATURES.map((f) => ({
@@ -175,23 +180,12 @@ function boundaries({ allow = [], belowFeatures = false } = {}) {
 const boundaryConfigs = [
   { files: SHARED, rules: boundaries() },
   { files: BELOW_FEATURES, rules: boundaries({ belowFeatures: true }) },
-  { files: ROUTER_UNTIL_PR2B, rules: boundaries({ allow: ['expo-router'] }) },
+  { files: ONBOARDING_ROUTER, rules: boundaries({ allow: ['expo-router'] }) },
   {
     files: PAIRING,
-    rules: boundaries({ allow: ['expo-router', 'expo-linking', 'link-listeners'] }),
-  },
-  // Shows each paired server's compatibility with About's labels until PR2-B moves the
-  // destinations sheet behind the standalone shell (it is pairing, and pairing is standalone).
-  {
-    files: ['src/features/upload/destinations-sheet.tsx'],
     rules: boundaries({
       allow: ['expo-router', 'expo-linking', 'link-listeners', 'standalone-features'],
     }),
-  },
-  // Opens an upload's link with expo-linking's openURL; the listener rule still holds there.
-  {
-    files: ['src/features/upload/link-actions.ts'],
-    rules: boundaries({ allow: ['expo-linking'] }),
   },
   // A round trip of the library backup through the draft-transfer feature. Tests are in neither
   // bundle.

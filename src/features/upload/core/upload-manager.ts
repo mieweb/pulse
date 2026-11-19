@@ -44,6 +44,7 @@ import type {
   ReturnTo,
   UploadPhase,
   UploadProgress,
+  UploadClaim,
   UploadSession,
 } from './types';
 import { requestViewLink } from './view-link';
@@ -379,14 +380,7 @@ class BackgroundUploadManager {
    * when two drafts claim one link — the loser unpairs itself. A double tap on the
    * same draft is ignored.
    */
-  async claim(params: {
-    draftId: string;
-    destinationId: string;
-    destination: Destination;
-    segments: UploadSession['segments'];
-    merged: UploadSession['merged'];
-    returnTo?: UploadSession['returnTo'];
-  }): Promise<void> {
+  async claim(params: UploadClaim): Promise<void> {
     const { draftId, destinationId, destination, segments, merged, returnTo = null } = params;
     if (this.claiming.has(draftId) || this.getDraftState(draftId).status !== 'idle') return;
     const pending = { cancelled: false };

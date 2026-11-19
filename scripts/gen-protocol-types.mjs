@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Generates src/features/upload/protocol.gen.ts — TypeScript types for the upload protocol —
-// from the JSON Schemas in the pinned pulsevault submodule (pulsevault-mieweb/protocol/schemas/),
-// the protocol's single source (PROTOCOL.md §7). When a submodule bump changes the protocol, the
-// types change with it and `tsc` shows what in the app needs to follow.
+// Generates src/features/upload/core/protocol.gen.ts — TypeScript types for the upload
+// protocol — from the JSON Schemas in the pinned pulsevault submodule
+// (pulsevault-mieweb/protocol/schemas/), the protocol's single source (PROTOCOL.md §7). When a
+// submodule bump changes the protocol, the types change with it and `tsc` shows what in the app
+// needs to follow.
 //
 // It also writes `APP_PROTOCOL`, the protocol majors this app speaks, from this repo's
 // package.json `pulseProtocol`. The app imports the constant rather than package.json itself, so
@@ -20,7 +21,7 @@ import prettier from 'prettier';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const schemaDir = path.join(root, 'pulsevault-mieweb', 'protocol', 'schemas');
-const outFile = path.join(root, 'src', 'features', 'upload', 'protocol.gen.ts');
+const outFile = path.join(root, 'src', 'features', 'upload', 'core', 'protocol.gen.ts');
 const check = process.argv.includes('--check');
 
 // Schema file → exported type name.
@@ -121,10 +122,10 @@ const source = await prettier.format(`${header}\n${appProtocolBlock}\n${blocks.j
 
 const current = await fs.readFile(outFile, 'utf8').catch(() => null);
 if (current === source) {
-  if (check) console.log('✓ src/features/upload/protocol.gen.ts is up to date');
+  if (check) console.log('✓ src/features/upload/core/protocol.gen.ts is up to date');
 } else if (check) {
   console.error(
-    '✗ src/features/upload/protocol.gen.ts is out of date with the pinned protocol or package.json pulseProtocol — run `node scripts/gen-protocol-types.mjs` and commit it.',
+    '✗ src/features/upload/core/protocol.gen.ts is out of date with the pinned protocol or package.json pulseProtocol — run `node scripts/gen-protocol-types.mjs` and commit it.',
   );
   process.exit(1);
 } else {

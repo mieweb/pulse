@@ -1,6 +1,6 @@
 import type { MenuAction } from '@/components/action-menu';
-import { watchUpload } from '@/features/upload/link-actions';
-import { uploads, type WatchLink } from '@/features/upload/upload-manager';
+import { watchUpload } from '@/features/upload/pairing/link-actions';
+import { uploads, type WatchLink } from '@/features/upload/core/upload-manager';
 
 export type DraftMenuProps = {
   draftId: string;

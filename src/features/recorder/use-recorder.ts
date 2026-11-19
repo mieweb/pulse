@@ -36,7 +36,7 @@ import {
 } from '@/db/settings';
 import { useToast } from '@/features/toast/toast-provider';
 import { dropClipJobs } from '@/features/transcription/clip-queue';
-import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
+import { describeError, formatBytes, formatSeconds } from '@/features/upload/core/upload-log';
 import {
   absolutize,
   copyIntoSegments,

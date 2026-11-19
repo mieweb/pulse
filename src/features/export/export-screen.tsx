@@ -42,14 +42,15 @@ import { SkiaCaption } from '@/features/transcription/skia-caption';
 import { captionStyleFor } from '@/features/transcription/caption-style';
 import { type DraftCaptions, useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import type { TranscriptLine } from '@/features/transcription/whisper';
-import { destinationSpokenName } from '@/features/upload/destination-options';
-import { DestinationSelector } from '@/features/upload/destination-selector';
-import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
-import { backToHost } from '@/features/upload/link-messages';
-import { uploadPhaseLabel } from '@/features/upload/phase-label';
-import { uploads } from '@/features/upload/upload-manager';
-import { useUpload } from '@/features/upload/use-upload';
-import { useUploadAnnouncement, useWatchLink } from '@/features/upload/use-uploads';
+import { uploadPhaseLabel } from '@/features/upload/core/phase-label';
+import { uploads } from '@/features/upload/core/upload-manager';
+import { useUpload } from '@/features/upload/core/use-upload';
+import { useUploadAnnouncement, useWatchLink } from '@/features/upload/core/use-uploads';
+import { destinationSpokenName } from '@/features/upload/pairing/destination-options';
+import { DestinationSelector } from '@/features/upload/pairing/destination-selector';
+import { shareUploadLink, watchUpload } from '@/features/upload/pairing/link-actions';
+import { backToHost } from '@/features/upload/pairing/link-messages';
+import { usePoolTargets } from '@/features/upload/pairing/use-pool-targets';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
 import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
@@ -78,11 +79,12 @@ export function ExportScreen({
   // Zero-length clips (failed native reads) can't be concatenated — drop them before merging.
   const clips = useMemo(() => segments.filter((s) => effMs(s) > 0), [segments]);
 
-  // Stable ref (not a plain value) so `useUpload` can be called — and its `destination`/pool
-  // read — before the merge finishes. It's read at enqueue time, once the merge is done. See the
-  // `useUpload` doc comment.
+  // Stable ref (not a plain value) so `useUpload` can be called before the merge finishes. It's
+  // read at enqueue time, once the merge is done. See the `useUpload` doc comment.
   const mergedRef = useRef<{ path: string; durationMs: number } | null>(null);
   const upload = useUpload(draftId, clips, mergedRef);
+  // The pool's destinations to pick from, and the one picked.
+  const targets = usePoolTargets(draftId);
 
   // The merge runs on mount: Share/Save/Preview and the upload all need the one video.
   const { state, run } = useExport(draftId, clips);
@@ -115,7 +117,7 @@ export function ExportScreen({
   // What the Upload button is called: the place's own label when its link gave one, else the
   // server's host. The label is the link's word, not the server's: the chip above the button
   // shows the host under it, and the button says both to a screen reader.
-  const selected = upload.selectedDestination;
+  const selected = targets.selectedDestination;
   const selectedHost = selected ? hostOf(selected.server) : '';
   const selectedName = selected ? (selected.label ?? selectedHost) : '';
   const actions = exportActions({
@@ -198,20 +200,20 @@ export function ExportScreen({
   // The pool selector + claim button, shared by every non-uploading state — including a draft
   // that was already uploaded before (claiming re-pairs it and restarts cleanly, see `claim`),
   // so a destination paired after a finished upload is always reachable.
-  const selectorAndUpload = (upload.destinations.length > 0 || upload.reopen) && (
+  const selectorAndUpload = (targets.destinations.length > 0 || targets.reopen) && (
     <>
       {/* The draft's own destination is gone, and it never falls back to another one. */}
-      {upload.reopen && !upload.selectedId && (
+      {targets.reopen && !targets.selectedId && (
         <ThemedText type="footnote" themeColor="textSecondary" accessibilityRole="text">
-          {upload.reopen}
+          {targets.reopen}
         </ThemedText>
       )}
-      {upload.destinations.length > 0 && (
+      {targets.destinations.length > 0 && (
         <>
           <DestinationSelector
-            destinations={upload.destinations}
-            selectedId={upload.selectedId}
-            onSelect={upload.setSelectedId}
+            destinations={targets.destinations}
+            selectedId={targets.selectedId}
+            onSelect={targets.setSelectedId}
           />
           {/* The section is already titled Upload: the icon and the destination say the rest.
               Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
@@ -220,8 +222,8 @@ export function ExportScreen({
             icon="icloud.and.arrow.up"
             busy={state.status === 'merging'}
             truncate={state.status !== 'merging' ? 'middle' : undefined}
-            onPress={() => void upload.claim(upload.selectedId)}
-            disabled={!upload.selectedId || !uploadReady}
+            onPress={() => void targets.resolve(targets.selectedId).then(upload.claim)}
+            disabled={!targets.selectedId || !uploadReady}
             accessibilityLabel={actions.primary.accessibilityLabel}
             testID="export.primary"
           />
@@ -388,8 +390,8 @@ export function ExportScreen({
             pick shows no upload UI at all (§ post-upload UX — no persistent buttons), but for
             the way back to the host its upload just came from. */}
         {pool &&
-          (upload.destinations.length > 0 ||
-            upload.reopen ||
+          (targets.destinations.length > 0 ||
+            targets.reopen ||
             uState.status === 'uploading' ||
             finished ||
             back) && (

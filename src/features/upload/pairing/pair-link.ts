@@ -1,7 +1,8 @@
-import type { CapabilitiesResult } from './capabilities';
-import { isTokenExpired } from './capability-token';
+import type { CapabilitiesResult } from '@/features/upload/core/capabilities';
+import { isTokenExpired } from '@/features/upload/core/capability-token';
+import type { TokenCheck } from '@/features/upload/core/token-check';
+
 import type { UploadDeepLink } from './deep-link';
-import type { TokenCheck } from './token-check';
 
 /** The same link reported twice this close together is one opening (see `createLinkGate`). */
 const DUPLICATE_URL_MS = 2000;

@@ -1,9 +1,9 @@
+import type { ReturnTo } from '@/features/upload/core/types';
 import { hostOf, shortHost } from '@/utils/format';
 
 import { cleanApp, readReturnUrl } from './deep-link';
 import type { DestinationOption } from './destination-options';
 import { openNewLink } from './link-messages';
-import type { ReturnTo } from './types';
 
 /** What the export screen knows of the draft (`draftPlaceQuery`): its place, if it has one. */
 export type DraftPlace = {

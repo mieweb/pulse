@@ -1,7 +1,6 @@
+import { decodeCapabilityClaims } from '@/features/upload/core/capability-token';
 import { cleanDisplayText, codePointLength, cutToFit } from '@/utils/display-text';
 import { DRAFT_NAME_MAX_LENGTH } from '@/utils/draft-name';
-
-import { decodeCapabilityClaims } from './capability-token';
 
 // Bump when the pairing link shape changes incompatibly — a client that
 // doesn't recognize `v` refuses the link outright instead of misparsing it.

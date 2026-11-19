@@ -1,9 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 
-import type { CapabilitiesResult } from './capabilities';
+import type { CapabilitiesResult } from '@/features/upload/core/capabilities';
+import type { TokenCheck } from '@/features/upload/core/token-check';
+
 import type { UploadDeepLink } from './deep-link';
 import { createLinkGate, createSaveOrder, type PairDeps, pairLink, screenLink } from './pair-link';
-import type { TokenCheck } from './token-check';
 
 const NOW = 1_700_000_000_000;
 const token = (expMs: number, ref?: string) =>

@@ -1,36 +1,21 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { type RefObject, useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { getDestination } from '@/db/destinations';
 import { draftPlaceQuery } from '@/db/drafts';
-import type { Segment } from '@/db/schema';
+import type { UploadTarget } from '@/features/upload/core/target-provider';
 
 import { isSpentLink } from './destination-options';
 import { returnToFor, uploadChoice } from './upload-choice';
 import { useDestinations, usePlaceLabels } from './use-destinations';
-import { uploads } from './upload-manager';
-import { useDraftUploadState } from './use-uploads';
 
 /**
- * The export screen's binding to the background upload system — a thin
- * controller: pick a pool destination, `claim` it (spend the link, pair the
- * draft and start uploading, in one tap) and `cancel`. It hands the actual
- * upload to the module-scope `uploads` manager (see `upload-manager.ts`):
- * leaving the screen doesn't abort the upload. There is no retry: a failed
- * upload unpairs the draft, and a new link is the retry — for a draft recorded
- * for a place, the place's link opened again (`reopen`). A finished
- * upload's Watch / Copy link live in the draft's ⋯ menu on Home.
- *
- * `state` is the manager's LIVE per-draft state (uploading, this session only)
- * via `useSyncExternalStore`. `mergedRef` is read only at claim time — the merge
- * is done by the time Upload is tappable — and captured into the session the
- * manager runs.
+ * The export screen's pick from the Pulse app's pool of paired destinations: what it offers for
+ * the draft, which one is picked, the line to show when the draft's own place has no link left
+ * (`reopen`), and `resolve`, which reads the picked one back as the target to claim
+ * (`useUpload`'s `claim`).
  */
-export function useUpload(
-  draftId: string,
-  segments: Segment[],
-  mergedRef: RefObject<{ path: string; durationMs: number } | null>,
-) {
+export function usePoolTargets(draftId: string) {
   // The device-wide pool of paired-but-unconsumed destinations (non-expired only).
   const { destinations: pool, ready: poolReady } = useDestinations();
   const placeLabels = usePlaceLabels();
@@ -60,50 +45,29 @@ export function useUpload(
     [destinations, selectedId],
   );
 
-  // The manager's live state for this draft (transient; this session only). Durable status is
-  // the draft row's `upload_status`.
-  const state = useDraftUploadState(draftId);
-
-  const cancel = useCallback(() => {
-    void uploads.cancel(draftId);
-  }, [draftId]);
-
-  // Spends the chosen pool destination on this draft and starts uploading in the same tap.
-  const claim = useCallback(
-    async (destinationId: string | null) => {
+  // The target to claim for a picked destination, or null when it's gone or spent.
+  const resolve = useCallback(
+    async (destinationId: string | null): Promise<UploadTarget | null> => {
       const option = destinationId
         ? (destinations.find((d) => d.id === destinationId) ?? null)
         : null;
-      const merged = mergedRef.current;
-      if (!option || !merged) return;
+      if (!option) return null;
       // The stored link, not the list's copy: a re-pair may have refreshed its token (or, for a
       // place, replaced its upload and its way back) a moment ago, before this screen's reload
       // (`reloadDestinationTokens`) landed. The copy only if it can't be read.
       const stored = await getDestination(option.id).catch(() => option);
-      if (!stored || isSpentLink(stored.ref, stored.token, Date.now())) return;
+      if (!stored || isSpentLink(stored.ref, stored.token, Date.now())) return null;
       const { server, token, artifactId } = stored;
-      await uploads.claim({
-        draftId,
+      return {
         destinationId: option.id,
         destination: { server, token, artifactId },
-        segments,
-        merged,
         // The host page to go back to once it's in, from the same link: the row is gone from
         // here on, so the upload carries it.
         returnTo: returnToFor(draft, stored),
-      });
+      };
     },
-    [destinations, draft, draftId, segments, mergedRef],
+    [destinations, draft],
   );
 
-  return {
-    state,
-    reopen,
-    destinations,
-    selectedId,
-    setSelectedId,
-    selectedDestination,
-    cancel,
-    claim,
-  };
+  return { reopen, destinations, selectedId, setSelectedId, selectedDestination, resolve };
 }

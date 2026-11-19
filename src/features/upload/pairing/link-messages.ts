@@ -1,7 +1,7 @@
+import type { ReturnTo } from '@/features/upload/core/types';
 import { hasNonAsciiHost, shortHost } from '@/utils/format';
 
 import { cleanApp, readReturnUrl } from './deep-link';
-import type { ReturnTo } from './types';
 
 /**
  * The one way Pulse says a place needs a new link (its link expired, was refused, or was used up

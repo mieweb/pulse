@@ -20,13 +20,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+// The wire test pairs a link the way the app does; core code itself never imports pairing.
+// eslint-disable-next-line import/no-restricted-paths
+import { parseUploadDeepLink, type UploadDeepLink } from '@/features/upload/pairing/deep-link';
+
 import { checkCapabilities } from './capabilities';
 import { setClientIdentity } from './client-identity';
-import { parseUploadDeepLink, type UploadDeepLink } from './deep-link';
 import { TusUploadError, uploadViaTus, type ArtifactKind, type UploadChunk } from './tus-client';
 import { requestViewLink } from './view-link';
 
-const ROOT = path.resolve(__dirname, '../../..');
+const ROOT = path.resolve(__dirname, '../../../..');
 const DIST = process.env.PV_CORE
   ? path.resolve(process.env.PV_CORE)
   : path.join(ROOT, 'pulsevault-mieweb/dist/core.js');

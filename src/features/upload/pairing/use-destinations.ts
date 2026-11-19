@@ -7,9 +7,9 @@ import {
   destinationsQuery,
 } from '@/db/destinations';
 import { getDestinationToken } from '@/db/secure-token';
+import { EXPIRY_CHECK_INTERVAL_MS } from '@/features/upload/core/capability-token';
 import { useNow } from '@/hooks/use-now';
 
-import { EXPIRY_CHECK_INTERVAL_MS } from './capability-token';
 import {
   type DestinationOption,
   destinationOptions,

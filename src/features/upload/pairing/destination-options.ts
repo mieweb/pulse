@@ -1,6 +1,6 @@
+import { expiresAtMs, formatExpiry, isTokenExpired } from '@/features/upload/core/capability-token';
 import { hostOf } from '@/utils/format';
 
-import { expiresAtMs, formatExpiry, isTokenExpired } from './capability-token';
 import { cleanApp, cleanLabel, readReturnUrl } from './deep-link';
 
 /** A row of the pool (`upload_destinations`), as `destinationsQuery` reads it. */

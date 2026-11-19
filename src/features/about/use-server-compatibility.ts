@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { checkCapabilities } from '@/features/upload/capabilities';
-import { useDestinations } from '@/features/upload/use-destinations';
+import { checkCapabilities } from '@/features/upload/core/capabilities';
+import { useDestinations } from '@/features/upload/pairing/use-destinations';
 import { hostOf } from '@/utils/format';
 
 import type { ServerCompat } from './details';
