@@ -23,6 +23,7 @@ import {
   recordersGone,
 } from '@/features/recorder/recorder-presence';
 import { useToast } from '@/features/toast/toast-provider';
+import { copyToClipboard } from '@/utils/clipboard';
 import { hostOf, shortHost } from '@/utils/format';
 import { createPresence } from '@/utils/presence';
 
@@ -188,6 +189,9 @@ export function UploadDeepLinkProvider({ children }: { children: React.ReactNode
   // foreground, poke the drain so an upload whose JS was suspended in the background carries on.
   useEffect(() => {
     uploads.registerToast(showToast);
+    // The Pulse app copies a finished upload's link; the embed has no clipboard and never mounts
+    // this provider, so the manager gets the copier only here, before any upload can resume.
+    uploads.setCopyLink(copyToClipboard);
     void uploads.prepareLaunch();
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') void uploads.ensureRunning();
