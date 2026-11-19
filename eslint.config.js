@@ -28,11 +28,13 @@ const BELOW_FEATURES = ['src/core/**', 'src/db/**', 'src/utils/**'];
 
 /**
  * Standalone-only code that still navigates with expo-router itself: allowed until onboarding
- * moves behind the standalone shell.
+ * moves behind the standalone shell. Home's paired-destinations float pushes /destinations, the
+ * pairing sheet's route.
  */
-const ONBOARDING_ROUTER = [
+const ROUTER_ONLY = [
   'src/features/onboarding/onboarding-screen.tsx',
   'src/features/onboarding/use-onboarding-redirect.ts',
+  'src/features/upload/pairing/destinations-float.tsx',
 ];
 /**
  * Rule 2: the features the embed runs never import a standalone-only one (the plan's B6 list:
@@ -44,7 +46,9 @@ const CORE_FEATURES = [
   'editor',
   'export',
   'transcription',
-  'upload/core',
+  // Pairing too: the export screen imports its destination picker and link helpers, so the embed
+  // bundles them. The pairing files below that only the Pulse app mounts lift what they need.
+  'upload',
   'tips',
   'toast',
   'logs',
@@ -53,11 +57,14 @@ const CORE_FEATURES = [
 const STANDALONE_FEATURES = ['onboarding', 'about', 'draft-transfer'];
 
 /**
- * Pairing (upload/pairing): the Pulse app's links, the paired pool and its sheets. Standalone-only:
- * the only feature code that listens for incoming links, and it may navigate with expo-router and
- * use the standalone-only features (the destinations sheet shows About's compatibility labels).
+ * The pairing files only the Pulse app mounts: the only feature code that listens for incoming
+ * links, and it may navigate with expo-router. Not all of upload/pairing: the export screen, which
+ * the embed runs, imports the destination picker and link helpers, and they keep every rule.
  */
-const PAIRING = ['src/features/upload/pairing/**'];
+const PAIRING = [
+  'src/features/upload/pairing/pairing-sheet.tsx',
+  'src/features/upload/pairing/upload-deep-link-provider.tsx',
+];
 /** The upload engine both shells run, which never imports pairing. */
 const UPLOAD_CORE = './src/features/upload/core';
 const UPLOAD_PAIRING = './src/features/upload/pairing';
@@ -180,12 +187,23 @@ function boundaries({ allow = [], belowFeatures = false } = {}) {
 const boundaryConfigs = [
   { files: SHARED, rules: boundaries() },
   { files: BELOW_FEATURES, rules: boundaries({ belowFeatures: true }) },
-  { files: ONBOARDING_ROUTER, rules: boundaries({ allow: ['expo-router'] }) },
+  { files: ROUTER_ONLY, rules: boundaries({ allow: ['expo-router'] }) },
   {
     files: PAIRING,
+    rules: boundaries({ allow: ['expo-router', 'expo-linking', 'link-listeners'] }),
+  },
+  // The destinations sheet (the /destinations route, standalone-only) shows each paired server's
+  // compatibility with About's labels.
+  {
+    files: ['src/features/upload/pairing/destinations-sheet.tsx'],
     rules: boundaries({
       allow: ['expo-router', 'expo-linking', 'link-listeners', 'standalone-features'],
     }),
+  },
+  // Opens an upload's link with expo-linking's openURL; the listener rule still holds there.
+  {
+    files: ['src/features/upload/pairing/link-actions.ts'],
+    rules: boundaries({ allow: ['expo-linking'] }),
   },
   // A round trip of the library backup through the draft-transfer feature. Tests are in neither
   // bundle.
