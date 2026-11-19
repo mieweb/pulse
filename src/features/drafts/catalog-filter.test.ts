@@ -4,8 +4,11 @@ import { join } from 'node:path';
 
 import type { CatalogFile, DraftState } from './catalog';
 import {
+  CATALOG_FILE,
+  CATALOG_PART,
   countDrafts,
   listDrafts,
+  readCatalogFile,
   shownState,
   type CountOptions,
   type DraftFilter,
@@ -26,6 +29,11 @@ type Vectors = {
     expect: Record<string, number>;
   }[];
   shownState: { name: string; state: DraftState; net: NetworkView; expect: DraftState }[];
+  readCatalog: {
+    name: string;
+    reads: Record<string, (string | null)[]>;
+    expect: number | null;
+  }[];
 };
 
 const vectors = JSON.parse(
@@ -64,6 +72,22 @@ describe('catalog vectors', () => {
       });
     }
   });
+
+  describe('readCatalog', () => {
+    for (const v of vectors.readCatalog) {
+      it(v.name, () => {
+        // Each file answers its successive reads from its list, the last answer repeating.
+        const seen: Record<string, number> = {};
+        const read = (name: string) => {
+          const answers = v.reads[name] ?? [null];
+          const i = Math.min(seen[name] ?? 0, answers.length - 1);
+          seen[name] = (seen[name] ?? 0) + 1;
+          return answers[i];
+        };
+        expect(readCatalogFile(read)?.writtenAt ?? null).toBe(v.expect);
+      });
+    }
+  });
 });
 
 describe('catalog filter', () => {
@@ -94,5 +118,12 @@ describe('catalog filter', () => {
     const before = JSON.stringify(vectors.catalog);
     listDrafts(vectors.catalog, {}, { online: false, wifi: false, wifiOnlyUploads: false });
     expect(JSON.stringify(vectors.catalog)).toBe(before);
+  });
+
+  it('reads the .part only while catalog.json is missing, and catalog.json again after it', () => {
+    const order: string[] = [];
+    const read = (name: string) => (order.push(name), null);
+    expect(readCatalogFile(read)).toBeNull();
+    expect(order).toEqual([CATALOG_FILE, CATALOG_PART, CATALOG_FILE]);
   });
 });

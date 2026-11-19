@@ -1,7 +1,7 @@
 {
   "format": "pulse-catalog-vectors",
   "version": 1,
-  "about": "Shared by catalog-filter.test.ts and PulseKit's Swift catalog reader (PR2-D). listDrafts expects [id, shown state] in order; countDrafts expects the groups with a count above 0.",
+  "about": "Shared by catalog-filter.test.ts and PulseKit's Swift catalog reader (PR2-D). listDrafts expects [id, shown state] in order; countDrafts expects the groups with a count above 0. readCatalog: each file's list is what its successive reads return (the last repeats; null = no such file); expect is the writtenAt of the catalog found, or null for none.",
   "catalog": {
     "format": "pulse-catalog",
     "version": 1,
@@ -662,6 +662,88 @@
         "wifiOnlyUploads": false
       },
       "expect": "failed"
+    }
+  ],
+  "readCatalog": [
+    {
+      "name": "catalog.json whole, a write in progress beside it: catalog.json",
+      "reads": {
+        "catalog.json": [
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":1,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": ["{\"format\":\"pulse-catalog\",\"version\":1,\"n"]
+      },
+      "expect": 1
+    },
+    {
+      "name": "catalog.json whole, a finished .part not yet moved: catalog.json",
+      "reads": {
+        "catalog.json": [
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":1,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": [
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":2,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ]
+      },
+      "expect": 1
+    },
+    {
+      "name": "mid-swap (catalog.json deleted, .part not yet moved in): the .part",
+      "reads": {
+        "catalog.json": [null],
+        "catalog.json.part": [
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":2,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ]
+      },
+      "expect": 2
+    },
+    {
+      "name": "the move landed between the first two reads: catalog.json, read again",
+      "reads": {
+        "catalog.json": [
+          null,
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":2,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": [null]
+      },
+      "expect": 2
+    },
+    {
+      "name": "the move landed and the next write began its .part: catalog.json, read again",
+      "reads": {
+        "catalog.json": [
+          null,
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":2,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": ["{\"format\":\"pulse-catalog\",\"version\":1,\"n"]
+      },
+      "expect": 2
+    },
+    {
+      "name": "a first write cut short: no catalog",
+      "reads": {
+        "catalog.json": [null],
+        "catalog.json.part": ["{\"format\":\"pulse-catalog\",\"version\":1,\"n"]
+      },
+      "expect": null
+    },
+    {
+      "name": "nothing written yet: no catalog",
+      "reads": {
+        "catalog.json": [null],
+        "catalog.json.part": [null]
+      },
+      "expect": null
+    },
+    {
+      "name": "a file that isn't a catalog: no catalog",
+      "reads": {
+        "catalog.json": [
+          "{\"format\":\"something-else\",\"version\":1,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": [null]
+      },
+      "expect": null
     }
   ]
 }

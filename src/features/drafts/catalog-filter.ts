@@ -4,6 +4,50 @@ import type { CatalogDraft, CatalogFile, DraftState } from './catalog';
 // answers them in Swift from catalog.json without starting Pulse (PR2-D); this is the same rule in
 // TypeScript, and both run the shared vectors in __vectors__/catalog.json, so the two can't drift.
 
+/** The catalog's name under the namespace's documents root, and where each write goes first. */
+export const CATALOG_FILE = 'catalog.json';
+export const CATALOG_PART = `${CATALOG_FILE}.part`;
+
+/** `text` as a catalog, or null when it isn't one (missing, cut short, or another file). */
+export function parseCatalog(text: string | null): CatalogFile | null {
+  if (text == null) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof value !== 'object' || value === null) return null;
+  const c = value as Partial<CatalogFile>;
+  if (c.format !== 'pulse-catalog' || typeof c.version !== 'number') return null;
+  if (!Array.isArray(c.drafts) || !Array.isArray(c.receipts)) return null;
+  return value as CatalogFile;
+}
+
+/**
+ * How a reader finds the catalog. `read(name)` returns the file's text, or null when there's no
+ * such file; the reader calls it in this order:
+ *
+ * 1. `catalog.json`. The writer only ever moves a finished file there, so it's always whole.
+ * 2. When it's missing, `catalog.json.part`. expo-file-system can't rename over a file: the writer's
+ *    move deletes `catalog.json` and then moves the `.part` in, so in that gap (or after a kill
+ *    inside it) the `.part` is the newest whole catalog. A `.part` beside a `catalog.json` is a write
+ *    in progress, and is never read.
+ * 3. When the `.part` is missing or cut short, `catalog.json` once more: the move may have landed
+ *    between the first two reads, and the next write started its own `.part`.
+ *
+ * Nothing that parses means no catalog: the reader answers as if it were empty. Before the first
+ * write ever finishes that is the truth; a cut-short `.part` with no `catalog.json` is only ever a
+ * first write killed midway.
+ */
+export function readCatalogFile(read: (name: string) => string | null): CatalogFile | null {
+  return (
+    parseCatalog(read(CATALOG_FILE)) ??
+    parseCatalog(read(CATALOG_PART)) ??
+    parseCatalog(read(CATALOG_FILE))
+  );
+}
+
 /** What the reader knows about the network, and the host's Wi-Fi-only choice. */
 export type NetworkView = { online: boolean; wifi: boolean; wifiOnlyUploads: boolean };
 
