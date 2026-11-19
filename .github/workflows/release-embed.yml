@@ -29,6 +29,19 @@
 #                  for this repository and this workflow file; or NPM_TOKEN (optional secret) for
 #                  a bootstrap publish before trusted publishing is set up.
 #   GITHUB_TOKEN   contents: write (the release) and id-token: write (npm provenance).
+#   A workflow that calls this one (workflow_call) runs under its own file name in the OIDC token
+#   npm checks, so it may need its own trusted-publisher entry for each package on npmjs.com.
+#
+# A failed publish: the GitHub Release is created before npm, and npm takes the packages one at a
+# time, so a failure there leaves a Release (and maybe some packages) behind, and a re-run stops at
+# "Check that nothing is published at this version yet".
+#   - Nothing reached npm: delete the Release and keep the tag (`gh release delete <tag> --yes`),
+#     fix the cause (trusted publishing, NPM_TOKEN) and re-run.
+#   - Some packages reached npm: that version can't be published again. Tag the next version
+#     (the next -rc.N for a release candidate).
+#
+# Every step runs in bash with pipefail (defaults below), so a failure inside a pipe fails the step.
+# Third-party actions are pinned to commit SHAs and npm to an exact version.
 # ─────────────────────────────────────────────────────────────────────────────
 name: PulseKit Release
 
@@ -72,6 +85,11 @@ concurrency:
 permissions:
   contents: read
 
+# Explicit bash: GitHub then runs `bash --noprofile --norc -eo pipefail`, not the default `bash -e`.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   release:
     if: startsWith(inputs.tag || github.ref_name, 'pulsekit-v')
@@ -96,7 +114,7 @@ jobs:
 
       # ── The tag's commit, with the pulse-editor native module ──────────────
       - name: Checkout the tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: refs/tags/${{ env.TAG }}
           submodules: true
@@ -118,24 +136,27 @@ jobs:
           sudo xcode-select -s "$SELECTED/Contents/Developer"
           xcodebuild -version
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           # No `cache:`: a release build installs from the lockfile, never from a cache.
 
-      # Trusted publishing needs npm >= 11.5.1.
+      # Trusted publishing needs npm >= 11.5.1; an exact version, so a new npm can't change a release.
       - name: Update npm
         run: |
-          npm install -g npm@11
+          npm install -g npm@11.17.0
           npm --version
 
       # ── Version: from the tag, checked before anything slow ───────────────
       - name: Read the version from the tag
         id: version
         run: |
-          node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
-            tag "$TAG" | tee -a "$GITHUB_OUTPUT"
+          # A malformed tag fails here: the assignment carries node's exit status, and pipefail
+          # covers the tee.
+          LINES=$(node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
+            tag "$TAG")
+          echo "$LINES" | tee -a "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" | tee -a "$GITHUB_OUTPUT"
 
       - name: Check that nothing is published at this version yet
@@ -143,16 +164,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          if [ -z "$VERSION" ]; then
+            echo "::error::No version came from $TAG."
+            exit 1
+          fi
           node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
             publishable "$GITHUB_REPOSITORY"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::A GitHub Release for $TAG already exists. Delete it (and check npm) or tag a new version."
+            echo "::error::A GitHub Release for $TAG already exists. If no package reached npm, delete it (keep the tag) and re-run; otherwise tag a new version. See the header of release-embed.yml."
             exit 1
           fi
           for pkg in embed/packages/*/package.json; do
             name=$(node -p "require('./$pkg').name")
             if [ -n "$(npm view "$name@$VERSION" version 2>/dev/null)" ]; then
-              echo "::error::$name@$VERSION is already on npm; npm versions can't be republished."
+              echo "::error::$name@$VERSION is already on npm; npm versions can't be republished. Tag a new version."
               exit 1
             fi
           done
@@ -192,7 +217,7 @@ jobs:
 
       # ── Signing identity (match, read-only) ───────────────────────────────
       - name: Checkout mieweb/actions v2.5.0 (match setup)
-        uses: actions/checkout@v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: mieweb/actions
           ref: df2ee7b96f5631bfedf22b0b6ecc43ab02fe6757 # v2.5.0
@@ -200,7 +225,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Ruby and Fastlane
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@afeafc3d1ab54a631816aba4c914a0081c12ff2f # v1.310.0
         with:
           ruby-version: '3.4'
           bundler-cache: true
@@ -348,7 +373,7 @@ jobs:
 
       - name: Keep the packaged assets of a failed run
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: pulsekit-${{ env.TAG }}-failed
           path: ${{ runner.temp }}/pulsekit-ios/release
