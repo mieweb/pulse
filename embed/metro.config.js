@@ -18,9 +18,11 @@ config.resolver.sourceExts.push('sql');
 // Modules the embedded build leaves out (B6; embed/package.json doesn't link them): the host app
 // owns notifications, background work and incoming links; react-native-background-actions'
 // service assumes a React Native host app (it crashes in others); and async-storage (the old
-// library's one-time move), the clipboard (pairing, the upload announcement) and the document
-// picker (.pulse import, library restore) serve only the Pulse app. Code the embed still reaches
-// gets a stub that does nothing, where the missing native module would crash it as it loads.
+// library's one-time move), the clipboard (pairing, About, the upload link the app's Export route
+// hands the upload manager) and the document picker (.pulse import, library restore) serve only
+// the Pulse app. Code the embed still reaches gets a stub that does nothing, where the missing
+// native module would crash it as it loads; the clipboard's is a guard, as nothing the embed
+// imports reaches it now.
 const stubs = {
   'expo-notifications': path.join(__dirname, 'src/stubs/expo-notifications.ts'),
   'react-native-background-actions': path.join(__dirname, 'src/stubs/background-actions.ts'),

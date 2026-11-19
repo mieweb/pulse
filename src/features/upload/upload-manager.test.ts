@@ -177,7 +177,10 @@ jest.mock('./notify', () => ({
   },
 }));
 const mockCopy = jest.fn<(text: string) => Promise<boolean>>(async () => true);
-jest.mock('expo-clipboard', () => ({ setStringAsync: (text: string) => mockCopy(text) }));
+// The manager never reaches the clipboard itself: the Pulse app's shell hands it a copy function.
+jest.mock('expo-clipboard', () => {
+  throw new Error('upload-manager must not import the clipboard');
+});
 
 jest.mock('./capabilities', () => ({
   ...(jest.requireActual('./capabilities') as object),
@@ -278,6 +281,7 @@ const SERVER = 'https://vault.example.test/pulsevault';
 
 const mockToast = jest.fn<(message: string) => void>();
 uploads.registerToast((m) => mockToast(m));
+uploads.setCopyLink((text) => mockCopy(text));
 
 /** Claim pool destination `destId` (artifact `art-<destId>`) for `draftId`. */
 function claim(draftId: string, destId = `dest-${draftId}`) {
@@ -890,6 +894,29 @@ describe('view links', () => {
 
     expect(mockToast.mock.calls).toEqual([['Uploaded']]);
     expect(uploads.getAnnouncement('v7')).toMatchObject({ copied: false });
+  });
+
+  it('copies nothing without a copy function (the embed), and says only that it landed', async () => {
+    uploads.setCopyLink(null);
+    try {
+      tusWith();
+      pool.pool.add('open-8');
+      await uploads.claim({
+        draftId: 'v8',
+        destinationId: 'open-8',
+        destination: { server: SERVER, token: null, artifactId: 'art-8' },
+        segments: [],
+        merged: { path: '/drafts/v8/export.mp4', durationMs: 1000 },
+      });
+      await eventually(() => mockToast.mock.calls.length > 0);
+
+      expect(mockCopy).not.toHaveBeenCalled();
+      expect(mockToast.mock.calls).toEqual([['Uploaded']]);
+      expect(mockNotifyComplete).toHaveBeenCalledWith(false);
+      expect(uploads.getAnnouncement('v8')).toMatchObject({ copied: false });
+    } finally {
+      uploads.setCopyLink((text) => mockCopy(text));
+    }
   });
 
   it('a new upload of the draft replaces its previous link', async () => {

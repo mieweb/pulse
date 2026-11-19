@@ -14,7 +14,6 @@ import {
 import { deleteSavedLink, getSavedLink, setSavedLink } from '@/db/secure-token';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { getDraftCaptions } from '@/features/transcription/draft-captions';
-import { copyToClipboard } from '@/utils/clipboard';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { hostOf } from '@/utils/format';
 import { userMessage } from '@/utils/user-message';
@@ -243,6 +242,16 @@ class BackgroundUploadManager {
   private showToast: ((message: string, kind?: 'success' | 'error') => void) | null = null;
   registerToast(showToast: (message: string, kind?: 'success' | 'error') => void): void {
     this.showToast = showToast;
+  }
+
+  /**
+   * How a finished upload's link reaches the clipboard, set by the Pulse app's shell; resolves
+   * whether it got there. The embed sets none (it has no clipboard), so nothing is copied there.
+   * Injected, like the toast, so this module never imports the clipboard.
+   */
+  private copyLink: ((text: string) => Promise<boolean>) | null = null;
+  setCopyLink(copyLink: ((text: string) => Promise<boolean>) | null): void {
+    this.copyLink = copyLink;
   }
 
   // ---- subscription surface (useSyncExternalStore) ----
@@ -629,7 +638,9 @@ class BackgroundUploadManager {
     // A newer upload of the draft took over meanwhile: still say this one landed, but copy
     // nothing, and leave what the upload screen offers (its way back) to the newer one.
     const current = () => this.watchLinks.get(draftId) === link;
-    const copied = current() && link.shareable && (await copyToClipboard(link.url));
+    const copy = this.copyLink;
+    const copied =
+      current() && link.shareable && copy !== null && (await copy(link.url).catch(() => false));
     uploadLog.info(`${draftLabel(draftId)}: link ${copied ? 'copied' : 'not copied'}`);
     this.showToast?.(copied ? 'Share link copied to clipboard' : 'Uploaded');
     void uploadNotify.complete(copied);
