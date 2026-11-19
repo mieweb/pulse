@@ -101,4 +101,6 @@ first version goes up by hand, once. This is how `@mieweb/pulsevault` started to
    The unscoped `cordova-plugin-pulse` is then owned by that account; add the org's maintainers.
 4. On npmjs.com, for each package: Settings → Trusted publisher → GitHub Actions,
    organization `mieweb`, repository `pulse`, workflow `release-embed.yml`.
-   From then on the workflow publishes with no token.
+   Then set the repository variable `NPM_PUBLISH` to `true` (Settings → Secrets and variables →
+   Actions → Variables). From then on the workflow publishes with no token. Until it is set, the
+   npm step is skipped and the Release's `.tgz` assets (listed in `SHA256SUMS`) are how hosts install.

@@ -47,7 +47,15 @@ of using `@mieweb/pulse-embed`, so copy their project setup, not their page code
 ## Versions
 
 PulseKit is published as release candidates, which are prereleases: GitHub tags
-`pulsekit-v<x.y.z>-rc.<n>`, and the npm dist-tag `rc`. Install with `@rc`. (The first RC, `0.1.0-rc.4`, is on GitHub; its npm packages go up once their first manual publish is done, see [releasing.md](releasing.md#the-first-npm-version-of-a-new-package). Until then, install from tarballs built from the tag.) A final release goes to
+`pulsekit-v<x.y.z>-rc.<n>`, and the npm dist-tag `rc`. Install with `@rc`. Until npm publishing is switched on (see [releasing.md](releasing.md#the-first-npm-version-of-a-new-package)), install from the GitHub Release instead: every release attaches the three npm packages as `.tgz` files, for example
+
+```sh
+V=0.1.0-rc.4
+BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
+npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz $BASE/mieweb-capacitor-pulse-$V.tgz
+```
+
+For Cordova: `npx cordova plugin add $BASE/cordova-plugin-pulse-$V.tgz`. A final release goes to
 the npm `latest` tag ([releasing.md](releasing.md#tags-and-versions)).
 
 The three npm packages are released together with the same version. Install them at the same
