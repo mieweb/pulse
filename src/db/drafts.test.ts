@@ -50,6 +50,7 @@ jest.mock('./client', () => {
 });
 jest.mock('@/utils/file-store', () => ({
   absolutize: (p: string) => `file:///docs/${p}`,
+  copyRelFile: jest.fn(async () => true),
   deleteDraftDir: jest.fn(),
   deleteSegmentFile: jest.fn(),
   editCoverRelPath: (d: string, s: string, rev: number) =>
@@ -72,9 +73,11 @@ import {
   deleteDraft,
   draftDisplayName,
   deleteSegment,
+  duplicateDraft,
   renameDraft,
   reorderSegments,
   resetEdit,
+  setDraftContext,
   setEditState,
 } from './drafts';
 /* eslint-enable import/first */
@@ -214,8 +217,15 @@ describe('draft names', () => {
         name: 'Huddle update',
         contextServer: context.server,
         contextRef: context.ref,
+        createdVia: 'app',
       },
-      { id: 'uuid', name: null, contextServer: context.server, contextRef: context.ref },
+      {
+        id: 'uuid',
+        name: null,
+        contextServer: context.server,
+        contextRef: context.ref,
+        createdVia: 'app',
+      },
     ]);
   });
 
@@ -224,5 +234,130 @@ describe('draft names', () => {
     expect(draftDisplayName(null, 'Team · Huddle')).toBe('Team · Huddle');
     expect(draftDisplayName('', 'Team · Huddle')).toBe('Team · Huddle');
     expect(draftDisplayName(null, null)).toBe('Untitled');
+  });
+});
+
+const TICKET = { key: 'ticket:t-42', kind: 'ticket', id: 'T-42', label: 'Fix login' };
+const TICKET_TYPE = { id: 'ticket.video', version: 1 };
+const CLOCK = { key: 'clock:ev-7', kind: 'clock', id: 'ev-7', label: 'Mon 9:02 session' };
+const CLOCK_TYPE = { id: 'clock.session', version: 1, confirmSend: true };
+const updates = () => mockWrites.filter((w) => w.op === 'update');
+
+describe('host context', () => {
+  it('createDraft stores a host’s place and upload type, and says the host made it', async () => {
+    await createDraft({ hostContext: TICKET, uploadType: TICKET_TYPE, createdVia: 'host' });
+    expect(mockWrites.map((w) => w.values)).toEqual([
+      {
+        id: 'uuid',
+        name: null,
+        contextServer: null,
+        contextRef: null,
+        contextKey: 'ticket:t-42',
+        contextLabel: 'Fix login',
+        contextJson: JSON.stringify({ kind: 'ticket', id: 'T-42', label: 'Fix login' }),
+        uploadTypeJson: JSON.stringify(TICKET_TYPE),
+        createdVia: 'host',
+      },
+    ]);
+  });
+
+  it('createDraft refuses a context that fails its checks, before writing', async () => {
+    await expect(
+      createDraft({ hostContext: { ...TICKET, key: 'Ticket:T-42' }, createdVia: 'host' }),
+    ).rejects.toMatchObject({ code: 'invalid_options' });
+    expect(mockWrites).toEqual([]);
+  });
+
+  it('setDraftContext moves an unsent draft to another place', async () => {
+    mockSelects.push(idle, [{ hostConfirmedAt: null }]);
+    await setDraftContext('d1', CLOCK, CLOCK_TYPE);
+    expect(updates()).toHaveLength(1);
+    expect(updates()[0].set).toMatchObject({
+      contextKey: 'clock:ev-7',
+      contextLabel: 'Mon 9:02 session',
+      uploadTypeJson: JSON.stringify(CLOCK_TYPE),
+    });
+  });
+
+  it('setDraftContext refuses a clock-bound draft: draft.locked, reason clock_bound', async () => {
+    mockSelects.push(idle, [{ hostConfirmedAt: 1790000000000 }]);
+    await expect(setDraftContext('d1', TICKET, TICKET_TYPE)).rejects.toMatchObject({
+      name: 'LibraryError',
+      code: 'draft.locked',
+      reason: 'clock_bound',
+    });
+    expect(updates()).toEqual([]);
+  });
+
+  it('setDraftContext refuses while the draft uploads, a draft that’s gone, and a bad context', async () => {
+    mockSelects.push(uploading);
+    await expect(setDraftContext('d1', TICKET)).rejects.toThrow(/uploading/);
+    mockSelects.push(idle, []);
+    await expect(setDraftContext('gone', TICKET)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(setDraftContext('d1', { ...TICKET, label: ' ' })).rejects.toMatchObject({
+      code: 'invalid_options',
+    });
+    expect(updates()).toEqual([]);
+  });
+
+  it('duplicateDraft leaves the host place, Send and confirmation behind', async () => {
+    const source = {
+      id: 'd1',
+      name: 'Fix login video',
+      captionY: 0.4,
+      lastClipNumber: 2,
+      contextKey: 'clock:ev-7',
+      contextLabel: 'Mon 9:02 session',
+      contextJson: '{"kind":"clock","id":"ev-7","label":"Mon 9:02 session"}',
+      uploadTypeJson: JSON.stringify(CLOCK_TYPE),
+      createdVia: 'host',
+      hostConfirmedAt: 1790000000000,
+      sentAt: 1790000000000,
+    };
+    mockSelects.push([source], []);
+    await duplicateDraft('d1');
+    const insert = mockWrites.find((w) => w.op === 'insert');
+    expect(insert?.values).toEqual({
+      id: 'uuid',
+      name: 'Fix login video copy',
+      captionY: 0.4,
+      lastClipNumber: 2,
+      createdVia: 'host',
+    });
+  });
+});
+
+describe('a library a newer Pulse wrote (read-only)', () => {
+  it('refuses every draft write with storage.newer_schema, writing nothing', async () => {
+    let d!: typeof import('./drafts');
+    jest.isolateModules(() => {
+      jest.requireActual<typeof import('./host-context')>('./host-context').markLibraryReadOnly();
+      d = jest.requireActual<typeof import('./drafts')>('./drafts');
+    });
+    const writes: [string, () => Promise<unknown>][] = [
+      ['createDraft', () => d.createDraft({ hostContext: TICKET, createdVia: 'host' })],
+      ['setDraftContext', () => d.setDraftContext('d1', TICKET)],
+      [
+        'addSegment',
+        () => d.addSegment('d1', { id: 's2', originalFilename: 'n.mp4', durationMs: 1 }),
+      ],
+      ['setEditState', () => d.setEditState('s1', EDIT)],
+      ['resetEdit', () => d.resetEdit('s1')],
+      ['deleteSegment', () => d.deleteSegment('s1')],
+      ['reorderSegments', () => d.reorderSegments(['s1'])],
+      ['renameDraft', () => d.renameDraft('d1', 'New name')],
+      ['duplicateDraft', () => d.duplicateDraft('d1')],
+      ['deleteDraft', () => d.deleteDraft('d1')],
+      ['setMergedExport', () => d.setMergedExport('d1', null)],
+    ];
+    for (const [name, write] of writes) {
+      mockSelects.length = 0;
+      mockSelects.push([SEG], [SEG], [SEG]); // the clip a mutation looks up first
+      await expect(write().then(() => name)).rejects.toMatchObject({
+        code: 'storage.newer_schema',
+      });
+    }
+    expect(mockWrites).toEqual([]);
+    expect(deleteDraftDir).not.toHaveBeenCalled();
   });
 });

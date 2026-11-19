@@ -10,7 +10,7 @@ import { RecoveryScreen } from '@/core/recovery/screen';
 import type { LibraryProblem, PulseMode } from '@/core/recovery/types';
 import { formatDateTime } from '@/utils/relative-date';
 import migrations from '../../drizzle/migrations';
-import { db, expoDb, library } from './client';
+import { db, expoDb, library, openReadOnlyIfNewer } from './client';
 import { referencedMediaPaths } from './media-refs';
 import { runDataMigrations, type DataMigration } from './data-migrations';
 import { dropBakedEdits } from './baked-edits-migration';
@@ -112,6 +112,12 @@ let migrated = false;
 let noticeSeen = false;
 
 function runMigrations(mode: PulseMode, afterMigrations?: () => void): Promise<void> {
+  // An embedded library a newer PulseKit wrote opens read-only, with nothing run on it: no
+  // migrations, data migrations or housekeeping (all of them write). It still lists and shows.
+  if (!migration && openReadOnlyIfNewer(mode)) {
+    migrated = true;
+    migration = Promise.resolve();
+  }
   migration ??= migrate(db, migrations)
     .then(async () => {
       await runDataMigrations(dataMigrationsFor(mode));

@@ -15,8 +15,9 @@ import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/v
 import { parseCaptionEdit } from './captions';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
+import { assertWritable, hostContextColumns, LibraryError, type HostContext } from './host-context';
 import type { Draft, Segment } from './schema';
-import { clipTranscripts, drafts, segments } from './schema';
+import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
 import { deleteSavedLink } from './secure-token';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
@@ -109,19 +110,90 @@ export type DraftContext = { server: string; ref: string };
 
 /**
  * A new draft. Opened from a link that names a place, it is named with the link's `name` (or not
- * at all) and remembers that place (`context`).
+ * at all) and remembers that place (`context`). Recorded for a host's place (embedded), it stores
+ * that place and its upload type (`hostContext`, `uploadType`, checked: `invalid_options`), and
+ * `createdVia` says which shell made it.
  */
 export async function createDraft(
-  opts: { name?: string | null; context?: DraftContext | null } = {},
+  opts: {
+    name?: string | null;
+    context?: DraftContext | null;
+    hostContext?: HostContext | null;
+    uploadType?: unknown;
+    createdVia?: 'app' | 'host';
+  } = {},
 ): Promise<string> {
+  assertWritable();
+  const host = opts.hostContext ? hostContextColumns(opts.hostContext, opts.uploadType) : null;
   const id = Crypto.randomUUID();
   await db.insert(drafts).values({
     id,
     name: opts.name ?? null,
     contextServer: opts.context?.server ?? null,
     contextRef: opts.context?.ref ?? null,
+    ...host,
+    createdVia: opts.createdVia ?? 'app',
   });
   return id;
+}
+
+/**
+ * Move an unsent draft to another host place (Move to…): its context and upload type, checked as
+ * at birth (`invalid_options`). Refused with `draft.locked` while it uploads, and with reason
+ * `clock_bound` once the host confirmed its Send: the clock action that ran for it stays its own.
+ */
+export async function setDraftContext(
+  draftId: string,
+  context: HostContext,
+  uploadType?: unknown,
+): Promise<void> {
+  assertWritable();
+  const columns = hostContextColumns(context, uploadType);
+  await assertNotUploading(draftId);
+  db.transaction((tx) => {
+    const row = tx
+      .select({ hostConfirmedAt: drafts.hostConfirmedAt })
+      .from(drafts)
+      .where(eq(drafts.id, draftId))
+      .get();
+    if (!row) throw new LibraryError('not_found', `Draft ${draftId} doesn't exist.`);
+    if (row.hostConfirmedAt != null) {
+      throw new LibraryError(
+        'draft.locked',
+        `Draft ${draftId} belongs to the clock action its Send confirmed.`,
+        'clock_bound',
+      );
+    }
+    tx.update(drafts)
+      .set({ ...columns, lastModified: now })
+      .where(eq(drafts.id, draftId))
+      .run();
+  });
+}
+
+/**
+ * The draft a host's `record` for a place continues: the newest one recorded for that place
+ * (`contextKey`) and upload type that hasn't been sent (no outbox job) and has a clip; an empty one
+ * is about to be dropped by the recorder that made it. `null` when there's none.
+ */
+export async function findOpenHostDraft(
+  contextKey: string,
+  uploadTypeId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(
+      and(
+        eq(drafts.contextKey, contextKey),
+        sql`json_extract(${drafts.uploadTypeJson}, '$.id') = ${uploadTypeId}`,
+        sql`not exists (select 1 from ${uploadJobs} where ${uploadJobs.draftId} = ${drafts.id})`,
+        sql`exists (select 1 from ${segments} where ${segments.draftId} = ${drafts.id})`,
+      ),
+    )
+    .orderBy(desc(drafts.lastModified))
+    .limit(1);
+  return row?.id ?? null;
 }
 
 /**
@@ -270,6 +342,7 @@ export async function addSegmentCover(
 }
 
 async function beginClipMutation(draftId: string): Promise<void> {
+  assertWritable();
   await assertNotUploading(draftId);
 }
 
@@ -298,6 +371,7 @@ export async function setMergedExport(
   draftId: string,
   merged: { signature: string; durationMs: number } | null,
 ): Promise<void> {
+  assertWritable();
   await db
     .update(drafts)
     .set({
@@ -517,6 +591,7 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
 export async function renameDraft(draftId: string, name: string | null): Promise<void> {
   // Locked too — the name rides the upload as the video's title. The video itself doesn't
   // change, so the persisted export stays valid.
+  assertWritable();
   await assertNotUploading(draftId);
   await db.update(drafts).set({ name, lastModified: now }).where(eq(drafts.id, draftId));
 }
@@ -524,11 +599,13 @@ export async function renameDraft(draftId: string, name: string | null): Promise
 /**
  * Copy a draft under a fresh id: its clips' files, and its rows with edits, clip names, captions
  * and clip transcripts carried over, their paths pointing at the copies. Not carried: the upload
- * pairing (a copy is a new, unsent draft) and the merged export (derived, merged again on
- * export). The files are copied first and the rows committed in one transaction; a failure
- * removes the copy's files. Returns the new draft's id.
+ * pairing (a copy is a new, unsent draft), the place (a link's or a host's: a copy isn't for the
+ * original's place) and the merged export (derived, merged again on export). The files are
+ * copied first and the rows committed in one transaction; a failure removes the copy's files.
+ * Returns the new draft's id.
  */
 export async function duplicateDraft(draftId: string): Promise<string> {
+  assertWritable();
   const source = await getDraftForExport(draftId);
   if (!source) throw new Error(`duplicateDraft: draft ${draftId} not found`);
   const copyId = Crypto.randomUUID();
@@ -586,6 +663,7 @@ export async function duplicateDraft(draftId: string): Promise<string> {
           name: `${source.draft.name || 'Untitled'} copy`,
           captionY: source.draft.captionY,
           lastClipNumber: source.draft.lastClipNumber,
+          createdVia: source.draft.createdVia,
         })
         .run();
       if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
@@ -610,6 +688,7 @@ export async function duplicateDraft(draftId: string): Promise<string> {
 
 /** Delete a draft (segments cascade), its on-disk directory (clips + export) and its saved link. */
 export async function deleteDraft(draftId: string): Promise<void> {
+  assertWritable();
   await assertNotUploading(draftId);
   await db.delete(drafts).where(eq(drafts.id, draftId));
   deleteDraftDir(draftId);
@@ -629,6 +708,7 @@ export async function setUploadDestination(
   draftId: string,
   destination: Pick<PairedDestination, 'server' | 'artifactId'>,
 ): Promise<void> {
+  assertWritable();
   await db
     .update(drafts)
     .set({
@@ -719,6 +799,7 @@ export async function insertImportedDraft(
   draft: typeof drafts.$inferInsert,
   segmentRows: (typeof segments.$inferInsert)[],
 ): Promise<void> {
+  assertWritable();
   db.transaction((tx) => {
     tx.insert(drafts).values(draft).run();
     if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
