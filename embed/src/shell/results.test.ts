@@ -38,10 +38,26 @@ let docs = '';
 const results = () => join(docs, 'results');
 const read = (name: string) => JSON.parse(readFileSync(join(results(), name), 'utf8'));
 
+const realMove = FsFile.prototype.moveSync;
+
 beforeEach(() => {
   // A fresh "device": the library's documents root is this folder (storage-root's default).
   docs = mkdtempSync(join(tmpdir(), 'pulse-results-'));
   env.docDir = docs;
+  // The move as expo-file-system 57 does it natively: with `overwrite` it deletes the destination,
+  // then moves (not one atomic rename, as the stand-in's renameSync would be); without, an
+  // existing destination is an error.
+  jest.spyOn(FsFile.prototype, 'moveSync').mockImplementation(function (
+    this: FsFile,
+    ...args: unknown[]
+  ) {
+    const [dest, opts] = args as [FsFile, { overwrite?: boolean } | undefined];
+    if (dest.exists) {
+      if (!opts?.overwrite) throw new Error('destination exists');
+      dest.delete();
+    }
+    realMove.call(this, dest);
+  });
 });
 afterEach(() => {
   jest.restoreAllMocks();
@@ -67,7 +83,16 @@ describe('writeResultFile', () => {
     expect(readdirSync(results())).toEqual(['r1.json']);
   });
 
-  it('leaves the old file whole when the write fails before the move', () => {
+  it('replaces an earlier file with the native delete-then-move', () => {
+    writeResultFile('r1.json', '{"a":1}');
+    writeResultFile('r1.json', '{"a":2}');
+    // Both writes went through the native-like move, the second over the first.
+    expect(FsFile.prototype.moveSync).toHaveBeenCalledTimes(2);
+    expect(read('r1.json')).toEqual({ a: 2 });
+    expect(readdirSync(results())).toEqual(['r1.json']);
+  });
+
+  it('leaves the old file whole when the move fails before it deletes anything', () => {
     writeResultFile('r1.json', '{"a":1}');
     jest.spyOn(FsFile.prototype, 'moveSync').mockImplementation(() => {
       throw new Error('disk full');

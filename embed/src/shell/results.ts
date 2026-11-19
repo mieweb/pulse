@@ -11,8 +11,12 @@ import { documentDir } from '@/utils/storage-root';
  * 'file' mode the export and the draft's project document sit next to it as
  * `<requestId>.mp4` and `<requestId>.project.json`. The facade's `acknowledge` deletes all three.
  *
- * Every write is atomic: `<name>.part` first, then a move over `<name>`, so a crash leaves the old
- * file or the new one, never half of one.
+ * Every write goes to `<name>.part` first, then moves to `<name>`, so a reader never sees half a
+ * file. The move is atomic only when no `<name>` exists yet, which is every write but one: the
+ * facade's own fallback result for a forced close can be there before JS writes. expo-file-system
+ * (57) has no rename-over call: its move with `overwrite` deletes `<name>` and then moves, on iOS
+ * (FileSystemPath.move) and Android (CopyMoveStrategy.LocalFile) alike. A crash between the two
+ * leaves only `<name>.part`.
  */
 export const RESULTS_DIR = 'results';
 
@@ -35,7 +39,7 @@ function partFor(name: string): File {
 /** Move a finished `.part` over `results/<name>`. */
 function commit(part: File, name: string): File {
   const dest = new File(resultsDir(), name);
-  // One native call replaces it: deleting first would lose the old file if the move then failed.
+  // Over an existing file this deletes it first, then moves (see above): not atomic then.
   part.moveSync(dest, { overwrite: true });
   return dest;
 }
