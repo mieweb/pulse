@@ -27,8 +27,9 @@ These pages are for mieweb host apps (Capacitor and Cordova, iOS first).
 - **One result per flow**: completed (with the video), closed (the take was kept as a draft),
   canceled (nothing was kept) or failed (with an error code).
 - **Results survive a reload.** Pulse writes each result to disk before it tells your page. If your
-  page reloads or your app is killed while Pulse is open, the result waits for you in
-  `pendingResults()`.
+  page reloads while Pulse is open, or your app is killed before your page handled a result, the
+  result waits for you in `pendingResults()`. A flow cut short by the app being killed has no
+  result.
 - **iPhone only.** iOS 16.4 or later. iPad, Mac (Designed for iPad) and Android report
   `supported: false`; the Android plugin is a stub that answers `unsupported` to every call.
 - **Not yet:** Pulse uploading the video for you (`uploadMode: 'pulse'`), a drafts API
