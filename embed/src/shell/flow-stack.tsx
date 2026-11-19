@@ -273,10 +273,13 @@ function FlowScreen({
 /**
  * A JS error in a screen ends the flow `failed{runtime.error}`, with the draft kept when it has a
  * clip, instead of taking the runtime down: the host keeps running and the next open is fresh.
+ * `onError` (the controller's `fail`) lets a take in flight finish saving first, for a few seconds
+ * at most. Whether a recorder the boundary has just unmounted still finishes its take is a device
+ * check (PR1-L nativeCheck "debug throw isolated", while recording).
  */
 class FlowErrorBoundary extends Component<
   {
-    onError: (error: Omit<PulseErrorInfo, 'callId' | 'recoverable'>) => void;
+    onError: (error: Omit<PulseErrorInfo, 'callId' | 'recoverable'>) => Promise<void>;
     children: ReactNode;
   },
   { failed: boolean }
@@ -289,7 +292,7 @@ class FlowErrorBoundary extends Component<
 
   componentDidCatch(error: unknown) {
     console.error('[embed] a screen failed', error);
-    this.props.onError({
+    void this.props.onError({
       code: 'runtime.error',
       message: error instanceof Error ? error.message : String(error),
     });

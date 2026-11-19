@@ -11,6 +11,25 @@ import { onDraftsChanged, projectDocument, readDraft } from './library';
 import { saveExportForHost } from './results';
 
 /**
+ * How long a failure waits for a take in flight to save before the flow ends anyway: a failure can
+ * come from the recorder itself, and a recorder that never finishes must not hold the result.
+ */
+export const FAIL_SETTLE_MS = 5_000;
+
+/** `work`, or `ms` going by, whichever is first; never rejects. */
+function within(work: Promise<void>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    work
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+  });
+}
+
+/**
  * What the shell does to the flow from outside the reducer: keep it in step with the library
  * (draft-sync.ts), settle a take in flight before an exit counts, and hand the export to the host.
  * One per presentation, made outside the library gate so the host's `close` works even while the
@@ -45,11 +64,18 @@ export function createFlowController(store: FlowStore, requestId: string) {
     observe();
   }
 
-  const fail = (error: Omit<PulseErrorInfo, 'callId' | 'recoverable'>) =>
+  /**
+   * End the flow `failed{error}` (a JS error in a screen, a library it can't open, a hand-off that
+   * failed), once a take in flight has saved, as the other exits do, so the result names the
+   * draft it landed in. Waits at most `FAIL_SETTLE_MS`.
+   */
+  async function fail(error: Omit<PulseErrorInfo, 'callId' | 'recoverable'>): Promise<void> {
+    await within(settle(), FAIL_SETTLE_MS);
     store.dispatch({
       type: 'error',
       error: { recoverable: false, callId: '', requestId, ...error },
     });
+  }
 
   return {
     /**
@@ -116,7 +142,7 @@ export function createFlowController(store: FlowStore, requestId: string) {
         });
       } catch (e) {
         console.warn('[embed] couldn’t hand the video to the app', e);
-        fail({
+        await fail({
           code: 'export.failed',
           message: e instanceof Error ? e.message : String(e),
           draftId: video.draftId,

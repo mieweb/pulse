@@ -67,7 +67,7 @@ function EmbedFlow({ plan }: { plan: OpenPlan }) {
   // account's Pulse data to be reset, which the host's purge does (PR2) once the flow has ended.
   const onFatalStorage = useCallback(
     (fatal: FatalStorage) =>
-      controller.fail({
+      void controller.fail({
         code: fatal.code,
         message: fatal.message,
         ...(fatal.reset ? { details: { reset: true } } : null),
