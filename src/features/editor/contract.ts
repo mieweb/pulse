@@ -15,7 +15,7 @@ export type EditorScreenProps = {
   onClose: () => void;
   /** Export, after the editor's pending writes are on disk. */
   onExport: (draftId: string) => void;
-  /** Add clips to this draft in the recorder. Nothing calls it yet: the Add clips control is to come. */
+  /** Add clips: the recorder for this draft. The editor shows the control only when given. */
   onAddClips?: (draftId: string) => void;
   /** Captions with no model, the model control and the "pick a model" status open the model sheet. */
   onOpenModelSheet: () => void;
