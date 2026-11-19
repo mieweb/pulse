@@ -15,10 +15,11 @@
  * byte-identical to production traffic.
  */
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // The wire test pairs a link the way the app does; core code itself never imports pairing.
 // eslint-disable-next-line import/no-restricted-paths
@@ -94,6 +95,24 @@ function bufferChunkUploader(bytes: Buffer): UploadChunk {
     await res.arrayBuffer().catch(() => undefined);
     return { status: res.status, headers: outHeaders };
   };
+}
+
+/**
+ * A new token for an artifact the server already has an upload for, signed as
+ * scripts/pv-test-server.mjs signs its pairing tokens (its secret, key id and issuer): what the
+ * host's `refreshUploadToken` hands an embedded job after a relaunch. It lives longer than the
+ * pairing token (20 min), so it differs from it even within the same second. Minted in a child
+ * process, because the server's core is an ES module.
+ */
+function remintToken(artifactId: string): string {
+  const script = `
+    const { issueCapabilityToken } = await import(${JSON.stringify(pathToFileURL(DIST).href)});
+    process.stdout.write(issueCapabilityToken(${JSON.stringify(artifactId)}, 'pv-integration-secret', {
+      keyId: 'pv-integration', issuer: 'pv-integration', expirySeconds: 1200,
+    }));`;
+  return execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8',
+  });
 }
 
 const describeIf = ENABLED && HAVE_DIST ? describe : describe.skip;
@@ -226,6 +245,64 @@ describeIf('pulsevault integration (real server, real wire)', () => {
       expect(got.res.status).toBe(200);
       expect(Buffer.compare(got.bytes, bytes)).toBe(0);
     }
+  });
+
+  it('resumes a paused upload through HEAD + PATCH with a re-minted token, and completes it once', async () => {
+    const link = await pair();
+    const video = makeMp4(64 * 1024);
+    const artifact = { artifactId: link.artifactId, filename: 'draft.mp4', kind: 'video' as const };
+
+    // First process: the first half lands, then the app is killed before the second PATCH.
+    let resourceUrl = '';
+    const firstHalf = bufferChunkUploader(video);
+    let calls = 0;
+    const failure = await uploadViaTus({
+      server: link.server,
+      token: link.token,
+      ...artifact,
+      checksum: md5(video),
+      file: { size: video.length } as never,
+      chunkSizeBytes: video.length / 2,
+      onResourceCreated: (url) => {
+        resourceUrl = url;
+      },
+      uploadChunk: async (params) => {
+        if (calls++ === 0) return firstHalf(params);
+        throw new TusUploadError('killed', { retryable: false });
+      },
+    }).catch((e: unknown) => e);
+    expect((failure as Error).message).toBe('killed');
+
+    // Relaunch: the job's token died with the process; the host mints another for the artifact.
+    const fresh = remintToken(link.artifactId);
+    expect(fresh).not.toBe(link.token);
+    const patches: number[] = [];
+    const uploader = bufferChunkUploader(video);
+    const resumed = await uploadViaTus({
+      server: link.server,
+      token: fresh,
+      ...artifact,
+      file: { size: video.length } as never,
+      resumeUrl: resourceUrl,
+      uploadChunk: (params) => {
+        patches.push(params.offset);
+        expect(params.headers.Authorization).toBe(`Bearer ${fresh}`);
+        return uploader(params);
+      },
+    });
+    expect(resumed.resourceUrl).toBe(resourceUrl);
+    // The resume sent only the second half, from the server's offset.
+    expect(patches).toEqual([video.length / 2]);
+
+    const served = await download(link, link.artifactId);
+    expect(Buffer.compare(served.bytes, video)).toBe(0);
+    const events = (await (await fetch(`${origin}/events`)).json()) as {
+      phase: string;
+      artifactId: string;
+    }[];
+    expect(
+      events.filter((e) => e.phase === 'complete' && e.artifactId === link.artifactId),
+    ).toHaveLength(1);
   });
 
   itSince(2, 2)(
