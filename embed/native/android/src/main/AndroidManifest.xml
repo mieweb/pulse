@@ -72,13 +72,21 @@
     tools:node="remove" />
 
   <application>
-    <!-- Pulse's screens: full screen over the host, portrait, back owned by Pulse JS (PR4-D). -->
+    <!--
+      Pulse's screens: full screen over the host, portrait, back owned by Pulse JS (PR4-D).
+      A task of their own (the affinity, plus FLAG_ACTIVITY_NEW_TASK from PulseKitPresenter), so a
+      singleTask relaunch of the host's Activity for a deep link or a push tap doesn't clear them
+      mid-take; the task leaves Recents when its last screen closes. configChanges covers a
+      language change too: a recreated screen would restart the flow.
+    -->
     <activity
       android:name="com.mieweb.pulse.kit.PulseActivity"
       android:exported="false"
       android:theme="@style/Theme.PulseKit"
       android:screenOrientation="portrait"
-      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale"
+      android:taskAffinity="${applicationId}.pulsekit"
+      android:autoRemoveFromRecents="true"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
       android:windowSoftInputMode="adjustResize" />
 
     <!-- Uploads that continue after Pulse closes, the screen locks or the task is swiped (PR4-E). -->

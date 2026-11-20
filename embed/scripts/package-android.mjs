@@ -9,8 +9,10 @@
 //   3. minSdk: the AAR's manifest asks for no more than the floor.
 //   4. Permissions: the merged manifest asks only for the allowlist, and for none of the
 //      permissions PulseKit removes.
-//   5. Dependencies: every POM dependency resolves (a version, no system scope, no dev tooling, no
-//      artifact of ours the repository lacks); the list is written out as the dependency matrix.
+//   5. Dependencies: every POM and .module dependency resolves (a version, no system scope, no dev
+//      tooling, no artifact of ours the repository lacks), and both declare the runtime baseline
+//      the fused template leaves out (S1-b; complete-android-metadata.mjs adds it); the POM's
+//      list is written out as the dependency matrix.
 //   6. R8: the AAR carries consumer rules that keep the facade.
 //   7. Facade: classes.jar has PulseKit, PulseActivity and PulseUploadService.
 // The pure rules live in lib/android-aar.mjs and lib/android-elf.mjs; this file reads the AAR
@@ -50,6 +52,7 @@ import {
   zipFiles,
 } from './lib/android-aar.mjs';
 import { pageCheck, parseElf } from './lib/android-elf.mjs';
+import { missingBaseline, moduleDependencies, moduleFileOf } from './lib/android-metadata.mjs';
 import { formatSha256Sums } from './lib/checksums.mjs';
 import { assertSafeOut } from './lib/out-dir.mjs';
 import { ANDROID_MAVEN_ZIP } from './lib/release-assets.mjs';
@@ -222,6 +225,8 @@ function main() {
   const shipped = new Set(pubs.map((p) => `${p.group}:${p.artifact}`));
   /** @type {(import('./lib/android-aar.mjs').PomDependency & { from: string })[]} */
   const depRows = [];
+  /** @type {import('./lib/android-aar.mjs').PomDependency[]} */
+  const moduleDeps = [];
   /** @type {Map<string, string[]>} */
   const libsByAbi = new Map();
   /** @type {import('./lib/android-aar.mjs').ManifestPermission[]} */
@@ -251,6 +256,17 @@ function main() {
         depRows.push({ ...dep, from: `${pub.artifact}:${pub.version}` });
         const problem = dependencyProblem(dep, { ownGroup: pub.group, shipped });
         if (problem) fail('dependencies', `${pub.artifact}: ${problem}`);
+      }
+      // Gradle consumers read the .module before the POM, so it gets the same checks.
+      const moduleFile = path.join(maven, moduleFileOf(pub));
+      if (fs.existsSync(moduleFile)) {
+        for (const dep of moduleDependencies(fs.readFileSync(moduleFile, 'utf8'))) {
+          moduleDeps.push(dep);
+          const problem = dependencyProblem(dep, { ownGroup: pub.group, shipped });
+          if (problem) fail('dependencies', `${pub.artifact} (.module): ${problem}`);
+        }
+      } else {
+        fail('dependencies', `${pub.artifact}: no ${path.basename(moduleFile)} next to the POM`);
       }
       if (pub.aar === null) continue;
 
@@ -309,6 +325,19 @@ function main() {
   }
 
   // --- Checks over everything read -------------------------------------------------------------
+  const runtimeBaseline = [
+    { where: 'POM', missing: missingBaseline(depRows.filter((d) => d.scope !== 'test')) },
+    { where: '.module', missing: missingBaseline(moduleDeps.filter((d) => d.scope === 'runtime')) },
+  ];
+  for (const { where, missing } of runtimeBaseline) {
+    if (missing.length > 0) {
+      fail(
+        'dependencies',
+        `the ${where} doesn't declare ${missing.join(', ')}; a host crashes without them ` +
+          '(run embed/scripts/complete-android-metadata.mjs after the build)',
+      );
+    }
+  }
   for (const p of abiProblems(libsByAbi, abis)) fail('abis', p);
   for (const { aar, minSdk: declared } of minSdks) {
     if (declared === null) fail('minsdk', `${aar}: the manifest has no minSdkVersion`);
