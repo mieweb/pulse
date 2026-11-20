@@ -38,10 +38,14 @@
             "libraryName": "pulsekit",
             "group": "com.mieweb.pulse",
             "package": "com.mieweb.pulse.kit",
-            "version": "0.1.0"
+            "version": "0.1.0",
+            "publishing": [
+              { "type": "localDirectory", "name": "pulsekit", "path": "artifacts/android-maven" }
+            ]
           }
         }
       ],
+      "./plugins/with-pulsekit-android",
       "expo-sqlite",
       "expo-video",
       "expo-image",
@@ -74,7 +78,8 @@
         "expo-build-properties",
         {
           "android": {
-            "minSdkVersion": 29,
+            "minSdkVersion": 24,
+            "buildArchs": ["arm64-v8a", "armeabi-v7a"],
             "extraProguardRules": "-keep class com.rnwhisper.** { *; }"
           }
         }
