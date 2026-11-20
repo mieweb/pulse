@@ -339,6 +339,15 @@ jobs:
           (cd embed/packages/capacitor-pulse && swift package dump-package > /dev/null)
           ruby -c embed/packages/cordova-plugin-pulse/PulseKit.podspec
 
+      - name: Pack the npm packages for the Release
+        # Attached to every Release, so a host can install the exact packages from GitHub
+        # (`npm install <release download URL>/<file>.tgz`) whether or not npm publishing is on.
+        run: |
+          for pkg in pulse-embed capacitor-pulse cordova-plugin-pulse; do
+            (cd "embed/packages/$pkg" && npm pack --pack-destination "$OUT/release")
+          done
+          (cd "$OUT/release" && shasum -a 256 *.tgz >> SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+
       - name: Disk (before publishing)
         run: df -h /
 
@@ -363,12 +372,16 @@ jobs:
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${FLAGS[@]}" "$OUT"/release/*
 
       - name: Publish to npm
+        # Off until the repo variable NPM_PUBLISH is 'true': a package's first version is published
+        # by hand and its trusted publisher set up first (docs/embedding/releasing.md). Until then
+        # the Release's .tgz assets are how hosts install.
+        if: vars.NPM_PUBLISH == 'true'
         env:
           DIST_TAG: ${{ steps.version.outputs.dist_tag }}
-          # The first publish of a new package needs a token (trusted publishing can only be set up
-          # for a package that exists): NPM_TOKEN if the repo sets one, else the org's npm secret.
-          # Once trusted publishing is configured on npmjs.com, neither is needed.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NPM_PUBLISH_SECRET }}
+          # No token: npm trusted publishing (OIDC), as mieweb/pulsevault publishes. Each package's
+          # trusted publisher on npmjs.com is GitHub Actions, mieweb/pulse, release-embed.yml.
+          # A new package's FIRST version is published by hand (see docs/embedding/releasing.md),
+          # because trusted publishing can only be set up for a package that already exists.
         run: |
           for pkg in pulse-embed capacitor-pulse cordova-plugin-pulse; do
             echo "::group::$pkg"
