@@ -62,20 +62,24 @@ enum PulseKitInfo {
   /// brief "Preparing…" screen instead (PulseKitPresenter.swift), and paused jobs wait for the
   /// host's "Tap to resume" (O2).
   ///
-  /// To build with it on: add `PULSEKIT_HEADLESS` to the PulseKit target's Active Compilation
-  /// Conditions (`SWIFT_ACTIVE_COMPILATION_CONDITIONS`), or set the `#else` branch below to true.
+  /// To build with it on: `PULSEKIT_HEADLESS=1 npm run prebuild -- --platform ios` in `embed/`
+  /// (plugins/with-pulsekit-facade.js adds `PULSEKIT_HEADLESS` to the PulseKit target's
+  /// `SWIFT_ACTIVE_COMPILATION_CONDITIONS`), then pods and `npm run build:ios` as usual. A prebuild
+  /// without it turns the flag off again. Without the plugin change, set the `#else` branch below to
+  /// true. `info().capabilities` lists `headless` exactly when it is on.
   #if PULSEKIT_HEADLESS
     static let headless = true
   #else
     static let headless = false
   #endif
 
-  /// What this build can do: Pulse's own uploads through the host's services ('upload.pulse'),
-  /// which go on in PulseKit's background session after Pulse closes ('upload.background', O16),
-  /// and `headless` when the flag above is on. Save to Photos needs the host's
-  /// NSPhotoLibraryAddUsageDescription (AD30).
+  /// What this build can do: Pulse's uploads go on in PulseKit's background session after Pulse
+  /// closes ('upload.background', O16), and `headless` when the flag above is on. Save to Photos
+  /// needs the host's NSPhotoLibraryAddUsageDescription (AD30). Not 'upload.pulse' yet: an open
+  /// with uploadMode 'pulse' answers `unsupported` until flow/validate.ts accepts it (PR2-I adds
+  /// the capability with it).
   static func capabilities() -> [String] {
-    var list = ["upload.pulse", "upload.background", "upload.file", "share"]
+    var list = ["upload.background", "upload.file", "share"]
     if hostHas("NSPhotoLibraryAddUsageDescription") { list.append("saveToPhotos") }
     if headless { list.append("headless") }
     return list
