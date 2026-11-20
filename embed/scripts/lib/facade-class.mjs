@@ -15,13 +15,19 @@ export const FACADE_CLASS_SYMBOL = '_OBJC_CLASS_$_PulseKit';
  * @returns {string[]}
  */
 export function slicesMissingFacadeClass(jobs, inspect) {
-  const symbol = new RegExp(`\\s${FACADE_CLASS_SYMBOL.replace(/\$/g, '\\$')}$`, 'm');
   const missing = [];
   for (const job of jobs.filter((j) => j.name === 'PulseKit.xcframework')) {
     for (const lib of job.keep) {
       const symbols = inspect('nm', ['-gU', path.join(job.dir, lib.id, lib.binaryPath)]);
-      if (symbols !== null && !symbol.test(symbols)) missing.push(`${job.name}/${lib.id}`);
+      if (symbols !== null && !exportsFacadeClass(symbols)) missing.push(`${job.name}/${lib.id}`);
     }
   }
   return missing;
+}
+
+/** Whether `nm -gU` output has a line whose symbol (its last field) is exactly the facade class. */
+function exportsFacadeClass(nmOutput) {
+  return nmOutput
+    .split('\n')
+    .some((line) => line.trim().split(/\s+/).pop() === FACADE_CLASS_SYMBOL);
 }
