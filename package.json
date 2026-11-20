@@ -124,6 +124,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "embed:package:ios": "node embed/scripts/package-ios.mjs",
+    "embed:package:android": "node embed/scripts/package-android.mjs",
     "check:embed": "node scripts/check-embed-bundle.mjs"
   },
   "private": true,

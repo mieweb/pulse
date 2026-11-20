@@ -11,6 +11,9 @@ export const DSYMS_ZIP = 'PulseKit-dSYMs.zip';
  */
 export const XCFRAMEWORKS_ZIP = 'PulseKit-xcframeworks.zip';
 
+/** The Android Maven repository (AAR, POM, checksums) in one zip, from package-android.mjs. */
+export const ANDROID_MAVEN_ZIP = 'PulseKit-android-maven.zip';
+
 /** The suffix of the per-xcframework zips that Package.swift declares as binary targets. */
 export const XCFRAMEWORK_ZIP_SUFFIX = '.xcframework.zip';
 
