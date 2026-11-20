@@ -201,10 +201,12 @@ export function commandHandlers(deps: CommandDeps): Record<WriteMethod, CommandH
           { draftId: id },
         );
       }
-      // A job already under way answers with its keys (outbox.sendDraft): no state locks Send.
-      // The reply comes once the job is queued, after a stale draft's merge and the host's
-      // confirm; past PulseKit's 30 s the host hears `timeout` while the Send still completes.
-      // Calling `upload` again then answers with the same keys (and queues nothing new).
+      // The outbox decides the lock (outbox.sendDraft), not this check: a `queued` or
+      // `needs_credentials` job with the same clientKey answers with its keys and queues nothing;
+      // `preparing`, `uploading` and `delivering` reject with draft.locked. The reply comes once
+      // the job is queued, after a stale draft's merge and the host's confirm; past PulseKit's
+      // 30 s the host hears `timeout` while the Send still completes, so it should read the draft
+      // (getDraft) rather than call `upload` again, which by then usually meets draft.locked.
       checkDraft(deps, id, { lockedStates: () => false });
       const keys = await deps.send(id);
       await deps.changed([id]);
