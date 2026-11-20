@@ -1,10 +1,71 @@
-// The Android stub of @mieweb/capacitor-pulse (AD20). It answers every call itself, so it depends
-// on nothing but Capacitor: no Maven libraries and no manifest permissions. Versions follow the
-// host's variables.gradle, as Capacitor's own plugins do.
+// The Android side of @mieweb/capacitor-pulse. One switch picks the plugin:
+//
+// - pulsekitAndroid on (the default): src/pulsekit/java, the transport over PulseKit
+//   (com.mieweb.pulse:pulsekit, the fused AAR, at this package's version).
+// - pulsekitAndroid=false: src/stub/java, the stub that answers every call itself (AD20). It
+//   depends on nothing but Capacitor, for hosts not ready for the PulseKit dependency.
+//
+// A host sets the switch in its root build.gradle or variables.gradle
+// (`ext { pulsekitAndroid = false }`) or as a Gradle property (`pulsekitAndroid=false` in
+// gradle.properties, or `-PpulsekitAndroid=false`). Versions follow the host's variables.gradle,
+// as Capacitor's own plugins do.
 apply plugin: 'com.android.library'
 
 def hostValue(String name, def fallback) {
     return rootProject.ext.has(name) ? rootProject.ext.get(name) : fallback
+}
+
+/** A host setting: rootProject.ext first, then a Gradle property of the same name. */
+def hostSetting(String name, def fallback) {
+    if (rootProject.ext.has(name)) return rootProject.ext.get(name)
+    def property = project.findProperty(name)
+    return property != null ? property : fallback
+}
+
+def pulsekit = hostSetting('pulsekitAndroid', 'true').toString() != 'false'
+
+// PulseKit's Maven module (S1-a, frozen in PR4). A local repository from a build that kept
+// expo-brownfield's own artifact id holds it as `pulsekit-fused-release` instead.
+def pulsekitModule = 'com.mieweb.pulse:pulsekit'
+
+// PULSEKIT_ANDROID_LOCAL: a local Maven repository holding PulseKit (embed/artifacts/android-maven
+// after `npm run build:android`, or an unzipped PulseKit-android-maven.zip).
+def pulsekitLocal = System.getenv('PULSEKIT_ANDROID_LOCAL') ?: null
+
+/** The versions of `module` that the Maven repository folder `repo` holds, sorted. */
+def localVersions(String repo, String module) {
+    def parts = module.split(':')
+    def dir = new File(new File(repo, parts[0].replace('.', '/')), parts[1])
+    if (!dir.isDirectory()) return []
+    return dir.listFiles().findAll { it.isDirectory() }.collect { it.name }.sort()
+}
+
+/**
+ * PulseKit's coordinates. The version is this package's (lockstep: a release stamps one version
+ * into package.json and the AAR) unless the host sets `pulsekitAndroidVersion`. The committed
+ * package.json says 0.0.0-dev, which no AAR carries, so a development build takes the one version
+ * PULSEKIT_ANDROID_LOCAL holds, as PULSEKIT_LOCAL does for iOS's Package.swift.
+ */
+def pulsekitCoordinates(String module, String local) {
+    def npmVersion = new groovy.json.JsonSlurper().parse(file('../package.json')).version.toString()
+    def version = hostSetting('pulsekitAndroidVersion', npmVersion).toString()
+    def artifact = module
+    def fused = module + '-fused-release'
+    if (local != null && localVersions(local, module).isEmpty() && !localVersions(local, fused).isEmpty()) {
+        artifact = fused
+    }
+    if (version == '0.0.0-dev') {
+        def found = local == null ? [] : localVersions(local, artifact)
+        if (found.size() != 1) {
+            throw new GradleException(
+                "@mieweb/capacitor-pulse is at 0.0.0-dev, which no PulseKit AAR carries. Set " +
+                "PULSEKIT_ANDROID_LOCAL to a Maven repository with one version of ${module} " +
+                "(${local == null ? 'it is not set' : 'it holds ' + (found ?: ['none']).join(', ')}), " +
+                "set pulsekitAndroidVersion, or set pulsekitAndroid=false for the stub.")
+        }
+        version = found[0]
+    }
+    return "${artifact}:${version}"
 }
 
 android {
@@ -17,13 +78,31 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
+    // src/main holds what both plugins share (the manifest and PulseUnsupported); the switch adds
+    // one PulsePlugin.java.
+    sourceSets {
+        main {
+            java.srcDirs += pulsekit ? 'src/pulsekit/java' : 'src/stub/java'
+        }
+    }
 }
 
+// These resolve this library's own dependencies only. Until Maven Central has PulseKit, the host
+// must list the same repository in its own build.gradle (allprojects.repositories), because a
+// library's repositories don't resolve the app's classpath:
+//     maven { url = uri('<PULSEKIT_ANDROID_LOCAL>') }
 repositories {
     google()
     mavenCentral()
+    if (pulsekit && pulsekitLocal != null) {
+        maven { url = uri(pulsekitLocal) }
+    }
 }
 
 dependencies {
     implementation project(':capacitor-android')
+    if (pulsekit) {
+        // com.mieweb.pulse:pulsekit:<version>. Its POM brings react-android, Hermes and AndroidX.
+        implementation pulsekitCoordinates(pulsekitModule, pulsekitLocal)
+    }
 }
