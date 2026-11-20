@@ -39,6 +39,7 @@ import {
   privacyManifestProblems,
 } from './lib/release-privacy.mjs';
 import { missingRpathDependencies, rpathFrameworks } from './lib/rpath.mjs';
+import { slicesMissingFacadeClass } from './lib/facade-class.mjs';
 import { createRunner } from './lib/runner.mjs';
 import { buildSizeReport, formatSizeReport, treeSize } from './lib/size-report.mjs';
 import { describeUnsafeSymlinks, findUnsafeSymlinks } from './lib/symlinks.mjs';
@@ -298,20 +299,15 @@ function main() {
     );
   }
 
-  // Hosts find PulseKit by its Objective-C name (`@objc(PulseKit)`, native-bridge.md §8). A
-  // framework built without the facade's sources still builds, so check each slice exports it.
+  // Before anything is written or an earlier run's output is removed: a PulseKit without its facade
+  // class builds fine but no host can use it (pulsekit-v0.1.0-rc.4).
   runner.step('Check the facade class');
-  for (const job of jobs.filter((j) => j.name === 'PulseKit.xcframework')) {
-    for (const lib of job.keep) {
-      const binary = path.join(job.dir, lib.id, lib.binaryPath);
-      const symbols = runner.inspect('nm', ['-gU', binary]);
-      if (symbols !== null && !/\b_OBJC_CLASS_\$_PulseKit$/m.test(symbols)) {
-        throw new Error(
-          `${job.name}/${lib.id} has no PulseKit class: the facade's Swift files weren't compiled ` +
-            'into the PulseKit target (embed/plugins/with-pulsekit-facade.js).',
-        );
-      }
-    }
+  const noFacade = slicesMissingFacadeClass(jobs, (cmd, args) => runner.inspect(cmd, args));
+  if (noFacade.length > 0) {
+    throw new Error(
+      `No PulseKit class in ${noFacade.join(', ')}: the facade's Swift files weren't compiled into ` +
+        'the PulseKit target (embed/plugins/with-pulsekit-facade.js).',
+    );
   }
 
   if (outEntries.length > 0) runner.remove(out); // checked above: only an earlier run's output
