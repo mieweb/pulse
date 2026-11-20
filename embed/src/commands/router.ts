@@ -202,6 +202,9 @@ export function commandHandlers(deps: CommandDeps): Record<WriteMethod, CommandH
         );
       }
       // A job already under way answers with its keys (outbox.sendDraft): no state locks Send.
+      // The reply comes once the job is queued, after a stale draft's merge and the host's
+      // confirm; past PulseKit's 30 s the host hears `timeout` while the Send still completes.
+      // Calling `upload` again then answers with the same keys (and queues nothing new).
       checkDraft(deps, id, { lockedStates: () => false });
       const keys = await deps.send(id);
       await deps.changed([id]);

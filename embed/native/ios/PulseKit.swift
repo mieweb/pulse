@@ -22,7 +22,11 @@ import UIKit
 ///   it is dropped and Pulse JS hears `pulse.cmd hostTimeout`.
 /// - Lifetime (C6): the runtime stays up between flows; on a memory warning with nothing open,
 ///   Pulse JS decides whether it is idle (no job the loop would run) and, if so, lets go of its
-///   library and PulseKit drops the instance.
+///   library and PulseKit drops the instance. Opens and writes wait for that answer; with none in
+///   10 s the instance is dropped too, and a `pulse.released` from JS always ends it: native never
+///   keeps a runtime whose library is closed.
+/// - `configure` reaches a runtime that is up as `pulse.cmd configure` (and again on each
+///   `pulse.ready`), so its writes read the host's latest `uploadMode`.
 /// - Accounts (PulseKitAccounts.swift): each signed-in person has a namespace, under
 ///   `Library/PulseKit/<ns>` and `Library/Caches/PulseKit/<ns>` (PulseKitStorage.swift). Until
 ///   `setAccount`, data calls and `open` fail with `no_account`. PR1's `<hostId>-local` is never
@@ -55,6 +59,9 @@ public final class PulseKit: NSObject {
   static let forwardTimeout: TimeInterval = 30
   /// A host request's time to be answered (§5, PLAN §6.4).
   static let hostRequestTimeout: TimeInterval = 20
+  /// A memory warning's time to be answered: Pulse JS answers within its 3 s engine budget plus
+  /// the library's close (lifetime.ts); without an answer by then the runtime is dropped.
+  static let memoryCheckTimeout: TimeInterval = 10
 
   /// Event envelopes (§2.3), on the main queue. Set by the plugin; one subscriber. `hostRequest`
   /// events that come while none is set are kept, and delivered once one is (until each one's
@@ -94,8 +101,11 @@ public final class PulseKit: NSObject {
   private var headlessRoot: UIView?
   /// The "Preparing…" screen, while it is up.
   private var preparing: PulseKitPreparingViewController?
-  /// A `memoryWarning` waiting for Pulse JS's answer: forwarded calls wait for it too.
+  /// A `memoryWarning` waiting for Pulse JS's answer: opens and forwarded calls wait for it too,
+  /// so nothing mounts on, or is sent to, a runtime that may be letting go of its library.
   private var memoryCheck: String?
+  /// Opens that came during a memory check, run once it is answered (or dropped).
+  private var deferredOpens: [() -> Void] = []
   /// Host requests (§5) not answered yet: each one's deadline.
   private var hostRequests: [String: DispatchWorkItem] = [:]
   /// `hostRequest` envelopes that came while no `onEvent` was set, by hostCallId, in order.
@@ -209,11 +219,27 @@ public final class PulseKit: NSObject {
         return respond(.failure(error))
       }
       config = req.args
+      // A runtime that is up reads the host's options per command (uploadMode for upload and
+      // retireDraft), so it hears each change; one booting hears them on `pulse.ready`.
+      if jsReady {
+        sendCommand(
+          "configure", args: .object(effectiveConfig(callId: callId, quiet: true)),
+          expectReply: false)
+      }
       respond(.success(callId))
     case "prewarm":
       startRuntime()
       respond(.success(callId))
     case "open":
+      if memoryCheck != nil {
+        // Pulse JS may be letting go of its library (lifetime.ts): the flow waits for the answer
+        // (memoryCheckTimeout at most), then mounts on this runtime or a fresh one.
+        log("open \(callId): waits for the memory check")
+        deferredOpens.append { [weak self] in
+          self?.open(req, presenter: presenter, respond: respond)
+        }
+        return
+      }
       open(req, presenter: presenter, respond: respond)
     case "close":
       close(req, respond: respond)
@@ -505,7 +531,13 @@ public final class PulseKit: NSObject {
       answered = true
       self.commands.removeValue(forKey: commandId)
       self.purging = nil
-      self.log("purge \(callId): Pulse didn't let go of \(ns) in 15 s")
+      // Pulse JS may still close its library after this: never send that runtime another
+      // command. The next call starts a fresh one; nothing was deleted.
+      self.runtimeReleased = true
+      self.runtimeNamespace = nil
+      self.jsReady = false
+      self.headlessRoot = nil
+      self.log("purge \(callId): Pulse didn't let go of \(ns) in 15 s; its runtime is dropped")
       respond(
         .failure(
           "timeout", "Pulse didn't close the library in time; nothing was deleted.", callId: callId))
@@ -672,13 +704,15 @@ public final class PulseKit: NSObject {
 
   /// The host's options as Pulse JS gets them, with what the host's Info.plist rules out: no
   /// NSPhotoLibraryAddUsageDescription means no Save to Photos (AD30), whatever the policy says.
-  private func effectiveConfig(callId: String) -> [String: JSONValue] {
+  private func effectiveConfig(callId: String, quiet: Bool = false) -> [String: JSONValue] {
     var out = config
     if !PulseKitInfo.hostHas("NSPhotoLibraryAddUsageDescription") {
       var policy = out["policy"]?.object ?? [:]
       policy["allowSaveToPhotos"] = .bool(false)
       out["policy"] = .object(policy)
-      log("open \(callId): host_misconfigured: no NSPhotoLibraryAddUsageDescription, Save to Photos is hidden")
+      if !quiet {
+        log("\(callId): host_misconfigured: no NSPhotoLibraryAddUsageDescription, Save to Photos is hidden")
+      }
     }
     return out
   }
@@ -872,7 +906,23 @@ public final class PulseKit: NSObject {
       if let bound = runtimeNamespace, accounts.namespace != bound {
         sendCommand("accountActive", args: .object(["active": .bool(false)]), expectReply: false)
       }
+      // The host's options now, in case `configure` came while the runtime booted on older ones.
+      sendCommand(
+        "configure", args: .object(effectiveConfig(callId: "pulse.ready", quiet: true)),
+        expectReply: false)
       sendWaitingCommands()
+    case "pulse.released":
+      // Pulse JS let go of its library for good (lifetime.ts, commands/runtime.ts): it gets no
+      // more commands, and the next call starts a fresh instance. A purge or a memory check
+      // waiting for this answer finishes the job from its reply.
+      jsReady = false
+      runtimeReleased = true
+      log("Pulse JS let go of \(message["namespace"]?.string ?? "?")")
+      if flow == nil, purging == nil, memoryCheck == nil {
+        runtimeNamespace = nil
+        headlessRoot = nil
+        resumeWaitingCommands()
+      }
     case "pulse.reply":
       guard let callId = message["callId"]?.string,
         let done = commands.removeValue(forKey: callId)
@@ -1172,7 +1222,7 @@ public final class PulseKit: NSObject {
 
   /// A memory warning with nothing open: Pulse JS lets go of what it can, and says whether it was
   /// idle (no command, no job the loop would run); if so, PulseKit drops the instance. Forwarded
-  /// calls that come meanwhile wait for the answer (5 s at most).
+  /// calls and opens that come meanwhile wait for the answer (memoryCheckTimeout at most).
   private func memoryWarning() {
     guard runtimeNamespace != nil, jsReady, flow == nil, preparing == nil, purging == nil,
       forwarded.isEmpty, memoryCheck == nil
@@ -1181,24 +1231,31 @@ public final class PulseKit: NSObject {
     let id = sendCommand("memoryWarning", args: .object([:]), flowScoped: false) { [weak self] reply in
       guard let self else { return }
       self.memoryCheck = nil
-      if reply["result"]?["release"]?.bool == true, self.flow == nil {
-        self.releaseRuntime()
+      // Kept only on a plain "keep": an error (a half-done release, or a runtime that let go
+      // already and doesn't know the command) drops it like a release does.
+      let keep = reply["ok"]?.bool == true && reply["result"]?["release"]?.bool == false
+      if !keep {
+        self.releaseRuntime(
+          reply["ok"]?.bool == true
+            ? "Pulse was idle" : "Pulse answered \(reply["error"]?["code"]?.string ?? "an error")")
       }
       self.resumeWaitingCommands()
     }
     memoryCheck = id
-    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.memoryCheckTimeout) { [weak self] in
       guard let self, self.memoryCheck == id else { return }
       self.commands.removeValue(forKey: id)
       self.memoryCheck = nil
-      self.log("memory warning: Pulse JS didn't answer in 5 s; keeping the runtime")
+      // Pulse JS may still be closing its library: never keep a runtime in that state.
+      self.releaseRuntime("Pulse JS didn't answer in \(Int(Self.memoryCheckTimeout)) s")
       self.resumeWaitingCommands()
     }
   }
 
-  /// Pulse JS closed its library: drop the instance now (the next call starts a fresh one).
-  private func releaseRuntime() {
-    log("memory warning: Pulse was idle; releasing its runtime")
+  /// Drop the instance now (the next call starts a fresh one): Pulse JS closed its library, or
+  /// may have.
+  private func releaseRuntime(_ why: String) {
+    log("memory warning: \(why); releasing its runtime")
     headlessRoot = nil
     jsReady = false
     runtimeNamespace = nil
@@ -1206,8 +1263,12 @@ public final class PulseKit: NSObject {
     ReactNativeHostManager.shared.cleanupPreviousInstance()
   }
 
-  /// After a memory check: send what waited, or boot for it if the runtime went meanwhile.
+  /// After a memory check: run the opens that waited, then send the writes that waited, or boot
+  /// for them if the runtime went meanwhile (an open that started a flow boots it for them).
   private func resumeWaitingCommands() {
+    let opens = deferredOpens
+    deferredOpens.removeAll()
+    for run in opens { run() }
     if boundNamespace == nil,
       let first = forwarded.values.filter({ !$0.sent }).min(by: { $0.sequence < $1.sequence })
     {

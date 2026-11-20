@@ -44,9 +44,13 @@ import { brownfieldUploadTransport } from './upload-transport';
  * 5. the library gate (the migrations, as PulseCore's gate runs them, without its screens), then
  *    catalog.json and the job loop with the launch rule (§6.3).
  *
- * Internal commands: `accountActive {active}` (setAccount / sign-out: the runner pauses while its
- * namespace isn't the signed-in one), `releaseLibrary` (a purge of this namespace: stop and close
- * the database for good) and `memoryWarning` (lifetime.ts).
+ * Internal commands: `configure` (the host's latest `configure` options, sent by PulseKit when the
+ * runtime is up and again on every `pulse.ready`: commands read `uploadMode` from them per call, not
+ * from the props of whichever root booted the runtime), `accountActive {active}` (setAccount /
+ * sign-out: the runner pauses while its namespace isn't the signed-in one), `releaseLibrary` (a
+ * purge of this namespace: stop and close the database for good) and `memoryWarning` (lifetime.ts).
+ * Once the library is let go, for either reason, Pulse JS says `pulse.released`: PulseKit then
+ * never sends this runtime another command, and starts a fresh one for whatever comes next.
  */
 
 export type RuntimeProps = { namespace?: string; config?: unknown; network?: unknown };
@@ -69,7 +73,7 @@ const coded = (code: string, message: string) => Object.assign(new Error(message
 /** How long job notices wait to be written together (an upload's steps come in bursts). */
 const CHANGES_DEBOUNCE_MS = 250;
 
-function uploadModeOf(config: unknown): 'pulse' | 'file' {
+export function uploadModeOf(config: unknown): 'pulse' | 'file' {
   const mode = (config as { uploadMode?: unknown } | null | undefined)?.uploadMode;
   return mode === 'file' ? 'file' : 'pulse';
 }
@@ -77,7 +81,8 @@ function uploadModeOf(config: unknown): 'pulse' | 'file' {
 function createServices(namespace: string, props: RuntimeProps): RuntimeServices {
   const channel = embedChannel();
   const log = (line: string) => console.log(`[embed] ${line}`);
-  const uploadMode = uploadModeOf(props.config);
+  // The host's configure options: the booting root's, then each `pulse.cmd configure`.
+  let config: unknown = props.config;
   const stops: (() => void)[] = [];
   let runner: JobRunner | null = null;
   let accountActive = true;
@@ -120,6 +125,13 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
   stops.push(
     channel.handle('network', (args) => {
       network.update(args);
+      return null;
+    }),
+  );
+
+  stops.push(
+    channel.handle('configure', (args) => {
+      config = args;
       return null;
     }),
   );
@@ -173,7 +185,7 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
   const deps = libraryDeps({
     runner: () => runner,
     heldDraft,
-    uploadMode: () => uploadMode,
+    uploadMode: () => uploadModeOf(config),
     changed,
   });
   stops.push(
@@ -219,13 +231,20 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
     jobTimer = null;
     setBackgroundUploads(null);
     setNetworkSource(null);
-    await stopCatalogWriter();
+    // Nothing below may stop `pulse.released`: the handlers are gone already, so PulseKit must
+    // hear that this runtime takes no more commands.
+    try {
+      await stopCatalogWriter();
+    } catch (e) {
+      log(`catalog.json's writer didn't stop cleanly: ${String(e)}`);
+    }
     try {
       expoDb.closeSync();
     } catch (e) {
       log(`the library didn't close cleanly: ${String(e)}`);
     }
     log(`released the library of ${namespace}`);
+    channel.released(namespace);
   }
 
   channel.ready(namespace);

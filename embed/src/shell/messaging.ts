@@ -9,7 +9,8 @@ import type { NetworkSource } from '@/core/network';
  * `pulse.result {requestId}` once a result file is written, `pulse.error {requestId, message}`
  * when the embed root can't start, `pulse.ui` for the container view controller (status bar,
  * whether a take exists), and `pulse.ready {namespace}` once the runtime's command handlers are up
- * (PulseKit holds forwarded calls until then). Native also sends `pulse.respond {hostCallId,
+ * (PulseKit holds forwarded calls until then), and `pulse.released {namespace}` once the runtime let
+ * go of its library for good (PulseKit sends it nothing more). Native also sends `pulse.respond {hostCallId,
  * result | error}`: the host's answer to a `hostRequest` event (§5).
  *
  * The runtime outlives each presentation, so the channel is made once and listens for the
@@ -42,6 +43,8 @@ export interface Channel {
   onRespond(onRespond: (message: Message) => void): () => void;
   /** The runtime's command handlers are up, for the library of `namespace`. */
   ready(namespace: string): void;
+  /** The runtime let go of `namespace`'s library for good: PulseKit starts a fresh one next. */
+  released(namespace: string): void;
   event(name: string, payload: Json): void;
   /** The result file for `requestId` is written: native reads it and ends the flow. */
   result(requestId: string): void;
@@ -112,6 +115,7 @@ export function createChannel(transport: Transport): Channel {
       };
     },
     ready: (namespace) => transport.send({ type: 'pulse.ready', namespace }),
+    released: (namespace) => transport.send({ type: 'pulse.released', namespace }),
     event: (name, payload) => transport.send({ type: 'pulse.event', name, payload }),
     result: (requestId) => transport.send({ type: 'pulse.result', requestId }),
     error: (requestId, message) => transport.send({ type: 'pulse.error', requestId, message }),
