@@ -3,7 +3,7 @@
 // wrote into a local Maven repository, then zips that repository as one release asset (G2, G5).
 // It refuses a build that would hurt a host:
 //   1. ABIs: exactly the expected set, each with the same libraries (a partly filled ABI loads
-//      nothing on that ABI).
+//      nothing on that ABI) but for per-ABI variants such as whisper.rn's CPU-tuned builds.
 //   2. 16 KB pages: every 64-bit .so has PT_LOAD p_align >= 16384 (Google Play, Android 15+
 //      targets); PT_GNU_RELRO's end alignment is reported.
 //   3. minSdk: the AAR's manifest asks for no more than the floor.

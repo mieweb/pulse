@@ -183,14 +183,25 @@ export function nativeLibraries(entries) {
 }
 
 /**
- * Whether the ABIs are exactly the expected ones, and each holds the same libraries. An ABI that
- * only some prebuilt dependencies fill (S1's AAR had 24 arm64-v8a libraries but 5 for x86) loads
- * nothing on that ABI, so a partial ABI is refused too.
+ * Libraries a dependency builds for one ABI only, so they're left out of the "every ABI holds the
+ * same libraries" rule. whisper.rn builds a generic librnwhisper.so for every ABI (still required
+ * everywhere) plus CPU-tuned variants it picks at runtime: librnwhisper_v8 and
+ * librnwhisper_v8fp16_va_2 on arm64-v8a, librnwhisper_vfpv4 on armeabi-v7a, librnwhisper_x86_64 on
+ * x86_64 (node_modules/whisper.rn/android/src/main/CMakeLists.txt).
+ * @type {readonly RegExp[]}
+ */
+export const ABI_SPECIFIC_LIBRARIES = [/^librnwhisper_[\w-]+\.so$/];
+
+/**
+ * Whether the ABIs are exactly the expected ones, and each holds the same libraries (but for
+ * ABI_SPECIFIC_LIBRARIES). An ABI that only some prebuilt dependencies fill (S1's AAR had 24
+ * arm64-v8a libraries but 5 for x86) loads nothing on that ABI, so a partial ABI is refused too.
  * @param {Map<string, string[]>} byAbi  From nativeLibraries.
  * @param {readonly string[]} expected
+ * @param {readonly RegExp[]} [abiSpecific]  Defaults to ABI_SPECIFIC_LIBRARIES.
  * @returns {string[]}
  */
-export function abiProblems(byAbi, expected) {
+export function abiProblems(byAbi, expected, abiSpecific = ABI_SPECIFIC_LIBRARIES) {
   /** @type {string[]} */
   const problems = [];
   const have = [...byAbi.keys()];
@@ -202,7 +213,9 @@ export function abiProblems(byAbi, expected) {
       `unexpected ABI(s): ${extra.map((abi) => `${abi} (${byAbi.get(abi)?.length} libraries)`).join(', ')}`,
     );
   }
-  const all = [...new Set([...byAbi.values()].flat())].sort();
+  const all = [...new Set([...byAbi.values()].flat())]
+    .filter((lib) => !abiSpecific.some((re) => re.test(lib)))
+    .sort();
   for (const abi of expected) {
     const libs = byAbi.get(abi);
     if (!libs) continue;

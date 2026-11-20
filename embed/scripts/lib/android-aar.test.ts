@@ -84,6 +84,43 @@ describe('ABIs', () => {
     );
     expect(abiProblems(byAbi, RELEASE_ABIS)).toEqual(['armeabi-v7a lacks libappmodules.so']);
   });
+
+  it("passes whisper.rn's per-ABI variants, and still wants its generic library in every ABI", () => {
+    // What whisper.rn's CMakeLists.txt builds for each ABI.
+    const release = {
+      'arm64-v8a': [
+        ...libs,
+        'librnwhisper.so',
+        'librnwhisper_v8.so',
+        'librnwhisper_v8fp16_va_2.so',
+      ],
+      'armeabi-v7a': [...libs, 'librnwhisper.so', 'librnwhisper_vfpv4.so'],
+    };
+    expect(abiProblems(nativeLibraries(entries(release)), RELEASE_ABIS)).toEqual([]);
+    const debug = { ...release, x86_64: [...libs, 'librnwhisper.so', 'librnwhisper_x86_64.so'] };
+    expect(abiProblems(nativeLibraries(entries(debug)), [...RELEASE_ABIS, 'x86_64'])).toEqual([]);
+
+    // The generic library isn't a variant: an ABI without it is refused.
+    const noGeneric = { ...release, 'armeabi-v7a': [...libs, 'librnwhisper_vfpv4.so'] };
+    expect(abiProblems(nativeLibraries(entries(noGeneric)), RELEASE_ABIS)).toEqual([
+      'armeabi-v7a lacks librnwhisper.so',
+    ]);
+    // Without the exemption, the variants alone would refuse a correct AAR.
+    expect(abiProblems(nativeLibraries(entries(release)), RELEASE_ABIS, [])).toEqual([
+      'arm64-v8a lacks librnwhisper_vfpv4.so',
+      'armeabi-v7a lacks librnwhisper_v8.so, librnwhisper_v8fp16_va_2.so',
+    ]);
+  });
+
+  it('still refuses a missing or extra ABI when variants are present', () => {
+    const byAbi = nativeLibraries(
+      entries({ 'arm64-v8a': ['librnwhisper.so', 'librnwhisper_v8.so'], x86: ['librnwhisper.so'] }),
+    );
+    expect(abiProblems(byAbi, RELEASE_ABIS)).toEqual([
+      'missing ABI(s): armeabi-v7a',
+      'unexpected ABI(s): x86 (1 libraries)',
+    ]);
+  });
 });
 
 describe('parseManifest', () => {
