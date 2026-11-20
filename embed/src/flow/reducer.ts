@@ -8,6 +8,8 @@ import type {
   PulseErrorInfo,
 } from '@mieweb/pulse-embed';
 
+import { confirmCopy } from '@/features/export/send-flow';
+
 /**
  * The embed's flow as a pure reducer (B2): one presentation, one stack of screens
  * (recorder ⇄ editor → export), one result. The shell (FlowStack) renders the stack, feeds the
@@ -22,6 +24,11 @@ import type {
  *   - A draft the flow opened (edit, export, record continue): it was there before and edits
  *     save as they happen, so there's nothing to discard: `closed{draftId}` if this flow changed
  *     it, else `canceled{draftId}`.
+ * A clock type's sheet says what keeping leaves behind ("Keep draft (you're still clocked in)"):
+ * its clock action runs only at Send (AD23), so nothing has changed on the host yet.
+ * After a host confirm that failed, Export's own [Keep draft] (`keepDraft`) leaves the same way
+ * Keep does, without the sheet: `closed{draftId}`, nothing queued.
+ *
  * The host's `close` never shows the sheet: the take is kept (`closed{reason:'host'}`) unless it
  * asks to discard (a shared phone), which deletes a draft this flow made and ends `canceled`. A
  * draft the flow opened is never deleted by the host's close: discard means the take, and that
@@ -121,6 +128,8 @@ export type FlowEvent =
   | { type: 'dismissSheet' }
   /** "Use this video" (uploadMode 'file'), once the export was copied for the host. */
   | { type: 'useVideo'; export: FileRef; durationMs: number; project?: FileRef }
+  /** Export's [Keep draft] after a failed host confirm: leave with the draft kept, unsent. */
+  | { type: 'keepDraft' }
   /** Send (uploadMode 'pulse', PR2), once the job is persisted. */
   | { type: 'send'; sentAt: number; clientKey: string; draftKey: string; confirmedAt?: number }
   /** The host's `close` (`pulse.cmd close`). */
@@ -263,6 +272,9 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
           ...(event.project ? { project: event.project } : null),
         },
       );
+    case 'keepDraft':
+      if (top !== 'export' || !state.draftId) return state;
+      return finish(state, { status: 'closed', reason: 'user', draftId: state.draftId });
     case 'send':
       if (top !== 'export' || !state.draftId) return state;
       return finish(
@@ -280,6 +292,22 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
     default:
       return state; // the sheet's answers with no sheet up
   }
+}
+
+/** The keep/discard sheet's words (final copy is the P0.3 mock's, Q23). */
+export type ExitSheetCopy = { title: string; keep: string; discard: string; cancel: string };
+
+/**
+ * The sheet's words for this flow: a clock type's keep answer says the person is still clocked in
+ * (or out), since closing without Send changes nothing on the host (AD23, B2/B3).
+ */
+export function exitSheetCopy(state: FlowState): ExitSheetCopy {
+  return {
+    title: 'Keep this video?',
+    keep: confirmCopy(state.context?.uploadType).keepDraft,
+    discard: 'Discard video',
+    cancel: 'Cancel',
+  };
 }
 
 /** Show `screen`: back to it when it's just below (recorder ⇄ editor), else on top. */

@@ -51,13 +51,22 @@ import { renameDraft, segmentsForDraft } from '@/db/drafts';
 import { drafts } from '@/db/schema';
 import type { ExportScreenProps } from '@/features/export/contract';
 import { exportActions } from '@/features/export/primary-action';
-import {
-  checkSend,
-  TRIM_LABEL,
-  uploadRulesOf,
-  type UploadRules,
-} from '@/features/export/send-checks';
+import { checkSend, TRIM_LABEL, uploadRulesOf } from '@/features/export/send-checks';
 import { useExport } from '@/features/export/use-export';
+import { exportAudio, mergeWithEditor } from '@/features/export/editor-merge';
+import { resolveMergedExport } from '@/features/export/merged-export';
+import {
+  confirmCopy,
+  KEEP_DRAFT_LABEL,
+  PREPARING_SEND_LABEL,
+  runSend,
+  sendLabel,
+  TRY_AGAIN_LABEL,
+  wantsConfirm,
+  type SendFlowDeps,
+} from '@/features/export/send-flow';
+import { getRecorderFormat } from '@/features/recorder/recorder-format';
+import { sendDraft } from '@/features/upload/core/outbox';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { useToast } from '@/features/toast/toast-provider';
@@ -84,23 +93,57 @@ const NO_CLIPS: readonly never[] = [];
 /** How long after an upload finished its way back to the host is still offered here. */
 const RETURN_OFFER_MS = 10 * 60_000;
 
-/** The draft's own name and its host upload type (embedded drafts only): live, for Send's checks. */
+/**
+ * The draft's own name, its place's label and its host upload type (embedded drafts only): live,
+ * for Send's checks and its button.
+ */
 function draftSendQuery(draftId: string) {
   return db
-    .select({ name: drafts.name, uploadTypeJson: drafts.uploadTypeJson })
+    .select({
+      name: drafts.name,
+      contextLabel: drafts.contextLabel,
+      uploadTypeJson: drafts.uploadTypeJson,
+    })
     .from(drafts)
     .where(eq(drafts.id, draftId));
 }
 
-/** The stored upload type's rules, or null (no host context, or a column that doesn't parse). */
-function rulesOf(uploadTypeJson: string | null | undefined): UploadRules | null {
+/** The stored upload type, parsed, or null (no host context, or a column that doesn't parse). */
+function uploadTypeOf(uploadTypeJson: string | null | undefined): unknown {
   if (!uploadTypeJson) return null;
   try {
-    return uploadRulesOf(JSON.parse(uploadTypeJson));
+    return JSON.parse(uploadTypeJson) as unknown;
   } catch {
     return null;
   }
 }
+
+/** The draft's `host_confirmed_at`: set once a type's confirm ran (the draft is clock-bound). */
+function hostConfirmedAt(draftId: string): number | null {
+  const row = db
+    .select({ at: drafts.hostConfirmedAt })
+    .from(drafts)
+    .where(eq(drafts.id, draftId))
+    .get();
+  return row?.at ?? null;
+}
+
+/** Send's merge: the saved export when it still matches the clips, else a fresh merge. */
+async function mergeForSend(draftId: string): Promise<{ durationMs: number }> {
+  const segments = await segmentsForDraft(draftId);
+  const recorder = await getRecorderFormat();
+  const { durationMs } = await resolveMergedExport(draftId, segments, exportAudio(recorder), () =>
+    mergeWithEditor(segments, recorder, new AbortController().signal, () => {}),
+  );
+  return { durationMs };
+}
+
+/**
+ * Where Export's Send is ('pulse' mode): ready, busy (the merge, then the host's confirm), or
+ * stopped by a failed confirm, with the words for it.
+ */
+type SendState =
+  { phase: 'idle' } | { phase: 'merging' | 'confirming' } | { phase: 'failed'; text: string };
 
 /** The merged file's size, or null when it can't be read. */
 function fileBytes(path: string): number | null {
@@ -179,12 +222,24 @@ export function ExportScreen({
   // shadow (no outline), like the app's other cards.
   const elementSurface = { backgroundColor: theme.card, ...CardShadow } as const;
 
+  // A host's upload type (C7): requireName and requireOnline hold the primary action back, and
+  // over its maxBytes a warning comes before Send. A draft without one (the Pulse app) has no rules.
+  const { data: sendRows } = useLiveQuery(draftSendQuery(draftId), [draftId]);
+  const uploadType = useMemo(() => uploadTypeOf(sendRows[0]?.uploadTypeJson), [sendRows]);
+  const rules = useMemo(() => uploadRulesOf(uploadType), [uploadType]);
+  const draftName = sendRows[0]?.name ?? null;
+  const contextLabel = sendRows[0]?.contextLabel ?? null;
+
   // Uploading needs the video, so the Upload button waits for the merge. It only shows a spinner
   // while the merge runs — a failed merge has its own Retry above, so the button just stays disabled.
   const uploadReady = state.status === 'done';
-  // What the Upload button is called: the picked target's name (the provider's).
+  // What the Upload button is called: the picked target's name (the provider's). Send ('pulse'
+  // mode) is one button like "Use this video", named by the draft's upload type.
   const actions = exportActions({
-    primaryAction,
+    primaryAction:
+      primaryAction.kind === 'send'
+        ? { kind: 'use-video', label: sendLabel(rules, contextLabel) }
+        : primaryAction,
     policy,
     photosAddPurpose,
     merging: state.status === 'merging',
@@ -232,13 +287,16 @@ export function ExportScreen({
       )}
     </>
   );
-  const close = useCallback(() => onClose({ draftLocked: uploading }), [onClose, uploading]);
+  // Send ('pulse' mode, send-flow.ts). While it runs (the merge, the host's confirm) the screen
+  // stays: X and Android back wait, so a clock action can't succeed behind a flow that ended.
+  const [send, setSend] = useState<SendState>({ phase: 'idle' });
+  const sending = send.phase === 'merging' || send.phase === 'confirming';
+  const sendingRef = useRef(false);
+  const close = useCallback(() => {
+    if (sendingRef.current) return;
+    onClose({ draftLocked: uploading });
+  }, [onClose, uploading]);
 
-  // A host's upload type (C7): requireName and requireOnline hold the primary action back, and
-  // over its maxBytes a warning comes before Send. A draft without one (the Pulse app) has no rules.
-  const { data: sendRows } = useLiveQuery(draftSendQuery(draftId), [draftId]);
-  const rules = useMemo(() => rulesOf(sendRows[0]?.uploadTypeJson), [sendRows]);
-  const draftName = sendRows[0]?.name ?? null;
   const online = useSyncExternalStore(subscribeNetwork, isOnline, isOnline);
   const outputPath = state.status === 'done' ? state.outputPath : null;
   const exportBytes = useMemo(
@@ -265,13 +323,63 @@ export function ExportScreen({
   };
   // Android's back button would otherwise pop straight to the recorder.
   useEffect(() => {
-    if (!uploading) return;
+    if (!uploading && !sending) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       close();
       return true;
     });
     return () => sub.remove();
-  }, [uploading, close]);
+  }, [uploading, sending, close]);
+
+  const copy = confirmCopy(uploadType);
+  const startSend = async () => {
+    if (primaryAction.kind !== 'send' || sendingRef.current) return;
+    sendingRef.current = true;
+    setSend({ phase: 'merging' });
+    const deps: SendFlowDeps = {
+      isOnline,
+      sendDraft,
+      merge: () => mergeForSend(draftId),
+      confirmedAt: hostConfirmedAt,
+    };
+    const outcome = await runSend({ draftId, rules, name: draftName, editable }, deps, (phase) =>
+      setSend({ phase }),
+    );
+    sendingRef.current = false;
+    switch (outcome.status) {
+      case 'sent':
+        setSend({ phase: 'idle' });
+        primaryAction.onSent(outcome.sent);
+        return;
+      case 'blocked':
+        // The line under the button says why (sendCheck renders it with the network as it is).
+        setSend({ phase: 'idle' });
+        return;
+      case 'confirmFailed':
+        console.warn(`[export] the host didn't confirm the Send: ${outcome.message}`);
+        setSend({ phase: 'failed', text: copy.failed });
+        return;
+      case 'tooLarge':
+      case 'failed': {
+        const message = outcome.status === 'tooLarge' ? outcome.text : outcome.message;
+        // A type with a confirm stays on its failure (B2: "Couldn't clock out…", the person is
+        // still clocked in); any other type says why and stays ready to Send again.
+        if (wantsConfirm(uploadType)) {
+          console.warn(`[export] Send stopped before the confirm: ${message}`);
+          setSend({ phase: 'failed', text: copy.failed });
+          return;
+        }
+        setSend({ phase: 'idle' });
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t send the video',
+          message:
+            outcome.status === 'tooLarge' ? message : userMessage(message, 'Try again.', 'send'),
+        });
+        return;
+      }
+    }
+  };
 
   const runShare = async () => {
     if (state.status !== 'done' || busy) return;
@@ -439,6 +547,57 @@ export function ExportScreen({
                   });
                 }}
               />
+            )}
+            {/* Inside a host, 'pulse' mode: Send through Pulse's outbox. */}
+            {primaryAction.kind === 'send' && send.phase !== 'failed' && (
+              <PrimaryButton
+                label={
+                  send.phase === 'merging'
+                    ? PREPARING_SEND_LABEL
+                    : send.phase === 'confirming'
+                      ? copy.confirming
+                      : actions.primary.label
+                }
+                icon="icloud.and.arrow.up"
+                busy={sending}
+                accessibilityLabel={
+                  send.phase === 'confirming' ? copy.confirming : actions.primary.accessibilityLabel
+                }
+                accessibilityHint={sendCheck.blockText ?? undefined}
+                disabled={sendCheck.block !== null || sending}
+                testID="export.primary"
+                onPress={() => void startSend()}
+              />
+            )}
+            {/* The host's confirm failed: nothing was sent and the draft is kept as it is. */}
+            {primaryAction.kind === 'send' && send.phase === 'failed' && (
+              <View style={styles.sendFailed}>
+                <ThemedText
+                  type="footnote"
+                  themeColor="warning"
+                  accessibilityLiveRegion="polite"
+                  testID="export.sendFailed">
+                  {send.text}
+                </ThemedText>
+                <View style={styles.finishedRow}>
+                  <PrimaryButton
+                    label={TRY_AGAIN_LABEL}
+                    icon="arrow.clockwise"
+                    disabled={sendCheck.block !== null}
+                    accessibilityHint={sendCheck.blockText ?? undefined}
+                    onPress={() => void startSend()}
+                    style={styles.rowButton}
+                    testID="export.sendRetry"
+                  />
+                  <PrimaryButton
+                    variant="card"
+                    label={KEEP_DRAFT_LABEL}
+                    onPress={primaryAction.onKeepDraft}
+                    style={styles.rowButton}
+                    testID="export.keepDraft"
+                  />
+                </View>
+              </View>
             )}
             {/* Why the primary action is held back: a name, or a connection. */}
             {sendCheck.blockText && (
@@ -895,4 +1054,5 @@ const styles = StyleSheet.create({
   finishedStack: { gap: Spacing.two },
   finishedRow: { flexDirection: 'row', gap: Spacing.two },
   rowButton: { flex: 1 },
+  sendFailed: { alignSelf: 'stretch', gap: Spacing.two },
 });

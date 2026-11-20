@@ -30,26 +30,19 @@ const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 export type UploadMode = 'pulse' | 'file';
 
 export type OpenCheck =
-  | { ok: true; request: OpenRequest }
-  | { ok: false; code: 'invalid_options' | 'unsupported'; message: string };
+  { ok: true; request: OpenRequest } | { ok: false; code: 'invalid_options'; message: string };
 
 /**
  * Check `raw` (the request from the initial props) against the host's configured upload mode
- * (`configure({uploadMode})`, default 'pulse'). In PR1 only 'file' runs: Export has no Send yet,
- * so 'pulse' is `unsupported` (B2) once the request itself is valid.
+ * (`configure({uploadMode})`, default 'pulse'). Both modes run: 'pulse' ends Export with Send
+ * (send-flow.ts, `completed{mode:'pulse'}`), 'file' with "Use this video". An upload mode that is
+ * neither is `invalid_options`, like any malformed field.
  */
 export function checkOpenRequest(raw: unknown, uploadMode: unknown = 'pulse'): OpenCheck {
   let request: OpenRequest;
   try {
     request = openRequest(raw);
-    const mode = uploadModeOf(uploadMode);
-    if (mode === 'pulse') {
-      return {
-        ok: false,
-        code: 'unsupported',
-        message: "uploadMode 'pulse' isn't supported by this version of Pulse; use 'file'.",
-      };
-    }
+    uploadModeOf(uploadMode);
   } catch (e) {
     if (e instanceof Invalid) return { ok: false, code: 'invalid_options', message: e.message };
     throw e;

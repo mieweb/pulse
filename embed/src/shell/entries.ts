@@ -72,7 +72,7 @@ export type OpenRefusal = {
 /**
  * Check the request from the initial props: Pulse's own rules (validate.ts) against the host's
  * configured upload mode. An entry Pulse doesn't have, a `record` without a context or a malformed
- * field is `invalid_options`; uploadMode 'pulse' in PR1 is `unsupported`.
+ * field (an upload mode other than 'pulse' or 'file' among them) is `invalid_options`.
  */
 export function planOpen(props: EmbedProps): OpenPlan | OpenRefusal {
   const requestId = props.requestId ?? '';

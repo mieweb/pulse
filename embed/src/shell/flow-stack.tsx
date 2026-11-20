@@ -19,6 +19,7 @@ import { RecorderScreen } from '@/features/recorder/recorder-screen';
 import { OnDeviceAiSheet } from '@/features/transcription/on-device-ai-sheet';
 import { tallSheetFits } from '@/utils/sheet-fit';
 
+import { exitSheetCopy } from '../flow/reducer';
 import type { FlowController } from './flow-controller';
 import type { FlowStore, StackItem } from './flow-store';
 import type { UiSender } from './messaging';
@@ -38,10 +39,6 @@ const NEW_DRAFT: RecorderNewDraft = { name: null, context: null };
 /** Final copy is the P0.3 mock's (Q23); these are its working words. */
 const COPY = {
   useVideo: 'Use this video',
-  exitTitle: 'Keep this video?',
-  keep: 'Keep draft',
-  discard: 'Discard video',
-  cancel: 'Cancel',
 };
 
 export function FlowStack({
@@ -83,20 +80,22 @@ export function FlowStack({
   useEffect(() => ui({ hasTake }), [ui, hasTake]);
 
   // The keep/discard sheet: X with a take on a draft this flow made.
+  // A clock type's Keep says the person is still clocked in (or out): nothing ran on the host.
   useEffect(() => {
     if (state.sheet !== 'exit') return;
+    const copy = exitSheetCopy(store.state());
     Alert.alert(
-      COPY.exitTitle,
+      copy.title,
       undefined,
       [
-        { text: COPY.keep, onPress: () => store.dispatch({ type: 'keep' }) },
+        { text: copy.keep, onPress: () => store.dispatch({ type: 'keep' }) },
         {
-          text: COPY.discard,
+          text: copy.discard,
           style: 'destructive',
           onPress: () => store.dispatch({ type: 'discard' }),
         },
         {
-          text: COPY.cancel,
+          text: copy.cancel,
           style: 'cancel',
           onPress: () => store.dispatch({ type: 'dismissSheet' }),
         },
@@ -236,11 +235,20 @@ function FlowScreen({
   }, [controller, store]);
   const editorAddClips = useCallback(() => store.dispatch({ type: 'addClips' }), [store]);
   const exportClose = useCallback(() => store.dispatch({ type: 'back' }), [store]);
-  const [primaryAction] = useState<ExportPrimaryAction>(() => ({
-    kind: 'use-video',
-    label: COPY.useVideo,
-    onUse: (video) => void controller.useVideo(video),
-  }));
+  // 'pulse' mode (the default) sends through Pulse's outbox; 'file' hands the video back.
+  const [primaryAction] = useState<ExportPrimaryAction>(() =>
+    config.uploadMode === 'file'
+      ? {
+          kind: 'use-video',
+          label: COPY.useVideo,
+          onUse: (video) => void controller.useVideo(video),
+        }
+      : {
+          kind: 'send',
+          onSent: (sent) => controller.sent(sent),
+          onKeepDraft: () => controller.keepDraft(),
+        },
+  );
   const [policy] = useState<ExportPolicy>(() => ({
     allowShare: config.policy?.allowShare !== false,
     allowSaveToPhotos: config.policy?.allowSaveToPhotos !== false,
