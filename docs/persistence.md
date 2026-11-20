@@ -4,6 +4,11 @@ Pulse keeps its library in one place: the SQLite database `pulse.db`, plus the m
 rows point to under `Documents/drafts/`. A `.pulse` file is a complete copy of drafts or of the
 whole library, made on demand to share, back up or restore. The app never runs on that copy.
 
+PulseKit, Pulse inside another app, keeps one such library per signed-in person, each in a folder
+of its own (a namespace), and adds three tables that never leave the phone: the upload outbox, the
+receipts of sent videos and this install's own settings. Those are covered from
+[Namespaces](#namespaces-pulsekit) on; everything before them applies to both shells.
+
 ## Saves
 
 `src/db/durability.ts` sets these pragmas when the database opens:
@@ -50,8 +55,9 @@ flowchart TD
 paths, derived ones (thumbnails, edited thumbnails, covers, `export.mp4`; see
 `src/utils/media-paths.ts`), and the clip files that transcripts and caption edits were timed against.
 It decides what goes into a `.pulse` file, and protects referenced files from the RNVT leftover
-sweep. Media is only deleted with its draft. Nothing deletes a file for lacking a row, because a
-damaged, empty or restored database would then delete videos.
+sweep. Media is only deleted with its draft, or, in PulseKit, once the host's server has the video
+([Retirement](#retirement-receipt-driven-deletion)). Nothing deletes a file for lacking a row,
+because a damaged, empty or restored database would then delete videos.
 
 ## `.pulse` files
 
@@ -96,3 +102,153 @@ if a schema column is missing from the export.
 - Each export builds its file in its own folder under `Caches/pulse-exports/`
   (`workspace.ts`), so a backup and a draft export never clear each other's files.
 - A backup from a newer schema is refused; an older one is migrated after the swap.
+
+## Namespaces (PulseKit)
+
+Each signed-in person in a host app gets a namespace: `<hostId>-<16 hex>`, where the hex is the
+start of SHA-256 over the server origin and the user id (`PulseKitAccounts.swift`; Node computes the
+same values in `embed/native/ios/namespace-vectors.json`). The host's `setAccount` picks it; the
+facade creates the folders before Pulse's JavaScript starts, and hands their paths to
+`setStorageRoots` (`src/utils/storage-root.ts`) as the runtime's initial props.
+
+```
+Library/PulseKit/<ns>/            documents root: SQLite/pulse.db, drafts/, results/,
+                                  catalog.json, account.json, logs/pulse.log
+Library/Caches/PulseKit/<ns>/     caches root
+Library/PulseKit/.shared/models/  captions models, shared by every namespace
+```
+
+- **One namespace per runtime.** The storage roots and the open database are fixed for the life of
+  Pulse's React Native runtime. `setAccount` for another person after the runtime started answers
+  `restart_required`; the facade's own reads switch to the new namespace at once, so a shared phone
+  never shows the last person's drafts.
+- **Backups and file protection.** `Library/PulseKit` is excluded from iCloud and device backups.
+  Every folder and file in it is `NSFileProtectionCompleteUntilFirstUserAuthentication`, whatever
+  the host's default, so a background upload can read a video with the phone locked.
+- **The facade never opens SQLite.** It reads `catalog.json`, `results/` and `account.json`, which
+  Pulse's JavaScript writes, and `npm run check:embed` fails on `sqlite3_open` in native code.
+- **Purge** (`purge({ namespace })`) deletes a namespace's two folders. If the runtime has that
+  library open, the facade first asks Pulse's JavaScript to close it (`releaseLibrary`) and starts a
+  fresh runtime for whatever comes next. The shared models go only with the last namespace.
+- **PR1's `<hostId>-local`** (the single namespace before accounts) is never adopted into an
+  account. It is deleted when empty, and otherwise listed by `listNamespaces` for the host to purge.
+
+### `catalog.json`
+
+The facade answers `listDrafts`, `getDraft`, `countDrafts` and `usage` from `catalog.json`, without
+starting Pulse. Pulse's embedded runtime writes it (`src/features/drafts/catalog-writer.ts`) at boot
+and 250 ms after a change to a table it is projected from: drafts, clips, transcripts, jobs,
+receipts and the settings that decide `ready` and `hasCaptions`. Only the embedded runtime writes
+it; the Pulse app has none.
+
+Each write goes to `catalog.json.part` and is then moved over `catalog.json`. expo-file-system's
+move deletes the target first, so in that gap, or after a kill inside it, the `.part` is the only
+whole catalog: the reader takes `catalog.json`, else the `.part`, and the next write moves a whole
+`.part` back into place before it starts. The rule is `readCatalogFile` in
+`src/features/drafts/catalog-filter.ts`, and the Swift reader passes the same vectors
+(`src/features/drafts/__vectors__/catalog.json`).
+
+## Host context on drafts
+
+Migration 0020 gives each draft the host place it was recorded for: `context_key` (indexed),
+`context_label`, `context_json` and `upload_type_json`, plus `created_via` (`app` or `host`),
+`host_confirmed_at` and `sent_at`. `src/db/host-context.ts` checks a context before it is stored:
+the key at most 128 characters, the label at most 120, each JSON column at most 8 KB.
+
+- A `.pulse` draft file carries `created_via` but not the place, the confirm or the Send time:
+  a draft opened on another phone, or duplicated, is a plain draft again.
+- A draft whose Send was confirmed by the host (a clock type, `host_confirmed_at` set) can't be
+  moved to another place: `setDraftContext` answers `draft.locked` with reason `clock_bound`.
+
+## Local tables
+
+`upload_jobs`, `upload_receipts` and `local_settings` belong to this phone (`LOCAL_TABLES` in
+`src/db/project.ts`):
+
+| Table             | Holds                                                                            | Restore                         |
+| ----------------- | -------------------------------------------------------------------------------- | ------------------------------- |
+| `upload_jobs`     | One row per sent draft that hasn't retired: the outbox. Cascades with its draft. | Goes with the replaced drafts.  |
+| `upload_receipts` | A retired draft's name, place, outcome and dates, for 7 days. No media.          | Kept.                           |
+| `local_settings`  | The installation id (made on first use) and the Wi-Fi-only choice.               | Kept.                           |
+
+- No `.pulse` file or library backup carries them, and an import that names one is refused as
+  damaged. A backup restored on another phone must not give two phones one installation id, or
+  send the first phone's uploads again.
+- The export coverage check still covers their columns, so a new column needs a scope like any
+  other.
+
+## Upload outbox (PulseKit)
+
+An embedded draft's upload state is its `upload_jobs` row and nothing else (the Pulse app keeps
+using `drafts.upload_status`). Every change is an event decided by the pure `nextJobState` and
+written with the draft's `sent_at` / `host_confirmed_at` in one synchronous transaction
+(`src/features/upload/core/outbox.ts`). The job loop (`runner.ts`) and the host's commands send the
+events.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> preparing: Send
+  preparing --> queued: merged, files written (host confirmed, for confirmSend types)
+  preparing --> [*]: confirm failed, or over maxBytes
+  preparing --> failed: merge failed
+  queued --> uploading: host gave a target
+  uploading --> queued: network or server error (backoff 5 s doubling, at most 15 min)
+  uploading --> delivering: video bytes landed
+  queued --> needs_credentials: host silent 20 s, signed out, or token expired
+  uploading --> needs_credentials: host silent 20 s, signed out, or token expired
+  needs_credentials --> queued: resume
+  queued --> failed: destination.gone, upload.refused, upload.too_large
+  uploading --> failed: destination.gone, upload.refused, upload.too_large
+  delivering --> Retired: the host's outcome (done or kept)
+  queued --> [*]: cancel, rename, edit, Move to, delete
+  uploading --> [*]: cancel
+  needs_credentials --> [*]: cancel, rename, edit, Move to, delete
+  failed --> [*]: cancel, rename, edit, Move to, delete
+```
+
+- **Keys.** `draftKey` is `<installationId>:<draftId>`, the same for every Send of the draft.
+  `clientKey` adds the first 16 hex of SHA-256 over the merged signature, so an edit makes a new
+  one. The server cancels an older `clientKey` with the same `draftKey`.
+- **The lock.** While a job is `preparing`, `uploading` or `delivering`, a rename, an edit, Move to
+  and Delete refuse with `draft.locked` (`cancelUpload` still works while `uploading`). On a
+  `queued`, `needs_credentials` or `failed` job they first take the job out (`cancelJob`): the
+  host's target is released and the job's TUS uploads are deleted.
+- **What a Send freezes.** The merged signature, and the send files under `drafts/<id>/send/`
+  (captions, beat manifest, thumbnail), so a resumed upload sends the bytes the person sent.
+- **Tokens stay in memory.** A job stores the token's expiry, never the token. After a relaunch the
+  loop asks the host again (`refreshUploadToken`).
+- **The launch rule** runs at boot and on `resumeOutbox`: a Send stopped while `preparing` never
+  happened (its job is removed); unfinished retirements are finished; background PATCHes iOS kept
+  running are waited for; then each job asks PulseVault's status route before it HEADs and resumes.
+  A job whose namespace isn't the signed-in one doesn't run.
+
+## Retirement: receipt-driven deletion
+
+A sent draft's media is deleted only after PulseVault's status route reports the host's outcome
+(`done`, or `kept` in the person's library). The draft then becomes a receipt
+(`src/features/upload/core/retire.ts`):
+
+```mermaid
+flowchart TD
+  outcome[Status route reports done or kept] --> tx[One transaction: insert the receipt, delete the draft; the cascade takes its clips, transcripts and job]
+  tx --> folder[Delete drafts/id/]
+  folder -- deleted --> mark[Receipt records media_deleted_at]
+  folder -- fails or the app is killed --> launch[Next launch: delete the folder of every receipt without media_deleted_at, then record it]
+  launch --> mark
+  mark --> expire[After 7 days the receipt is deleted]
+```
+
+- Nothing deletes a folder that no receipt names, and nothing retires a draft before the host has
+  the video. A kill between the transaction and the folder is finished at the next launch.
+- In `uploadMode: 'file'`, the host's `retireDraft` retires the draft the same way, with outcome
+  `done`, as soon as it asks; in `'pulse'` mode it is only a hint, and the status route decides.
+- `dismissReceipt` stops a `kept` receipt counting for attention; it doesn't shorten its 7 days.
+
+## A library a newer PulseKit migrated
+
+PulseKit may meet a library that a newer PulseKit already migrated (a host downgraded its
+plugin). In the embed, Pulse then runs no migrations and no housekeeping on it
+(`guardNewerSchema`, `src/db/client.ts`): it still lists, sends and deletes, while every write that
+creates or edits a draft rejects with `storage.newer_schema`. The catalog says `readOnly`. The Pulse
+app is unchanged: it refuses a newer backup and migrates an older one.
