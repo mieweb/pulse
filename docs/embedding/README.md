@@ -2,16 +2,20 @@
 
 PulseKit is Pulse packaged for another iOS app. Your web page asks for a task (record a video for a
 place, edit a draft, export a draft), Pulse opens full screen over your app, and you get one result
-back when the person is done. The result carries the finished MP4, which your app uploads its own
-way.
+back when the person is done. Pulse can then upload the video to your server itself, carrying on
+after Pulse closes and while your app is in the background, or hand you the finished MP4 to upload
+your own way. Your page can also list the person's unsent drafts and their upload states without
+opening Pulse.
 
 This page is the integration path for a Capacitor or a Cordova app, from install to a first
-result. Follow it top to bottom; it links to [capacitor.md](capacitor.md) and
-[cordova.md](cordova.md) for what is specific to each host.
+result. Follow it top to bottom; it links to the other pages for each topic.
 
 | Page                                     | Read it when you want to                                                        |
 | ---------------------------------------- | ------------------------------------------------------------------------------- |
 | This page                                | Add Pulse to your app and record your first video.                              |
+| [uploads.md](uploads.md)                 | Let Pulse upload the video to your server (`uploadMode: 'pulse'`).              |
+| [drafts.md](drafts.md)                   | List, count, rename, move and delete drafts from your own screens.              |
+| [accounts.md](accounts.md)               | Keep each signed-in person's videos apart, and clean up after sign-out.         |
 | [capacitor.md](capacitor.md)             | See what is specific to a Capacitor 8 app.                                      |
 | [cordova.md](cordova.md)                 | See what is specific to a Cordova (cordova-ios 8) app, including Meteor's.      |
 | [timehuddle-ios.md](timehuddle-ios.md)   | Wire Pulse into TimeHuddle's iOS project (SwiftPM patch and native-sync check). |
@@ -30,19 +34,23 @@ of using `@mieweb/pulse-embed`, so copy their project setup, not their page code
 
 - **Three entries.** `record` (the recorder for a place you name), `edit` (the editor on a draft)
   and `export` (Export on a draft). The person can move between recorder, editor and Export inside
-  one flow. There is no Pulse home screen and no drafts list inside your app.
-- **One flow at a time, one result per flow**: completed (with the video), closed (the take was
-  kept as a draft), canceled (nothing was kept) or failed (with an error code).
+  one flow. There is no Pulse home screen and no drafts list inside Pulse; your app shows the
+  drafts with the [drafts API](drafts.md).
+- **One flow at a time, one result per flow**: completed (sent, or the MP4 handed back), closed
+  (the take was kept as a draft), canceled (nothing was kept) or failed (with an error code).
 - **Results survive a reload.** Pulse writes each result to disk before it tells your page. If
   your page reloads while Pulse is open, or your app is killed before your page handled a result,
   the result waits in `pendingResults()` until you `acknowledge()` it. A flow cut short by the app
   being killed has no result.
+- **Uploads that outlive Pulse.** In `uploadMode: 'pulse'`, Send queues the video and Pulse closes.
+  Pulse asks your page for an upload target, sends the video to your PulseVault server, and keeps
+  going in the background and with the phone locked. See [uploads.md](uploads.md).
+- **One library per signed-in person.** Drafts, uploads and results belong to the account you set
+  with `setAccount()`. Nothing but `getInfo()` and `configure()` works before it: see
+  [accounts.md](accounts.md).
 - **iPhone only.** iOS 16.4 or later. iPad, Mac (Designed for iPad) and Android report
   `supported: false`. Both plugins have an Android side, but it is a stub: `isAvailable()` is false
   there and every other call rejects with `unsupported`.
-- **Not in this version:** Pulse uploading the video for you (`uploadMode: 'pulse'`), the drafts
-  API (`listDrafts` and the other [minor-1 methods](contract.md#minor-1-not-in-this-version)), and
-  accounts. A call to one of those methods rejects with `method.unsupported`.
 
 ## Versions
 
@@ -52,6 +60,9 @@ the npm `latest` tag ([releasing.md](releasing.md#tags-and-versions)).
 
 The three npm packages are released together with the same version. Install them at the same
 exact version (`--save-exact`). `npm view @mieweb/pulse-embed dist-tags` lists what is published.
+
+`pulsekit-v0.1.0-rc.4` was built without PulseKit's native class: in an app that links it,
+`isAvailable()` is false and your fallback shows. Use a later release, or a local build.
 
 ## Before you start
 
@@ -69,13 +80,19 @@ exact version (`--save-exact`). `npm view @mieweb/pulse-embed dist-tags` lists w
   your page calls it. The Cordova reference host sets 16.4; a lower deployment target is UNTESTED.
 - A Capacitor iOS project on CocoaPods (an `ios/App/Podfile` and no `ios/App/CapApp-SPM` folder)
   can't use the plugin: `@mieweb/capacitor-pulse` ships a `Package.swift` and no podspec.
-- Your app needs somewhere to send the finished MP4 (your own upload endpoint), and a fallback for
-  where Pulse isn't available: a desktop browser, Android, an iPad.
+- The signed-in user's id and your server's origin: Pulse keeps each person's videos apart by them.
+- Somewhere for the video to go: a server with PulseVault and an upload route for Pulse to reach
+  through your page (`uploadMode: 'pulse'`, [uploads.md](uploads.md)), or your own upload endpoint
+  for the MP4 (`uploadMode: 'file'`).
+- A fallback for where Pulse isn't available: a desktop browser, Android, an iPad.
 
 ## Add Pulse, step by step
 
 > **UNTESTED from npm.** These steps have not been run from a published release candidate yet.
 > The [support matrix](support-matrix.md) says which pieces have run, and where.
+
+The code on this page uses `uploadMode: 'file'`, the shortest way to a first result. To let Pulse
+upload instead, do these steps, then [uploads.md](uploads.md).
 
 ### 1. Install the packages
 
@@ -118,14 +135,25 @@ against a PulseKit you built yourself, see
 Name your own app's places in the purpose strings ("TimeHuddle records videos for tickets and
 clock sessions"), because the person sees them as your app's request.
 
-Your `AppDelegate` needs no change. PulseKit has a hook for background upload events, but this
-version doesn't upload, so a host that doesn't forward to it loses nothing.
+If Pulse uploads to a server on your local network or over plain `http` while you develop, the app
+also needs `NSLocalNetworkUsageDescription` and an App Transport Security exception for that server.
 
-### 3. Configure Pulse on every page load
+### 3. Forward background upload events in your `AppDelegate`
 
-Call `configure()` once per page load, before any other Pulse call, with `uploadMode: 'file'`. The
-default, `'pulse'`, isn't available in this version: without `'file'`, every flow ends `failed`
-with `unsupported`.
+Pulse's uploads run in iOS background sessions, so iOS can relaunch your app to deliver an upload's
+events. Your `AppDelegate` hands those events to PulseKit; the code is in
+[uploads.md](uploads.md#forward-background-upload-events). A host that only uses
+`uploadMode: 'file'` can skip this step.
+
+### 4. Configure Pulse on every page load
+
+Call `configure()` once per page load, before any other Pulse call. `uploadMode` decides what
+Export's primary action does:
+
+| `uploadMode`        | Export's primary action                                | The `completed` result carries                |
+| ------------------- | ------------------------------------------------------ | --------------------------------------------- |
+| `'pulse'` (default) | Send: the video is queued for upload, and Pulse closes | `sentAt`, `clientKey` and `draftKey`; no file |
+| `'file'`            | Use this video                                         | `export`, the MP4 for your app to upload      |
 
 ```ts
 import { getPulse } from '@mieweb/pulse-embed';
@@ -137,9 +165,22 @@ await pulse.configure({ uploadMode: 'file', hostName: 'TimeHuddle' });
 `getPulse()` finds the plugin itself (Capacitor's `Pulse` plugin, then Cordova's
 `window.PulseKit`, otherwise none), so the same page code runs in a desktop browser. On Cordova it
 waits for `deviceready`, up to 10 s, before it answers. The other options (`theme`, `policy`,
-`hostId`) are in [contract.md](contract.md#configureoptions).
+`hostId`, `captions`) are in [contract.md](contract.md#configureoptions).
 
-### 4. Open Pulse where it can run
+### 5. Set the signed-in account
+
+Call `setAccount()` after `configure()`, on sign-in and whenever your page restores a session, and
+`setAccount(null)` on sign-out. Until an account is set, `open`, `pendingResults` and every drafts
+call reject with `no_account`.
+
+```ts
+await pulse.setAccount({ serverOrigin: 'https://timehuddle.mieweb.org', userId: 'u_8Kq2fd' });
+```
+
+Pulse keeps one library per account. Switching to another person after Pulse has run in this app
+session rejects with `restart_required`; [accounts.md](accounts.md) says what to do then.
+
+### 6. Open Pulse where it can run
 
 `isAvailable()` is false in a desktop browser, on Android, on an iPad and on iOS before 16.4. Show
 your fallback there: a link, a QR code to the Pulse app, a file input.
@@ -147,19 +188,21 @@ your fallback there: a link, a QR code to the Pulse app, a file input.
 Where it's true, open one of the three entries. Each resolves with a `FlowResult` when the flow
 ends, which can be minutes later:
 
-| Call                         | Opens                                          |
-| ---------------------------- | ---------------------------------------------- |
-| `pulse.record(context)`      | The recorder, on a new draft for `context`.    |
-| `pulse.edit(draftId)`        | The editor, on a draft from an earlier result. |
-| `pulse.exportDraft(draftId)` | Export, on a draft from an earlier result.     |
+| Call                         | Opens                                       |
+| ---------------------------- | ------------------------------------------- |
+| `pulse.record(context)`      | The recorder, on a new draft for `context`. |
+| `pulse.edit(draftId)`        | The editor, on a draft.                     |
+| `pulse.exportDraft(draftId)` | Export, on a draft.                         |
 
 `context` is the place in your app the video is for: `key` (build it with
 `contextKey(kind, id)`), `kind`, `id`, `label` (what the recorder shows, up to 120 characters), and
-an optional `data` that Pulse hands back unchanged in the result.
+an optional `data` that Pulse hands back unchanged in results, in the drafts list and when it asks
+for an upload target. An optional `uploadType` sets what Send asks of the person
+([uploads.md](uploads.md#upload-types)).
 
 Only one flow is open at a time. A second call while one is open rejects with `busy`.
 
-### 5. Handle the result, then acknowledge it
+### 7. Handle the result, then acknowledge it
 
 A result can reach your page three ways: the promise from `record`, `edit` or `exportDraft`; a
 `flowResult` event; and `pendingResults()`. The same result can come through more than one of
@@ -167,32 +210,33 @@ them, so send all three to one handler that ignores a result it has already hand
 
 | `status`      | What your app does                                                                                      |
 | ------------- | ------------------------------------------------------------------------------------------------------- |
-| `'completed'` | Upload `result.export`, keep `draftId`, then acknowledge.                                               |
-| `'closed'`    | The take was kept as a draft. Keep `draftId` if you offer "continue", then acknowledge.                 |
+| `'completed'` | File mode: upload `result.export`, then acknowledge. Pulse mode: the video is queued; acknowledge.      |
+| `'closed'`    | The take was kept as a draft; it shows in `listDrafts()`. Acknowledge.                                  |
 | `'canceled'`  | Nothing was kept. Acknowledge.                                                                          |
 | `'failed'`    | Show your message for `result.error.code` ([troubleshooting.md](troubleshooting.md)), then acknowledge. |
 
-`acknowledge(requestId)` deletes the stored result and its MP4 copy, so read or upload the file
-first. `result.export.webUrl` is a URL your WebView can load in a `<video>` or with `fetch()`;
-don't write to it.
+`acknowledge(requestId)` deletes the stored result and, in file mode, its MP4 copy, so read or
+upload the file first. `result.export.webUrl` is a URL your WebView can load in a `<video>` or
+with `fetch()`; don't write to it.
 
-### 6. Read pending results on every page load
+### 8. Read pending results on every page load
 
 The `record()` promise belongs to the page that called it. If the page reloads while Pulse is
 open, or the app is killed before your page acknowledged a result, the result comes through
 `pendingResults()` or a `flowResult` event instead. Subscribe to `flowResult` and call
-`pendingResults()` after `configure()` on every page load.
+`pendingResults()` after `setAccount()` on every page load.
 
-### The code for steps 3 to 6
+### The code for steps 4 to 8
 
 ```ts
 import { contextKey, getPulse, isPulseError, type FlowResult } from '@mieweb/pulse-embed';
 
-// showFallback, uploadVideo and saveDraftId are your app's own code.
+// currentUser, showFallback and uploadVideo are your app's own code.
 const pulse = getPulse();
 
 export async function startPulse() {
   await pulse.configure({ uploadMode: 'file', hostName: 'TimeHuddle' });
+  await pulse.setAccount({ serverOrigin: 'https://timehuddle.mieweb.org', userId: currentUser.id });
   pulse.on('flowResult', (result) => void handleResult(result));
   for (const result of await pulse.pendingResults()) await handleResult(result);
 }
@@ -221,9 +265,6 @@ async function handleResult(result: FlowResult) {
   if (result.status === 'completed' && result.mode === 'file') {
     const video = await (await fetch(result.export.webUrl)).blob();
     await uploadVideo(result.context?.key, video, result.durationMs);
-    await saveDraftId(result.context?.key, result.draftId);
-  } else if (result.status === 'closed') {
-    await saveDraftId(result.context?.key, result.draftId);
   }
   await pulse.acknowledge(result.requestId);
 }
@@ -234,8 +275,9 @@ async function handleResult(result: FlowResult) {
 - In rare cases PulseKit ends a flow itself and Pulse's own result for the same `requestId` arrives
   later, with another status. The handler above treats it as new; act on the latest one
   ([contract.md](contract.md#results)).
+- On sign-out, call `pulse.setAccount(null)`.
 
-### 7. Build and run
+### 9. Build and run
 
 - **Capacitor:** `npx cap sync ios`, then `npx cap open ios` and run the `App` scheme on an iPhone
   or an iPhone Simulator.
@@ -245,15 +287,15 @@ async function handleResult(result: FlowResult) {
 The first build downloads PulseKit's frameworks; later builds use the Swift Package Manager or
 CocoaPods cache.
 
-## What your app keeps
+## Where the videos live
 
-| Keep                              | From                                    | Why                                                                       |
-| --------------------------------- | --------------------------------------- | ------------------------------------------------------------------------- |
-| The video                         | `result.export` of a `completed` result | Pulse deletes its copy when you acknowledge.                              |
-| `draftId`, next to your own place | `completed` and `closed` results        | To reopen the draft later with `edit(draftId)` or `exportDraft(draftId)`. |
+Drafts stay on the phone, in PulseKit's folder for the signed-in account, until they are sent and
+your server has them. Your app doesn't need to keep draft ids: `listDrafts()` reads them back for
+any place, and the `draftsChanged` event says when they change ([drafts.md](drafts.md)). If a draft
+no longer exists, `edit` or `exportDraft` ends `failed` with `not_found`.
 
-Drafts stay on the phone, in PulseKit's own folder. If a draft no longer exists, `edit` or
-`exportDraft` ends `failed` with `not_found`; drop your `draftId` then.
+In file mode, keep the video from `result.export` before you acknowledge: acknowledging deletes
+Pulse's copy. The draft itself stays until you call `retireDraft(draftId)`.
 
 ## Use a local build instead of npm
 
@@ -303,29 +345,22 @@ import { createFakePulse } from '@mieweb/pulse-embed/testing';
 
 const fake = createFakePulse({
   flows: [{ result: 'file' }], // what each open does, in order; the last one repeats
-  // The methods this PulseKit answers; without this list the fake also answers minor-1 methods.
-  info: {
-    methods: [
-      'info',
-      'configure',
-      'prewarm',
-      'open',
-      'close',
-      'isOpen',
-      'pendingResults',
-      'acknowledge',
-      'logFile',
-    ],
-  },
 });
 window.__PULSE_ADAPTER__ = fake.adapter;
 ```
 
-- Other steps: `{ result: 'kept' }` ends `closed`, `{ result: 'discarded' }` ends `canceled`,
+- Other steps: `{ result: 'sent' }` ends `completed` in pulse mode with an upload queued,
+  `{ result: 'kept' }` ends `closed`, `{ result: 'discarded' }` ends `canceled`,
   `{ result: 'failed', code: 'storage.full' }` ends `failed`. `afterMs` on a step keeps that flow
   open that long.
+- The fake starts signed in to a test account, so data calls work before your page's
+  `setAccount()`; `account: null` starts it signed out. Drafts you seed with `drafts: [...]` move
+  to the account your page sets first.
 - `fake.dropNextResult()` sends the next result only to the inbox, as if the page had reloaded
-  while Pulse was open; `fake.reload()` returns the new page's client. Use them to test step 6.
+  while Pulse was open; `fake.reload()` returns the new page's client. Use them to test step 8.
+- `fake.transition(draftId, { type: 'failed', code: 'upload.refused' })` moves an upload without a
+  server, so you can test how your screens show each state. With `server: { fixture }`, the fake
+  uploads for real over TUS to the target your `getUploadTarget` returns.
 - The fake's `export.webUrl` is a `fakepulse://local/...` URL, which `fetch()` can't load. If your
   code reads the file, pass `toWebUrl: (path) => ...` to `createFakePulse` and return a URL your
   test server answers.
@@ -341,7 +376,8 @@ import { createFakePulse, runPulseContract } from '@mieweb/pulse-embed/testing';
 runPulseContract((setup) => createFakePulse(setup), { describe, it, expect });
 ```
 
-The suite runs under Jest on every Pulse PR; under Vitest it is UNTESTED.
+The suite runs under Jest on every Pulse PR, against the fake and against Pulse's own JavaScript,
+so the fake answers the way Pulse does wherever the suite can tell. Under Vitest it is UNTESTED.
 
 ## Done when
 
@@ -356,15 +392,15 @@ Check each of these in your app:
 - [ ] The app's `Info.plist` has `NSCameraUsageDescription`, `NSMicrophoneUsageDescription`,
       `NSPhotoLibraryUsageDescription`, `NSPhotoLibraryAddUsageDescription`, and
       `UIViewControllerBasedStatusBarAppearance` set to `YES`.
-- [ ] Your page calls `configure({ uploadMode: 'file' })` once per load, before any other Pulse
-      call.
+- [ ] Your page calls `configure()` once per load, before any other Pulse call, then
+      `setAccount()` for the signed-in person, and `setAccount(null)` on sign-out.
 - [ ] Your page subscribes to `flowResult` and handles `pendingResults()` on every load.
-- [ ] Every path through your result handler ends in `acknowledge(requestId)`, and a `completed`
-      result is acknowledged only after its upload succeeded.
+- [ ] Every path through your result handler ends in `acknowledge(requestId)`, and a file-mode
+      `completed` result is acknowledged only after its upload succeeded.
 - [ ] A result handled twice does nothing the second time.
 - [ ] Where `isAvailable()` is false, your fallback shows and your Pulse button doesn't.
-- [ ] Your tests pass against `createFakePulse` with `flows: [{ result: 'file' }]`, including a
-      dropped result read back with `pendingResults()` after `fake.reload()`.
+- [ ] Your tests pass against `createFakePulse`, including a dropped result read back with
+      `pendingResults()` after `fake.reload()`.
 - [ ] On an iPhone or Simulator: `getInfo()` answers `supported: true`, `record()` opens the
-      recorder, and "Use this video" on Export gives a `completed` result whose `export.webUrl`
-      plays in a `<video>`.
+      recorder, and Export's primary action gives a `completed` result.
+- [ ] In pulse mode, the checks at the end of [uploads.md](uploads.md#done-when) too.
