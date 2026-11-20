@@ -37,9 +37,6 @@ public final class PulseKit: NSObject {
   /// Event envelopes (§2.3), on the main queue. Set by the plugin; one subscriber.
   @objc public var onEvent: ((String) -> Void)?
 
-  /// Background URLSession completion handlers by session identifier (PulseKitBackground.swift).
-  var backgroundCompletions: [String: () -> Void] = [:]
-
   private var config: [String: JSONValue] = [:]
   private var flow: Flow?
   private var commands: [String: (JSONValue) -> Void] = [:]
@@ -65,6 +62,10 @@ public final class PulseKit: NSObject {
     super.init()
     network.onChange = { [weak self] old, new in self?.networkChanged(from: old, to: new) }
     network.start()
+    // Background uploads (PulseKitBackground.swift): their listener and sessions from the first
+    // `shared` access, with no UI or React Native, so tasks iOS kept running have a delegate and
+    // Pulse JS's first upload message is heard.
+    PulseKitUploads.shared.start()
   }
 
   /// The open flow: one request, presented once, ended by exactly one result.
