@@ -1,13 +1,24 @@
 import { useEvent } from 'expo';
+import { eq } from 'drizzle-orm';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
+import { File } from 'expo-file-system';
 import { Icon } from '@/components/icon';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
   ActivityIndicator,
   BackHandler,
   Pressable,
   StyleSheet,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -25,39 +36,113 @@ import {
   ButtonHeight,
   CardShadow,
   ControlScrim,
+  MaxTextScale,
   Opacity,
   Radius,
   Spacing,
 } from '@/constants/theme';
+import { isOnline, subscribeNetwork } from '@/core/network';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { captionYQuery } from '@/db/captions';
-import { segmentsForDraft } from '@/db/drafts';
+import { db } from '@/db/client';
+import { libraryNewerSchema } from '@/db/host-context';
+import { captionsOffQuery, setCaptionsOff } from '@/db/settings';
+import { renameDraft, segmentsForDraft } from '@/db/drafts';
+import { drafts } from '@/db/schema';
 import type { ExportScreenProps } from '@/features/export/contract';
 import { exportActions } from '@/features/export/primary-action';
+import { checkSend, TRIM_LABEL, uploadRulesOf } from '@/features/export/send-checks';
 import { useExport } from '@/features/export/use-export';
+import {
+  confirmCopy,
+  KEEP_DRAFT_LABEL,
+  PREPARING_SEND_LABEL,
+  runSend,
+  sendLabel,
+  stoppedSend,
+  TRY_AGAIN_LABEL,
+  type SendFlowDeps,
+} from '@/features/export/send-flow';
+import { mergeForSend } from '@/features/export/send-merge';
+import { sendDraft } from '@/features/upload/core/outbox';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
 import { useToast } from '@/features/toast/toast-provider';
 import { SkiaCaption } from '@/features/transcription/skia-caption';
 import { captionStyleFor } from '@/features/transcription/caption-style';
+import { captionsModelPolicy } from '@/features/transcription/model-policy';
 import { type DraftCaptions, useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import type { TranscriptLine } from '@/features/transcription/whisper';
-import { destinationSpokenName } from '@/features/upload/destination-options';
-import { DestinationSelector } from '@/features/upload/destination-selector';
-import { shareUploadLink, watchUpload } from '@/features/upload/link-actions';
-import { backToHost } from '@/features/upload/link-messages';
-import { uploadPhaseLabel } from '@/features/upload/phase-label';
-import { uploads } from '@/features/upload/upload-manager';
-import { useUpload } from '@/features/upload/use-upload';
-import { useUploadAnnouncement, useWatchLink } from '@/features/upload/use-uploads';
+import { uploadPhaseLabel } from '@/features/upload/core/phase-label';
+import { useUploadTargets } from '@/features/upload/core/target-provider';
+import { uploads } from '@/features/upload/core/upload-manager';
+import { useUpload } from '@/features/upload/core/use-upload';
+import { useUploadAnnouncement, useWatchLink } from '@/features/upload/core/use-uploads';
 import { useParkedPlayback } from '@/hooks/use-parked-playback';
+import { DRAFT_NAME_MAX_LENGTH, dropSplitSurrogate } from '@/utils/draft-name';
 import { toFileUri } from '@/utils/file-store';
-import { formatClipCount, formatDuration, hostOf } from '@/utils/format';
+import { formatClipCount, formatDuration } from '@/utils/format';
 import { effMs } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
 
+/** No clips: a draft whose captions are off asks for none. */
+const NO_CLIPS: readonly never[] = [];
+
 /** How long after an upload finished its way back to the host is still offered here. */
 const RETURN_OFFER_MS = 10 * 60_000;
+
+/**
+ * The draft's own name, its place's label and its host upload type (embedded drafts only): live,
+ * for Send's checks and its button.
+ */
+function draftSendQuery(draftId: string) {
+  return db
+    .select({
+      name: drafts.name,
+      contextLabel: drafts.contextLabel,
+      uploadTypeJson: drafts.uploadTypeJson,
+    })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+}
+
+/** The stored upload type, parsed, or null (no host context, or a column that doesn't parse). */
+function uploadTypeOf(uploadTypeJson: string | null | undefined): unknown {
+  if (!uploadTypeJson) return null;
+  try {
+    return JSON.parse(uploadTypeJson) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** The draft's `host_confirmed_at`: set once a type's confirm ran (the draft is clock-bound). */
+function hostConfirmedAt(draftId: string): number | null {
+  const row = db
+    .select({ at: drafts.hostConfirmedAt })
+    .from(drafts)
+    .where(eq(drafts.id, draftId))
+    .get();
+  return row?.at ?? null;
+}
+
+/**
+ * Where Export's Send is ('pulse' mode): ready, busy (the merge, then the host's confirm), or
+ * stopped for a type with a confirm, with the words for it and whether [Try again] can help.
+ */
+type SendState =
+  | { phase: 'idle' }
+  | { phase: 'merging' | 'confirming' }
+  | { phase: 'failed'; text: string; retry: boolean };
+
+/** The merged file's size, or null when it can't be read. */
+function fileBytes(path: string): number | null {
+  try {
+    return new File(toFileUri(path)).size ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Merges the draft into one video, previews it, and offers the primary action (the pool's Upload,
@@ -70,7 +155,9 @@ export function ExportScreen({
   policy,
   photosAddPurpose = true,
   onClose,
+  onTrim,
   onBackToHost,
+  onReady,
 }: ExportScreenProps) {
   const insets = useSafeAreaInsets();
 
@@ -78,11 +165,12 @@ export function ExportScreen({
   // Zero-length clips (failed native reads) can't be concatenated — drop them before merging.
   const clips = useMemo(() => segments.filter((s) => effMs(s) > 0), [segments]);
 
-  // Stable ref (not a plain value) so `useUpload` can be called — and its `destination`/pool
-  // read — before the merge finishes. It's read at enqueue time, once the merge is done. See the
-  // `useUpload` doc comment.
+  // Stable ref (not a plain value) so `useUpload` can be called before the merge finishes. It's
+  // read at enqueue time, once the merge is done. See the `useUpload` doc comment.
   const mergedRef = useRef<{ path: string; durationMs: number } | null>(null);
   const upload = useUpload(draftId, clips, mergedRef);
+  // The shell's targets to pick from, its picker, and the one picked.
+  const targets = useUploadTargets();
 
   // The merge runs on mount: Share/Save/Preview and the upload all need the one video.
   const { state, run } = useExport(draftId, clips);
@@ -92,10 +180,33 @@ export function ExportScreen({
     mergedRef.current =
       state.status === 'done' ? { path: state.outputPath, durationMs: state.durationMs } : null;
   }, [state]);
+  // Tell the shell the video is ready from the merge's own state, a saved export used as is
+  // included: that one writes nothing to the library, so the shell can't see it there.
+  useEffect(() => {
+    if (state.status === 'done') {
+      onReady?.({ draftId, path: state.outputPath, durationMs: state.durationMs });
+    }
+  }, [state, draftId, onReady]);
+
+  // Embedded, the person can turn captions off for this video (O6): its clips aren't
+  // transcribed for it from then on, and it goes without them (getDraftCaptions). The Pulse app
+  // never shows the switch, so its drafts keep their captions as before.
+  const captionsSwitch = captionsModelPolicy.embedded();
+  const { data: captionsOffRows } = useLiveQuery(captionsOffQuery(draftId), [draftId]);
+  const captionsOff = captionsOffRows[0]?.value === 'true';
+  const toggleCaptions = () => {
+    setCaptionsOff(draftId, !captionsOff).catch((e) =>
+      showToast({
+        kind: 'error',
+        title: captionsOff ? 'Couldn’t turn captions on' : 'Couldn’t turn captions off',
+        message: userMessage(e, 'Try again.', 'captions'),
+      }),
+    );
+  };
 
   // The draft's captions, composed from its clips (made and edited in the editor), where they
-  // were moved to there. No wait for the merge.
-  const captions = useDraftCaptions(draftId, clips);
+  // were moved to there. No wait for the merge. Turned off, none are asked for or shown.
+  const captions = useDraftCaptions(draftId, captionsOff ? NO_CLIPS : clips);
   const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionY = captionRows[0]?.captionY ?? null;
 
@@ -109,23 +220,28 @@ export function ExportScreen({
   // shadow (no outline), like the app's other cards.
   const elementSurface = { backgroundColor: theme.card, ...CardShadow } as const;
 
+  // A host's upload type (C7): requireName and requireOnline hold the primary action back, and
+  // over its maxBytes a warning comes before Send. A draft without one (the Pulse app) has no rules.
+  const { data: sendRows } = useLiveQuery(draftSendQuery(draftId), [draftId]);
+  const uploadType = useMemo(() => uploadTypeOf(sendRows[0]?.uploadTypeJson), [sendRows]);
+  const rules = useMemo(() => uploadRulesOf(uploadType), [uploadType]);
+  const draftName = sendRows[0]?.name ?? null;
+  const contextLabel = sendRows[0]?.contextLabel ?? null;
+
   // Uploading needs the video, so the Upload button waits for the merge. It only shows a spinner
   // while the merge runs — a failed merge has its own Retry above, so the button just stays disabled.
   const uploadReady = state.status === 'done';
-  // What the Upload button is called: the place's own label when its link gave one, else the
-  // server's host. The label is the link's word, not the server's: the chip above the button
-  // shows the host under it, and the button says both to a screen reader.
-  const selected = upload.selectedDestination;
-  const selectedHost = selected ? hostOf(selected.server) : '';
-  const selectedName = selected ? (selected.label ?? selectedHost) : '';
+  // What the Upload button is called: the picked target's name (the provider's). Send ('pulse'
+  // mode) is one button like "Use this video", named by the draft's upload type.
   const actions = exportActions({
-    primaryAction,
+    primaryAction:
+      primaryAction.kind === 'send'
+        ? { kind: 'use-video', label: sendLabel(rules, contextLabel) }
+        : primaryAction,
     policy,
     photosAddPurpose,
     merging: state.status === 'merging',
-    destination: selected
-      ? { name: selectedName, spokenName: destinationSpokenName(selected) }
-      : null,
+    destination: targets.picked,
   });
   const pool = actions.primary.kind === 'upload';
   // Local const so TS narrows the discriminated union within the UPLOAD section below — property
@@ -151,7 +267,7 @@ export function ExportScreen({
   const [openedAt] = useState(() => Date.now());
   const back =
     onBackToHost && announcement && (justFinished || announcement.at > openedAt - RETURN_OFFER_MS)
-      ? backToHost(announcement.returnTo)
+      ? targets.backToHost(announcement.returnTo)
       : null;
   const backButton = back && (
     <>
@@ -169,16 +285,100 @@ export function ExportScreen({
       )}
     </>
   );
-  const close = useCallback(() => onClose({ draftLocked: uploading }), [onClose, uploading]);
+  // Send ('pulse' mode, send-flow.ts). While it runs (the merge, the host's confirm) the screen
+  // stays: X and Android back wait, so a clock action can't succeed behind a flow that ended.
+  const [send, setSend] = useState<SendState>({ phase: 'idle' });
+  const sending = send.phase === 'merging' || send.phase === 'confirming';
+  const sendingRef = useRef(false);
+  const close = useCallback(() => {
+    if (sendingRef.current) return;
+    onClose({ draftLocked: uploading });
+  }, [onClose, uploading]);
+
+  const online = useSyncExternalStore(subscribeNetwork, isOnline, isOnline);
+  const outputPath = state.status === 'done' ? state.outputPath : null;
+  const exportBytes = useMemo(
+    () => (rules?.maxBytes != null && outputPath ? fileBytes(outputPath) : null),
+    [rules, outputPath],
+  );
+  // A library a newer Pulse migrated takes no name (only edits are refused; it still sends), so
+  // the name field goes and requireName doesn't hold it back.
+  const editable = !libraryNewerSchema();
+  const sendCheck = checkSend({ rules, name: draftName, online, exportBytes, editable });
+  // Checked again at the tap, with the network as it is then.
+  const sendAllowedNow = () =>
+    checkSend({ rules, name: draftName, online: isOnline(), exportBytes, editable }).block === null;
+  const submitName = (input: string) => {
+    const name = dropSplitSurrogate(input).trim() || null;
+    if (name === draftName) return;
+    renameDraft(draftId, name).catch((e) =>
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t name the video',
+        message: userMessage(e, 'Try again.', 'rename'),
+      }),
+    );
+  };
   // Android's back button would otherwise pop straight to the recorder.
   useEffect(() => {
-    if (!uploading) return;
+    if (!uploading && !sending) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       close();
       return true;
     });
     return () => sub.remove();
-  }, [uploading, close]);
+  }, [uploading, sending, close]);
+
+  const copy = confirmCopy(uploadType);
+  const startSend = async () => {
+    if (primaryAction.kind !== 'send' || sendingRef.current) return;
+    sendingRef.current = true;
+    primaryAction.onSending?.(true);
+    setSend({ phase: 'merging' });
+    const deps: SendFlowDeps = {
+      isOnline,
+      sendDraft,
+      merge: () => mergeForSend(draftId),
+      confirmedAt: hostConfirmedAt,
+    };
+    const outcome = await runSend({ draftId, rules, name: draftName, editable }, deps, (phase) =>
+      setSend({ phase }),
+    );
+    sendingRef.current = false;
+    // A Send that went ends the flow (onSent); any other lets a held host close through.
+    if (outcome.status !== 'sent') primaryAction.onSending?.(false);
+    switch (outcome.status) {
+      case 'sent':
+        setSend({ phase: 'idle' });
+        primaryAction.onSent(outcome.sent);
+        return;
+      case 'blocked':
+        // The line under the button says why (sendCheck renders it with the network as it is).
+        setSend({ phase: 'idle' });
+        return;
+      case 'confirmFailed':
+      case 'tooLarge':
+      case 'failed': {
+        const message = outcome.status === 'tooLarge' ? outcome.text : outcome.message;
+        // A type with a confirm stays on its failure (send-flow.ts `stoppedSend`); any other type
+        // says why and stays ready to Send again.
+        const stopped = stoppedSend(outcome, uploadType);
+        if (stopped) {
+          console.warn(`[export] Send stopped (${outcome.status}): ${message}`);
+          setSend({ phase: 'failed', ...stopped });
+          return;
+        }
+        setSend({ phase: 'idle' });
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t send the video',
+          message:
+            outcome.status === 'tooLarge' ? message : userMessage(message, 'Try again.', 'send'),
+        });
+        return;
+      }
+    }
+  };
 
   const runShare = async () => {
     if (state.status !== 'done' || busy) return;
@@ -198,21 +398,17 @@ export function ExportScreen({
   // The pool selector + claim button, shared by every non-uploading state — including a draft
   // that was already uploaded before (claiming re-pairs it and restarts cleanly, see `claim`),
   // so a destination paired after a finished upload is always reachable.
-  const selectorAndUpload = (upload.destinations.length > 0 || upload.reopen) && (
+  const selectorAndUpload = (targets.available || targets.reopen) && (
     <>
       {/* The draft's own destination is gone, and it never falls back to another one. */}
-      {upload.reopen && !upload.selectedId && (
+      {targets.reopen && (
         <ThemedText type="footnote" themeColor="textSecondary" accessibilityRole="text">
-          {upload.reopen}
+          {targets.reopen}
         </ThemedText>
       )}
-      {upload.destinations.length > 0 && (
+      {targets.available && (
         <>
-          <DestinationSelector
-            destinations={upload.destinations}
-            selectedId={upload.selectedId}
-            onSelect={upload.setSelectedId}
-          />
+          {targets.picker}
           {/* The section is already titled Upload: the icon and the destination say the rest.
               Middle truncation keeps the domain's end (e.g. "…mieweb.org") visible. */}
           <PrimaryButton
@@ -220,8 +416,8 @@ export function ExportScreen({
             icon="icloud.and.arrow.up"
             busy={state.status === 'merging'}
             truncate={state.status !== 'merging' ? 'middle' : undefined}
-            onPress={() => void upload.claim(upload.selectedId)}
-            disabled={!upload.selectedId || !uploadReady}
+            onPress={() => void targets.resolvePicked().then(upload.claim)}
+            disabled={!targets.picked || !uploadReady}
             accessibilityLabel={actions.primary.accessibilityLabel}
             testID="export.primary"
           />
@@ -258,11 +454,79 @@ export function ExportScreen({
               uri={state.outputPath}
               // What the upload will carry: the captions once every clip that speaks has its
               // words (getDraftCaptions sends none before), so the preview never shows more.
-              lines={uploadCarries(captions) ? captions.lines : []}
+              lines={!captionsOff && uploadCarries(captions) ? captions.lines : []}
               captionY={captionY}
               meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
-              note={<CaptionsNote captions={captions} />}
+              note={captionsOff ? null : <CaptionsNote captions={captions} />}
             />
+
+            {/* Embedded: captions for this video, on unless the person turns them off. */}
+            {captionsSwitch && (
+              <Pressable
+                onPress={toggleCaptions}
+                disabled={uploading}
+                accessibilityRole="switch"
+                accessibilityLabel="Captions"
+                accessibilityState={{ checked: !captionsOff, disabled: uploading }}
+                testID="export.captions"
+                // 34pt pill + 5 each side = a 44pt tap target.
+                hitSlop={5}
+                style={({ pressed }) => [
+                  styles.smallButton,
+                  elementSurface,
+                  uploading && styles.disabled,
+                  pressed && styles.pressed,
+                ]}>
+                <Icon
+                  name={captionsOff ? 'captions.bubble' : 'captions.bubble.fill'}
+                  size={14}
+                  tintColor={theme.text}
+                  scalesWithText
+                />
+                <ThemedText type="subheadline">
+                  {captionsOff ? 'Captions off' : 'Captions on'}
+                </ThemedText>
+              </Pressable>
+            )}
+
+            {/* The host's type asks for a name: the field to give one. */}
+            {rules?.requireName && editable && (
+              <TextInput
+                defaultValue={draftName ?? ''}
+                placeholder="Name this video"
+                placeholderTextColor={theme.textSecondary}
+                maxLength={DRAFT_NAME_MAX_LENGTH}
+                maxFontSizeMultiplier={MaxTextScale}
+                returnKeyType="done"
+                accessibilityLabel="Video name"
+                onEndEditing={(e) => submitName(e.nativeEvent.text)}
+                style={[styles.nameInput, elementSurface, { color: theme.text }]}
+                testID="export.name"
+              />
+            )}
+
+            {/* Over the host's size cap: said before Send, with the way to make it smaller. */}
+            {sendCheck.tooLarge && (
+              <View style={styles.sendNote} accessibilityLiveRegion="polite">
+                <ThemedText type="footnote" themeColor="warning" style={styles.sendNoteText}>
+                  {sendCheck.tooLarge.text}
+                </ThemedText>
+                {/* Trim only where the shell can take the person to the editor (onTrim). A flow
+                    opened straight on Export has none: the warning stays, Send isn't blocked. */}
+                {onTrim && (
+                  <Pressable
+                    onPress={onTrim}
+                    accessibilityRole="button"
+                    hitSlop={12}
+                    testID="export.trim"
+                    style={({ pressed }) => pressed && styles.pressed}>
+                    <ThemedText type="footnote" themeColor="accent" style={styles.trimLabel}>
+                      {TRIM_LABEL}
+                    </ThemedText>
+                  </Pressable>
+                )}
+              </View>
+            )}
 
             {/* Inside a host: hand the video back to it. */}
             {primaryAction.kind === 'use-video' && (
@@ -270,15 +534,81 @@ export function ExportScreen({
                 label={actions.primary.label}
                 icon="checkmark"
                 accessibilityLabel={actions.primary.accessibilityLabel}
+                accessibilityHint={sendCheck.blockText ?? undefined}
+                disabled={sendCheck.block !== null}
                 testID="export.primary"
-                onPress={() =>
+                onPress={() => {
+                  if (!sendAllowedNow()) return;
                   primaryAction.onUse({
                     draftId,
                     path: state.outputPath,
                     durationMs: state.durationMs,
-                  })
-                }
+                  });
+                }}
               />
+            )}
+            {/* Inside a host, 'pulse' mode: Send through Pulse's outbox. */}
+            {primaryAction.kind === 'send' && send.phase !== 'failed' && (
+              <PrimaryButton
+                label={
+                  send.phase === 'merging'
+                    ? PREPARING_SEND_LABEL
+                    : send.phase === 'confirming'
+                      ? copy.confirming
+                      : actions.primary.label
+                }
+                icon="icloud.and.arrow.up"
+                busy={sending}
+                accessibilityLabel={
+                  send.phase === 'confirming' ? copy.confirming : actions.primary.accessibilityLabel
+                }
+                accessibilityHint={sendCheck.blockText ?? undefined}
+                disabled={sendCheck.block !== null || sending}
+                testID="export.primary"
+                onPress={() => void startSend()}
+              />
+            )}
+            {/* The host's confirm failed: nothing was sent and the draft is kept as it is. */}
+            {primaryAction.kind === 'send' && send.phase === 'failed' && (
+              <View style={styles.sendFailed}>
+                <ThemedText
+                  type="footnote"
+                  themeColor="warning"
+                  accessibilityLiveRegion="polite"
+                  testID="export.sendFailed">
+                  {send.text}
+                </ThemedText>
+                <View style={styles.finishedRow}>
+                  {send.retry && (
+                    <PrimaryButton
+                      label={TRY_AGAIN_LABEL}
+                      icon="arrow.clockwise"
+                      disabled={sendCheck.block !== null}
+                      accessibilityHint={sendCheck.blockText ?? undefined}
+                      onPress={() => void startSend()}
+                      style={styles.rowButton}
+                      testID="export.sendRetry"
+                    />
+                  )}
+                  <PrimaryButton
+                    variant="card"
+                    label={KEEP_DRAFT_LABEL}
+                    onPress={primaryAction.onKeepDraft}
+                    style={styles.rowButton}
+                    testID="export.keepDraft"
+                  />
+                </View>
+              </View>
+            )}
+            {/* Why the primary action is held back: a name, or a connection. */}
+            {sendCheck.blockText && (
+              <ThemedText
+                type="footnote"
+                themeColor="textSecondary"
+                accessibilityLiveRegion="polite"
+                testID="export.sendBlocked">
+                {sendCheck.blockText}
+              </ThemedText>
             )}
 
             {/* Compact inline row — these are secondary actions; the upload button(s) below
@@ -388,8 +718,8 @@ export function ExportScreen({
             pick shows no upload UI at all (§ post-upload UX — no persistent buttons), but for
             the way back to the host its upload just came from. */}
         {pool &&
-          (upload.destinations.length > 0 ||
-            upload.reopen ||
+          (targets.available ||
+            targets.reopen ||
             uState.status === 'uploading' ||
             finished ||
             back) && (
@@ -429,7 +759,7 @@ export function ExportScreen({
                       variant={back ? 'card' : 'filled'}
                       label="Watch"
                       icon="play.fill"
-                      onPress={() => void watchUpload(finished.link.url)}
+                      onPress={() => void targets.watch(finished.link.url)}
                       style={styles.rowButton}
                     />
                     {/* Only a link that's safe to share — never one carrying the upload token. */}
@@ -438,7 +768,7 @@ export function ExportScreen({
                         variant="card"
                         label="Share link"
                         icon="square.and.arrow.up"
-                        onPress={() => void shareUploadLink(finished.link.url).catch(() => {})}
+                        onPress={() => void targets.share(finished.link.url).catch(() => {})}
                         style={styles.rowButton}
                       />
                     )}
@@ -702,8 +1032,28 @@ const styles = StyleSheet.create({
   },
   uploadingLabel: { flex: 1, fontVariant: ['tabular-nums'] },
   pressed: { opacity: Opacity.pressed },
+  disabled: { opacity: Opacity.disabled },
+  // The host type's name field: a card like the secondary buttons, as tall as a row.
+  nameInput: {
+    alignSelf: 'stretch',
+    minHeight: 44,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Radius.button,
+    borderCurve: 'continuous',
+    fontSize: 17,
+  },
+  sendNote: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+  },
+  sendNoteText: { textAlign: 'center' },
+  trimLabel: { fontWeight: '600' },
   pressedIcon: { opacity: Opacity.pressedGlyph },
   finishedStack: { gap: Spacing.two },
   finishedRow: { flexDirection: 'row', gap: Spacing.two },
   rowButton: { flex: 1 },
+  sendFailed: { alignSelf: 'stretch', gap: Spacing.two },
 });

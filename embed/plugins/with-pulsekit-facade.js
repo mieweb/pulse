@@ -12,6 +12,9 @@ const FILES = [
   'PulseKitInbox.swift',
   'PulseKitPresenter.swift',
   'PulseKitBackground.swift',
+  'PulseKitAccounts.swift',
+  'PulseKitCatalog.swift',
+  'PulseKitStorage.swift',
 ];
 
 // PulseKit's privacy manifest (K2), a resource at the framework's root, where Apple's privacy
@@ -42,6 +45,28 @@ function addAliasFlag(project, target) {
   }
 }
 
+// The facade builds with the `headless` capability on (PulseKitInfo.swift; spike S3 passed on an
+// iPhone 2026-11-20): host writes boot Pulse with no screen instead of "Preparing…".
+// `PULSEKIT_HEADLESS=0 npm run prebuild` builds it off.
+const HEADLESS_CONDITION = 'PULSEKIT_HEADLESS';
+
+/** Adds or removes HEADLESS_CONDITION in each configuration's SWIFT_ACTIVE_COMPILATION_CONDITIONS. */
+function setHeadless(project, target, on) {
+  const lists = project.pbxXCConfigurationList();
+  const configs = project.pbxXCBuildConfigurationSection();
+  const list = lists[target.buildConfigurationList];
+  for (const { value } of (list && list.buildConfigurations) || []) {
+    const settings = configs[value] && configs[value].buildSettings;
+    if (!settings) continue;
+    const current = String(settings.SWIFT_ACTIVE_COMPILATION_CONDITIONS || '$(inherited)')
+      .replace(/^"|"$/g, '')
+      .split(/\s+/)
+      .filter((c) => c && c !== HEADLESS_CONDITION);
+    if (on) current.push(HEADLESS_CONDITION);
+    settings.SWIFT_ACTIVE_COMPILATION_CONDITIONS = `"${current.join(' ')}"`;
+  }
+}
+
 /**
  * Adds `name` (already copied into the target's folder) to the target's Copy Bundle Resources.
  * The host app has a PrivacyInfo.xcprivacy of its own, so this looks in the PulseKit group only.
@@ -58,6 +83,44 @@ function addResource(project, targetUuid, groupKey, name) {
     { target: targetUuid, lastKnownFileType: 'text.xml', defaultEncoding: 4 },
     groupKey,
   );
+}
+
+/** The Sources build phase of the target with this uuid, or undefined. */
+function sourcesPhaseOf(project, targetUuid) {
+  const objects = project.hash.project.objects;
+  const target = (objects.PBXNativeTarget || {})[targetUuid];
+  const phase = (target?.buildPhases || []).find((p) => objects.PBXSourcesBuildPhase?.[p.value]);
+  return phase && objects.PBXSourcesBuildPhase[phase.value];
+}
+
+/**
+ * Puts `name`'s build file in the PulseKit target's Sources phase and takes it out of every other
+ * target's. addSourceFile's `target` option finds the phase by its "Sources" comment, which
+ * expo-brownfield's target doesn't have, so the xcode library files the source under the first
+ * target, the Pulse app. A `-scheme PulseKit` build then never compiles the facade, and the
+ * framework ships without its `PulseKit` class (pulsekit-v0.1.0-rc.4).
+ */
+function compileInPulseKit(project, targetUuid, name) {
+  const kit = sourcesPhaseOf(project, targetUuid);
+  if (!kit) throw new Error(`with-pulsekit-facade: the ${TARGET} target has no Sources phase.`);
+  const comment = `${name} in Sources`;
+  const phases = Object.entries(project.hash.project.objects.PBXSourcesBuildPhase || {}).filter(
+    ([key]) => !key.endsWith('_comment'),
+  );
+  let file;
+  for (const [, phase] of phases) {
+    if (phase === kit) continue;
+    const found = (phase.files || []).filter((f) => f.comment === comment);
+    if (found.length) {
+      file = file ?? found[0];
+      phase.files = phase.files.filter((f) => f.comment !== comment);
+    }
+  }
+  kit.files = kit.files || [];
+  if (file && !kit.files.some((f) => f.comment === comment)) kit.files.push(file);
+  if (!kit.files.some((f) => f.comment === comment)) {
+    throw new Error(`with-pulsekit-facade: ${name} isn't in the ${TARGET} target's sources.`);
+  }
 }
 
 /** A pbxproj name without the quotes the xcode library may keep around it (`"PulseKit"`). */
@@ -98,6 +161,7 @@ module.exports = function withPulseKitFacade(config) {
     for (const name of FILES) {
       fs.copyFileSync(path.join(__dirname, '../native/ios', name), path.join(dir, name));
       if (!project.hasFile(name)) project.addSourceFile(name, { target: targetUuid }, groupKey);
+      compileInPulseKit(project, targetUuid, name);
     }
     fs.copyFileSync(
       path.join(__dirname, '../native/ios', PRIVACY_MANIFEST),
@@ -105,6 +169,7 @@ module.exports = function withPulseKitFacade(config) {
     );
     addResource(project, targetUuid, groupKey, PRIVACY_MANIFEST);
     addAliasFlag(project, target);
+    setHeadless(project, target, process.env.PULSEKIT_HEADLESS !== '0');
     return cfg;
   });
 };

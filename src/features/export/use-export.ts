@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { mergedSignature } from '@/core/media/merge-signature';
 import type { Segment } from '@/db/schema';
 import { getRecorderFormat } from '@/features/recorder/recorder-format';
-import { describeError } from '@/features/upload/upload-log';
+import { describeError } from '@/features/upload/core/upload-log';
 
 import { exportAudio, mergeWithEditor } from './editor-merge';
 import { resolveMergedExport } from './merged-export';

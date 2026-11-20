@@ -2,6 +2,7 @@
 // pushes (src/app/recorder.tsx); the embed shell maps them to its own flow. The screen itself never
 // navigates.
 import type { DraftContext } from '@/db/drafts';
+import type { HostContext } from '@/db/host-context';
 
 /** What a draft this recorder creates starts with (read once, on mount). */
 export type RecorderNewDraft = {
@@ -9,6 +10,13 @@ export type RecorderNewDraft = {
   name: string | null;
   /** The place the draft is recorded for; null for none. */
   context: DraftContext | null;
+  /**
+   * Embedded: the host place the flow records for (its `PulseContext`, with the upload type). A
+   * draft made here stores it, and the recorder shows its banner. Absent in the Pulse app.
+   */
+  hostContext?: HostContext | null;
+  /** Which shell makes the draft (`createDraft`'s `createdVia`); default 'app'. */
+  createdVia?: 'app' | 'host';
 };
 
 /** How the recorder was left. */

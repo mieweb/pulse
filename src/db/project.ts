@@ -55,6 +55,20 @@ const tableName = (t: SQLiteTable) => getTableConfig(t).name;
 /** Tables a selection carries (a draft and its rows); the others go only with the library. */
 const DRAFT_TABLES = new Set(['drafts', 'segments', 'draft_transcripts', 'clip_transcripts']);
 const LIBRARY_TABLES = new Set(['settings', 'upload_destinations']);
+/**
+ * Tables that never travel: the upload outbox, the receipts of sent drafts and this install's own
+ * values. No document or library backup carries them, and a document naming one is refused. A
+ * restore keeps this phone's receipts and values; the jobs go with the drafts it replaces.
+ */
+export const LOCAL_TABLES = new Set(['upload_jobs', 'upload_receipts', 'local_settings']);
+const isLocal = (t: SQLiteTable) => LOCAL_TABLES.has(tableName(t));
+/** The tables documents and restores carry, parents first. */
+const CARRIED = TABLES.filter((t) => !isLocal(t));
+/**
+ * What a restore keeps of this phone's LOCAL rows: the receipts and its own values. A restore
+ * replaces every draft, so each outbox job goes with its draft.
+ */
+const KEPT_BY_RESTORE = TABLES.filter((t) => isLocal(t) && t !== schema.uploadJobs);
 
 /** The newest schema migration this build ships. */
 export const APP_SCHEMA_VERSION = journal.entries[journal.entries.length - 1].when;
@@ -73,6 +87,15 @@ export function schemaVersion(conn: SQLiteDatabase): number | null {
 }
 
 /**
+ * Whether a newer Pulse migrated `conn`: its newest migration is later than this build's newest and
+ * not one this build ships.
+ */
+export function isNewerSchema(conn: SQLiteDatabase): boolean {
+  const version = schemaVersion(conn);
+  return version != null && version > APP_SCHEMA_VERSION && !KNOWN_SCHEMA_VERSIONS.has(version);
+}
+
+/**
  * Fail closed when the database and schema.ts disagree: a table or column only the database has
  * (a migration without its schema change) would be left out of every export.
  */
@@ -86,7 +109,7 @@ export function assertSchemaCoverage(conn: SQLiteDatabase): void {
   for (const name of live) {
     const table = known.get(name);
     if (!table) throw new Error(`Export coverage: table ${name} is not in schema.ts`);
-    if (!DRAFT_TABLES.has(name) && !LIBRARY_TABLES.has(name)) {
+    if (!DRAFT_TABLES.has(name) && !LIBRARY_TABLES.has(name) && !LOCAL_TABLES.has(name)) {
       throw new Error(`Export coverage: table ${name} has no export scope`);
     }
     const columns = new Set(Object.values(getTableColumns(table)).map((c) => c.name));
@@ -164,7 +187,7 @@ export function buildProject(
   assertSchemaCoverage(conn);
   const { draftIds } = opts;
   const tables: Record<string, Row[]> = {};
-  for (const t of TABLES) {
+  for (const t of CARRIED) {
     const name = tableName(t);
     if (draftIds && !DRAFT_TABLES.has(name)) continue;
     tables[name] = selectRows(conn, t, draftIds);
@@ -215,6 +238,8 @@ export function checkProject(value: unknown): ProjectDocument {
     TABLES.map((t) => [tableName(t), new Set(Object.keys(getTableColumns(t)))]),
   );
   for (const [name, rows] of Object.entries(doc.tables)) {
+    // Never written into a document: one that carries them wasn't made by Pulse.
+    if (LOCAL_TABLES.has(name)) throw new Error(DAMAGED_PROJECT);
     const columns = known.get(name);
     if (!columns || !Array.isArray(rows)) throw new Error(NEWER);
     for (const row of rows) {
@@ -252,12 +277,15 @@ export function checkProject(value: unknown): ProjectDocument {
   return doc;
 }
 
-/** Insert `rows` (by table name) in schema order, in batches under SQLite's variable limit. */
+/**
+ * Insert `rows` (by table name) in schema order, in batches under SQLite's variable limit. LOCAL
+ * tables are never inserted from a document.
+ */
 function insertAll(
   tx: { insert: ReturnType<typeof drizzle>['insert'] },
   rows: Record<string, Row[]>,
 ) {
-  for (const t of TABLES) {
+  for (const t of CARRIED) {
     const list = rows[tableName(t)] ?? [];
     for (let i = 0; i < list.length; i += 100) {
       tx.insert(t)
@@ -269,14 +297,68 @@ function insertAll(
 
 /**
  * Exact restore: the library becomes the document's rows, in one transaction. The caller puts
- * the media back first (same paths) — rows never point at files that aren't there yet.
+ * the media back first (same paths) — rows never point at files that aren't there yet. This
+ * phone's receipts and local settings stay as they were; the outbox jobs go with the drafts the
+ * restore replaces (as the foreign key's cascade would delete them).
  */
 export function restoreProject(conn: SQLiteDatabase, doc: ProjectDocument): void {
   if (doc.scope !== 'library') throw new Error('Only a library backup can replace the library.');
   drizzle(conn).transaction((tx) => {
-    for (const t of [...TABLES].reverse()) tx.delete(t).run();
+    tx.delete(schema.uploadJobs).run();
+    for (const t of [...CARRIED].reverse()) tx.delete(t).run();
     insertAll(tx, doc.tables);
   });
+}
+
+/** The LOCAL tables `conn` has (a library before migration 0020 has none). */
+function localTablesIn(conn: SQLiteDatabase): SQLiteTable[] {
+  return TABLES.filter(
+    (t) =>
+      isLocal(t) &&
+      conn.getFirstSync(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        tableName(t),
+      ) != null,
+  );
+}
+
+/** Empty `conn`'s LOCAL tables: a library backup's copy of the database carries none of them. */
+export function clearLocalTables(conn: SQLiteDatabase): void {
+  const tables = localTablesIn(conn);
+  drizzle(conn).transaction((tx) => {
+    for (const t of tables) tx.delete(t).run();
+  });
+}
+
+/**
+ * Before a library backup's database (`to`) replaces this phone's (`from`), as `restoreProject`
+ * does for a document: `to` gets this phone's receipts and local settings instead of any it has,
+ * and no outbox jobs (the restore replaces every draft). A table `to` lacks (a backup from before
+ * migration 0020) can't take rows: they're dropped, as on a fresh install. If the rows can't be
+ * carried, `to` is left with none rather than another phone's.
+ */
+export function carryLocalTables(from: SQLiteDatabase, to: SQLiteDatabase): void {
+  const target = localTablesIn(to);
+  try {
+    const source = new Set(localTablesIn(from));
+    const read = drizzle(from);
+    const rows = KEPT_BY_RESTORE.filter((t) => target.includes(t) && source.has(t)).map(
+      (t) => [t, read.select().from(t).all() as Row[]] as const,
+    );
+    drizzle(to).transaction((tx) => {
+      for (const t of target) tx.delete(t).run();
+      for (const [t, list] of rows) {
+        for (let i = 0; i < list.length; i += 100) {
+          tx.insert(t)
+            .values(list.slice(i, i + 100))
+            .run();
+        }
+      }
+    });
+  } catch (e) {
+    console.warn('[db] this phone’s local rows could not be carried into the restore', e);
+    clearLocalTables(to);
+  }
 }
 
 export type CopyPlan = {
@@ -290,7 +372,7 @@ export type CopyPlan = {
  * A copy of the document's drafts under fresh ids, every path moved under the new ids (as
  * `duplicateDraft` names them) and every reference to a path — signatures, caption edits, clip
  * transcripts — rewritten to match. Not carried, as for a duplicate: the upload pairing, the
- * place, and the merged export (merged again). Pure; `commitCopy` writes it.
+ * place (a link's or a host's), and the merged export (merged again). Pure; `commitCopy` writes it.
  */
 export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan {
   const t = doc.tables;
@@ -363,6 +445,13 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
         uploadStatus: null,
         contextServer: null,
         contextRef: null,
+        // A copy isn't for the original's host place, nor sent or confirmed (its origin stays).
+        contextKey: null,
+        contextLabel: null,
+        contextJson: null,
+        uploadTypeJson: null,
+        hostConfirmedAt: null,
+        sentAt: null,
         mergedSignature: null,
         mergedDurationMs: null,
       })),

@@ -44,9 +44,10 @@ import { pollOutcome, sizeOf, TusError, uploadArtifact, type FetchLike } from '.
  *   window.__PULSE_ADAPTER__ = fake.adapter;
  *
  * Flows (open) follow `script.flows`, one step per open, repeating the last. The data API (drafts,
- * outbox states, locks, receipts, accounts) is the fake's reading of PLAN §5–§6 and the contract
- * files; it is provisional until PR2-K runs the same contract suite against the real code and fixes
- * the fake where they differ. Those parts are marked `PR2-K`.
+ * outbox states, locks, receipts, accounts) follows the real Pulse JS code: the same contract
+ * suite (runPulseContract) runs against both (embed/src/test-support/contract-parity.test.ts), and
+ * where they differed the fake was changed. What the suite can't reach (the fake's own TUS client,
+ * `transition`, namespaces hashed with FNV-1a instead of SHA-256) is the fake's own model.
  */
 
 /** A flow step, plus how long the flow stays open and fields a newer facade might add. */
@@ -57,7 +58,7 @@ export type FakeStep = FakeFlowStep & {
   extra?: { [key: string]: Json };
 };
 
-/** Simulated outbox moves for a job, without a server (PR2-K: provisional). */
+/** Simulated outbox moves for a job, without a server (the fake's own model). */
 export type FakeUploadEvent =
   | { type: 'uploading'; progress?: number }
   | { type: 'delivering' }
@@ -87,13 +88,17 @@ export interface FakeScript extends Omit<FakePulseScript, 'flows' | 'server' | '
     fixture: Blob | ArrayBuffer;
     pollMs?: number;
     related?: FakeRelatedPart[];
-    /** Default: the global `fetch`. */
+    /** Default: the global `fetch` (called unbound, so it works in a browser). */
     fetch?: FetchLike;
   };
   /**
    * The signed-in account at start. Default: a fixed test account, so data calls work without
-   * `setAccount`; `null` starts signed out (data calls reject `no_account`). Seeded drafts belong
-   * to this account (or the default one when null).
+   * `setAccount`; `null` starts signed out (data calls reject `no_account`).
+   *
+   * Seeded drafts (`drafts`) belong to the person the page signs in first: they sit in this
+   * account's namespace (keyed by the `hostId` the page configures) until the page's first
+   * `setAccount` with an account, and then move to that account's namespace, so a host that binds
+   * its own hostId and signed-in user finds them without knowing the fake's ids.
    */
   account?: PulseAccount | null;
   /** Default: `fakepulse://local<path>`. */
@@ -118,7 +123,7 @@ export interface FakePulseHandle extends FakePulse {
   drafts(): DraftSummary[];
   /** Every hostRequest payload the fake sent, oldest first. */
   hostRequests: { hostCallId: string; method: string; args: Json; deadline: number }[];
-  /** Moves a draft's job without a server (PR2-K: provisional). Throws when it has no job. */
+  /** Moves a draft's job without a server (the fake's own model). Throws when it has no job. */
   transition(draftId: string, e: FakeUploadEvent): void;
   /** Resolves once no flow is ending and no upload is running (a flow left open by a failed confirmSend counts as idle). */
   idle(): Promise<void>;
@@ -163,12 +168,48 @@ export const FAKE_ACCOUNT: PulseAccount = Object.freeze({
 });
 
 const DEFAULT_HOST_ID = 'fake.host';
+/** The contract minor this facade answers: minor 1, the data API (like PulseKit.contractMinor). */
+const FACADE_MINOR = 1;
 const HOST_DEADLINE_MS = 20_000;
 const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_DURATION_MS = 5_000;
 const DEFAULT_BYTES = 1_048_576;
 
 const LOCKED: readonly string[] = ['preparing', 'uploading', 'delivering', 'sent'];
+/** The job states that lock a draft against the host's writes (PLAN §6.1). */
+const JOB_LOCKED: readonly string[] = ['preparing', 'uploading', 'delivering'];
+
+/** A host context Pulse stores (host-context.ts `hostContextColumns`), or why not. */
+function contextProblem(c: unknown): string | null {
+  if (!isObject(c)) return 'The context must be an object.';
+  if (
+    typeof c.key !== 'string' ||
+    c.key.length > 128 ||
+    !/^[a-z0-9._-]+:[a-z0-9._:-]+$/.test(c.key)
+  ) {
+    return 'The context key must be kind:id, 1–128 chars of [a-z0-9._:-].';
+  }
+  if (typeof c.label !== 'string' || c.label.trim().length === 0) {
+    return 'The context label must not be blank.';
+  }
+  if (Array.from(c.label).length > 120) return 'The context label must be at most 120 characters.';
+  return null;
+}
+
+/** The codes a host's refusal keeps (host-services.ts HOST_CODES); any other is host.unavailable. */
+const HOST_CODES: readonly string[] = [
+  'destination.gone',
+  'upload.refused',
+  'upload.too_large',
+  'no_account',
+  'host.unavailable',
+];
+/** The host refusals that fail a job for good (outbox.ts `hostErrorEvent`). */
+const PERMANENT_HOST_CODES: readonly string[] = [
+  'destination.gone',
+  'upload.refused',
+  'upload.too_large',
+];
 
 type JobState =
   'preparing' | 'queued' | 'uploading' | 'delivering' | 'needs_credentials' | 'failed';
@@ -181,7 +222,7 @@ const JOB_STATES: readonly string[] = [
   'failed',
 ];
 
-// PR2-K: the job and draft rows below are the fake's model of upload_jobs / drafts / receipts.
+// The job and draft rows below are the fake's model of upload_jobs / drafts / receipts.
 interface Job {
   state: JobState;
   clientKey: string;
@@ -199,7 +240,8 @@ interface Job {
 interface Row {
   id: string;
   draftKey: string;
-  name: string;
+  /** Its own name, or null: then it is shown by its place's label (drafts.ts draftDisplayName). */
+  name: string | null;
   context: PulseContext | null;
   clipCount: number;
   durationMs: number;
@@ -210,6 +252,12 @@ interface Row {
   confirmedSentAt?: number;
   /** The export is current ('ready' without a job). */
   exported: boolean;
+  /**
+   * The draft's cut (its clips as they are): a Send's clientKey is the draftKey plus a hash of it
+   * (client-key.ts), so a Send of the same cut has the same clientKey. A take or an edit changes
+   * it; a rename or a move doesn't.
+   */
+  cut: string;
   job?: Job;
   receipt?: DraftReceipt;
   createdVia: 'app' | 'host';
@@ -315,9 +363,13 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
   const now = script.now ?? (() => Date.now());
   const steps: FakeStep[] =
     script.flows && script.flows.length > 0 ? script.flows : [{ result: 'sent' }];
+  // The global fetch is called through a wrapper: a browser's `fetch` called as a method of
+  // another object throws "Illegal invocation".
   const fetchImpl: FetchLike | undefined =
     script.server?.fetch ??
-    (typeof fetch === 'function' ? (fetch as unknown as FetchLike) : undefined);
+    (typeof fetch === 'function'
+      ? (url, init) => (fetch as unknown as FetchLike)(url, init)
+      : undefined);
   const installationId = `fake-${hex(8)}`;
 
   let stepIndex = 0;
@@ -402,7 +454,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     return p;
   }
 
-  // ── Accounts and rows (PR2-K: provisional) ───────────────────────────────────────────────────
+  // ── Accounts and rows ──────────────────────────────────────────────────────────────────────────
 
   function namespaceFor(a: PulseAccount, hostId: string): string {
     return `${hostId}-${hash16(`${originOf(a.serverOrigin)}\n${a.userId}`)}`;
@@ -414,10 +466,33 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     return s;
   }
 
+  // The seeded drafts' namespace: the starting account's, until the page's first setAccount with
+  // an account takes them over (`bindSeeds`); a configure before that re-keys it by its hostId.
   const seedAccount = script.account ?? FAKE_ACCOUNT;
-  const seedNs = namespaceFor(seedAccount, DEFAULT_HOST_ID);
-  const seedSpace = space(seedNs, seedAccount, DEFAULT_HOST_ID);
+  let seedNs = namespaceFor(seedAccount, DEFAULT_HOST_ID);
+  let seedSpace = space(seedNs, seedAccount, DEFAULT_HOST_ID);
+  let seedsBound = false;
   active = script.account === null ? null : seedNs;
+
+  /** configure before any sign-in: the starting namespace is keyed by the host's own hostId. */
+  function rekeySeeds(hostId: string): void {
+    if (seedsBound || seedSpace.hostId === hostId) return;
+    const ns = namespaceFor(seedSpace.account, hostId);
+    spaces.delete(seedNs);
+    seedSpace = { ...seedSpace, hostId };
+    spaces.set(ns, seedSpace);
+    if (active === seedNs) active = ns;
+    seedNs = ns;
+  }
+
+  /** The page's first sign-in: the seeded drafts move to that account's namespace. */
+  function bindSeeds(ns: string, s: Space): void {
+    if (seedsBound) return;
+    seedsBound = true;
+    if (ns === seedNs) return;
+    for (const [id, r] of seedSpace.rows) s.rows.set(id, r);
+    spaces.delete(seedNs);
+  }
 
   function root(): string {
     return `/fake/PulseKit/${active ?? '_'}`;
@@ -443,7 +518,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       ...(r.extra as object),
       id: r.id,
       draftKey: r.draftKey,
-      name: r.name,
+      name: displayName(r),
       context: r.context,
       state,
       clipCount: r.clipCount,
@@ -488,6 +563,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       durationMs: d.durationMs ?? DEFAULT_DURATION_MS,
       hasCaptions: d.hasCaptions === true,
       exported: state !== 'draft',
+      cut: hex(16),
       createdVia: d.createdVia ?? 'host',
       createdAt: d.createdAt ?? now(),
       updatedAt: d.updatedAt ?? now(),
@@ -512,7 +588,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       // A seeded waiting_network is a queued job: the fake derives the state from setOnline.
       r.job = {
         state: state === 'waiting_network' ? 'queued' : (state as JobState),
-        clientKey: d.upload?.clientKey ?? `${r.draftKey}:${hex(16)}`,
+        clientKey: d.upload?.clientKey ?? clientKeyOf(r),
         sentAt: d.upload?.sentAt ?? r.updatedAt,
         attempts: d.upload?.attempts ?? 0,
         ...(d.upload?.uploadId ? { uploadId: d.upload.uploadId } : {}),
@@ -551,6 +627,11 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     emitEvent('draftsChanged', { namespace: active, ids });
   }
 
+  /** What a draft is called where it's shown: its own name, else its place's label. */
+  function displayName(r: Row): string {
+    return r.name || r.context?.label || 'Untitled';
+  }
+
   function touch(r: Row): void {
     r.updatedAt = Math.max(now(), r.updatedAt + 1);
   }
@@ -566,19 +647,89 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     }
   }
 
+  /** A draft (not a receipt) by id: a receipt is no draft to the commands (router.ts). */
+  function draftRow(id: unknown): Row {
+    const r = row(id);
+    if (r.receipt) throw new Failure('not_found', `No draft ${r.id}.`, { draftId: r.id });
+    return r;
+  }
+
+  /**
+   * The commands' lock check (router.ts `checkDraft`): the draft the open flow holds, then the
+   * job states that lock this command (default: preparing, uploading, delivering).
+   */
+  function checkLock(r: Row, lockedStates: readonly string[] = JOB_LOCKED): void {
+    if (flow && !flow.ended && flow.draftId === r.id) {
+      throw new Failure('draft.locked', `Draft ${r.id} is open in Pulse.`, { draftId: r.id });
+    }
+    if (r.job && lockedStates.includes(r.job.state)) {
+      throw new Failure('draft.locked', `Draft ${r.id} is ${r.job.state}.`, { draftId: r.id });
+    }
+  }
+
+  /**
+   * `upload(id)` (outbox.ts `sendDraft`): a job already queued or paused answers with its keys; one
+   * under way refuses `draft.locked`; otherwise the type's `maxBytes` and, once per draft, its
+   * `confirmSend` (a clock-bound draft keeps its first sentAt), then a new job.
+   */
+  async function hostSend(r: Row): Promise<Json> {
+    checkLock(r, []);
+    const job = r.job;
+    if (job && (job.state === 'queued' || job.state === 'needs_credentials')) {
+      return { clientKey: job.clientKey, draftKey: r.draftKey, sentAt: job.sentAt };
+    }
+    if (job && job.state !== 'failed') {
+      throw new Failure('draft.locked', `Draft ${r.id} is ${job.state}.`, { draftId: r.id });
+    }
+    const bytes = r.bytes ?? fixtureBytes();
+    const type = r.context?.uploadType;
+    if (typeof type?.maxBytes === 'number' && bytes > type.maxBytes) {
+      throw new Failure(
+        'upload.too_large',
+        `Draft ${r.id} is ${bytes} bytes, over its upload type's ${type.maxBytes}.`,
+        { draftId: r.id },
+      );
+    }
+    let sentAt = now();
+    if (r.confirmedAt !== undefined) {
+      sentAt = r.confirmedSentAt ?? sentAt;
+    } else if (type?.confirmSend) {
+      let answer: ConfirmSendResult;
+      try {
+        answer = (await askHost('confirmSend', {
+          draftId: r.id,
+          draftKey: r.draftKey,
+          context: r.context as PulseContext,
+          uploadType: type,
+          sentAt,
+          bytes,
+        })) as unknown as ConfirmSendResult;
+      } catch (e) {
+        const err = hostErrorOf(e);
+        throw new Failure(err.code as PulseErrorCode, err.message, { draftId: r.id });
+      }
+      r.confirmedAt = typeof answer?.confirmedAt === 'number' ? answer.confirmedAt : now();
+      r.confirmedSentAt = sentAt;
+    }
+    const queued = queue(r, sentAt);
+    changed([r.id]);
+    startUpload(r);
+    return { clientKey: queued.clientKey, draftKey: r.draftKey, sentAt: queued.sentAt };
+  }
+
   function newRow(context: PulseContext | null, step: FakeStep): Row {
     const id = newRequestId();
     const t = now();
-    const n = rows().size + 1;
     return {
       id,
       draftKey: `${installationId}:${id}`,
-      name: step.result === 'sent' && step.name ? step.name : `Video ${n}`,
+      name: step.result === 'sent' && step.name ? step.name : null,
       context: clone(context),
       clipCount: 1,
       durationMs: (step.result === 'sent' && step.durationMs) || DEFAULT_DURATION_MS,
       hasCaptions: false,
       exported: false,
+      cut: hex(16),
       createdVia: 'host',
       createdAt: t,
       updatedAt: t,
@@ -616,15 +767,12 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     changed([r.id]);
   }
 
-  function jobError(code: PulseErrorCode, message: string, r: Row): PulseErrorInfo {
-    return {
-      code,
-      message,
-      recoverable: isRecoverableCode(code),
-      callId: 'outbox',
-      draftId: r.id,
-      ...(r.job?.uploadId ? { uploadId: r.job.uploadId } : {}),
-    };
+  /**
+   * A job's last error as the catalog projects it (catalog.ts `uploadOf`): its code and message,
+   * recoverable unless the job failed, and no callId (no call made it).
+   */
+  function jobError(code: string, message: string, state: JobState): PulseErrorInfo {
+    return { code: code as PulseErrorCode, message, recoverable: state !== 'failed', callId: '' };
   }
 
   // ── Host requests ────────────────────────────────────────────────────────────────────────────
@@ -638,7 +786,11 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     return new Promise<Json>((resolve, reject) => {
       const timer = later(HOST_DEADLINE_MS, () => {
         hostWaits.delete(hostCallId);
-        reject({ code: 'host.unavailable', message: `The host didn't answer ${method} in 20 s.` });
+        reject({
+          code: 'host.unavailable',
+          message: `The host didn't answer ${method} in 20 s.`,
+          unanswered: true,
+        });
       });
       hostWaits.set(hostCallId, { resolve, reject, timer });
       emitEvent('hostRequest', payload);
@@ -666,20 +818,35 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     return null;
   }
 
-  function hostErrorOf(e: unknown): HostServiceError {
-    if (isObject(e) && typeof e.code === 'string') {
-      return { code: e.code as HostServiceError['code'], message: String(e.message ?? e.code) };
+  /**
+   * A host refusal as Pulse reads it (host-services.ts `hostError`): one of the contract's codes
+   * stays, anything else is `host.unavailable`; `unanswered` when nobody answered in time.
+   */
+  function hostErrorOf(e: unknown): HostServiceError & { unanswered: boolean } {
+    const unanswered = isObject(e) && e.unanswered === true;
+    if (isObject(e) && typeof e.code === 'string' && HOST_CODES.includes(e.code)) {
+      return {
+        code: e.code as HostServiceError['code'],
+        message: String(e.message ?? e.code),
+        unanswered,
+      };
     }
-    return { code: 'host.unavailable', message: e instanceof Error ? e.message : String(e) };
+    const message = isObject(e) && typeof e.message === 'string' ? e.message : String(e);
+    return { code: 'host.unavailable', message, unanswered };
   }
 
-  // ── The outbox (PR2-K: provisional) ──────────────────────────────────────────────────────────
+  // ── The outbox ─────────────────────────────────────────────────────────────────────────────────
+
+  /** `<draftKey>:<16 hex of the cut>` (client-key.ts `jobKeys`). */
+  function clientKeyOf(r: Row): string {
+    return `${r.draftKey}:${hash16(r.cut)}`;
+  }
 
   function queue(r: Row, sentAt: number): Job {
     r.job?.abort?.abort();
     const job: Job = {
       state: 'queued',
-      clientKey: `${r.draftKey}:${hex(16)}`,
+      clientKey: clientKeyOf(r),
       sentAt,
       attempts: 0,
     };
@@ -708,17 +875,17 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
   ): Promise<void> {
     const live = () => !disposed && !abort.signal.aborted && r.job === job;
     const bytes = sizeOf(server.fixture);
-    job.attempts += 1;
     const request: UploadTargetRequest = {
       draftId: r.id,
       clientKey: job.clientKey,
       draftKey: r.draftKey,
       context: r.context as PulseContext,
-      name: r.name,
+      name: displayName(r),
       durationMs: r.durationMs,
       bytes,
       sentAt: job.sentAt,
-      attempt: job.attempts,
+      // `attempts` counts the asks that got an answer, or a retryable refusal (outbox.ts).
+      attempt: job.attempts + 1,
       renewArtifact: false,
     };
     let target: UploadTarget;
@@ -726,15 +893,20 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       target = (await askHost('getUploadTarget', request)) as unknown as UploadTarget;
     } catch (e) {
       if (!live()) return;
+      // As the outbox reads a host refusal (outbox.ts `hostErrorEvent`): its own codes fail the
+      // job, no_account and a host that never answered pause it, anything else is retried.
       const err = hostErrorOf(e);
       job.abort = undefined;
-      if (err.code === 'no_account' || err.code === 'host.unavailable') {
-        job.state = 'needs_credentials';
-        job.error = jobError('credentials.expired', err.message, r);
-      } else {
+      if (PERMANENT_HOST_CODES.includes(err.code)) {
         job.state = 'failed';
-        job.error = jobError(err.code, err.message, r);
+      } else if (err.code === 'no_account' || err.unanswered) {
+        job.state = 'needs_credentials';
+      } else {
+        // Retried after a backoff in the real outbox; the fake retries on resumeOutbox.
+        job.state = 'queued';
+        job.attempts += 1;
       }
+      job.error = jobError(err.code, err.message, job.state);
       touch(r);
       changed([r.id]);
       return;
@@ -743,7 +915,11 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     if (!isObject(target) || target.clientKey !== job.clientKey) {
       job.abort = undefined;
       job.state = 'failed';
-      job.error = jobError('host_misconfigured', "The upload target's clientKey doesn't match.", r);
+      job.error = jobError(
+        'host_misconfigured',
+        "The upload target's clientKey doesn't match.",
+        'failed',
+      );
       touch(r);
       changed([r.id]);
       return;
@@ -751,7 +927,11 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     job.uploadId = target.uploadId;
     job.artifactId = target.artifactId;
     job.token = target.token;
-    const settled = target.state === 'delivered' || target.state === 'kept';
+    job.attempts += 1;
+    job.error = undefined;
+    // The server has the video already (a resend after a kill): straight to its outcome.
+    const settled =
+      target.state === 'processing' || target.state === 'delivered' || target.state === 'kept';
     job.state = settled ? 'delivering' : 'uploading';
     touch(r);
     changed([r.id]);
@@ -777,7 +957,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
           artifactId: target.artifactId,
           filename: `${r.id}.mp4`,
           kind: 'video',
-          name: r.name,
+          name: displayName(r),
           body: server.fixture,
           fetch: fetchFn,
           signal: abort.signal,
@@ -821,7 +1001,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       const message = e instanceof Error ? e.message : String(e);
       const refused =
         e instanceof TusError && e.status !== null && e.status >= 400 && e.status < 500;
-      job.error = jobError(refused ? 'upload.refused' : 'upload.failed', message, r);
+      job.error = jobError(refused ? 'upload.refused' : 'upload.failed', message, 'failed');
       touch(r);
       changed([r.id]);
     }
@@ -850,7 +1030,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       sdkVersion: '0.0.0-fake',
       build: '0',
       gitSha: 'fake',
-      contract: { major: CONTRACT.major, minor: CONTRACT.minor },
+      contract: { major: CONTRACT.major, minor: FACADE_MINOR },
       formatVersion: 2,
       dbSchema: 0,
       entries: ['record', 'edit', 'export'],
@@ -950,6 +1130,8 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     const r = take(f);
     // An edit cancels a job that hasn't started sending (pulse-schema.md §3.3).
     if (r.job && !LOCKED.includes(r.job.state)) cancelJob(r);
+    // Recorded or edited: a new cut. Export alone sends the draft as it is.
+    if (f.entry !== 'export') r.cut = hex(16);
     if (step.result === 'kept') {
       // The take changed and nobody exported it: the export (if any) is stale.
       r.exported = false;
@@ -1118,21 +1300,24 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
     return null;
   }
 
-  // ── Data API (PR2-K: provisional) ────────────────────────────────────────────────────────────
+  // ── Data API ───────────────────────────────────────────────────────────────────────────────────
 
   function listDrafts(a: Record<string, Json>): DraftSummary[] {
     const states = Array.isArray(a.states) ? (a.states as string[]) : null;
-    return [...rows().values()]
-      .map(summary)
-      .filter((s) => (states ? states.includes(s.state) : s.state !== 'sent'))
-      .filter((s) => typeof a.contextKey !== 'string' || s.context?.key === a.contextKey)
-      .filter(
-        (s) =>
-          typeof a.contextKeyPrefix !== 'string' ||
-          (s.context?.key ?? '').startsWith(a.contextKeyPrefix),
-      )
-      .filter((s) => typeof a.contextKind !== 'string' || s.context?.kind === a.contextKind)
-      .sort((x, y) => y.updatedAt - x.updatedAt);
+    return (
+      [...rows().values()]
+        .map(summary)
+        .filter((s) => (states ? states.includes(s.state) : s.state !== 'sent'))
+        .filter((s) => typeof a.contextKey !== 'string' || s.context?.key === a.contextKey)
+        .filter(
+          (s) =>
+            typeof a.contextKeyPrefix !== 'string' ||
+            (s.context?.key ?? '').startsWith(a.contextKeyPrefix),
+        )
+        .filter((s) => typeof a.contextKind !== 'string' || s.context?.kind === a.contextKind)
+        // catalog-filter.ts `catalogOrder`: the newest change first, equal times by id.
+        .sort((x, y) => y.updatedAt - x.updatedAt || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
+    );
   }
 
   function countDrafts(a: Record<string, Json>): Record<string, number> {
@@ -1187,6 +1372,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
           uploadMode: a.uploadMode === 'file' ? 'file' : 'pulse',
           hostId: typeof a.hostId === 'string' ? a.hostId : DEFAULT_HOST_ID,
         };
+        rekeySeeds(configured.hostId);
         return null;
       }
       case 'prewarm':
@@ -1218,7 +1404,9 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
           ...(typeof a.label === 'string' ? { label: a.label } : {}),
         };
         const ns = namespaceFor(account, configured.hostId);
-        space(ns, account, configured.hostId).lastUsedAt = now();
+        const s = space(ns, account, configured.hostId);
+        s.lastUsedAt = now();
+        bindSeeds(ns, s);
         active = ns;
         return { namespace: ns };
       }
@@ -1231,24 +1419,30 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       case 'countDrafts':
         return countDrafts(a);
       case 'renameDraft': {
-        const r = row(a.id);
-        if (r.receipt) throw new Failure('not_found', `No draft ${r.id}.`, { draftId: r.id });
-        r.name = String(a.name).trim() || r.name;
+        const r = draftRow(a.id);
+        checkLock(r);
+        // The name rides the upload as the video's title: a queued Send goes back to a draft.
+        cancelJob(r);
+        r.name = String(a.name).trim() || null;
         touch(r);
         changed([r.id]);
         return null;
       }
       case 'deleteDraft': {
-        const r = row(a.id);
-        assertUnlocked(r);
+        const r = draftRow(a.id);
+        checkLock(r);
+        // A clock-bound draft goes too: the host cancels its intent (O13).
         cancelJob(r);
         rows().delete(r.id);
         changed([r.id]);
         return null;
       }
       case 'setDraftContext': {
-        const r = row(a.id);
-        assertUnlocked(r);
+        // Checked first: a context Pulse would refuse never cancels a Send.
+        const problem = contextProblem(a.context);
+        if (problem) throw new Failure('invalid_options', problem);
+        const r = draftRow(a.id);
+        checkLock(r);
         if (r.confirmedAt !== undefined) {
           // Clock-bound: the host already clocked with this video (AD23).
           throw new Failure('draft.locked', 'The draft is clock-bound.', {
@@ -1263,20 +1457,20 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
         return null;
       }
       case 'upload': {
-        const r = row(a.id);
-        assertUnlocked(r);
-        const sentAt = r.confirmedAt !== undefined ? (r.confirmedSentAt ?? now()) : now();
-        cancelJob(r);
-        const job = queue(r, sentAt);
-        changed([r.id]);
-        startUpload(r);
-        return { clientKey: job.clientKey, draftKey: r.draftKey, sentAt: job.sentAt };
+        const r = draftRow(a.id);
+        if (configured.uploadMode !== 'pulse') {
+          throw new Failure(
+            'host_misconfigured',
+            "upload sends through the host's services, which uploadMode 'file' has none of.",
+            { draftId: r.id },
+          );
+        }
+        return hostSend(r);
       }
       case 'cancelUpload': {
-        const r = row(a.id);
-        if (r.job?.state === 'delivering' || r.job?.state === 'preparing' || r.receipt) {
-          throw new Failure('draft.locked', `The draft is ${stateOf(r)}.`, { draftId: r.id });
-        }
+        const r = draftRow(a.id);
+        // An upload can be cancelled while its bytes go up; not while it prepares or delivers.
+        checkLock(r, ['preparing', 'delivering']);
         if (r.job) {
           cancelJob(r);
           touch(r);
@@ -1286,21 +1480,27 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       }
       case 'retireDraft': {
         const r = row(a.id);
-        if (r.receipt) return null;
+        if (r.receipt) return null; // retired already
         if (configured.uploadMode === 'file') {
+          checkLock(r);
           retire(r, 'done');
-        } else if (r.job?.state === 'delivering' && !r.job.abort) {
-          // Without a server the fake takes the hint as the outcome; with one, the poll decides.
-          retire(r, 'done');
+          return null;
         }
+        // 'pulse' mode: only the status route retires a draft (server mode polls it); the call is
+        // a hint to ask again, and never retires by itself.
+        checkLock(r, []);
         return null;
       }
       case 'dismissReceipt': {
-        const r = row(a.id);
-        if (!r.receipt)
-          throw new Failure('not_found', `No receipt for ${r.id}.`, { draftId: r.id });
-        r.receipt.dismissed = true;
-        touch(r);
+        const r = rows().get(String(a.id));
+        if (!r?.receipt) {
+          throw new Failure('not_found', `No receipt ${String(a.id)}.`, { draftId: String(a.id) });
+        }
+        // Dismissing again keeps the first time.
+        if (!r.receipt.dismissed) {
+          r.receipt.dismissed = true;
+          touch(r);
+        }
         changed([r.id]);
         return null;
       }
@@ -1308,8 +1508,8 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
         const ids: string[] = [];
         for (const r of rows().values()) {
           if (r.job?.state === 'needs_credentials') {
+            // The last error stays until the host answers (outbox.ts 'resume').
             r.job.state = 'queued';
-            r.job.error = undefined;
             ids.push(r.id);
           }
           if (r.job?.state === 'queued') startUpload(r);
@@ -1471,11 +1671,19 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
           break;
         case 'needs_credentials':
           job.state = 'needs_credentials';
-          job.error = jobError('credentials.expired', 'The host gave no upload target.', r);
+          job.error = jobError(
+            'credentials.expired',
+            'The host gave no upload target.',
+            'needs_credentials',
+          );
           break;
         case 'failed':
           job.state = 'failed';
-          job.error = jobError(e.code ?? 'upload.failed', e.message ?? 'Scripted failure.', r);
+          job.error = jobError(
+            e.code ?? 'upload.failed',
+            e.message ?? 'Scripted failure.',
+            'failed',
+          );
           break;
         case 'delivered':
           retire(r, e.outcome, e);

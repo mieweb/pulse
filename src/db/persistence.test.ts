@@ -35,6 +35,9 @@ import {
   assertSchemaCoverage,
   buildProject,
   checkProject,
+  isNewerSchema,
+  LOCAL_TABLES,
+  planCopy,
   PROJECT_FORMAT,
   restoreProject,
   schemaVersion,
@@ -53,6 +56,18 @@ jest.mock(
 );
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 jest.mock('react-native-zip-archive', () => jest.requireActual('@/test-support/zip-archive-node'));
+// Only for the library as the app opens it (`@/db/client`, `@/db/drafts`): drafts.ts imports
+// these native modules, none of which the tests here reach.
+jest.mock('@/utils/video', () => ({}));
+jest.mock('./secure-token', () => ({ deleteSavedLink: async () => {} }));
+jest.mock('expo-crypto', () => ({
+  randomUUID: () => jest.requireActual<typeof import('node:crypto')>('node:crypto').randomUUID(),
+}));
+// Only for the migration gate (`./migrate`): its screens, which the tests here never render.
+jest.mock('@/components/primary-button', () => ({}));
+jest.mock('@/components/state-message', () => ({}));
+jest.mock('@/core/recovery/screen', () => ({}));
+jest.mock('@/utils/relative-date', () => ({ formatDateTime: () => '' }));
 
 // Each test works on "devices": a temp folder with the app's documents, cache and SQLite dirs.
 const ROOT = mkdtempSync(join(tmpdir(), 'pulse-persistence-'));
@@ -75,6 +90,13 @@ const TABLES = Object.values(schema as Record<string, unknown>).filter((v): v is
   is(v, SQLiteTable),
 );
 const tableNames = () => TABLES.map((t) => getTableConfig(t).name);
+/** The tables documents and backups carry: all but the LOCAL ones (outbox, receipts, local settings). */
+const LOCAL = ['upload_jobs', 'upload_receipts', 'local_settings'];
+const carriedNames = () => tableNames().filter((n) => !LOCAL.includes(n));
+/** What a restore replaces: every carried table, and the migration log. */
+const REPLACED = () => [...carriedNames(), '__drizzle_migrations'];
+/** What a restore keeps of this phone's LOCAL rows (its jobs go with the drafts it replaces). */
+const KEPT = ['upload_receipts', 'local_settings'];
 
 /** Open the device's pulse.db and run drizzle's expo-sqlite migrator (optionally only up to `idx`). */
 async function openMigrated(idx?: number): Promise<SQLiteDatabase> {
@@ -123,6 +145,7 @@ const EDIT_JSON =
   '{"startMs":120,"endMs":2400,"rotation":90,"flipH":false,"crop":null,"muted":true,"speed":1.5}';
 const LEGACY_EDIT = '{"history":[{"startMs":0,"endMs":900}],"index":0}'; // an older shape, kept as text
 const SIG = `${P(S1, '.edited.111.mp4')}|${P(S2, '.mp4')}|${P(S1, '.mp4')}`;
+const CONTEXT_KEY = 'ticket:t-42';
 
 function seedFixture(conn: SQLiteDatabase) {
   const d = drizzle(conn, { schema });
@@ -142,6 +165,14 @@ function seedFixture(conn: SQLiteDatabase) {
         lastClipNumber: 3,
         createdAt: 1790000000123.5, // unixepoch('subsec') * 1000 stores fractions
         lastModified: 1790000000999,
+        // Recorded for a host's place (embedded), its Send confirmed by the host.
+        contextKey: CONTEXT_KEY,
+        contextLabel: 'Fix login',
+        contextJson: '{"kind":"ticket","id":"T-42","label":"Fix login","data":{"teamId":"t1"}}',
+        uploadTypeJson: '{"id":"ticket.video","version":1}',
+        createdVia: 'host',
+        hostConfirmedAt: 1790000000800,
+        sentAt: 1790000000750,
       },
       { id: D2, name: 'Other', lastClipNumber: 1, createdAt: 1, lastModified: 2 },
     ])
@@ -252,8 +283,69 @@ function seedFixture(conn: SQLiteDatabase) {
       createdAt: 1790000000700,
     })
     .run();
+  seedLocal(conn, 'src');
   // The files: everything referenced, stored or derived.
   for (const rel of FIXTURE_MEDIA) media(rel);
+}
+
+/**
+ * This phone's LOCAL rows (every column set): an outbox job for draft `D`, a receipt and the
+ * installation id, each tagged with `phone` so two phones' rows tell apart.
+ */
+function seedLocal(conn: SQLiteDatabase, phone: string, jobDraft = D) {
+  const d = drizzle(conn, { schema });
+  d.insert(schema.uploadJobs)
+    .values({
+      draftId: jobDraft,
+      state: 'uploading',
+      clientKey: `${phone}:${jobDraft}:0123456789abcdef`,
+      draftKey: `${phone}:${jobDraft}`,
+      mergedSignature: SIG,
+      sentAt: 1790000000750,
+      uploadId: `${phone}-upload`,
+      artifactId: 'art-9',
+      endpoint: 'https://vault.example.org',
+      partsJson: '[]',
+      bytesTotal: 1000,
+      bytesSent: 400,
+      attempts: 1,
+      nextAttemptAt: 1790000001000,
+      tokenExp: 1790000009000,
+      lastErrorCode: 'upload.failed',
+      lastErrorMessage: 'offline',
+      createdAt: 1790000000760,
+      updatedAt: 1790000000770,
+    })
+    .run();
+  d.insert(schema.uploadReceipts)
+    .values({
+      draftId: `${phone}-retired`,
+      name: 'Sent earlier',
+      contextKey: CONTEXT_KEY,
+      contextLabel: 'Fix login',
+      contextJson: '{"kind":"ticket","id":"T-42","label":"Fix login"}',
+      uploadTypeJson: '{"id":"ticket.video","version":1}',
+      outcome: 'kept',
+      note: 'n',
+      reason: 'ticket closed',
+      uploadId: `${phone}-u0`,
+      artifactId: 'art-0',
+      clientKey: `${phone}:retired:0`,
+      clipCount: 1,
+      durationMs: 1000,
+      sentAt: 1,
+      deliveredAt: 2,
+      expiresAt: 3,
+      dismissedAt: 4,
+      mediaDeletedAt: 5,
+    })
+    .run();
+  d.insert(schema.localSettings)
+    .values([
+      { key: 'installationId', value: `${phone}-install` },
+      { key: 'wifiOnlyUploads', value: '1' },
+    ])
+    .run();
 }
 
 /** Every file the fixture's rows need (what referencedMediaPaths must return). */
@@ -284,10 +376,14 @@ const BACKED_UP_MEDIA = FIXTURE_MEDIA.filter((p) => !p.endsWith('/export.mp4'));
 const forgetExports = (conn: SQLiteDatabase) =>
   conn.execSync('UPDATE drafts SET merged_signature = NULL, merged_duration_ms = NULL');
 
-/** What a restore brings back: no exports, and no upload destinations (their tokens stay here). */
+/**
+ * What a restore brings back: no exports, no upload destinations (their tokens stay here) and none
+ * of the LOCAL rows (the restoring phone keeps its own).
+ */
 const asRestored = (conn: SQLiteDatabase) => {
   forgetExports(conn);
   conn.execSync('DELETE FROM upload_destinations');
+  for (const t of LOCAL) conn.execSync(`DELETE FROM ${t}`);
 };
 
 const byteLength = (rel: string) => {
@@ -319,8 +415,8 @@ describe('schema-driven project document', () => {
     seedFixture(conn);
     assertSchemaCoverage(conn);
     const doc = buildProject(conn, { now: 1, byteLength });
-    expect(Object.keys(doc.tables).sort()).toEqual(tableNames().sort());
-    for (const t of TABLES) {
+    expect(Object.keys(doc.tables).sort()).toEqual(carriedNames().sort());
+    for (const t of TABLES.filter((t) => !LOCAL.includes(getTableConfig(t).name))) {
       const rows = doc.tables[getTableConfig(t).name];
       for (const key of Object.keys(getTableColumns(t))) {
         expect([getTableConfig(t).name, key, rows.some((r) => r[key] != null)]).toEqual([
@@ -342,6 +438,16 @@ describe('schema-driven project document', () => {
     );
   });
 
+  it('checks a LOCAL table’s columns too, though it never travels', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    expect(() => assertSchemaCoverage(conn)).not.toThrow();
+    conn.execSync('ALTER TABLE upload_jobs ADD COLUMN sneaky text');
+    expect(() => buildProject(conn, { now: 1, byteLength })).toThrow(
+      'Export coverage: column upload_jobs.sneaky is not in schema.ts',
+    );
+  });
+
   it('exact restore into a fresh migrated database reproduces every row', async () => {
     const source = newDevice();
     use(source);
@@ -350,7 +456,7 @@ describe('schema-driven project document', () => {
     const doc: ProjectDocument = JSON.parse(
       JSON.stringify(buildProject(src, { now: 1, byteLength })),
     );
-    const before = dump(src);
+    const before = dump(src, REPLACED());
 
     const target = newDevice();
     use(target);
@@ -358,7 +464,111 @@ describe('schema-driven project document', () => {
     drizzle(dst).insert(schema.drafts).values({ id: 'local', lastClipNumber: 0 }).run(); // replaced
     for (const m of doc.media) media(m.path, readFileSync(join(source.docDir, m.path), 'utf8'));
     restoreProject(dst, doc);
-    expect(dump(dst)).toEqual(before);
+    expect(dump(dst, REPLACED())).toEqual(before);
+    expect(dump(dst, LOCAL)).toEqual({ upload_jobs: [], upload_receipts: [], local_settings: [] });
+  });
+
+  it('a restore keeps this phone’s receipts and local settings; jobs go with the drafts', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src);
+    const doc: ProjectDocument = JSON.parse(
+      JSON.stringify(buildProject(src, { now: 1, byteLength })),
+    );
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    const local = drizzle(dst, { schema });
+    local
+      .insert(schema.drafts)
+      .values([{ id: D }, { id: 'local' }])
+      .run();
+    seedLocal(dst, 'dst'); // a job for D, which the document also has
+    local
+      .insert(schema.uploadJobs)
+      .values({
+        draftId: 'local',
+        state: 'queued',
+        clientKey: 'dst:local:x',
+        draftKey: 'dst:local',
+        mergedSignature: 's',
+        sentAt: 1,
+      })
+      .run();
+    const mine = dump(dst, LOCAL);
+
+    expect(mine.upload_jobs).toHaveLength(2);
+
+    restoreProject(dst, doc);
+    expect(dump(dst, KEPT)).toEqual({
+      upload_receipts: mine.upload_receipts,
+      local_settings: mine.local_settings,
+    });
+    // Every draft was replaced, D too (the document's D isn't the one that was sent).
+    expect(dump(dst, ['upload_jobs'])).toEqual({ upload_jobs: [] });
+    expect(
+      local
+        .select()
+        .from(schema.drafts)
+        .all()
+        .map((r) => r.contextKey),
+    ).toEqual([CONTEXT_KEY, null]);
+  });
+
+  it('never writes a LOCAL table into a document, in either scope', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    for (const draftIds of [undefined, [D]]) {
+      const doc = buildProject(conn, { draftIds, now: 1, byteLength });
+      expect(Object.keys(doc.tables).filter((t) => LOCAL_TABLES.has(t))).toEqual([]);
+    }
+  });
+
+  it('refuses a document that carries a LOCAL table', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    const doc = buildProject(conn, { now: 1, byteLength });
+    const job = drizzle(conn, { schema }).select().from(schema.uploadJobs).all();
+    expect(job).toHaveLength(1);
+    for (const table of LOCAL) {
+      expect(() => checkProject({ ...doc, tables: { ...doc.tables, [table]: [] } })).toThrow(
+        'This .pulse file is damaged.',
+      );
+    }
+    expect(() => checkProject({ ...doc, tables: { ...doc.tables, upload_jobs: job } })).toThrow(
+      'This .pulse file is damaged.',
+    );
+  });
+
+  it('a draft’s host context goes with it in a .pulse file; a copy of it drops the place', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    const archive = unzipSync(readFileSync(new File(await exportDrafts(conn, [D], 5)).path));
+    const doc = checkProject(JSON.parse(strFromU8(archive['project.json'])));
+    const context = {
+      contextKey: CONTEXT_KEY,
+      contextLabel: 'Fix login',
+      contextJson: '{"kind":"ticket","id":"T-42","label":"Fix login","data":{"teamId":"t1"}}',
+      uploadTypeJson: '{"id":"ticket.video","version":1}',
+      createdVia: 'host',
+      hostConfirmedAt: 1790000000800,
+      sentAt: 1790000000750,
+    };
+    expect(doc.tables.drafts).toEqual([expect.objectContaining(context)]);
+    const plan = planCopy(doc, () => 'fresh');
+    expect(plan.rows.drafts).toEqual([
+      expect.objectContaining({
+        contextKey: null,
+        contextLabel: null,
+        contextJson: null,
+        uploadTypeJson: null,
+        hostConfirmedAt: null,
+        sentAt: null,
+        createdVia: 'host', // where it was made stays
+      }),
+    ]);
   });
 
   it('copy import (.pulse v2 file) gives identical rows except remapped ids and paths', async () => {
@@ -394,6 +604,12 @@ describe('schema-driven project document', () => {
       uploadStatus: null,
       contextServer: null,
       contextRef: null,
+      contextKey: null,
+      contextLabel: null,
+      contextJson: null,
+      uploadTypeJson: null,
+      hostConfirmedAt: null,
+      sentAt: null,
       mergedSignature: null,
       mergedDurationMs: null,
     };
@@ -931,12 +1147,13 @@ describe('library backup', () => {
     seedFixture(src);
     const uri = await createLibraryBackup(src, 42);
     asRestored(src);
-    const before = dump(src);
+    const before = dump(src, REPLACED());
 
     const target = newDevice();
     use(target);
     const dst = await openMigrated();
     seedFixture(dst);
+    const mine = dump(dst, KEPT);
     const live = P(S2, '.cover.222.jpg'); // a file both libraries have, at the same path
     media(live, 'this phone’s newer copy');
     await restoreLibraryBackup(dst, uri, 100);
@@ -947,7 +1164,8 @@ describe('library backup', () => {
     expect(relaunched).toMatchObject({ restored: true, restoreFailed: false, failed: false });
     expect(readMedia(live)).toBe(`bytes of ${live}`);
     await migrate(drizzle(relaunched.conn), migrations);
-    expect(dump(relaunched.conn)).toEqual(before);
+    expect(dump(relaunched.conn, REPLACED())).toEqual(before);
+    expect(dump(relaunched.conn, KEPT)).toEqual(mine); // this phone's own, not the backup's
     expect(existsSync(join(env.docDir, '.pulse-pending-media'))).toBe(false);
   });
 
@@ -1015,6 +1233,45 @@ describe('library backup', () => {
     const dst = await openMigrated();
     await expect(restoreLibraryBackup(dst, uri, 100)).rejects.toThrow('This backup is damaged.');
     expect(existsSync(join(env.dbDir, 'backups', 'restore-pending.db'))).toBe(false);
+  });
+
+  it('never carries LOCAL rows in a backup; a restore keeps this phone’s and the context', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    seedFixture(src); // with src's own job, receipt and installation id
+    const uri = await createLibraryBackup(src, 42);
+    const archive = unzipSync(readFileSync(new File(uri).path));
+    const copy = join(source.cacheDir, 'backed-up.db');
+    writeFileSync(copy, archive['pulse.db']);
+    const backedUp = sqlite.openDatabaseSync('backed-up.db', {}, source.cacheDir);
+    for (const t of LOCAL) {
+      expect([t, backedUp.getAllSync(`SELECT * FROM ${t}`)]).toEqual([t, []]);
+    }
+    backedUp.closeSync();
+
+    const target = newDevice();
+    use(target);
+    const dst = await openMigrated();
+    drizzle(dst)
+      .insert(schema.drafts)
+      .values([{ id: D }, { id: 'local' }])
+      .run();
+    seedLocal(dst, 'dst'); // its own job (for its own D), receipt and installation id
+    const mine = dump(dst, KEPT);
+    await restoreLibraryBackup(dst, uri, 100);
+    dst.closeSync();
+    const relaunched = openLibrary(200);
+    expect(relaunched.restored).toBe(true);
+    await migrate(drizzle(relaunched.conn), migrations);
+    expect(dump(relaunched.conn, KEPT)).toEqual(mine);
+    // Every draft was replaced, so no job is left (the backup's D isn't the one this phone sent).
+    expect(dump(relaunched.conn, ['upload_jobs'])).toEqual({ upload_jobs: [] });
+    const restored = drizzle(relaunched.conn, { schema });
+    expect(restored.select().from(schema.drafts).all()).toEqual([
+      expect.objectContaining({ id: D, contextKey: CONTEXT_KEY, createdVia: 'host' }),
+      expect.objectContaining({ id: D2, contextKey: null, createdVia: 'app' }),
+    ]);
   });
 
   it('never restores upload destinations (their tokens stay on this phone)', async () => {
@@ -1157,3 +1414,185 @@ function oldBackup(
   writeFileSync(out, zipSync(entries, { level: 0 }));
   return `file://${out}`;
 }
+
+/** The library as the app opens it on this device (`@/db/client` opens it on import): fresh modules. */
+function appLibrary() {
+  let mods!: {
+    client: typeof import('./client');
+    drafts: typeof import('./drafts');
+    host: typeof import('./host-context');
+    settings: typeof import('./local-settings');
+    gate: typeof import('./migrate');
+  };
+  jest.isolateModules(() => {
+    mods = {
+      gate: jest.requireActual<typeof import('./migrate')>('./migrate'),
+      client: jest.requireActual<typeof import('./client')>('./client'),
+      drafts: jest.requireActual<typeof import('./drafts')>('./drafts'),
+      host: jest.requireActual<typeof import('./host-context')>('./host-context'),
+      settings: jest.requireActual<typeof import('./local-settings')>('./local-settings'),
+    };
+  });
+  return mods;
+}
+
+describe('a library a newer Pulse migrated (downgrade guard)', () => {
+  /** This device's library, seeded, with one migration this build doesn't ship applied after ours. */
+  async function newerLibrary() {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    conn.execSync(
+      `INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('', ${APP_SCHEMA_VERSION + 1})`,
+    );
+    const rows = dump(conn);
+    conn.closeSync();
+    return rows;
+  }
+  const clip = { id: 'seg-new', originalFilename: 'drafts/x/segments/seg-new.mp4', durationMs: 1 };
+
+  it('embedded: still lists, sends and deletes, and refuses an edit with storage.newer_schema', async () => {
+    const before = await newerLibrary();
+    const { client, drafts, host, settings } = appLibrary();
+    try {
+      expect(isNewerSchema(client.expoDb)).toBe(true);
+      expect(client.guardNewerSchema('embedded')).toBe(true);
+      expect(host.libraryNewerSchema()).toBe(true);
+
+      // List.
+      expect((await drafts.draftListQuery).map((r) => r.id).sort()).toEqual([D, D2]);
+
+      // Edit: refused, nothing written.
+      await expect(drafts.addSegment(D, clip)).rejects.toMatchObject({
+        code: 'storage.newer_schema',
+      });
+      await expect(drafts.renameDraft(D, 'Renamed')).rejects.toMatchObject({
+        code: 'storage.newer_schema',
+      });
+      await expect(
+        drafts.setDraftContext(D2, { key: 'ticket:t-7', label: 'Other ticket' }),
+      ).rejects.toMatchObject({ code: 'storage.newer_schema' });
+      await expect(drafts.createDraft({ createdVia: 'host' })).rejects.toMatchObject({
+        code: 'storage.newer_schema',
+      });
+      expect(dump(client.expoDb)).toEqual(before);
+
+      // Send: the export is recorded, this install's id is made and the job is queued.
+      await drafts.setMergedExport(D2, { signature: 'sig-b', durationMs: 900 });
+      const install = settings.installationId();
+      client.db
+        .insert(schema.uploadJobs)
+        .values({
+          draftId: D2,
+          state: 'queued',
+          clientKey: `${install}:${D2}:sig-b`,
+          draftKey: `${install}:${D2}`,
+          mergedSignature: 'sig-b',
+          sentAt: 5,
+        })
+        .run();
+      const jobs = () =>
+        client.expoDb.getAllSync('SELECT draft_id FROM upload_jobs ORDER BY draft_id');
+      expect(jobs()).toEqual([{ draft_id: D }, { draft_id: D2 }]); // the fixture's job, and this one
+
+      // Delete: the draft goes, and its job with it.
+      await drafts.deleteDraft(D2);
+      expect((await drafts.draftListQuery).map((r) => r.id)).toEqual([D]);
+      expect(jobs()).toEqual([{ draft_id: D }]);
+
+      // No migration ran: the newer one is still the library's last.
+      expect(dump(client.expoDb, ['__drizzle_migrations'])).toEqual({
+        __drizzle_migrations: before.__drizzle_migrations,
+      });
+    } finally {
+      client.expoDb.closeSync();
+    }
+  });
+
+  it('embedded: the migration gate runs no migration or housekeeping on it', async () => {
+    const before = await newerLibrary();
+    const { client, gate, host } = appLibrary();
+    const afterMigrations = jest.fn();
+    try {
+      await gate.runMigrations('embedded', afterMigrations);
+      expect(host.libraryNewerSchema()).toBe(true);
+      expect(afterMigrations).not.toHaveBeenCalled(); // no housekeeping either
+      expect(dump(client.expoDb)).toEqual(before);
+    } finally {
+      client.expoDb.closeSync();
+    }
+  });
+
+  it('standalone: the Pulse app keeps today’s behaviour (editable)', async () => {
+    await newerLibrary();
+    const { client, drafts, host } = appLibrary();
+    try {
+      expect(client.guardNewerSchema('standalone')).toBe(false);
+      expect(host.libraryNewerSchema()).toBe(false);
+      await drafts.renameDraft(D2, 'Renamed');
+      expect(
+        client.expoDb.getFirstSync<{ name: string }>(`SELECT name FROM drafts WHERE id = '${D2}'`),
+      ).toEqual({ name: 'Renamed' });
+    } finally {
+      client.expoDb.closeSync();
+    }
+  });
+
+  it('embedded, a library this build migrated: editable', async () => {
+    (await openMigrated()).closeSync();
+    const { client, host } = appLibrary();
+    try {
+      expect(isNewerSchema(client.expoDb)).toBe(false);
+      expect(client.guardNewerSchema('embedded')).toBe(false);
+      expect(host.libraryNewerSchema()).toBe(false);
+    } finally {
+      client.expoDb.closeSync();
+    }
+  });
+});
+
+describe('findOpenHostDraft', () => {
+  it('is the newest unsent draft with a clip, for that place and upload type', async () => {
+    (await openMigrated()).closeSync();
+    const { client, drafts } = appLibrary();
+    const ticket = { key: CONTEXT_KEY, kind: 'ticket', id: 'T-42', label: 'Fix login' };
+    const video = { id: 'ticket.video', version: 1 };
+    const make = async (
+      lastModified: number,
+      opts: { context?: typeof ticket; type?: typeof video; clip?: boolean } = {},
+    ) => {
+      const id = await drafts.createDraft({
+        hostContext: opts.context ?? ticket,
+        uploadType: opts.type ?? video,
+        createdVia: 'host',
+      });
+      if (opts.clip !== false) {
+        await drafts.addSegment(id, {
+          id: `${id}-1`,
+          originalFilename: `drafts/${id}/segments/${id}-1.mp4`,
+          durationMs: 1000,
+        });
+      }
+      client.expoDb.runSync('UPDATE drafts SET last_modified = ? WHERE id = ?', lastModified, id);
+      return id;
+    };
+    try {
+      const open = await make(10);
+      await make(5); // older
+      const sent = await make(20);
+      client.expoDb.runSync(
+        `INSERT INTO upload_jobs (draft_id, state, client_key, draft_key, merged_signature, sent_at)
+         VALUES (?, 'queued', 'k', 'dk', 's', 1)`,
+        sent,
+      );
+      await make(30, { clip: false }); // empty: its recorder is about to drop it
+      const post = await make(40, { type: { id: 'huddle.post', version: 1 } });
+      await make(50, { context: { ...ticket, key: 'ticket:t-43' } });
+
+      expect(await drafts.findOpenHostDraft(CONTEXT_KEY, 'ticket.video')).toBe(open);
+      expect(await drafts.findOpenHostDraft(CONTEXT_KEY, 'huddle.post')).toBe(post);
+      expect(await drafts.findOpenHostDraft('clock:ev-1', 'ticket.video')).toBeNull();
+    } finally {
+      client.expoDb.closeSync();
+    }
+  });
+});

@@ -4,9 +4,12 @@ import { StyleSheet, View } from 'react-native';
 
 import { PulseCore } from '@/core/pulse-core';
 import type { FatalStorage } from '@/core/recovery/types';
+import { useCatalogWriter } from '@/features/drafts/catalog-writer';
 import { installLogCapture } from '@/features/logs/logger';
+import { configureCaptions, startCaptionsModelPolicy } from '@/features/transcription/model-policy';
 import { ToastProvider } from '@/features/toast/toast-provider';
 
+import { holdFlowDraft } from '../commands/held-draft';
 import type { FlowState } from '../flow/reducer';
 import { flowResult } from '../flow/result';
 import { planOpen, type EmbedProps, type OpenPlan } from './entries';
@@ -41,10 +44,22 @@ export function EmbedApp(props: EmbedProps & { requestId: string }) {
   }, [plan, requestId]);
 
   if (!plan.ok) return <View style={styles.blank} />;
-  return <EmbedFlow plan={plan} />;
+  return <EmbedFlow plan={plan} namespace={props.namespace} />;
 }
 
-function EmbedFlow({ plan }: { plan: OpenPlan }) {
+/** The captions model's download policy (O6, C8) for as long as this flow is up. */
+function CaptionsModelPolicy() {
+  useEffect(() => startCaptionsModelPolicy(), []);
+  return null;
+}
+
+/** Keeps the namespace's catalog.json in step with the library, from the first flow on. */
+function CatalogWriter({ namespace }: { namespace: string | undefined }) {
+  useCatalogWriter(namespace);
+  return null;
+}
+
+function EmbedFlow({ plan, namespace }: { plan: OpenPlan; namespace: string | undefined }) {
   const { requestId, request, config } = plan;
   const [store] = useState(() =>
     createFlowStore({ requestId, request, onEnd: (state) => void finish(state) }),
@@ -52,6 +67,11 @@ function EmbedFlow({ plan }: { plan: OpenPlan }) {
   const [controller] = useState(() => createFlowController(store, requestId));
   const [ui] = useState(() => createUiSender(embedChannel().ui));
   const [theme] = useState(() => themeOverrides(themeOf(request, config)));
+  // The host's captions settings (models.baseUrl, captions), before any screen reads them.
+  useState(() => configureCaptions(config));
+
+  // Host writes on this flow's draft refuse with draft.locked while it is up (§3 busy matrix).
+  useEffect(() => holdFlowDraft(() => store.state().draftId), [store]);
 
   // The host's close (`pulse.cmd close {reason, discard?}`), for as long as this flow is up.
   useEffect(
@@ -63,15 +83,9 @@ function EmbedFlow({ plan }: { plan: OpenPlan }) {
     [controller],
   );
 
-  // B6: a library Pulse can't open or migrate ends the flow; `reset` is the person asking for this
-  // account's Pulse data to be reset, which the host's purge does (PR2) once the flow has ended.
+  // B6: a library Pulse can't open or migrate ends the flow.
   const onFatalStorage = useCallback(
-    (fatal: FatalStorage) =>
-      void controller.fail({
-        code: fatal.code,
-        message: fatal.message,
-        ...(fatal.reset ? { details: { reset: true } } : null),
-      }),
+    (fatal: FatalStorage) => void controller.fail({ code: fatal.code, message: fatal.message }),
     [controller],
   );
 
@@ -95,6 +109,9 @@ function EmbedFlow({ plan }: { plan: OpenPlan }) {
       wrap={ToastProvider}
       onBoot={installLogCapture}
       onFatalStorage={onFatalStorage}>
+      {/* Under the library gate: the migrations have run. */}
+      <CatalogWriter namespace={namespace} />
+      <CaptionsModelPolicy />
       <FlowStack
         store={store}
         controller={controller}

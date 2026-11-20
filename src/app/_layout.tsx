@@ -2,6 +2,7 @@ import { reloadAppAsync } from 'expo';
 import Constants from 'expo-constants';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
 import { PulseCore } from '@/core/pulse-core';
@@ -14,11 +15,15 @@ import {
   restoreLibraryBackup,
 } from '@/features/draft-transfer/library-backup';
 import { installLogCapture } from '@/features/logs/logger';
-import { ToastProvider } from '@/features/toast/toast-provider';
-import { setClientIdentity } from '@/features/upload/client-identity';
-import { destinationsSheetOptions } from '@/features/upload/destinations-sheet';
-import { UploadDeepLinkProvider } from '@/features/upload/upload-deep-link-provider';
+import { ToastProvider, useToast } from '@/features/toast/toast-provider';
+import { setClientIdentity } from '@/features/upload/core/client-identity';
+import { startUploads } from '@/features/upload/core/start-uploads';
+import { UploadStrategyContext } from '@/features/upload/core/target-provider';
+import { destinationsSheetOptions } from '@/features/upload/pairing/destinations-sheet';
+import { poolProvider } from '@/features/upload/pairing/pool-provider';
+import { UploadDeepLinkProvider } from '@/features/upload/pairing/upload-deep-link-provider';
 import { useThemeMode } from '@/hooks/use-theme';
+import { copyToClipboard } from '@/utils/clipboard';
 import { tallSheetOptions } from '@/utils/sheet-fit';
 
 /** The Pulse app's start-up, run by PulseCore before anything renders. */
@@ -54,7 +59,10 @@ export default function RootLayout() {
       // Unzipped restores and imports a crash left behind: nothing of this version is writing
       // them yet.
       afterMigrations={removeLeftoverRestores}>
-      <ThemedNavigation />
+      {/* The Pulse app uploads to destinations paired from links. */}
+      <UploadStrategyContext.Provider value={poolProvider}>
+        <ThemedNavigation />
+      </UploadStrategyContext.Provider>
     </PulseCore>
   );
 }
@@ -69,6 +77,8 @@ function ThemedNavigation() {
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
+      {/* First, so the upload manager has its toast before any link or screen starts an upload. */}
+      <UploadsStarter />
       <UploadDeepLinkProvider>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="recorder" options={fullScreen} />
@@ -118,6 +128,16 @@ function ThemedNavigation() {
       <StandaloneStatusBar fallback={isDark ? 'light' : 'dark'} />
     </ThemeProvider>
   );
+}
+
+/**
+ * Runs the upload manager for the app's lifetime, with the app's toast and clipboard. A leaf of its
+ * own: the toast context changes with every toast, and the navigation tree shouldn't re-render.
+ */
+function UploadsStarter() {
+  const { showToast } = useToast();
+  useEffect(() => startUploads({ showToast, copyLink: copyToClipboard }), [showToast]);
+  return null;
 }
 
 /** The standalone implementation of the status-bar port: the style a screen asks for (the newest

@@ -1,0 +1,76 @@
+{
+  "format": "pulsekit-namespace-vectors",
+  "version": 1,
+  "about": "native-bridge.md §4: namespace = hostId + \"-\" + lowercase hex SHA-256 of UTF-8(origin + \"\\n\" + userId), first 16 characters. origin = lowercased scheme (http or https only) + \"://\" + lowercased ASCII host + \":\" + port unless the port is the scheme default; any path, query or fragment is dropped. Credentials, IPv6 literals, non-ASCII hosts and ports outside 1-65535 are refused (invalid_options). Computed in Node by embed/src/accounts/namespace-vectors.test.ts; PulseKitAccounts.swift must give the same namespace on a device.",
+  "vectors": [
+    {
+      "name": "the plain case",
+      "hostId": "com.mieweb.timehuddle",
+      "serverOrigin": "https://huddle.example.org",
+      "userId": "user-0001",
+      "origin": "https://huddle.example.org",
+      "namespace": "com.mieweb.timehuddle-c2974d2cec7b07bf"
+    },
+    {
+      "name": "case, the default port, a path, a query and a fragment normalise away: the same namespace as the plain case",
+      "hostId": "com.mieweb.timehuddle",
+      "serverOrigin": "HTTPS://Huddle.Example.ORG:443/app/?x=1#y",
+      "userId": "user-0001",
+      "origin": "https://huddle.example.org",
+      "namespace": "com.mieweb.timehuddle-c2974d2cec7b07bf"
+    },
+    {
+      "name": "a non-default port stays",
+      "hostId": "com.mieweb.timehuddle",
+      "serverOrigin": "http://localhost:3101",
+      "userId": "u-42",
+      "origin": "http://localhost:3101",
+      "namespace": "com.mieweb.timehuddle-0da3ebe71e953bc1"
+    },
+    {
+      "name": "http drops :80; the userId is hashed as its UTF-8 bytes, not normalised (a decomposed é)",
+      "hostId": "io.example.host",
+      "serverOrigin": "http://10.0.0.5:80/",
+      "userId": "Ünïcode-user-é",
+      "origin": "http://10.0.0.5",
+      "namespace": "io.example.host-a68e010512332029"
+    },
+    {
+      "name": "another host app, https on :8443",
+      "hostId": "capacitor.cap-host",
+      "serverOrigin": "https://huddle.example.org:8443",
+      "userId": "9QZ4kE2pX7wLmN3aB",
+      "origin": "https://huddle.example.org:8443",
+      "namespace": "capacitor.cap-host-3c1507867d112518"
+    }
+  ],
+  "invalidOrigins": [
+    "huddle.example.org",
+    "ftp://huddle.example.org",
+    " https://huddle.example.org",
+    "https://",
+    "https://user:secret@huddle.example.org",
+    "https://[::1]:3000",
+    "https://huddle.example.org:0",
+    "https://huddle.example.org:65536",
+    "https://huddle.example.org:port",
+    "https://bücher.example",
+    "https://...",
+    "https://huddle.example.org:"
+  ],
+  "deviceCases": [
+    "setAccount with each vector (configure({hostId}) first) answers {namespace} equal to that vector's namespace, and Library/PulseKit/<namespace>/account.json holds hostId, serverOrigin (the normalised origin), label when given, createdAt and lastUsedAt, and no userId.",
+    "setAccount with the same account again answers the same namespace and changes nothing else.",
+    "setAccount(null), then listDrafts / getDraft / countDrafts / usage / pendingResults / open: each fails with no_account; acknowledge is a no-op; listNamespaces still answers.",
+    "Before any open: setAccount A, then B: listDrafts for B is empty (or B's own rows). After an open on A: setAccount B fails with restart_required (details.namespace = B), yet listDrafts now answers B's rows (never A's), open fails with restart_required, and setAccount A again works and opens.",
+    "setAccount or purge while a flow is open: busy.",
+    "PR1-era <hostId>-local with no drafts: the first setAccount deletes it (both roots). With drafts: it stays; listNamespaces reports it (serverOrigin \"\", active false, unsent = its draft folders); it is never adopted into the signed-in account; purge({namespace: \"<hostId>-local\"}) deletes it.",
+    "listNamespaces lists every Library/PulseKit/*/account.json namespace (A and B above), active only for the signed-in one.",
+    "purge() of the active namespace after an open: Pulse JS answers releaseLibrary first, then both roots go; with no namespace left, Library/PulseKit/.shared and the empty PulseKit folders go too (a container diff shows nothing of Pulse's).",
+    "Library/PulseKit is excluded from backups (isExcludedFromBackup), and files under a namespace are NSFileProtectionCompleteUntilFirstUserAuthentication.",
+    "purge() of the active namespace after an open, still signed in, then open again: the log shows 'starting a fresh React Native instance after a purge released the library', Pulse opens on an empty library (no database error), and records into it.",
+    "After an open on A, setAccount B (restart_required), then purge({namespace: A}): Pulse JS answers releaseLibrary, A's roots go, and open now opens for B in a fresh runtime (no restart_required).",
+    "Seed drafts with posters and an export, open once so catalog.json is written, then install a new build over the app (or restore from a device backup) so the data container path changes: before any open, listDrafts and getDraft give poster and export paths under the new container (each path ends with its rel and the file exists).",
+    "logFile signed out with no open yet: not_found (never no_account). After an open on A then setAccount B (restart_required): logFile is A's logs/pulse.log, the one the runtime writes."
+  ]
+}

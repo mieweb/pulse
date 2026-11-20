@@ -45,9 +45,23 @@ signs and publishes everything a host needs:
 4. When it's green, check a download: download the release's assets and run
    `shasum -a 256 -c SHA256SUMS` in that folder.
 5. Try it in a host: `npm install --save-exact @mieweb/capacitor-pulse@rc` in the Capacitor test
-   host or your app, and check that `getInfo().gitSha` is the tagged commit.
+   host or your app, and check that `isAvailable()` is true on an iPhone and that
+   `getInfo().gitSha` is the tagged commit.
+
+A green run is not enough on its own: `pulsekit-v0.1.0-rc.4` built, packaged and published a
+release whose `PulseKit` binary had no `PulseKit` class, because the facade's Swift files were
+compiled into the wrong target. Hosts linking it answered `isAvailable()` false. Packaging now
+refuses a PulseKit slice without the class, but step 5 on a phone is the check that counts.
 
 For a final release, tag `pulsekit-v0.2.0` the same way.
+
+## Choose whether the release runs without a screen
+
+The `headless` capability (host writes and uploads with nothing on screen) is a build-time switch,
+on unless the prebuild runs with `PULSEKIT_HEADLESS=0` ([dev-loop.md](dev-loop.md#with-the-headless-capability)).
+`release-embed.yml` runs `npm run prebuild -- --platform ios` without the variable, so a release reports
+`headless`. To ship a release without it, set `PULSEKIT_HEADLESS: '0'` on that step. Hosts read the result from `getInfo().capabilities` and change how they resume uploads
+([uploads.md](uploads.md#paused-uploads)), so say in the release notes which way it went.
 
 ## When a release run fails
 

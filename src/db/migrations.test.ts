@@ -278,3 +278,105 @@ describe('0019_link_places', () => {
     insert.run('d2', 'https://a.test', 'art-6', null);
   });
 });
+
+describe('0020_host_context_outbox', () => {
+  let db: DatabaseSync;
+
+  beforeEach(() => {
+    db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON'); // as the app opens its library (durability.ts)
+    applyMigrations(db, (f) => f < '0020');
+  });
+
+  const insertJob = (draftId: string, clientKey: string) =>
+    db
+      .prepare(
+        `INSERT INTO upload_jobs (draft_id, state, client_key, draft_key, merged_signature, sent_at)
+         VALUES (?, 'queued', ?, ?, 'sig', 1)`,
+      )
+      .run(draftId, clientKey, `install:${draftId}`);
+
+  it('gives every older draft created_via "app" and no host context, keeping its rows', () => {
+    db.prepare(
+      `INSERT INTO drafts (id, name, context_server, context_ref) VALUES ('d1', 'Old', 'https://a.test', 'r1')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO segments (id, draft_id, sort_order, original_filename, duration_ms) VALUES ('s1', 'd1', 0, 'o.mp4', 1000)`,
+    ).run();
+
+    applyMigrations(db, (f) => f.startsWith('0020'));
+
+    expect(
+      db
+        .prepare(
+          `SELECT name, context_server, context_ref, context_key, context_label, context_json,
+                  upload_type_json, created_via, host_confirmed_at, sent_at FROM drafts`,
+        )
+        .get(),
+    ).toEqual({
+      name: 'Old',
+      context_server: 'https://a.test',
+      context_ref: 'r1',
+      context_key: null,
+      context_label: null,
+      context_json: null,
+      upload_type_json: null,
+      created_via: 'app',
+      host_confirmed_at: null,
+      sent_at: null,
+    });
+    expect(db.prepare('SELECT id FROM segments').all()).toEqual([{ id: 's1' }]);
+    // A row written later without it gets the default too.
+    db.prepare(`INSERT INTO drafts (id) VALUES ('d2')`).run();
+    expect(db.prepare(`SELECT created_via FROM drafts WHERE id = 'd2'`).get()).toEqual({
+      created_via: 'app',
+    });
+  });
+
+  it('adds the outbox, receipts and local settings, empty, and the context indexes', () => {
+    applyMigrations(db, (f) => f.startsWith('0020'));
+    for (const table of ['upload_jobs', 'upload_receipts', 'local_settings']) {
+      expect([table, db.prepare(`SELECT count(*) AS n FROM ${table}`).get()]).toEqual([
+        table,
+        { n: 0 },
+      ]);
+    }
+    const indexes = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'`)
+      .all()
+      .map((r) => r.name);
+    expect(indexes).toEqual(
+      expect.arrayContaining([
+        'drafts_context_key_idx',
+        'upload_jobs_client_key_unique',
+        'upload_receipts_context_key_idx',
+      ]),
+    );
+  });
+
+  it('keeps one job per client key, only for a draft that exists, gone with its draft', () => {
+    applyMigrations(db, (f) => f.startsWith('0020'));
+    db.prepare(`INSERT INTO drafts (id) VALUES ('d1'), ('d2')`).run();
+    insertJob('d1', 'install:d1:aaaa');
+    expect(() => insertJob('d2', 'install:d1:aaaa')).toThrow(/UNIQUE/);
+    expect(() => insertJob('missing', 'install:missing:bbbb')).toThrow(/FOREIGN KEY/);
+    expect(db.prepare('SELECT attempts, created_at > 0 AS stamped FROM upload_jobs').get()).toEqual(
+      { attempts: 0, stamped: 1 },
+    );
+
+    db.prepare(`DELETE FROM drafts WHERE id = 'd1'`).run();
+    expect(db.prepare('SELECT count(*) AS n FROM upload_jobs').get()).toEqual({ n: 0 });
+  });
+
+  it('keeps a receipt after its draft is gone (no foreign key)', () => {
+    applyMigrations(db, (f) => f.startsWith('0020'));
+    db.prepare(
+      `INSERT INTO upload_receipts (draft_id, name, outcome, upload_id, artifact_id, client_key,
+         clip_count, duration_ms, sent_at, delivered_at, expires_at)
+       VALUES ('retired', 'Fix login', 'done', 'u1', 'a1', 'install:retired:cccc', 2, 3000, 1, 2, 3)`,
+    ).run();
+    expect(db.prepare('SELECT draft_id, media_deleted_at FROM upload_receipts').all()).toEqual([
+      { draft_id: 'retired', media_deleted_at: null },
+    ]);
+  });
+});

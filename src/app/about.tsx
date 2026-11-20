@@ -38,8 +38,8 @@ import {
   clearTrustedServers,
   untrustServer,
   useTrustedServers,
-} from '@/features/upload/trusted-servers';
-import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/client-identity';
+} from '@/features/upload/pairing/trusted-servers';
+import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/core/client-identity';
 import { useTheme } from '@/hooks/use-theme';
 import { formatCount } from '@/utils/format';
 import { formatDateTime } from '@/utils/relative-date';

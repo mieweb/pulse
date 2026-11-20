@@ -10,7 +10,7 @@ import { RecoveryScreen } from '@/core/recovery/screen';
 import type { LibraryProblem, PulseMode } from '@/core/recovery/types';
 import { formatDateTime } from '@/utils/relative-date';
 import migrations from '../../drizzle/migrations';
-import { db, expoDb, library } from './client';
+import { db, expoDb, library, guardNewerSchema } from './client';
 import { referencedMediaPaths } from './media-refs';
 import { runDataMigrations, type DataMigration } from './data-migrations';
 import { dropBakedEdits } from './baked-edits-migration';
@@ -111,7 +111,15 @@ let migration: Promise<void> | null = null;
 let migrated = false;
 let noticeSeen = false;
 
-function runMigrations(mode: PulseMode, afterMigrations?: () => void): Promise<void> {
+/** The gate's once-per-runtime run (exported for tests). */
+export function runMigrations(mode: PulseMode, afterMigrations?: () => void): Promise<void> {
+  // An embedded library a newer PulseKit migrated has nothing run on it: no migrations, data
+  // migrations or housekeeping (written for this build's schema, not the newer one). It still
+  // lists, sends and deletes; editing is refused (`guardNewerSchema`).
+  if (!migration && guardNewerSchema(mode)) {
+    migrated = true;
+    migration = Promise.resolve();
+  }
   migration ??= migrate(db, migrations)
     .then(async () => {
       await runDataMigrations(dataMigrationsFor(mode));

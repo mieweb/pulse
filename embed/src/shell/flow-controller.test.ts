@@ -1,12 +1,31 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
 import type { FileRef, OpenRequest, PulseContext } from '@mieweb/pulse-embed';
+import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import type { DraftSeen } from './draft-sync';
+import migrations from '../../../drizzle/migrations';
+import { env } from '@/test-support/expo-fs-node';
+
+import { flowResult } from '../flow/result';
 import { createFlowController, FAIL_SETTLE_MS } from './flow-controller';
 import { createFlowStore } from './flow-store';
+import type { DraftRead } from './library';
 
-// The library, the recorders on screen and the results folder, as the controller sees them.
-const mockDrafts = new Map<string, DraftSeen>();
+// The library, the recorders on screen and the results folder, as the controller sees them. A
+// test that needs the real library (on node:sqlite) sets `mockLibrary`.
+const mockDrafts = new Map<string, DraftRead>();
+let mockLibrary: typeof import('./library') | null = null;
 let mockOnScreen: { place: null; draftId: string | null } | null = null;
 let mockFinalize: () => Promise<void> = async () => {};
 const mockSave =
@@ -18,21 +37,41 @@ jest.mock('@/features/recorder/recorder-presence', () => ({
   recorderOnScreen: () => mockOnScreen,
 }));
 jest.mock('./library', () => ({
-  readDraft: (id: string) => mockDrafts.get(id) ?? null,
+  readDraft: (id: string) =>
+    mockLibrary ? mockLibrary.readDraft(id) : (mockDrafts.get(id) ?? null),
   onDraftsChanged: () => () => {},
   projectDocument: () => ({ version: 2 }),
 }));
 jest.mock('./results', () => ({
   saveExportForHost: (opts: { requestId: string; exportPath: string }) => mockSave(opts),
 }));
+// What the real library needs off the phone: the file system and SQLite stand-ins.
+jest.mock('expo-file-system', () => jest.requireActual('@/test-support/expo-fs-node'));
+jest.mock(
+  'expo-sqlite',
+  () =>
+    jest.requireActual<typeof import('@/test-support/expo-sqlite-node')>(
+      '@/test-support/expo-sqlite-node',
+    ).mockModule,
+);
+jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+jest.mock('@/utils/video', () => ({}));
+jest.mock('@/db/secure-token', () => ({ deleteSavedLink: async () => {} }));
+jest.mock('expo-crypto', () => ({
+  randomUUID: () => jest.requireActual<typeof import('node:crypto')>('node:crypto').randomUUID(),
+}));
 
 const context: PulseContext = { key: 'ticket:t-1', kind: 'ticket', id: 'T-1', label: 'One' };
 const record: OpenRequest = { entry: 'record', context };
-const draft = (draftId: string, clipCount: number): DraftSeen => ({
+const draft = (
+  draftId: string,
+  clipCount: number,
+  place: PulseContext | null = null,
+): DraftRead => ({
   draftId,
   clipCount,
   lastModified: clipCount,
-  mergedSignature: null,
+  context: place,
 });
 const ref = (rel: string): FileRef => ({ rel, path: `/docs/${rel}`, webUrl: '', bytes: 1 });
 
@@ -115,6 +154,31 @@ describe("the host's close", () => {
     await closing;
     expect(store.state().end).toMatchObject({ status: 'closed', reason: 'host', draftId: 'd1' });
   });
+
+  it('waits while Export sends; the Send that goes completes the flow', async () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    store.dispatch({ type: 'edit' });
+    store.dispatch({ type: 'export' });
+    controller.sending(true);
+    await controller.hostClose(false);
+    expect(store.state().end).toBeNull();
+    controller.sent({ draftId: 'd1', sentAt: 5, clientKey: 'i:d1:ab', draftKey: 'i:d1' });
+    expect(store.state().end).toMatchObject({ status: 'completed', mode: 'pulse' });
+  });
+
+  it('a Send that stops lets the waiting close end the flow', async () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    store.dispatch({ type: 'edit' });
+    store.dispatch({ type: 'export' });
+    controller.sending(true);
+    await controller.hostClose(false);
+    controller.sending(false);
+    expect(store.state().end).toMatchObject({ status: 'closed', reason: 'host', draftId: 'd1' });
+  });
 });
 
 describe('Use this video', () => {
@@ -166,6 +230,50 @@ describe('Use this video', () => {
   });
 });
 
+describe("Export's ready video", () => {
+  it('an export entry on a draft whose saved export still matches ends exported', async () => {
+    // A saved export used as is writes nothing: the draft reads the same before and after.
+    mockDrafts.set('d1', draft('d1', 2));
+    const store = createFlowStore({
+      requestId: 'r6',
+      request: { entry: 'export', draftId: 'd1' },
+      onEnd: () => {},
+    });
+    const controller = createFlowController(store, 'r6');
+    controller.attach('d1');
+    store.dispatch({ type: 'mounted' });
+    controller.observe();
+    controller.exportReady('d1');
+    await controller.close();
+    expect(flowResult(store.state(), 9)).toMatchObject({ stage: 'exported', draftId: 'd1' });
+  });
+
+  it('back on the editor with nothing changed, the stage stays exported', async () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    store.dispatch({ type: 'edit' });
+    mockDrafts.set('d1', { ...draft('d1', 1), lastModified: 50 }); // a trim
+    controller.observe();
+    expect(store.state().stage).toBe('edited');
+    store.dispatch({ type: 'export' });
+    controller.exportReady('d1');
+    await controller.back();
+    expect(store.getSnapshot().items.at(-1)?.screen).toBe('editor');
+    expect(store.state().stage).toBe('exported');
+  });
+
+  it("ignores another draft's video", () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    store.dispatch({ type: 'edit' });
+    store.dispatch({ type: 'export' });
+    controller.exportReady('d2');
+    expect(store.state().stage).toBe('recorded');
+  });
+});
+
 describe('attach', () => {
   it("is false for a draft the library doesn't have", () => {
     const store = createFlowStore({
@@ -174,6 +282,90 @@ describe('attach', () => {
       onEnd: () => {},
     });
     expect(createFlowController(store, 'r2').attach('nope')).toBe(false);
+  });
+
+  it.each(['edit', 'export'] as const)(
+    "a reopened draft's %s flow carries the draft's context into its result",
+    async (entry) => {
+      mockDrafts.set('d1', draft('d1', 2, context));
+      const store = createFlowStore({
+        requestId: 'r3',
+        request: { entry, draftId: 'd1' },
+        onEnd: () => {},
+      });
+      const controller = createFlowController(store, 'r3');
+      expect(controller.attach('d1')).toBe(true);
+      store.dispatch({ type: 'mounted' });
+      await controller.hostClose(false);
+      expect(flowResult(store.state(), 9)).toMatchObject({ draftId: 'd1', context });
+    },
+  );
+});
+
+describe('record → Keep draft → edit, on the real library', () => {
+  // One "device": the library as the embed opens it (`@/db/client` opens it on import), migrated.
+  const ROOT = mkdtempSync(join(tmpdir(), 'pulse-flow-controller-'));
+  let lib!: { client: typeof import('@/db/client'); drafts: typeof import('@/db/drafts') };
+
+  beforeAll(async () => {
+    const docs = join(ROOT, 'Documents');
+    Object.assign(env, {
+      docDir: docs,
+      cacheDir: join(ROOT, 'Caches'),
+      dbDir: join(docs, 'SQLite'),
+    });
+    for (const dir of [env.docDir, env.cacheDir, env.dbDir]) mkdirSync(dir, { recursive: true });
+    lib = { client: jest.requireActual('@/db/client'), drafts: jest.requireActual('@/db/drafts') };
+    await migrate(lib.client.db, migrations);
+    mockLibrary = jest.requireActual('./library');
+  });
+  afterAll(() => {
+    mockLibrary = null;
+    lib?.client.expoDb.closeSync();
+    rmSync(ROOT, { recursive: true, force: true });
+  });
+
+  it('returns the place and host data the recording stored, not null', async () => {
+    const placed: PulseContext = {
+      key: 'huddle:c-9',
+      kind: 'huddle',
+      id: 'C-9',
+      label: 'Platform',
+      uploadType: { id: 'huddle.post', version: 1, title: 'Post' },
+      data: {
+        type: 'huddle.post',
+        target: { kind: 'huddle', teamId: 't1', conversationId: 'c-9' },
+      },
+    };
+    // The draft a record flow's recorder makes for `placed` (flow-stack.tsx's newDraft), kept.
+    const id = await lib.drafts.createDraft({
+      name: null,
+      context: null,
+      hostContext: { ...placed },
+      createdVia: 'host',
+    });
+
+    const store = createFlowStore({
+      requestId: 'r4',
+      request: { entry: 'edit', draftId: id },
+      onEnd: () => {},
+    });
+    const controller = createFlowController(store, 'r4');
+    expect(controller.attach(id)).toBe(true);
+    store.dispatch({ type: 'mounted' });
+    await controller.hostClose(false);
+    expect(flowResult(store.state(), 9)?.context).toEqual(placed);
+  });
+
+  it('is null for a draft the Pulse app made, with no host place', async () => {
+    const id = await lib.drafts.createDraft({ name: 'Walkthrough' });
+    const store = createFlowStore({
+      requestId: 'r5',
+      request: { entry: 'edit', draftId: id },
+      onEnd: () => {},
+    });
+    expect(createFlowController(store, 'r5').attach(id)).toBe(true);
+    expect(store.state().context).toBeNull();
   });
 });
 

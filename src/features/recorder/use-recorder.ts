@@ -22,7 +22,6 @@ import {
   createDraft,
   deleteDraft,
   deleteSegment,
-  type DraftContext,
   expectSegmentCover,
   reorderSegments,
   segmentsForDraft,
@@ -36,7 +35,7 @@ import {
 } from '@/db/settings';
 import { useToast } from '@/features/toast/toast-provider';
 import { dropClipJobs } from '@/features/transcription/clip-queue';
-import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
+import { describeError, formatBytes, formatSeconds } from '@/features/upload/core/upload-log';
 import {
   absolutize,
   copyIntoSegments,
@@ -50,6 +49,7 @@ import { userMessage } from '@/utils/user-message';
 import { generateThumbnailFile, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
+import type { RecorderNewDraft } from './contract';
 import { importLog } from './import-log';
 import { getRecorderFormat, learnRecorderFormat } from './recorder-format';
 import { useCallState } from './use-call-state';
@@ -75,12 +75,10 @@ function discard(uri: string) {
 
 /**
  * `newDraft`: what a draft this recorder creates starts with — a link's `name` as its name (if
- * it has one) and the link's place as its context. Read once, like `initialDraftId`.
+ * it has one) and the link's place as its context; embedded, the host place and `createdVia`.
+ * Read once, like `initialDraftId`.
  */
-export function useRecorder(
-  initialDraftId?: string,
-  newDraft?: { name: string | null; context: DraftContext | null },
-) {
+export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft) {
   const cameraRef = useRef<CameraRef>(null);
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
   const [isRecording, setIsRecording] = useState(false);

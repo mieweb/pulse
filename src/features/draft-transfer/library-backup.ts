@@ -9,6 +9,7 @@ import { assertSafeLibrary, isSafeMediaPath, referencedMediaPaths } from '@/db/m
 import {
   APP_SCHEMA_VERSION,
   assertCurrentSchema,
+  clearLocalTables,
   KNOWN_SCHEMA_VERSIONS,
   schemaVersion,
 } from '@/db/project';
@@ -94,6 +95,7 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
       copy.execSync('PRAGMA journal_mode = DELETE;'); // one self-contained file, no -wal beside it
       // Exports aren't carried: a restored draft merges again instead of trusting a stale one.
       copy.execSync('UPDATE drafts SET merged_signature = NULL, merged_duration_ms = NULL');
+      clearLocalTables(copy); // this phone's outbox, receipts and installation id stay here
       version = schemaVersion(copy);
       // The files the COPY's rows reference, so the manifest matches the database in it.
       media = [...referencedMediaPaths(copy)]

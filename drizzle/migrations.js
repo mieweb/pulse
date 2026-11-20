@@ -21,6 +21,7 @@ import m0016 from './0016_single_shot_uploads.sql';
 import m0017 from './0017_clip_transcripts.sql';
 import m0018 from './0018_caption_edits.sql';
 import m0019 from './0019_link_places.sql';
+import m0020 from './0020_host_context_outbox.sql';
 
   export default {
     journal,
@@ -44,7 +45,8 @@ m0015,
 m0016,
 m0017,
 m0018,
-m0019
+m0019,
+m0020
     }
   }
   

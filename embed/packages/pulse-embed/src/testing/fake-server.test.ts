@@ -253,12 +253,15 @@ describe('server mode', () => {
     expect(fake.drafts()[0].state).toBe('sent');
   });
 
-  it('host refusals: destination.gone fails the job, host.unavailable needs credentials', async () => {
+  it('host refusals: destination.gone fails the job, no_account pauses it, host.unavailable retries', async () => {
     for (const [code, state] of [
       ['destination.gone', 'failed'],
       ['upload.too_large', 'failed'],
-      ['host.unavailable', 'needs_credentials'],
       ['no_account', 'needs_credentials'],
+      // The host said so itself: retried later (outbox.ts), not paused.
+      ['host.unavailable', 'queued'],
+      // Not one of the contract's codes: read as host.unavailable.
+      ['host_misconfigured', 'queued'],
     ] as const) {
       const v = vault();
       const fake = make(v);
@@ -270,7 +273,9 @@ describe('server mode', () => {
       const [d] = fake.drafts();
       expect([code, d.state]).toEqual([code, state]);
       expect(v.seen).toEqual([]);
-      if (state === 'failed') expect(d.upload?.error?.code).toBe(code);
+      expect(d.upload?.error?.code).toBe(code === 'host_misconfigured' ? 'host.unavailable' : code);
+      expect(d.upload?.error?.recoverable).toBe(state !== 'failed');
+      expect(d.upload?.attempts).toBe(state === 'queued' ? 1 : 0);
     }
   });
 
@@ -414,5 +419,31 @@ describe('server mode', () => {
     expect(fake.drafts()[0].state).toBe('ready');
     expect(released).toEqual([{ reason: 'canceled', uploadId: 'up-1' }]);
     expect(seen).toEqual(['POST', 'PATCH']);
+  });
+
+  it('without a fetch of its own it calls the global fetch unbound, as a browser needs', async () => {
+    const v = vault();
+    const original = globalThis.fetch;
+    const receivers: unknown[] = [];
+    // A browser's fetch throws "Illegal invocation" when called as a method of another object.
+    globalThis.fetch = function (this: unknown, url: string, init: FetchInitLike) {
+      receivers.push(this);
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+      return v.fetch(url, init);
+    } as unknown as typeof fetch;
+    try {
+      const fake = createFakePulse({
+        flows: [{ result: 'sent' }],
+        server: { fixture: fixture(10), pollMs: 2 },
+      });
+      fake.client.setHostServices(services());
+      const r = await fake.client.record(ctx);
+      if (r.status !== 'completed') throw new Error(r.status);
+      await fake.idle();
+      expect(receivers.length > 0).toBe(true);
+      expect((await fake.client.getDraft(r.draftId))?.state).toBe('sent');
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });

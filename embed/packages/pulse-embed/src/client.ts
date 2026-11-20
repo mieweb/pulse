@@ -112,7 +112,11 @@ export function createPulseClient(o: CreateClientOptions = {}): PulseClient {
     timeout: number | null,
   ): Promise<unknown> {
     const sent = Promise.resolve()
-      .then(() => adapter.call(method, args, callId))
+      .then(() =>
+        timeout === null
+          ? adapter.call(method, args, callId)
+          : adapter.call(method, args, callId, { timeoutMs: timeout }),
+      )
       .catch((e: unknown) => {
         throw pulseError(
           'unavailable',

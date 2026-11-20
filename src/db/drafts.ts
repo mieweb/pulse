@@ -15,9 +15,23 @@ import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/v
 import { parseCaptionEdit } from './captions';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
+import {
+  assertEditable,
+  hostContextColumns,
+  hostContextOf,
+  LibraryError,
+  type HostContext,
+  type HostContextColumns,
+} from './host-context';
 import type { Draft, Segment } from './schema';
-import { clipTranscripts, drafts, segments } from './schema';
+import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
 import { deleteSavedLink } from './secure-token';
+import {
+  cancelJobForChange,
+  isLockedJobState,
+  type JobChangeReason,
+  type JobState,
+} from './upload-jobs';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
@@ -109,19 +123,120 @@ export type DraftContext = { server: string; ref: string };
 
 /**
  * A new draft. Opened from a link that names a place, it is named with the link's `name` (or not
- * at all) and remembers that place (`context`).
+ * at all) and remembers that place (`context`). Recorded for a host's place (embedded), it stores
+ * that place and its upload type (`hostContext`, `uploadType`, checked: `invalid_options`), and
+ * `createdVia` says which shell made it.
  */
 export async function createDraft(
-  opts: { name?: string | null; context?: DraftContext | null } = {},
+  opts: {
+    name?: string | null;
+    context?: DraftContext | null;
+    hostContext?: HostContext | null;
+    uploadType?: unknown;
+    createdVia?: 'app' | 'host';
+  } = {},
 ): Promise<string> {
+  assertEditable();
+  const host = opts.hostContext ? hostContextColumns(opts.hostContext, opts.uploadType) : null;
   const id = Crypto.randomUUID();
   await db.insert(drafts).values({
     id,
     name: opts.name ?? null,
     contextServer: opts.context?.server ?? null,
     contextRef: opts.context?.ref ?? null,
+    ...host,
+    createdVia: opts.createdVia ?? 'app',
   });
   return id;
+}
+
+/**
+ * The host place a draft's columns hold, as the host handed it over (with its upload type and
+ * `data`), and with `kind` and `id` taken from the key (`kind:id`) when it didn't spell them out:
+ * what a flow that reopens the draft returns as its context. Null for a draft without one.
+ */
+export function draftHostContext(columns: {
+  [K in keyof HostContextColumns]: HostContextColumns[K] | null;
+}): (HostContext & { kind: string; id: string }) | null {
+  const context = hostContextOf(columns);
+  if (!context) return null;
+  const colon = context.key.indexOf(':');
+  return {
+    ...context,
+    kind: typeof context.kind === 'string' ? context.kind : context.key.slice(0, colon),
+    id: typeof context.id === 'string' ? context.id : context.key.slice(colon + 1),
+  };
+}
+
+/**
+ * Move an unsent draft to another host place (Move to…): its context and upload type, checked as
+ * at birth (`invalid_options`). Refused with `draft.locked` while it uploads, and with reason
+ * `clock_bound` once the host confirmed its Send: the clock action that ran for it stays its own.
+ */
+export async function setDraftContext(
+  draftId: string,
+  context: HostContext,
+  uploadType?: unknown,
+): Promise<void> {
+  assertEditable();
+  const columns = hostContextColumns(context, uploadType);
+  const jobState = await readUploadLock(draftId);
+  if (jobState) {
+    // Checked before the job is taken out: a refused move leaves its Send queued.
+    const row = db
+      .select({ hostConfirmedAt: drafts.hostConfirmedAt })
+      .from(drafts)
+      .where(eq(drafts.id, draftId))
+      .get();
+    if (row?.hostConfirmedAt != null) throw clockBound(draftId);
+    cancelJobForChange(draftId, 'edited');
+  }
+  db.transaction((tx) => {
+    const row = tx
+      .select({ hostConfirmedAt: drafts.hostConfirmedAt })
+      .from(drafts)
+      .where(eq(drafts.id, draftId))
+      .get();
+    if (!row) throw new LibraryError('not_found', `Draft ${draftId} doesn't exist.`);
+    if (row.hostConfirmedAt != null) throw clockBound(draftId);
+    tx.update(drafts)
+      .set({ ...columns, lastModified: now })
+      .where(eq(drafts.id, draftId))
+      .run();
+  });
+}
+
+function clockBound(draftId: string): LibraryError {
+  return new LibraryError(
+    'draft.locked',
+    `Draft ${draftId} belongs to the clock action its Send confirmed.`,
+    'clock_bound',
+  );
+}
+
+/**
+ * The draft a host's `record` for a place continues: the newest one recorded for that place
+ * (`contextKey`) and upload type that hasn't been sent (no outbox job) and has a clip; an empty one
+ * is about to be dropped by the recorder that made it. `null` when there's none.
+ */
+export async function findOpenHostDraft(
+  contextKey: string,
+  uploadTypeId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(
+      and(
+        eq(drafts.contextKey, contextKey),
+        sql`json_extract(${drafts.uploadTypeJson}, '$.id') = ${uploadTypeId}`,
+        sql`not exists (select 1 from ${uploadJobs} where ${uploadJobs.draftId} = ${drafts.id})`,
+        sql`exists (select 1 from ${segments} where ${segments.draftId} = ${drafts.id})`,
+      ),
+    )
+    .orderBy(desc(drafts.lastModified))
+    .limit(1);
+  return row?.id ?? null;
 }
 
 /**
@@ -214,11 +329,45 @@ export async function getDraftUploadStatus(draftId: string): Promise<Draft['uplo
  * A draft is LOCKED while it uploads: it goes up exactly as it was when Upload was tapped, and
  * cancelling is the only way back to editing. The UI never offers an edit on an uploading draft,
  * so this throwing is a backstop, not a user-reachable path.
+ *
+ * Two upload states, one per shell, read in one query (AD33): the Pulse app's `upload_status`
+ * ('uploading' locks), and an embedded draft's outbox job, which locks while it prepares, uploads
+ * or delivers and refuses with `draft.locked` (a queued, paused or failed job is taken out by the
+ * edit instead: `takeOutForChange`, which every edit and delete runs).
  */
 export async function assertNotUploading(draftId: string): Promise<void> {
-  if ((await getDraftUploadStatus(draftId)) === 'uploading') {
+  await readUploadLock(draftId);
+}
+
+/** `assertNotUploading`, returning the state of the draft's outbox job (null: none). */
+async function readUploadLock(draftId: string): Promise<JobState | null> {
+  const [row] = await db
+    .select({
+      status: drafts.uploadStatus,
+      jobState: sql<JobState | null>`(select ${uploadJobs.state} from ${uploadJobs} where ${uploadJobs.draftId} = ${drafts.id})`,
+    })
+    .from(drafts)
+    .where(eq(drafts.id, draftId));
+  if (row?.status === 'uploading') {
     throw new Error(`Draft ${draftId} is uploading — cancel the upload to edit it`);
   }
+  if (row?.jobState && isLockedJobState(row.jobState)) {
+    throw new LibraryError(
+      'draft.locked',
+      `Draft ${draftId} is uploading (${row.jobState}): it goes up as it was at Send.`,
+    );
+  }
+  return row?.jobState ?? null;
+}
+
+/**
+ * Before an edit or delete changes the draft: refuse while it uploads (`assertNotUploading`), and
+ * take a queued, paused or failed outbox job out (pulse-schema.md §3.3), so the job never sends
+ * the cut from before the edit and the host's target is released. The next Send makes a new
+ * clientKey. A draft without a job (every standalone one) costs no more than the lock check.
+ */
+async function takeOutForChange(draftId: string, reason: JobChangeReason): Promise<void> {
+  if (await readUploadLock(draftId)) cancelJobForChange(draftId, reason);
 }
 
 /**
@@ -270,7 +419,8 @@ export async function addSegmentCover(
 }
 
 async function beginClipMutation(draftId: string): Promise<void> {
-  await assertNotUploading(draftId);
+  assertEditable();
+  await takeOutForChange(draftId, 'edited');
 }
 
 /** Whether a clip is still in the database (not deleted, nor its draft). */
@@ -298,6 +448,8 @@ export async function setMergedExport(
   draftId: string,
   merged: { signature: string; durationMs: number } | null,
 ): Promise<void> {
+  // No `assertEditable`: Send merges and records the export, and a library a newer Pulse migrated
+  // still sends (AD34). Edits clear it only after their own check.
   await db
     .update(drafts)
     .set({
@@ -517,18 +669,21 @@ export async function reorderSegments(orderedIds: string[]): Promise<void> {
 export async function renameDraft(draftId: string, name: string | null): Promise<void> {
   // Locked too — the name rides the upload as the video's title. The video itself doesn't
   // change, so the persisted export stays valid.
-  await assertNotUploading(draftId);
+  assertEditable();
+  await takeOutForChange(draftId, 'edited');
   await db.update(drafts).set({ name, lastModified: now }).where(eq(drafts.id, draftId));
 }
 
 /**
  * Copy a draft under a fresh id: its clips' files, and its rows with edits, clip names, captions
  * and clip transcripts carried over, their paths pointing at the copies. Not carried: the upload
- * pairing (a copy is a new, unsent draft) and the merged export (derived, merged again on
- * export). The files are copied first and the rows committed in one transaction; a failure
- * removes the copy's files. Returns the new draft's id.
+ * pairing (a copy is a new, unsent draft), the place (a link's or a host's: a copy isn't for the
+ * original's place) and the merged export (derived, merged again on export). The files are
+ * copied first and the rows committed in one transaction; a failure removes the copy's files.
+ * Returns the new draft's id.
  */
 export async function duplicateDraft(draftId: string): Promise<string> {
+  assertEditable();
   const source = await getDraftForExport(draftId);
   if (!source) throw new Error(`duplicateDraft: draft ${draftId} not found`);
   const copyId = Crypto.randomUUID();
@@ -586,6 +741,7 @@ export async function duplicateDraft(draftId: string): Promise<string> {
           name: `${source.draft.name || 'Untitled'} copy`,
           captionY: source.draft.captionY,
           lastClipNumber: source.draft.lastClipNumber,
+          createdVia: source.draft.createdVia,
         })
         .run();
       if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
@@ -610,7 +766,10 @@ export async function duplicateDraft(draftId: string): Promise<string> {
 
 /** Delete a draft (segments cascade), its on-disk directory (clips + export) and its saved link. */
 export async function deleteDraft(draftId: string): Promise<void> {
-  await assertNotUploading(draftId);
+  // No `assertEditable`: a library a newer Pulse migrated still deletes (AD34). The job goes
+  // first, through the outbox, so the host releases its target and the TUS uploads are deleted
+  // (the FK cascade would drop the row without either).
+  await takeOutForChange(draftId, 'deleted');
   await db.delete(drafts).where(eq(drafts.id, draftId));
   deleteDraftDir(draftId);
   await deleteSavedLink(draftId);
@@ -690,12 +849,20 @@ export async function getUploadedDraftIds(): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
-/** Drafts marked `uploading` — at launch, the uploads a killed app never finished. */
+/**
+ * Drafts marked `uploading` — at launch, the uploads a killed app never finished. Never one with
+ * an outbox job: that upload is the embed's, and its own launch rule resumes it (AD33).
+ */
 export async function getUploadingDraftIds(): Promise<string[]> {
   const rows = await db
     .select({ id: drafts.id })
     .from(drafts)
-    .where(eq(drafts.uploadStatus, 'uploading'));
+    .where(
+      and(
+        eq(drafts.uploadStatus, 'uploading'),
+        sql`not exists (select 1 from ${uploadJobs} where ${uploadJobs.draftId} = ${drafts.id})`,
+      ),
+    );
   return rows.map((r) => r.id);
 }
 
@@ -719,6 +886,7 @@ export async function insertImportedDraft(
   draft: typeof drafts.$inferInsert,
   segmentRows: (typeof segments.$inferInsert)[],
 ): Promise<void> {
+  assertEditable();
   db.transaction((tx) => {
     tx.insert(drafts).values(draft).run();
     if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();

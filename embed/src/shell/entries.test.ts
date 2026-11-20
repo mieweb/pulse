@@ -96,14 +96,16 @@ describe('planOpen', () => {
     });
   });
 
-  it('refuses uploadMode pulse (the default) as unsupported in PR1', () => {
+  it('runs uploadMode pulse (the default) as it runs file', () => {
     for (const config of [null, {}, { uploadMode: 'pulse' }]) {
       expect(planOpen(props({ entry: 'edit', draftId: 'd1' }, config))).toMatchObject({
-        ok: false,
-        entry: 'edit',
-        error: { code: 'unsupported' },
+        ok: true,
       });
     }
+    expect(planOpen(props({ entry: 'edit', draftId: 'd1' }, { uploadMode: 'ftp' }))).toMatchObject({
+      ok: false,
+      error: { code: 'invalid_options' },
+    });
   });
 
   it('runs a valid request under the facade’s requestId, ignoring fields it doesn’t know', () => {

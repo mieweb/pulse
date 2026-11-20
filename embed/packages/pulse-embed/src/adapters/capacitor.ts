@@ -73,10 +73,10 @@ export function createCapacitorAdapter(g: PageGlobals = pageGlobals()): PulseAda
   return {
     kind: 'capacitor',
     present: () => Promise.resolve(nativePulse(cap)),
-    async call(method, args, callId): Promise<BridgeReply> {
+    async call(method, args, callId, options): Promise<BridgeReply> {
       const fn = read(plugin, 'call');
       if (typeof fn !== 'function') throw new Error('The Pulse plugin has no call method.');
-      const json = JSON.stringify(buildRequest(method, args, callId));
+      const json = JSON.stringify(buildRequest(method, args, callId, options?.timeoutMs));
       const out: unknown = await (fn as (o: { json: string }) => unknown).call(plugin, { json });
       const text = read(out, 'json');
       if (typeof text !== 'string') throw new Error('The Pulse plugin answered without json.');
