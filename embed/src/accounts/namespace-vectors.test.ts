@@ -69,7 +69,8 @@ describe('namespace vectors', () => {
 
     it('is a plain folder name: 1–64 of [A-Za-z0-9._-]', () => {
       expect(v.namespace).toMatch(/^[A-Za-z0-9._-]{1,64}$/);
-      expect(v.namespace).toMatch(new RegExp(`^${v.hostId.replace(/\./g, '\\.')}-[0-9a-f]{16}$`));
+      expect(v.namespace.startsWith(`${v.hostId}-`)).toBe(true);
+      expect(v.namespace.slice(v.hostId.length + 1)).toMatch(/^[0-9a-f]{16}$/);
     });
   });
 
