@@ -29,6 +29,22 @@ npm run embed:package:ios              # → embed/artifacts/pulsekit-ios
 
 These are the same commands the release workflow runs, without signing.
 
+### With the `headless` capability
+
+A build with `headless` runs host writes and uploads with nothing on screen; without it, they show
+a brief "Preparing…" screen ([uploads.md](uploads.md#paused-uploads)). It is a build-time switch,
+off by default. Turn it on at prebuild:
+
+```sh
+cd embed
+PULSEKIT_HEADLESS=1 npm run prebuild -- --platform ios
+(cd ios && pod install)
+npm run build:ios
+```
+
+A prebuild without the variable turns it off again. `getInfo().capabilities` lists `headless`
+exactly when the build has it.
+
 ## Point a host at it
 
 ### Capacitor
@@ -74,9 +90,11 @@ error shows React Native's red error screen instead of ending the flow `failed` 
 - **Native lines.** The facade logs each open, its result, refused calls and commands to Pulse with
   the prefix `[PulseKit]` and the call's `callId`. Read them in Xcode's console or Console.app. A `callId` from a `PulseError`
   finds the matching lines.
-- **Pulse's own log.** `logFile()` returns a `FileRef` to `logs/pulse.log`, where Pulse keeps its
-  recent console output, redacted as it's recorded. `fetch(ref.webUrl)` reads it from your page.
-  With `configure({ policy: { logs: 'off' } })`, `logFile()` rejects with `not_found`.
+- **Pulse's own log.** `logFile()` returns a `FileRef` to the signed-in account's `logs/pulse.log`,
+  where Pulse keeps its recent console output, including the upload loop's lines when Pulse runs
+  with nothing on screen. Tokens, credentials and anything shaped like a capability token are
+  redacted as each line is recorded. `fetch(ref.webUrl)` reads it from your page. With
+  `configure({ policy: { logs: 'off' } })`, `logFile()` rejects with `not_found`.
 - **`on('log')`** is in the contract but this version doesn't send `log` events. Use `logFile()`.
 
 ## Check your change before you push
@@ -98,3 +116,14 @@ xcrun swiftc -o "$TMPDIR/pk-envelope-vectors" \
   embed/native/ios/PulseKitEnvelope.swift embed/native/ios/tests/EnvelopeVectorsMain.swift
 "$TMPDIR/pk-envelope-vectors" embed/native/ios/vectors/envelope.json
 ```
+
+When you change how drafts are listed or counted, run the catalog vectors the same way:
+
+```sh
+xcrun swiftc -o "$TMPDIR/pk-catalog-vectors" \
+  embed/native/ios/PulseKitCatalog.swift embed/native/ios/tests/CatalogVectorsMain.swift
+"$TMPDIR/pk-catalog-vectors" src/features/drafts/__vectors__/catalog.json
+```
+
+When you change upload code, also run the PulseVault integration suite
+([README](../../README.md#testing)): `PULSE_INTEGRATION=1 npx jest pv-integration --forceExit`.
