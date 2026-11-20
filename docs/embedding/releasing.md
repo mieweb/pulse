@@ -90,15 +90,27 @@ Every release attaches what you need to read a PulseKit crash from a host app:
 Trusted publishing can only be set up for a package that already exists on npm, so a new package's
 first version goes up by hand, once. This is how `@mieweb/pulsevault` started too.
 
-1. Let the release run publish the GitHub Release. Its npm step fails for a package npm doesn't
-   know yet; nothing is published to npm.
-2. Build the three tarballs exactly as the workflow does, from the tag: stamp the version
-   (`release-version.mjs stamp <version>`), write `Package.swift` and `PulseKit.podspec` from the
-   Release's `SHA256SUMS` (`write-package-swift.mjs`, `write-podspec.mjs`, `--base-url` = the
-   Release's download URL), then `npm pack` each of `embed/packages/{pulse-embed,capacitor-pulse,cordova-plugin-pulse}`.
+1. Let the release run publish the GitHub Release. While the repository variable `NPM_PUBLISH`
+   isn't `true`, its npm step is skipped and the three npm packages are attached to the Release as
+   `.tgz` files, built from the tag with the version stamped and `Package.swift` and
+   `PulseKit.podspec` written, and listed in `SHA256SUMS`.
+2. Download those three files and check them:
+
+   ```sh
+   V=<version>
+   gh release download "pulsekit-v$V" -R mieweb/pulse -p '*.tgz' -p SHA256SUMS
+   shasum -a 256 -c --ignore-missing SHA256SUMS
+   ```
+
+   Don't pack them yourself: a fresh checkout has no `node_modules` for `pulse-embed`'s `prepack`
+   (run `npm ci` at the root first), and the version stamp only runs through the workflow's call,
+   `node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" stamp "$V"`.
 3. As a member of the `mieweb` npm org (`npm login`), publish each tarball:
-   `npm publish <file>.tgz --tag rc --access public` (`--tag latest` for a final release).
-   The unscoped `cordova-plugin-pulse` is then owned by that account; add the org's maintainers.
+   `npm publish <file>.tgz --tag rc --access public --provenance=false` (`--tag latest` for a final
+   release). `@mieweb/pulse-embed`'s manifest asks for provenance, which npm can only generate in a
+   supported CI run, so this first version goes up without an attestation; every later version
+   comes from the workflow with one. The unscoped `cordova-plugin-pulse` is then owned by that
+   account; add the org's maintainers.
 4. On npmjs.com, for each package: Settings → Trusted publisher → GitHub Actions,
    organization `mieweb`, repository `pulse`, workflow `release-embed.yml`.
    Then set the repository variable `NPM_PUBLISH` to `true` (Settings → Secrets and variables →

@@ -55,7 +55,8 @@ BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
 npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz $BASE/mieweb-capacitor-pulse-$V.tgz
 ```
 
-For Cordova: `npx cordova plugin add $BASE/cordova-plugin-pulse-$V.tgz`. A final release goes to
+For Cordova: `npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz`, then
+`npx cordova plugin add $BASE/cordova-plugin-pulse-$V.tgz`. A final release goes to
 the npm `latest` tag ([releasing.md](releasing.md#tags-and-versions)).
 
 The three npm packages are released together with the same version. Install them at the same
@@ -87,9 +88,14 @@ exact version (`--save-exact`). `npm view @mieweb/pulse-embed dist-tags` lists w
 
 ### 1. Install the packages
 
-Capacitor, from your app's root:
+Until the packages are on npm, install them from the GitHub Release (as above) and skip the `@rc`
+commands below. Capacitor, from your app's root:
 
 ```sh
+# from the Release (now)
+V=0.1.0-rc.4; BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
+npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz $BASE/mieweb-capacitor-pulse-$V.tgz
+# from npm (once publishing is on)
 npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc
 npx cap sync ios
 ```
@@ -97,6 +103,10 @@ npx cap sync ios
 Cordova, from your app's root:
 
 ```sh
+# from the Release (now)
+npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz
+npx cordova plugin add $BASE/cordova-plugin-pulse-$V.tgz
+# from npm (once publishing is on)
 npm install --save-exact @mieweb/pulse-embed@rc
 npx cordova plugin add cordova-plugin-pulse@rc
 ```
