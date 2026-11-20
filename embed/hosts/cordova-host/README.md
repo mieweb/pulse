@@ -1,8 +1,9 @@
 # cordova-host
 
 A cordova-ios 8 app for trying the Pulse Cordova plugin (`embed/packages/cordova-plugin-pulse`). It
-shows the same transport test page as `cap-host` (`www/host.js` is an identical copy), reaching the
-plugin through `window.PulseKit` after `deviceready`.
+shows the transport test page `cap-host` started with (`www/host.js` is an earlier copy of cap-host's,
+without its test-server host services, open/close ×10 run and deep-link queue), reaching the plugin
+through `window.PulseKit` after `deviceready`.
 
 Only the sources are committed. `node_modules/`, `platforms/` and `plugins/` are generated (see
 `embed/hosts/.gitignore`). The plugin comes from this repo through a relative `file:` dependency, and
