@@ -48,7 +48,7 @@ if [ -n "${PULSEKIT_ANDROID_LOCAL:-}" ]; then
     exit 1
     ;;
   esac
-  MAVEN_LINE="        maven { url '$REPO' } // pulsekit-local (scripts/android-setup.sh)" \
+  MAVEN_LINE="        maven { url = uri('$REPO') } // pulsekit-local (scripts/android-setup.sh)" \
     awk '
       /\/\/ pulsekit-local/ { next }
       { print }
@@ -61,7 +61,7 @@ if [ -n "${PULSEKIT_ANDROID_LOCAL:-}" ]; then
     echo "No allprojects { repositories { in $BUILD_GRADLE" >&2
     exit 1
   }
-  apply "$BUILD_GRADLE" "$BUILD_GRADLE: maven { url '$REPO' } in allprojects.repositories"
+  apply "$BUILD_GRADLE" "$BUILD_GRADLE: maven { url = uri('$REPO') } in allprojects.repositories"
 else
   echo "skipped:   $BUILD_GRADLE: PULSEKIT_ANDROID_LOCAL is not set"
 fi
