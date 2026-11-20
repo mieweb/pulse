@@ -85,8 +85,9 @@ refresh }`.
   `needs_credentials` or `failed` cancels its upload; send it again afterwards.
 - **`upload(id)` resolves once the upload is queued**, with `{ clientKey, draftKey, sentAt }`, not
   when it has finished. It needs `uploadMode: 'pulse'` (in `'file'` mode it rejects with
-  `host_misconfigured`) and your [host services](uploads.md). Calling it again on a draft that is
-  already sending answers with the same keys and queues nothing.
+  `host_misconfigured`) and your [host services](uploads.md). Calling it again while the upload
+  is `queued` or `needs_credentials` answers with the same keys and queues nothing; once it is
+  `preparing`, `uploading` or `delivering`, it rejects with `draft.locked`.
 - **What `upload(id)` checks.** The upload type's `maxBytes` (`upload.too_large`) and its
   `confirmSend`, which it asks your server for as Export does. `requireName` and `requireOnline`
   are Export's checks: check them in your own screen before you offer Send.
@@ -94,7 +95,9 @@ refresh }`.
   capability shows a brief "Preparing…" screen until the call is answered
   ([uploads.md](uploads.md#paused-uploads)). Each waits up to 30 s, the start included, then
   rejects with `timeout`; `createPulseClient({ timeoutMs })` changes that. A `timeout` doesn't
-  mean the change didn't happen: read the draft again before you retry.
+  mean the change didn't happen: read the draft with `getDraft(id)` instead of retrying. After an
+  `upload(id)` timeout the draft is usually `uploading` already, and a second `upload(id)` would
+  reject with `draft.locked`.
 
 ## Open a draft in Pulse
 

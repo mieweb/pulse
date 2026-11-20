@@ -78,8 +78,10 @@ uploads and host services, and [accounts.md](accounts.md) the account calls.
 - A call that starts Pulse waits 30 s by default, a cold start included, then rejects with
   `timeout`. `createPulseClient({ timeoutMs })` changes the wait; the client sends it with each
   call, and PulseKit waits as long, from 1 s to 10 minutes.
-- A `timeout` doesn't mean the change didn't happen: Pulse may still finish it. `upload(id)` called
-  again answers with the same keys.
+- A `timeout` doesn't mean the change didn't happen: Pulse may still finish it. Read the draft with
+  `getDraft(id)` before you retry. `upload(id)` called again answers with the same keys only while
+  the upload is `queued` or `needs_credentials`; once it is `preparing`, `uploading` or
+  `delivering` it rejects with `draft.locked`, which after a timeout usually means the Send worked.
 - `open` has no timeout: it resolves when the person finishes, minutes later.
 - A host request ([uploads.md](uploads.md)) has 20 s to be answered.
 
@@ -258,19 +260,19 @@ Hosts never see these; they are for working on PulseKit itself. The facade
 (`embed/native/ios/PulseKit.swift`) and Pulse's JavaScript (`embed/src/shell/messaging.ts`,
 `embed/src/commands/runtime.ts`) talk over expo-brownfield's `BrownfieldMessaging`:
 
-| `type`                                      | Direction   | Fields                                                        | Meaning                                                                                                |
-| ------------------------------------------- | ----------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `pulse.cmd`                                 | native → JS | `callId, method, args`                                        | A forwarded host write, or an internal command (below).                                                |
-| `pulse.reply`                               | JS → native | `callId, ok, result \| error`                                 | The answer to a `pulse.cmd` that expects one.                                                          |
-| `pulse.event`                               | JS → native | `name, payload`                                               | `draftsChanged`, `uploadProgress`, `hostRequest`; the facade forwards each to the host.                |
-| `pulse.respond`                             | native → JS | `hostCallId, result \| error`                                 | The host's `respondHostRequest`.                                                                       |
-| `pulse.ready`                               | JS → native | `namespace`                                                   | The runtime's command handlers are up; the facade sends the writes it held, then `configure`.          |
-| `pulse.released`                            | JS → native | `namespace`                                                   | The runtime closed its library for good; the facade sends it nothing more and starts a fresh one next. |
-| `pulse.result`                              | JS → native | `requestId`                                                   | The flow's result file is written; the facade reads it, resolves `open` and dismisses.                 |
-| `pulse.error`                               | JS → native | `requestId, message`                                          | The embed root couldn't start; the flow ends `failed{runtime.error}`.                                  |
-| `pulse.ui`                                  | JS → native | `statusBar?, statusBarHidden?, hasTake?`                      | The container's status bar and swipe-to-dismiss; each field sticks until set again.                    |
-| `pulse.upload`                              | JS → native | `op` (`hello`, `patch`, `attach`, `cancel`, `sweep`), `id`, … | A TUS PATCH for PulseKit's background session (`PulseKitBackground.swift`).                            |
-| `pulse.upload.progress`, `pulse.upload.end` | native → JS | `id, sent` / `id, ok, status?, …`                             | That PATCH's progress and end.                                                                         |
+| `type`                                      | Direction   | Fields                                                        | Meaning                                                                                                                                                                            |
+| ------------------------------------------- | ----------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pulse.cmd`                                 | native → JS | `callId, method, args`                                        | A forwarded host write, or an internal command (below).                                                                                                                            |
+| `pulse.reply`                               | JS → native | `callId, ok, result \| error`                                 | The answer to a `pulse.cmd` that expects one.                                                                                                                                      |
+| `pulse.event`                               | JS → native | `name, payload`                                               | `draftsChanged`, `uploadProgress`, `hostRequest`; the facade forwards each to the host.                                                                                            |
+| `pulse.respond`                             | native → JS | `hostCallId, result \| error`                                 | The host's `respondHostRequest`.                                                                                                                                                   |
+| `pulse.ready`                               | JS → native | `namespace`                                                   | The runtime's command handlers are up. The facade sends `accountActive {active:false}` if the runtime's account isn't the signed-in one, then `configure`, then the calls it held. |
+| `pulse.released`                            | JS → native | `namespace`                                                   | The runtime closed its library for good; the facade sends it nothing more and starts a fresh one next.                                                                             |
+| `pulse.result`                              | JS → native | `requestId`                                                   | The flow's result file is written; the facade reads it, resolves `open` and dismisses.                                                                                             |
+| `pulse.error`                               | JS → native | `requestId, message`                                          | The embed root couldn't start; the flow ends `failed{runtime.error}`.                                                                                                              |
+| `pulse.ui`                                  | JS → native | `statusBar?, statusBarHidden?, hasTake?`                      | The container's status bar and swipe-to-dismiss; each field sticks until set again.                                                                                                |
+| `pulse.upload`                              | JS → native | `op` (`hello`, `patch`, `attach`, `cancel`, `sweep`), `id`, … | A TUS PATCH for PulseKit's background session (`PulseKitBackground.swift`).                                                                                                        |
+| `pulse.upload.progress`, `pulse.upload.end` | native → JS | `id, sent` / `id, ok, status?, …`                             | That PATCH's progress and end.                                                                                                                                                     |
 
 Internal `pulse.cmd` methods:
 
