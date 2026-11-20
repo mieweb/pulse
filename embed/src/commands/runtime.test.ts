@@ -28,6 +28,7 @@ jest.mock('@/db/client', () => ({
   library: { failed: false },
 }));
 jest.mock('@/db/migrate', () => ({ runMigrations: jest.fn(async () => {}) }));
+jest.mock('@/features/logs/logger', () => ({ installLogCapture: jest.fn() }));
 jest.mock('@/db/upload-jobs', () => ({
   ...jest.requireActual<typeof import('@/db/upload-jobs')>('@/db/upload-jobs'),
   listUploadJobs: jest.fn(() => []),
