@@ -5,6 +5,7 @@
 package com.mieweb.pulse.kit
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -28,6 +29,9 @@ import java.lang.ref.WeakReference
  * this process launched from one Android restored on its own (process death, a restored task) and
  * the facade's `dismiss` can reach a screen that hasn't been created yet. Every Activity it knows
  * is held weakly and dropped in that Activity's onDestroy: nothing here keeps an Activity alive.
+ *
+ * Pulse's screens run in a task of their own (PulseActivity "Task"), so it also puts that task
+ * back in front of the host's while a screen is open ([keepPulseInFront]).
  *
  * Main thread only (PresenterPort's rule), so there is no locking.
  */
@@ -85,6 +89,12 @@ internal object PulseKitPresenter : PresenterPort {
    */
   private val ended = LinkedHashSet<String>()
 
+  /**
+   * Ids of the tasks a PulseActivity of this process was created in. A Pulse task that isn't
+   * among them was left by an earlier process: [keepPulseInFront] brings it back once.
+   */
+  private val seenTasks = HashSet<Int>()
+
   private val main = Handler(Looper.getMainLooper())
 
   private var appContext: Context? = null
@@ -107,13 +117,17 @@ internal object PulseKitPresenter : PresenterPort {
 
   private val callbacks =
     object : Application.ActivityLifecycleCallbacks {
-      override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+      override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+        if (activity is PulseActivity) seenTasks.add(activity.taskId)
+      }
 
       override fun onActivityStarted(activity: Activity) = Unit
 
       override fun onActivityResumed(activity: Activity) {
         resumed = WeakReference(activity)
         foreground = WeakReference(activity)
+        // Posted: the host's Activity finishes resuming (and handling its new intent) first.
+        if (activity !is PulseActivity) main.post { keepPulseInFront(activity) }
       }
 
       override fun onActivityPaused(activity: Activity) {
@@ -171,6 +185,12 @@ internal object PulseKitPresenter : PresenterPort {
     }
     val intent =
       Intent(activity, PulseActivity::class.java)
+        // Pulse's own task (the manifest gives PulseActivity the affinity
+        // `${applicationId}.pulsekit`): a singleTask relaunch of the host's Activity for a deep
+        // link or a push tap then clears nothing of Pulse's, and the take goes on (PulseActivity
+        // "Task"). Across tasks Android answers a launcher's Activity result with RESULT_CANCELED
+        // at once; the flow's result comes by PulseKit's reply and the inbox.
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         // An instant cut: no system transition (Pulse's no-decorative-animation rule, as iOS).
         .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
         .putExtra(PulseActivity.EXTRA_REQUEST_ID, id)
@@ -301,6 +321,107 @@ internal object PulseKitPresenter : PresenterPort {
 
   /** The status bar the showing flow asked for: `"light"`, `"dark"` or `"auto"`, and hidden. */
   internal fun statusBar(): Pair<String, Boolean> = statusBar to statusBarHidden
+
+  // endregion
+
+  // region Pulse's task
+
+  /**
+   * One of the app's own Activities ([host]) resumed outside Pulse's task. That happens while a
+   * Pulse screen is open when the host's singleTask Activity is relaunched for a deep link or a
+   * push tap, or the user comes back by the launcher icon or the host's card in Recents. The
+   * owner's rule (2026-11-20) is that the take goes on and the host's navigation waits until
+   * Pulse closes, as a view controller presented on iOS stays over its host. So Pulse's task goes
+   * back in front; the host's Activity has its new intent by then, and queues it.
+   *
+   * - A screen is open, in a task other than [host]'s: that task moves to the front.
+   * - A screen is opening (not created yet) or closing: nothing; the front settles by itself.
+   * - No screen is open, and a Pulse task this process never ran in is still there (the process
+   *   died under it): it moves to the front once, so the PulseActivity Android restores in it
+   *   reports the flow it lost and closes, as it would have on top of the host's own task.
+   * - No screen is open, and a Pulse task this process ran in is still there (Android destroyed
+   *   its Activity, which already reported): it is removed, with nothing shown.
+   * - In multi-window both tasks are on screen, and the user picks: nothing.
+   */
+  private fun keepPulseInFront(host: Activity) {
+    if (host is PulseActivity || !alive(host) || resumed?.get() !== host) return
+    if (host.isInMultiWindowMode) return
+    val opening = live.values.any { record ->
+      val screen = record.screen?.get()
+      record.dismissed || screen == null || !alive(screen)
+    }
+    if (opening) return
+    val manager = host.getSystemService(ActivityManager::class.java) ?: return
+    val tasks =
+      try {
+        manager.appTasks
+      } catch (e: RuntimeException) {
+        Log.w(TAG, "couldn't list the app's tasks", e)
+        return
+      }
+    val showing = live.values.firstNotNullOfOrNull { record ->
+      record.screen?.get()?.let { record.requestId to it }
+    }
+    if (showing != null) {
+      val (id, screen) = showing
+      if (screen.taskId == host.taskId) return
+      val task = tasks.firstOrNull { taskIdOf(it) == screen.taskId }
+      if (task == null) {
+        Log.w(TAG, "open $id: its task is missing; it stays behind ${host.javaClass.simpleName}")
+        return
+      }
+      Log.i(TAG, "open $id: ${host.javaClass.simpleName} came to the front; Pulse goes back over")
+      moveToFront(task)
+      return
+    }
+    for (task in tasks) {
+      val taskId = taskIdOf(task) ?: continue
+      if (taskId == host.taskId || !isPulseTask(task)) continue
+      if (taskId in seenTasks) {
+        Log.i(TAG, "removed a Pulse task whose screen already ended")
+        try {
+          task.finishAndRemoveTask()
+        } catch (e: RuntimeException) {
+          Log.w(TAG, "couldn't remove a Pulse task", e)
+        }
+      } else {
+        // Once: the screen restored in it is created here, which adds its task to seenTasks.
+        seenTasks.add(taskId)
+        Log.i(TAG, "a Pulse task from an earlier process is still there; it goes to the front")
+        moveToFront(task)
+        return
+      }
+    }
+  }
+
+  private fun moveToFront(task: ActivityManager.AppTask) {
+    try {
+      task.moveToFront()
+    } catch (e: RuntimeException) {
+      Log.w(TAG, "couldn't bring Pulse's task to the front", e)
+    }
+  }
+
+  /** The task's id, or null when it went away. */
+  private fun taskIdOf(task: ActivityManager.AppTask): Int? =
+    try {
+      val info = task.taskInfo
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        info.taskId
+      } else {
+        @Suppress("DEPRECATION") info.persistentId
+      }
+    } catch (e: IllegalArgumentException) {
+      null
+    }
+
+  /** Whether PulseActivity started the task (only PulseKitPresenter starts tasks of Pulse's). */
+  private fun isPulseTask(task: ActivityManager.AppTask): Boolean =
+    try {
+      task.taskInfo.baseIntent.component?.className == PulseActivity::class.java.name
+    } catch (e: IllegalArgumentException) {
+      false
+    }
 
   // endregion
 

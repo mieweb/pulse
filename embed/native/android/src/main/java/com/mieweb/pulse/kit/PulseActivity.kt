@@ -1,8 +1,8 @@
 // Mirrors embed/native/ios/PulseKitPresenter.swift (`PulseKitContainerViewController` and
 // `PulseKitPreparingViewController`): the screen Pulse's flows and the brief "Preparing…" live in.
-// On Android that is an Activity of its own over the host's (PR4-SPEC "Android differences":
-// presentation), which also brings Android's own cases: back, process death, a task cleared under
-// it, configuration changes.
+// On Android that is an Activity of its own, in a task of its own, over the host's (PR4-SPEC
+// "Android differences": presentation), which also brings Android's own cases: back, process
+// death, the host's task coming to the front, configuration changes.
 package com.mieweb.pulse.kit
 
 import android.app.Activity
@@ -58,12 +58,24 @@ import org.json.JSONObject
  * then X with its sheet). Back that JS doesn't take, and back before JS is up, does nothing, so it
  * never leaves Pulse without the X sheet.
  *
+ * **Task.** A deep link or a push tap during a take is queued by the host until Pulse closes, and
+ * the take goes on (owner decision, 2026-11-20). Hosts' MainActivity is singleTask (Capacitor's
+ * template, TimeHuddle), and relaunching a singleTask Activity clears every Activity above it in
+ * its task, so this one can't live in the host's task. It runs in a task of its own: the library
+ * manifest gives it the affinity `${applicationId}.pulsekit` and `autoRemoveFromRecents`, and
+ * [PulseKitPresenter] starts it with FLAG_ACTIVITY_NEW_TASK. The relaunch then only brings the
+ * host's task forward with its new intent, and the presenter puts Pulse's task back in front of
+ * it (PulseKitPresenter.keepPulseInFront), as it does when the user comes back by the launcher
+ * icon or the host's card in Recents. Closing returns to the host's task, under it. Across tasks
+ * Android answers the launcher's Activity result with RESULT_CANCELED at once, so the result set
+ * here reaches no caller; the `open` reply comes by PulseKit's reply and inbox.
+ *
  * **Ending.** Exactly one of these per screen:
  * - The facade dismisses it ([finishDismissed]): the Activity result is RESULT_OK with the `open`
  *   reply under [RESULT_EXTRA_JSON], and nothing is reported.
- * - Android finishes it without the facade (the host's singleTask Activity relaunched by a deep
- *   link or a push tap clears the task above it; the task is removed): `onViewGone(id,
- *   "interrupted")`. The take Pulse JS already saved stays a draft.
+ * - Android finishes it without the facade (the user swiped Pulse's own card away in Recents, so
+ *   its task is removed): `onViewGone(id, "interrupted")`. The take Pulse JS already saved stays
+ *   a draft. A deep link or a push tap is not this case: see Task.
  * - Android destroys it without finishing it (Don't keep activities): `onViewGone(id, "system")`.
  * - A configuration change recreates it (one `configChanges` doesn't cover): nothing is reported;
  *   the next instance mounts a fresh root for the same flow.
@@ -72,9 +84,7 @@ import org.json.JSONObject
  *   mounts nothing.
  * - Android recreates it after it already ended in this process: it finishes with that result.
  *
- * A new intent never ends it: deep links and push taps go to the host, which queues them until
- * Pulse closes. If the host's own launch mode clears this Activity anyway, the flow ends
- * `interrupted` as above.
+ * A new intent for this Activity never ends it ([onNewIntent]).
  */
 class PulseActivity : ReactActivity() {
   companion object {
