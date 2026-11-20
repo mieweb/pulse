@@ -40,29 +40,32 @@ export function cleanupStaleUploadTempFiles(): void {
 type FileSystemNativeModule = { cancelBackgroundUploadTasks?: () => Promise<number> };
 
 /**
- * iOS only: cancels the upload tasks an earlier process left behind. Call once at launch, before
- * anything uploads. Best-effort; resolves how many it cancelled.
+ * Cancels the upload tasks an earlier process left behind. Call once at launch, before anything
+ * uploads. Best-effort; resolves how many it cancelled.
  *
- * - expo-file-system's background `URLSession` (every PATCH of the Pulse app's uploads): all of its
- *   upload tasks go. That session is owned by `nsurlsessiond`, so a crash or iOS memory kill
+ * - expo-file-system's background `URLSession` (iOS only; every PATCH of the Pulse app's uploads):
+ *   all of its upload tasks go. That session is owned by `nsurlsessiond`, so a crash or iOS memory kill
  *   mid-upload leaves a transfer that keeps sending, and a new upload to the same host queues
  *   behind it at 0%. Nothing can attach to such a task again, so nothing there is worth keeping:
  *   the Pulse app's kill ends its upload, and an embedded job resumes from the server's offset.
  *   Download tasks share the session and are left alone. 0 when the native method isn't in the
  *   build.
- * - PulseKit's own session (the embed, with `setBackgroundUploads`): in this runtime's namespace
- *   only, the tasks of uploads not in `live` go. A task of a live job carries on, and the job
- *   waits for it (`attachRunningUpload`) before HEADing the upload (PLAN §6.3 step 1: reattach,
- *   don't cancel).
+ * - PulseKit's own uploads (the embed, with `setBackgroundUploads`; iOS and Android): in this
+ *   runtime's namespace only, the tasks of uploads not in `live` go. A task of a live job carries
+ *   on, and the job waits for it (`attachRunningUpload`) before HEADing the upload (PLAN §6.3
+ *   step 1: reattach, don't cancel). On Android these are the PATCHes PulseKit runs in its upload
+ *   service (PulseKitUploads.kt), which a Pulse runtime closing doesn't stop.
  */
 export async function cancelOrphanedUploadTasks(live?: readonly string[]): Promise<number> {
-  if (Platform.OS !== 'ios') return 0;
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return 0;
   let cancelled = 0;
-  const native = requireOptionalNativeModule<FileSystemNativeModule>('FileSystem');
-  try {
-    cancelled += (await native?.cancelBackgroundUploadTasks?.()) ?? 0;
-  } catch {
-    // Best effort.
+  if (Platform.OS === 'ios') {
+    const native = requireOptionalNativeModule<FileSystemNativeModule>('FileSystem');
+    try {
+      cancelled += (await native?.cancelBackgroundUploadTasks?.()) ?? 0;
+    } catch {
+      // Best effort.
+    }
   }
   // Only this runtime's namespace: another account's jobs aren't in `live`.
   const root = customDocumentsPath();
@@ -87,7 +90,7 @@ export async function attachRunningUpload(
   return background.attach({ url, path: plainPath(file.uri), ...opts });
 }
 
-// PulseKit's background uploader (embed, iOS) ----------------------------------------------------
+// PulseKit's background uploader (embed) ---------------------------------------------------------
 
 /** How Pulse JS reaches PulseKit (the embed's BrownfieldMessaging), or a fake in tests. */
 export type BackgroundTransport = {
@@ -106,12 +109,15 @@ type Waiter = {
 };
 
 /**
- * The embed's PATCHes run in PulseKit's own background `URLSession`
- * (`com.mieweb.pulsekit.upload.<namespace>`, PulseKitBackground.swift), one PATCH of all the bytes
- * left (O16): iOS finishes it with no JS running, after Pulse closes, while the host is suspended,
- * killed by the system, or the phone is locked. The session is recreated at the next launch, so a
- * task iOS kept running is reattached rather than duplicated: a PATCH for an upload that already
- * has a running task attaches to it. Messages (all over the transport):
+ * The embed's PATCHes run in PulseKit, one PATCH of all the bytes left (O16). On iOS that is its
+ * own background `URLSession` (`com.mieweb.pulsekit.upload.<namespace>`, PulseKitBackground.swift):
+ * iOS finishes it with no JS running, after Pulse closes, while the host is suspended, killed by
+ * the system, or the phone is locked. The session is recreated at the next launch, so a task iOS
+ * kept running is reattached rather than duplicated: a PATCH for an upload that already has a
+ * running task attaches to it. On Android it is an OkHttp PATCH in PulseKit's dataSync foreground
+ * service (PulseKitUploads.kt): it survives Pulse closing and the task being swiped away, but not a
+ * killed process, after which `attach` finds nothing and the job resumes from the server's offset.
+ * Messages (all over the transport):
  *
  *   JS → PulseKit  {type:'pulse.upload', op:'hello'|'patch'|'attach'|'cancel'|'sweep', id, ...}
  *   PulseKit → JS  {type:'pulse.upload.progress', id, sent}
@@ -353,8 +359,10 @@ function prepareChunkSource(
  * MITM'd paired server to trigger, matching the fetch layer before this fix.
  *
  * In the embed, once `setBackgroundUploads` is wired and PulseKit answers, the PATCH runs in
- * PulseKit's background session instead (PulseKit stages a resumed slice itself), so it finishes
- * with no JS running. The redirect limitation above applies there too.
+ * PulseKit instead (on iOS its background session, which stages a resumed slice itself; on Android
+ * its upload service, which streams the slice from the file), so it finishes with no JS running.
+ * The redirect limitation above applies on iOS too; Android's PulseKit PATCH doesn't follow
+ * redirects (a 3xx comes back as the PATCH's status).
  *
  * Logs one line per PATCH: its range, result, time and speed.
  */
