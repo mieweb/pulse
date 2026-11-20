@@ -45,9 +45,9 @@ function addAliasFlag(project, target) {
   }
 }
 
-// `PULSEKIT_HEADLESS=1 npm run prebuild` builds the facade with the `headless` capability on
-// (PulseKitInfo.swift, spike S3): host writes then boot Pulse with no screen instead of
-// "Preparing…". Any other value, or none, leaves it off (the default).
+// The facade builds with the `headless` capability on (PulseKitInfo.swift; spike S3 passed on an
+// iPhone 2026-11-20): host writes boot Pulse with no screen instead of "Preparing…".
+// `PULSEKIT_HEADLESS=0 npm run prebuild` builds it off.
 const HEADLESS_CONDITION = 'PULSEKIT_HEADLESS';
 
 /** Adds or removes HEADLESS_CONDITION in each configuration's SWIFT_ACTIVE_COMPILATION_CONDITIONS. */
@@ -169,7 +169,7 @@ module.exports = function withPulseKitFacade(config) {
     );
     addResource(project, targetUuid, groupKey, PRIVACY_MANIFEST);
     addAliasFlag(project, target);
-    setHeadless(project, target, process.env.PULSEKIT_HEADLESS === '1');
+    setHeadless(project, target, process.env.PULSEKIT_HEADLESS !== '0');
     return cfg;
   });
 };

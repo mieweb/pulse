@@ -28,7 +28,8 @@ version.
 import { contextKey, getPulse } from '@mieweb/pulse-embed';
 
 const pulse = getPulse();
-await pulse.configure({ uploadMode: 'file', hostName: 'TimeHuddle' });
+await pulse.configure({ hostName: 'TimeHuddle' });
+await pulse.setAccount({ serverOrigin: 'https://timehuddle.mieweb.org', userId: 'u_8Kq2fd' });
 const result = await pulse.record({
   key: contextKey('ticket', 'TH-482'),
   kind: 'ticket',
@@ -37,9 +38,11 @@ const result = await pulse.record({
 });
 ```
 
-PulseKit needs `uploadMode: 'file'` in this version: the default, `'pulse'`, ends every flow
-`failed` with `unsupported`. Read `pendingResults()` on every page load, and `acknowledge()` each
-result once you've handled it.
+Call `setAccount()` for the signed-in person before `open` or any drafts call (`no_account`
+otherwise). In the default `uploadMode: 'pulse'`, Send queues the upload and your page answers
+Pulse's upload requests through `setHostServices()`
+([uploads](../../../docs/embedding/uploads.md)); `uploadMode: 'file'` hands you the MP4 instead.
+Read `pendingResults()` on every page load, and `acknowledge()` each result once you've handled it.
 
 The client picks its transport itself: `window.__PULSE_ADAPTER__` (test builds), then Capacitor's
 `Pulse` plugin, then Cordova's `window.PulseKit`, and otherwise an adapter that reports Pulse as
@@ -48,8 +51,8 @@ unavailable, so the same code runs in a desktop browser.
 ## The fake
 
 `createFakePulse` models the whole contract, the minor-1 methods (drafts, accounts, Pulse uploads)
-included, and its default flow ends as a Pulse upload. To match the PulseKit that is released, pass
-`flows: [{ result: 'file' }]` and the minor-0 method list as `info.methods`
+included, and its default flow ends as a Pulse upload. Pass `flows: [{ result: 'file' }]` for file
+mode, or a minor-0 method list as `info.methods` to test against an older PulseKit
 ([example](../../../docs/embedding/README.md#test-without-a-phone)).
 
 ### Server mode
