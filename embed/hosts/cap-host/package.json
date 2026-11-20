@@ -2,9 +2,10 @@
   "name": "pulse-cap-host",
   "version": "1.0.0",
   "private": true,
-  "description": "Test host: the Pulse Capacitor plugin in a Capacitor 8 app (iOS, and the Android stub).",
+  "description": "Test host: the Pulse Capacitor plugin in a Capacitor 8 app (iOS and Android).",
   "dependencies": {
     "@capacitor/android": "^8.6.2",
+    "@capacitor/app": "^8.0.0",
     "@capacitor/cli": "^8.6.2",
     "@capacitor/core": "^8.6.2",
     "@capacitor/ios": "^8.6.2",
