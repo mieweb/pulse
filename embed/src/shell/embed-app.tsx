@@ -83,15 +83,9 @@ function EmbedFlow({ plan, namespace }: { plan: OpenPlan; namespace: string | un
     [controller],
   );
 
-  // B6: a library Pulse can't open or migrate ends the flow; `reset` is the person asking for this
-  // account's Pulse data to be reset, which the host's purge does (PR2) once the flow has ended.
+  // B6: a library Pulse can't open or migrate ends the flow.
   const onFatalStorage = useCallback(
-    (fatal: FatalStorage) =>
-      void controller.fail({
-        code: fatal.code,
-        message: fatal.message,
-        ...(fatal.reset ? { details: { reset: true } } : null),
-      }),
+    (fatal: FatalStorage) => void controller.fail({ code: fatal.code, message: fatal.message }),
     [controller],
   );
 

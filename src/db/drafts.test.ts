@@ -72,6 +72,7 @@ import {
   createDraft,
   deleteDraft,
   draftDisplayName,
+  draftHostContext,
   deleteSegment,
   duplicateDraft,
   renameDraft,
@@ -80,6 +81,7 @@ import {
   setDraftContext,
   setEditState,
 } from './drafts';
+import { hostContextColumns } from './host-context';
 /* eslint-enable import/first */
 
 const SEG = { id: 's1', draftId: 'd1', originalFilename: 'o.mp4', editedFilename: null };
@@ -244,6 +246,29 @@ const CLOCK_TYPE = { id: 'clock.session', version: 1, confirmSend: true };
 const updates = () => mockWrites.filter((w) => w.op === 'update');
 
 describe('host context', () => {
+  it('draftHostContext gives back the context as stored, host data and upload type included', () => {
+    const placed = { ...TICKET, data: { type: 'ticket.video', target: { ticketId: 'T-42' } } };
+    expect(draftHostContext(hostContextColumns(placed, TICKET_TYPE))).toEqual({
+      ...placed,
+      uploadType: TICKET_TYPE,
+    });
+  });
+
+  it('draftHostContext takes kind and id from the key when the host left them out', () => {
+    const columns = hostContextColumns({ key: 'clock:ev-7', label: 'Mon 9:02 session' });
+    expect(draftHostContext(columns)).toEqual({
+      key: 'clock:ev-7',
+      kind: 'clock',
+      id: 'ev-7',
+      label: 'Mon 9:02 session',
+    });
+  });
+
+  it('draftHostContext is null for a draft with no host place', () => {
+    const none = { contextKey: null, contextLabel: null, contextJson: null, uploadTypeJson: null };
+    expect(draftHostContext(none)).toBeNull();
+  });
+
   it('createDraft stores a host’s place and upload type, and says the host made it', async () => {
     await createDraft({ hostContext: TICKET, uploadType: TICKET_TYPE, createdVia: 'host' });
     expect(mockWrites.map((w) => w.values)).toEqual([
