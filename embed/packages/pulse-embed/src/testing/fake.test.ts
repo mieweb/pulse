@@ -292,7 +292,7 @@ describe('the catalog', () => {
   });
 });
 
-describe('outbox transitions (provisional until PR2-K)', () => {
+describe('outbox transitions', () => {
   it('upload → queued → uploading → delivering → retired into a receipt', async () => {
     const fake = createFakePulse({ drafts: [seed('a', 'ready')] });
     const progress: number[] = [];
@@ -337,13 +337,16 @@ describe('outbox transitions (provisional until PR2-K)', () => {
     expect((await fake.client.getDraft('n'))?.state).toBe('queued');
   });
 
-  it("retireDraft: 'file' mode retires at once; 'pulse' mode only once delivering", async () => {
+  it("retireDraft: 'file' mode retires at once; in 'pulse' mode only the status route does", async () => {
     const fake = createFakePulse({
       drafts: [seed('a', 'ready'), seed('b', 'queued'), seed('c', 'delivering')],
     });
     await fake.client.retireDraft('b');
     expect((await fake.client.getDraft('b'))?.state).toBe('queued');
+    // A hint to ask the status route again, as the real job loop takes it: no retirement.
     await fake.client.retireDraft('c');
+    expect((await fake.client.getDraft('c'))?.state).toBe('delivering');
+    fake.transition('c', { type: 'delivered', outcome: 'done' });
     expect((await fake.client.getDraft('c'))?.sent?.outcome).toBe('done');
     await fake.client.configure({ uploadMode: 'file' });
     await fake.client.retireDraft('a');
@@ -370,12 +373,14 @@ describe('outbox transitions (provisional until PR2-K)', () => {
     const open = fake.client.edit('r');
     await tick(5);
     expect((await rejection(fake.client.deleteDraft('r'))).code).toBe('draft.locked');
-    await fake.client.renameDraft('r', 'Renamed while open');
+    // The open flow holds its draft against every write (router.ts), a rename too.
+    expect((await rejection(fake.client.renameDraft('r', 'Renamed'))).code).toBe('draft.locked');
     await open;
+    await fake.client.renameDraft('r', 'Renamed after');
     await fake.client.setDraftContext('r', ctx);
     const r = await fake.client.getDraft('r');
     expect(r?.context).toEqual(ctx);
-    expect(r?.name).toBe('Renamed while open');
+    expect(r?.name).toBe('Renamed after');
     await fake.client.deleteDraft('r');
     expect(await fake.client.getDraft('r')).toBeNull();
   });
@@ -434,7 +439,7 @@ describe('open and close', () => {
   });
 });
 
-describe('accounts (provisional until PR2-K)', () => {
+describe('accounts', () => {
   it('starts signed in by default; signed out, data calls are no_account', async () => {
     const fake = createFakePulse({ account: null, flows: [{ result: 'kept' }] });
     expect((await fake.client.getInfo()).namespace).toBeNull();
@@ -454,6 +459,23 @@ describe('accounts (provisional until PR2-K)', () => {
     expect(again.namespace).toBe(namespace);
     const spaces = await fake.client.listNamespaces();
     expect(spaces.filter((s) => s.active).map((s) => s.namespace)).toEqual([namespace]);
+  });
+
+  it('seeded drafts reach the namespace the page binds: its hostId and its first account', async () => {
+    const fake = createFakePulse({ drafts: [seed('a', 'ready')] });
+    await fake.client.configure({ uploadMode: 'pulse', hostId: 'com.example.th' });
+    const { namespace } = await fake.client.setAccount({
+      serverOrigin: 'https://th.example.org',
+      userId: 'person-1',
+    });
+    expect(namespace).toMatch(/^com\.example\.th-[0-9a-f]{16}$/);
+    expect((await fake.client.listDrafts()).map((d) => d.id)).toEqual(['a']);
+    // Only the first sign-in takes them: another person starts empty, and the first keeps them.
+    await fake.client.setAccount({ serverOrigin: 'https://th.example.org', userId: 'person-2' });
+    expect(await fake.client.listDrafts()).toEqual([]);
+    await fake.client.setAccount({ serverOrigin: 'https://th.example.org', userId: 'person-1' });
+    expect((await fake.client.listDrafts()).map((d) => d.id)).toEqual(['a']);
+    expect((await fake.client.listNamespaces()).map((n) => n.namespace).sort()).toHaveLength(2);
   });
 
   it('usage counts the active namespace; purge empties it', async () => {

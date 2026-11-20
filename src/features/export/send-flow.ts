@@ -125,6 +125,22 @@ export type SendFlowDeps = {
   confirmedAt: (draftId: string) => number | null;
 };
 
+/**
+ * Where Export stays after a Send that didn't go, for a type with a confirm (B2: the person is
+ * still clocked in, so the screen keeps the failure with [Keep draft]): a failed confirm or merge
+ * shows the confirm's failure line with [Try again]; a video over the type's size cap says so,
+ * without [Try again] (sending it again can't help). Null for any other type: Export says why in a
+ * toast and stays ready to Send.
+ */
+export function stoppedSend(
+  outcome: Extract<SendOutcome, { status: 'confirmFailed' | 'tooLarge' | 'failed' }>,
+  uploadType: unknown,
+): { text: string; retry: boolean } | null {
+  if (outcome.status !== 'confirmFailed' && !wantsConfirm(uploadType)) return null;
+  if (outcome.status === 'tooLarge') return { text: outcome.text, retry: false };
+  return { text: confirmCopy(uploadType).failed, retry: true };
+}
+
 /** The `maxBytes` refusal, thrown from `beforeConfirm` so the outbox leaves no job behind. */
 class TooLarge extends Error {
   readonly code = 'upload.too_large';

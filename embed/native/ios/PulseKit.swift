@@ -13,8 +13,8 @@ import UIKit
 ///   listDrafts, getDraft, countDrafts, usage, listNamespaces, purge).
 /// - Forwarded to Pulse JS (§3 "JS"): the host's writes (renameDraft, deleteDraft,
 ///   setDraftContext, upload, cancelUpload, retireDraft, dismissReceipt, resumeOutbox), each as one
-///   `pulse.cmd` answered by one `pulse.reply`, within 30 s from the call, a cold boot included
-///   (else `timeout`). A warm runtime takes them at once, with or without a flow open. A cold one
+///   `pulse.cmd` answered by one `pulse.reply`, within 30 s from the call (or the client's
+///   `timeoutMs`, 1 s to 10 min), a cold boot included (else `timeout`). A warm runtime takes them at once, with or without a flow open. A cold one
 ///   boots for them: with no surface when the build's `headless` flag is on (PulseKitInfo.swift,
 ///   S3), else under the brief "Preparing…" screen, which closes itself once they are answered.
 /// - Host requests (§5): Pulse JS's `hostRequest` events reach `onEvent` (kept while no subscriber
@@ -55,8 +55,17 @@ public final class PulseKit: NSObject {
       "setAccount", "listDrafts", "getDraft", "countDrafts", "usage", "listNamespaces", "purge",
     ] + forwardedMethods + ["respondHostRequest"]
 
-  /// A forwarded call's time to answer, a cold boot included (§3 Timeouts).
+  /// A forwarded call's time to answer, a cold boot included (§3 Timeouts), unless the client's
+  /// request says how long it waits (`timeoutMs`, within `forwardTimeoutRange`).
   static let forwardTimeout: TimeInterval = 30
+  static let forwardTimeoutRange: ClosedRange<TimeInterval> = 1...600
+
+  /// How long a forwarded call waits for Pulse JS: the client's own deadline, else 30 s.
+  static func forwardDeadline(_ req: PulseRequest) -> TimeInterval {
+    guard let ms = req.timeoutMs else { return forwardTimeout }
+    let s = TimeInterval(ms) / 1000
+    return min(max(s, forwardTimeoutRange.lowerBound), forwardTimeoutRange.upperBound)
+  }
   /// A host request's time to be answered (§5, PLAN §6.4).
   static let hostRequestTimeout: TimeInterval = 20
   /// A memory warning's time to be answered: Pulse JS answers within its 3 s engine budget plus
@@ -1018,7 +1027,7 @@ public final class PulseKit: NSObject {
     forwarded[callId] = call
     let timeout = DispatchWorkItem { [weak self] in self?.forwardTimedOut(callId) }
     call.timeout = timeout
-    DispatchQueue.main.asyncAfter(deadline: .now() + Self.forwardTimeout, execute: timeout)
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.forwardDeadline(req), execute: timeout)
 
     if boundNamespace == nil {
       bootCommandRuntime(for: call, presenter: presenter)
@@ -1053,7 +1062,7 @@ public final class PulseKit: NSObject {
   private func forwardTimedOut(_ callId: String) {
     guard let call = forwarded.removeValue(forKey: callId) else { return }
     commands.removeValue(forKey: callId)
-    log("\(call.request.method) \(callId): no answer in \(Int(Self.forwardTimeout)) s")
+    log("\(call.request.method) \(callId): no answer in \(Int(Self.forwardDeadline(call.request))) s")
     call.reply(
       PulseReply.failure(
         "timeout", "Pulse didn't answer \(call.request.method) in time.", callId: callId

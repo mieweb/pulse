@@ -1,15 +1,13 @@
 import { eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { deleteDraft, renameDraft, segmentsForDraft, setDraftContext } from '@/db/drafts';
+import { deleteDraft, renameDraft, setDraftContext } from '@/db/drafts';
 import { libraryNewerSchema } from '@/db/host-context';
 import { dismissReceipt, getReceipt } from '@/db/receipts';
 import { drafts } from '@/db/schema';
 import { getUploadJob } from '@/db/upload-jobs';
-import { exportAudio, mergeWithEditor } from '@/features/export/editor-merge';
-import { resolveMergedExport } from '@/features/export/merged-export';
 import { uploadRulesOf } from '@/features/export/send-checks';
-import { getRecorderFormat } from '@/features/recorder/recorder-format';
+import { mergeForSend } from '@/features/export/send-merge';
 import { cancelJob, sendDraft } from '@/features/upload/core/outbox';
 import { retireSentFile } from '@/features/upload/core/retire';
 import type { JobRunner } from '@/features/upload/core/runner';
@@ -23,16 +21,6 @@ export type LibraryDepsInput = {
   uploadMode: () => 'pulse' | 'file';
   changed: (ids: readonly string[]) => Promise<void>;
 };
-
-/** The draft's merged video for a Send from the host's list: the saved export when current. */
-async function mergeForSend(draftId: string): Promise<{ durationMs: number }> {
-  const segments = await segmentsForDraft(draftId);
-  const recorder = await getRecorderFormat();
-  const { durationMs } = await resolveMergedExport(draftId, segments, exportAudio(recorder), () =>
-    mergeWithEditor(segments, recorder, new AbortController().signal, () => {}),
-  );
-  return { durationMs };
-}
 
 /** The draft's upload type's size cap (O15), checked once the send files are written. */
 function maxBytesOf(draftId: string): number | null {

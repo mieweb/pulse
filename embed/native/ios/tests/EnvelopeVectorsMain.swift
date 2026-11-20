@@ -70,8 +70,9 @@ struct EnvelopeVectors {
     switch (route, expect["route"]?.string) {
     case (.native(let req), "native"):
       check(
-        req.method == expect["method"]?.string && .object(req.args) == expect["args"],
-        name, "got \(req.method) \(JSONValue.object(req.args).serialized)")
+        req.method == expect["method"]?.string && .object(req.args) == expect["args"]
+          && req.timeoutMs.map { Int64($0) } == expect["timeoutMs"]?.integer,
+        name, "got \(req.method) \(JSONValue.object(req.args).serialized) \(String(describing: req.timeoutMs))")
     case (.reply(let reply), "reply"):
       let replyJSON = JSONValue.parse(reply.serialized)
       let ok =

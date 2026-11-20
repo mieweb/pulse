@@ -20,8 +20,12 @@ export {
   type FakeUploadEvent,
 } from './fake';
 export {
+  CONTRACT_ACCOUNT,
+  fakeContractMaker,
   runPulseContract,
+  type PulseContractAbilities,
   type PulseContractMaker,
+  type PulseContractOptions,
   type PulseContractSetup,
   type PulseContractSubject,
   type PulseContractTest,

@@ -89,6 +89,7 @@ import {
   confirmCopy,
   runSend,
   sendLabel,
+  stoppedSend,
   wantsConfirm,
   type SendFlowDeps,
   type SendPhase,
@@ -372,5 +373,28 @@ describe('Send copy', () => {
     expect(confirmCopy(null).keepDraft).toBe('Keep draft');
     expect(wantsConfirm(WRAP_UP)).toBe(true);
     expect(wantsConfirm(TICKET)).toBe(false);
+  });
+
+  it('a clock type stays on a stopped Send; too large says so without [Try again]', () => {
+    const tooLarge = {
+      status: 'tooLarge',
+      maxBytes: 100,
+      text: 'Too big: 100 bytes at most',
+    } as const;
+    expect(stoppedSend(tooLarge, WRAP_UP)).toEqual({
+      text: 'Too big: 100 bytes at most',
+      retry: false,
+    });
+    expect(stoppedSend({ status: 'confirmFailed', message: 'down' }, WRAP_UP)).toEqual({
+      text: 'Couldn’t clock out. Your video is saved.',
+      retry: true,
+    });
+    expect(stoppedSend({ status: 'failed', message: 'merge' }, PLAN)).toEqual({
+      text: 'Couldn’t clock in. Your video is saved.',
+      retry: true,
+    });
+    // Any other type says why in a toast and stays ready to Send.
+    expect(stoppedSend(tooLarge, TICKET)).toBeNull();
+    expect(stoppedSend({ status: 'failed', message: 'merge' }, TICKET)).toBeNull();
   });
 });

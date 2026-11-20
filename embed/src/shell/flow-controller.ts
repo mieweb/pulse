@@ -156,6 +156,14 @@ export function createFlowController(store: FlowStore, requestId: string) {
         ...(sent.confirmedAt !== undefined ? { confirmedAt: sent.confirmedAt } : null),
       });
     },
+    /**
+     * Export's Send started (`true`: the merge, then the host's confirm) or stopped without going
+     * (`false`). Meanwhile the host's close waits, as it waits for a take: a clock action must
+     * not succeed behind a flow that already ended.
+     */
+    sending(busy: boolean): void {
+      store.dispatch({ type: busy ? 'sendStarted' : 'sendStopped' });
+    },
     /** [Keep draft] after a failed host confirm: the flow ends `closed`, the draft unsent. */
     keepDraft(): void {
       store.dispatch({ type: 'keepDraft' });

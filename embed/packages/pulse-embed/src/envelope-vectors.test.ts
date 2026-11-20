@@ -33,6 +33,8 @@ interface Vectors {
       route: 'native' | 'reply';
       method?: string;
       args?: unknown;
+      /** The client's deadline the route carries to the method (forwarded calls wait as long). */
+      timeoutMs?: number;
       callId?: string;
       error?: { code: string; recoverable: boolean };
     };
@@ -115,6 +117,7 @@ describe('envelope vectors: requests', () => {
         callId: (v.request as { callId: string }).callId,
         method: v.expect.method,
         args: v.expect.args,
+        ...(v.expect.timeoutMs !== undefined ? { timeoutMs: v.expect.timeoutMs } : {}),
       });
     } else {
       expect(routed.route).toBe('reply');

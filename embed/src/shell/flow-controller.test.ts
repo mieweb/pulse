@@ -115,6 +115,31 @@ describe("the host's close", () => {
     await closing;
     expect(store.state().end).toMatchObject({ status: 'closed', reason: 'host', draftId: 'd1' });
   });
+
+  it('waits while Export sends; the Send that goes completes the flow', async () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    store.dispatch({ type: 'edit' });
+    store.dispatch({ type: 'export' });
+    controller.sending(true);
+    await controller.hostClose(false);
+    expect(store.state().end).toBeNull();
+    controller.sent({ draftId: 'd1', sentAt: 5, clientKey: 'i:d1:ab', draftKey: 'i:d1' });
+    expect(store.state().end).toMatchObject({ status: 'completed', mode: 'pulse' });
+  });
+
+  it('a Send that stops lets the waiting close end the flow', async () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    store.dispatch({ type: 'edit' });
+    store.dispatch({ type: 'export' });
+    controller.sending(true);
+    await controller.hostClose(false);
+    controller.sending(false);
+    expect(store.state().end).toMatchObject({ status: 'closed', reason: 'host', draftId: 'd1' });
+  });
 });
 
 describe('Use this video', () => {

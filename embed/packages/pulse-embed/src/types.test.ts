@@ -213,9 +213,9 @@ const configure: ConfigureOptions = {
 const badCaptions: ConfigureOptions = { captions: { autoDownload: 'always' } };
 
 describe('the host contract', () => {
-  it('is major 1, minor 0 (PR1)', () => {
+  it('is major 1, minor 1 (PR2: the data API)', () => {
     expect(CONTRACT.major).toBe(1);
-    expect(CONTRACT.minor).toBe(0);
+    expect(CONTRACT.minor).toBe(1);
     expect(Object.isFrozen(CONTRACT)).toBe(true);
   });
 

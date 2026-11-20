@@ -1,24 +1,39 @@
 import type {
   ConfirmSendRequest,
+  DraftSummary,
   FlowResult,
   HostServices,
   Json,
+  PulseAccount,
   PulseClient,
   PulseContext,
   PulseInfo,
+  UploadTarget,
 } from '../types';
-import type { FakeStep } from './fake';
+import { createFakePulse, type FakeScript, type FakeStep } from './fake';
+import type { FetchLike } from './tus';
 
 /**
  * runPulseContract: the host contract as one test suite that any Pulse implementation must pass,
- * jest or vitest (nothing here imports a test framework). It runs against the fake today; PR2-K
- * runs it against the real command router (a Node adapter) and on a device against the plugin.
+ * jest or vitest (nothing here imports a test framework). It runs against the fake
+ * (contract.test.ts), against the real Pulse JS code through a Node facade
+ * (embed/src/test-support/contract-parity.test.ts), and on a phone against the plugin (the cap-host
+ * contract page).
  *
  * Each test asks `make(setup)` for a fresh subject. `setup` says what the facade must do for that
- * test: which flow steps the person (or a script) takes, info overrides, and whether the next
- * result is lost to a reload. A maker that can't arrange it (a real device) shows it to the person
- * or leaves those tests out.
+ * test: which flow steps the person (or a script) takes, info overrides, whether the next result is
+ * lost to a reload, and whether uploads run. A maker that can't arrange something says so in
+ * `options.can`, and the tests that need it are left out (a phone's person follows the flow steps;
+ * nobody can script its info, a reload or its network).
+ *
+ * The data tests sign in as CONTRACT_ACCOUNT first, so they run in a namespace of their own.
  */
+
+/** The account the data tests sign in as. */
+export const CONTRACT_ACCOUNT: PulseAccount = Object.freeze({
+  serverOrigin: 'https://contract.example',
+  userId: 'contract-user',
+});
 
 export interface PulseContractSetup {
   /** What each open does, in order; the last one repeats. */
@@ -27,6 +42,11 @@ export interface PulseContractSetup {
   info?: Partial<PulseInfo> & { [key: string]: unknown };
   /** The next open's result goes only to the inbox (the page reloaded while Pulse was open). */
   dropNextResult?: boolean;
+  /**
+   * Uploads run: a queued job asks the host's getUploadTarget, and the upload server never answers
+   * (every request to it hangs), so the job stays in the state the host's answer put it in.
+   */
+  server?: boolean;
 }
 
 /** What a maker gives back: the client, and the controls the implementation has. */
@@ -34,8 +54,10 @@ export interface PulseContractSubject {
   client: PulseClient;
   /** Simulates a WebView reload: the old page's listeners are gone; returns the new page's client. */
   reload?(): PulseClient | Promise<PulseClient>;
+  /** The device's network: offline, a queued job reads `waiting_network`. */
+  setOnline?(online: boolean): void | Promise<void>;
   /** Called after each test. */
-  dispose?(): void;
+  dispose?(): void | Promise<void>;
 }
 
 export type PulseContractMaker = (
@@ -47,6 +69,24 @@ export interface PulseContractTest {
   describe: (n: string, f: () => void) => void;
   it: (n: string, f: () => Promise<void> | void) => void;
   expect: unknown;
+}
+
+/** What a maker can arrange. Each defaults to true; a test needing one that's false is left out. */
+export interface PulseContractAbilities {
+  /** `setup.info`: the facade's info, overridden. */
+  info?: boolean;
+  /** `subject.reload()` and `setup.dropNextResult`. */
+  reload?: boolean;
+  /** `subject.setOnline()`. */
+  network?: boolean;
+  /** `setup.server`: uploads that run against a server that never answers. */
+  server?: boolean;
+}
+
+export interface PulseContractOptions {
+  can?: PulseContractAbilities;
+  /** How long a wait for a state lasts before the test fails. Default 3000 ms. */
+  waitMs?: number;
 }
 
 interface Matchers {
@@ -65,8 +105,10 @@ function isSubject(v: unknown): v is PulseContractSubject {
   return typeof v === 'object' && v !== null && 'client' in v && typeof v.client === 'object';
 }
 
+let waitMs = 3000;
+
 /** Polls `check` with real timers until it holds, or fails after `timeoutMs`. */
-async function waitFor(what: string, check: () => Promise<boolean> | boolean, timeoutMs = 3000) {
+async function waitFor(what: string, check: () => Promise<boolean> | boolean, timeoutMs = waitMs) {
   const until = Date.now() + timeoutMs;
   for (;;) {
     if (await check()) return;
@@ -106,23 +148,97 @@ const STATES_AFTER_SEND = [
   'sent',
 ];
 
-export function runPulseContract(make: PulseContractMaker, t: PulseContractTest): void {
+/** The ids of listed drafts. */
+function ids(list: DraftSummary[]): string[] {
+  return list.map((d) => d.id);
+}
+
+/** The rejection's fields (code, reason, draftId), or a failure when it resolved. */
+async function rejection(p: Promise<unknown>): Promise<{ code?: string; reason?: string }> {
+  try {
+    await p;
+  } catch (e) {
+    return (typeof e === 'object' && e !== null ? e : { code: String(e) }) as {
+      code?: string;
+      reason?: string;
+    };
+  }
+  throw new Error('runPulseContract: expected a rejection');
+}
+
+/** Host services whose every request hangs, unless `over` answers it. */
+function services(over: Partial<HostServices> = {}): HostServices {
+  return {
+    getUploadTarget: () => new Promise(() => {}),
+    refreshUploadToken: () => new Promise(() => {}),
+    ...over,
+  };
+}
+
+/** A target on a server that never answers (the maker's `server`). */
+function target(clientKey: string): UploadTarget {
+  return {
+    uploadId: 'contract-upload-1',
+    endpoint: 'https://vault.contract.example/pulsevault',
+    artifactId: '11111111-2222-4333-8444-555555555555',
+    token: 'contract-token',
+    expiresAt: Date.now() + 3_600_000,
+    clientKey,
+  };
+}
+
+/** Sign in as CONTRACT_ACCOUNT, in `uploadMode`. */
+async function signIn(client: PulseClient, uploadMode: 'pulse' | 'file'): Promise<void> {
+  await client.configure({ uploadMode });
+  await client.setAccount(CONTRACT_ACCOUNT);
+}
+
+type Sent = Extract<FlowResult, { status: 'completed'; mode: 'pulse' }>;
+
+/** Record and Send for `context`: the completed/pulse result. */
+async function sent(client: PulseClient, context: PulseContext = ctx()): Promise<Sent> {
+  const r = await client.record(context);
+  if (r.status !== 'completed' || r.mode !== 'pulse') {
+    throw new Error(`expected completed/pulse, got ${JSON.stringify(r)}`);
+  }
+  return r;
+}
+
+export function runPulseContract(
+  make: PulseContractMaker,
+  t: PulseContractTest,
+  options: PulseContractOptions = {},
+): void {
   const expect = t.expect as Expect;
   const { describe, it } = t;
+  const can: Required<PulseContractAbilities> = {
+    info: true,
+    reload: true,
+    network: true,
+    server: true,
+    ...options.can,
+  };
+  if (options.waitMs !== undefined) waitMs = options.waitMs;
 
-  /** One test: a fresh subject, disposed afterwards. */
+  /** One test: a fresh subject, disposed afterwards. Left out when it needs what the maker can't. */
   function test(
     name: string,
     setup: PulseContractSetup,
     body: (s: PulseContractSubject) => Promise<void>,
+    needs: (keyof PulseContractAbilities)[] = [],
   ) {
+    const wanted = [...needs];
+    if (setup.info) wanted.push('info');
+    if (setup.dropNextResult) wanted.push('reload');
+    if (setup.server) wanted.push('server');
+    if (wanted.some((n) => !can[n])) return;
     it(name, async () => {
       const made = await make(setup);
       const s: PulseContractSubject = isSubject(made) ? made : { client: made };
       try {
         await body(s);
       } finally {
-        s.dispose?.();
+        await s.dispose?.();
       }
     });
   }
@@ -139,6 +255,8 @@ export function runPulseContract(make: PulseContractMaker, t: PulseContractTest)
       async ({ client }) => {
         const info = await client.getInfo();
         expect(info.contract.major).toBe(1);
+        // Minor 1: the data API (setAccount, the drafts, the outbox, host requests).
+        expect(info.contract.minor).toBe(1);
         expect(info.supported).toBe(true);
         expect(info.methods.includes('open')).toBe(true);
         expect(await client.isAvailable()).toBe(true);
@@ -259,6 +377,7 @@ export function runPulseContract(make: PulseContractMaker, t: PulseContractTest)
           expect(heard.map((r) => r.requestId)).toEqual(['reload-2']);
           await client.acknowledge('reload-2');
         },
+        ['reload'],
       );
     });
 
@@ -401,5 +520,287 @@ export function runPulseContract(make: PulseContractMaker, t: PulseContractTest)
         },
       );
     });
+
+    describe('the data API (contract minor 1)', () => {
+      const clock = ctx({
+        key: 'clock:e2',
+        kind: 'clock',
+        id: 'e2',
+        label: 'Tue 9:00 session',
+        uploadType: { id: 'clock.wrapup', version: 1, confirmSend: true },
+      });
+
+      test(
+        'signed out, data calls and open reject no_account; signing in answers again',
+        { flows: [{ result: 'kept' }] },
+        async ({ client }) => {
+          expect((await client.setAccount(null)).namespace).toBe(null);
+          expect((await client.getInfo()).namespace).toBe(null);
+          expect(await codeOf(client.listDrafts())).toBe('no_account');
+          expect(await codeOf(client.getDraft('d-1'))).toBe('no_account');
+          expect(await codeOf(client.renameDraft('d-1', 'x'))).toBe('no_account');
+          expect(await codeOf(client.record(ctx()))).toBe('no_account');
+          const { namespace } = await client.setAccount(CONTRACT_ACCOUNT);
+          expect(typeof namespace).toBe('string');
+          expect((await client.getInfo()).namespace).toBe(namespace);
+          expect(Array.isArray(await client.listDrafts())).toBe(true);
+        },
+      );
+
+      test(
+        "writes on a draft Pulse doesn't have are not_found, and getDraft is null",
+        { flows: [] },
+        async ({ client }) => {
+          await signIn(client, 'pulse');
+          const id = 'no-such-draft';
+          expect(await client.getDraft(id)).toBe(null);
+          expect(await codeOf(client.renameDraft(id, 'x'))).toBe('not_found');
+          expect(await codeOf(client.deleteDraft(id))).toBe('not_found');
+          expect(await codeOf(client.setDraftContext(id, ctx()))).toBe('not_found');
+          expect(await codeOf(client.upload(id))).toBe('not_found');
+          expect(await codeOf(client.cancelUpload(id))).toBe('not_found');
+          expect(await codeOf(client.retireDraft(id))).toBe('not_found');
+          expect(await codeOf(client.dismissReceipt(id))).toBe('not_found');
+        },
+      );
+
+      test(
+        'the draft an open flow holds is locked against host writes until the flow ends',
+        { flows: [{ result: 'kept' }, { result: 'kept', afterMs: 300 }] },
+        async ({ client }) => {
+          await signIn(client, 'pulse');
+          const first = await client.record(ctx());
+          if (first.status !== 'closed') throw new Error(`expected closed, got ${first.status}`);
+          const editing = client.edit(first.draftId, { requestId: 'held-1' });
+          await waitFor('the flow to open', () => client.isOpen());
+          expect(await codeOf(client.renameDraft(first.draftId, 'Renamed'))).toBe('draft.locked');
+          expect(await codeOf(client.deleteDraft(first.draftId))).toBe('draft.locked');
+          expect(await codeOf(client.upload(first.draftId))).toBe('draft.locked');
+          expect((await editing).status).toBe('closed');
+          await client.renameDraft(first.draftId, 'Renamed');
+          expect((await client.getDraft(first.draftId))?.name).toBe('Renamed');
+          await client.acknowledge('held-1');
+          await client.acknowledge(first.requestId);
+        },
+      );
+
+      test(
+        "'file' mode: retireDraft turns the draft into a receipt; dismissReceipt marks it seen",
+        { flows: [{ result: 'file' }] },
+        async ({ client }) => {
+          await signIn(client, 'file');
+          const r = await client.record(ctx());
+          if (r.status !== 'completed' || r.mode !== 'file') {
+            throw new Error(`expected completed/file, got ${JSON.stringify(r)}`);
+          }
+          expect((await client.getDraft(r.draftId))?.state).toBe('ready');
+          await client.retireDraft(r.draftId);
+          const sent = await client.getDraft(r.draftId);
+          expect(sent?.state).toBe('sent');
+          expect(sent?.sent?.outcome).toBe('done');
+          expect(sent?.sent?.dismissed).toBe(false);
+          expect(ids(await client.listDrafts()).includes(r.draftId)).toBe(false);
+          expect(ids(await client.listDrafts({ states: ['sent'] })).includes(r.draftId)).toBe(true);
+          // Retired already: a no-op. A receipt is no draft to the other writes.
+          await client.retireDraft(r.draftId);
+          expect(await codeOf(client.renameDraft(r.draftId, 'x'))).toBe('not_found');
+          expect(await codeOf(client.deleteDraft(r.draftId))).toBe('not_found');
+          await client.dismissReceipt(r.draftId);
+          expect((await client.getDraft(r.draftId))?.sent?.dismissed).toBe(true);
+          await client.acknowledge(r.requestId);
+        },
+      );
+
+      test(
+        "'pulse' mode: retireDraft is only a hint, and dismissReceipt needs a receipt",
+        { flows: [{ result: 'sent' }] },
+        async ({ client }) => {
+          await signIn(client, 'pulse');
+          const r = await sent(client);
+          await client.retireDraft(r.draftId);
+          const d = await client.getDraft(r.draftId);
+          expect(d?.state === 'sent').toBe(false);
+          expect(await codeOf(client.dismissReceipt(r.draftId))).toBe('not_found');
+          expect(await codeOf(client.upload(r.draftId))).toBe('resolved');
+          expect((await client.upload(r.draftId)).clientKey).toBe(r.clientKey);
+          await client.acknowledge(r.requestId);
+        },
+      );
+
+      test(
+        'a Send made offline reads waiting_network, from the network rather than the catalog',
+        { flows: [{ result: 'sent' }] },
+        async (s) => {
+          const { client } = s;
+          await signIn(client, 'pulse');
+          await s.setOnline?.(false);
+          const r = await sent(client);
+          expect((await client.getDraft(r.draftId))?.state).toBe('waiting_network');
+          const waiting = await client.listDrafts({ states: ['waiting_network'] });
+          expect(ids(waiting).includes(r.draftId)).toBe(true);
+          expect(ids(await client.listDrafts({ states: ['queued'] })).includes(r.draftId)).toBe(
+            false,
+          );
+          await s.setOnline?.(true);
+          await waitFor('queued once online', async () => {
+            return (await client.getDraft(r.draftId))?.state === 'queued';
+          });
+          await client.acknowledge(r.requestId);
+        },
+        ['network'],
+      );
+
+      test(
+        'a Send the host answers no_account waits in needs_credentials until resumeOutbox',
+        { flows: [{ result: 'sent' }], server: true },
+        async ({ client }) => {
+          await signIn(client, 'pulse');
+          let refuse = true;
+          client.setHostServices(
+            services({
+              getUploadTarget: () =>
+                refuse
+                  ? Promise.reject({ code: 'no_account', message: 'Signed out' })
+                  : new Promise(() => {}),
+            }),
+          );
+          const r = await sent(client);
+          await waitFor('needs_credentials', async () => {
+            return (await client.getDraft(r.draftId))?.state === 'needs_credentials';
+          });
+          const paused = await client.getDraft(r.draftId);
+          expect(paused?.upload?.error?.code).toBe('no_account');
+          expect(paused?.upload?.error?.recoverable).toBe(true);
+          expect(paused?.upload?.clientKey).toBe(r.clientKey);
+          refuse = false;
+          await client.resumeOutbox();
+          await waitFor('queued again', async () => {
+            return (await client.getDraft(r.draftId))?.state === 'queued';
+          });
+          await client.acknowledge(r.requestId);
+        },
+      );
+
+      test(
+        'while uploading: edits, Move to…, Delete and Send are locked; Cancel sending is not',
+        { flows: [{ result: 'sent' }], server: true },
+        async ({ client }) => {
+          await signIn(client, 'pulse');
+          client.setHostServices(services({ getUploadTarget: async (q) => target(q.clientKey) }));
+          const r = await sent(client);
+          await waitFor('uploading', async () => {
+            return (await client.getDraft(r.draftId))?.state === 'uploading';
+          });
+          const before = await client.getDraft(r.draftId);
+          expect(await codeOf(client.renameDraft(r.draftId, 'Renamed'))).toBe('draft.locked');
+          expect(await codeOf(client.deleteDraft(r.draftId))).toBe('draft.locked');
+          expect(await codeOf(client.setDraftContext(r.draftId, ctx({ label: 'Elsewhere' })))).toBe(
+            'draft.locked',
+          );
+          expect(await codeOf(client.upload(r.draftId))).toBe('draft.locked');
+          await client.retireDraft(r.draftId);
+          const still = await client.getDraft(r.draftId);
+          expect(still?.state).toBe('uploading');
+          expect(still?.name).toBe(before?.name);
+          await client.cancelUpload(r.draftId);
+          const canceled = await client.getDraft(r.draftId);
+          expect(canceled?.state).toBe('ready');
+          expect(canceled?.upload === undefined).toBe(true);
+          await client.renameDraft(r.draftId, 'Renamed');
+          expect((await client.getDraft(r.draftId))?.name).toBe('Renamed');
+          await client.acknowledge(r.requestId);
+        },
+      );
+
+      test(
+        'while delivering: Cancel sending and edits are locked; retireDraft waits for the server',
+        { flows: [{ result: 'sent' }], server: true },
+        async ({ client }) => {
+          await signIn(client, 'pulse');
+          client.setHostServices(
+            services({
+              getUploadTarget: async (q) => ({ ...target(q.clientKey), state: 'delivered' }),
+            }),
+          );
+          const r = await sent(client);
+          await waitFor('delivering', async () => {
+            return (await client.getDraft(r.draftId))?.state === 'delivering';
+          });
+          expect(await codeOf(client.cancelUpload(r.draftId))).toBe('draft.locked');
+          expect(await codeOf(client.renameDraft(r.draftId, 'x'))).toBe('draft.locked');
+          expect(await codeOf(client.deleteDraft(r.draftId))).toBe('draft.locked');
+          await client.retireDraft(r.draftId);
+          expect((await client.getDraft(r.draftId))?.state).toBe('delivering');
+          await client.acknowledge(r.requestId);
+        },
+      );
+
+      test(
+        'a clock-bound draft refuses Move to… (clock_bound), and a new Send keeps its first sentAt',
+        { flows: [{ result: 'sent' }] },
+        async ({ client }) => {
+          await signIn(client, 'pulse');
+          let asked = 0;
+          client.setHostServices(
+            services({
+              confirmSend: async () => {
+                asked += 1;
+                return { confirmedAt: 1_763_500_000_000 };
+              },
+            }),
+          );
+          const r = await sent(client, clock);
+          expect(r.confirmedAt).toBe(1_763_500_000_000);
+          const moved = await rejection(client.setDraftContext(r.draftId, ctx()));
+          expect(moved.code).toBe('draft.locked');
+          expect(moved.reason).toBe('clock_bound');
+          // A rename takes the queued Send back; the draft stays bound to its clock action.
+          await client.renameDraft(r.draftId, 'Wrap-up');
+          const renamed = await client.getDraft(r.draftId);
+          expect(renamed?.state).toBe('ready');
+          expect(renamed?.confirmedAt).toBe(1_763_500_000_000);
+          const again = await client.upload(r.draftId);
+          expect(again.sentAt).toBe(r.sentAt);
+          expect(again.draftKey).toBe(r.draftKey);
+          // The same cut: the same clientKey.
+          expect(again.clientKey).toBe(r.clientKey);
+          expect(asked).toBe(1);
+          // Deleting it still works: the host cancels its clock intent (O13).
+          await client.deleteDraft(r.draftId);
+          expect(await client.getDraft(r.draftId)).toBe(null);
+          await client.acknowledge(r.requestId);
+        },
+      );
+    });
   });
+}
+
+/** A fetch that never answers (the `server` that never answers); an abort rejects it. */
+const neverAnswers: FetchLike = (_url, init) =>
+  new Promise((_resolve, reject) => {
+    init.signal?.addEventListener('abort', () =>
+      reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
+    );
+  });
+
+/**
+ * The maker for the fake: `runPulseContract(fakeContractMaker(), t)`. `script` adds to every
+ * test's fake (latency, say).
+ */
+export function fakeContractMaker(script: FakeScript = {}): PulseContractMaker {
+  return (setup) => {
+    const fake = createFakePulse({
+      ...script,
+      flows: setup.flows,
+      ...(setup.info ? { info: setup.info } : {}),
+      ...(setup.dropNextResult ? { dropNextResult: true } : {}),
+      ...(setup.server ? { server: { fixture: new ArrayBuffer(16), fetch: neverAnswers } } : {}),
+    });
+    return {
+      client: fake.client,
+      reload: () => fake.reload(),
+      setOnline: (online) => fake.setOnline(online),
+      dispose: () => fake.dispose(),
+    };
+  };
 }
