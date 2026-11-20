@@ -3,10 +3,21 @@
 #
 # Builds PulseKit (embed/, expo-brownfield), packages and signs it, and publishes:
 #   - a GitHub Release on the tag: one zip per xcframework, the all-in-one zip CocoaPods uses,
-#     SHA256SUMS, the dSYMs, the Hermes source map, THIRD_PARTY_NOTICES and the size report;
+#     PulseKit-android-maven.zip (the fused Android AAR as a Maven repository), SHA256SUMS, the
+#     dSYMs, the Hermes source map, THIRD_PARTY_NOTICES and the size report;
 #   - @mieweb/pulse-embed, @mieweb/capacitor-pulse and cordova-plugin-pulse to npm at the tag's
 #     version, with provenance, under the `rc` dist-tag for -rc.N tags.
+#   - when the owner switches it on, the same Android repository on Maven Central (final versions
+#     only).
 # Each step calls a script that also runs locally (embed/scripts/*.mjs).
+#
+# Jobs: `android` (Ubuntu) builds the fused release AAR, completes its POM and .module, checks it
+# with package-android.mjs and hands the zip on as a workflow artifact. `release` (macOS) needs it:
+# it builds iOS, attaches the Android zip through package-ios.mjs --attach (so SHA256SUMS covers
+# it) and publishes. A failed Android job fails the release: one release, both platforms.
+# `maven-central` runs after a successful release, only when the repository variable
+# MAVEN_CENTRAL_PUBLISH is 'true' and only for a final (non -rc.N) tag, and uploads the bytes of
+# the Release's zip. Central versions can't be deleted, so release candidates never go there.
 #
 # Tags: pulsekit-v<major>.<minor>.<patch> or pulsekit-v<major>.<minor>.<patch>-rc.<n>. A person
 # pushes the tag (a GITHUB_TOKEN-created tag starts no workflow), or a workflow calls this one
@@ -32,6 +43,11 @@
 #                  for this repository and this workflow file; or NPM_TOKEN (optional secret) for
 #                  a bootstrap publish before trusted publishing is set up.
 #   GITHUB_TOKEN   contents: write (the release) and id-token: write (npm provenance).
+#   Maven Central  (P0.6, only with MAVEN_CENTRAL_PUBLISH = 'true') MAVEN_CENTRAL_USERNAME and
+#                  MAVEN_CENTRAL_PASSWORD (a Central Portal user token for the com.mieweb
+#                  namespace), MAVEN_GPG_PRIVATE_KEY (ASCII-armoured) and MAVEN_GPG_PASSPHRASE.
+#                  The variable MAVEN_CENTRAL_PUBLISHING_TYPE picks USER_MANAGED (the default:
+#                  someone presses Publish on central.sonatype.com) or AUTOMATIC.
 #   A workflow that calls this one (workflow_call) runs under its own file name in the OIDC token
 #   npm checks, so it may need its own trusted-publisher entry for each package on npmjs.com.
 #
@@ -79,6 +95,14 @@ on:
         required: true
       NPM_TOKEN:
         required: false
+      MAVEN_CENTRAL_USERNAME:
+        required: false
+      MAVEN_CENTRAL_PASSWORD:
+        required: false
+      MAVEN_GPG_PRIVATE_KEY:
+        required: false
+      MAVEN_GPG_PASSPHRASE:
+        required: false
 
 # One run per tag; a second run for the same tag waits instead of racing the first.
 concurrency:
@@ -94,7 +118,150 @@ defaults:
     shell: bash
 
 jobs:
+  # ── Android: the fused release AAR as a Maven repository (G5) ────────────
+  android:
+    if: startsWith(inputs.tag || github.ref_name, 'pulsekit-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      # OUT: package-android.mjs's output. MAVEN: the localDirectory repository expo-brownfield
+      # publishes to (embed/app.json). DEPS: the build's resolved runtime classpath.
+      - name: Paths and disk (start)
+        run: |
+          {
+            echo "OUT=$RUNNER_TEMP/pulsekit-android"
+            echo "MAVEN=$GITHUB_WORKSPACE/embed/artifacts/android-maven"
+            echo "DEPS=$RUNNER_TEMP/pulsekit-dependencies.txt"
+          } >> "$GITHUB_ENV"
+          df -h /
+
+      - name: Checkout the tag
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          submodules: true
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          # No `cache:`: a release build installs from the lockfile, never from a cache.
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # The build runs the generated project's Gradle wrapper; this only sets Gradle up for it.
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-disabled: true # as with npm: a release build never starts from a cache
+
+      - name: Read the version from the tag
+        id: version
+        run: |
+          LINES=$(node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
+            tag "$TAG")
+          echo "$LINES" | tee -a "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The fused build needs room: remove the preinstalled .NET, GHC and every Android NDK but
+      # the one React Native builds with (node_modules/react-native/gradle/libs.versions.toml).
+      - name: Free disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          NDK=$(sed -n 's/^ndkVersion = "\(.*\)"$/\1/p' node_modules/react-native/gradle/libs.versions.toml)
+          if [ -z "$NDK" ]; then
+            echo "::error::No ndkVersion in react-native's libs.versions.toml"
+            exit 1
+          fi
+          echo "Keeping NDK $NDK"
+          for dir in "$ANDROID_HOME"/ndk/*; do
+            if [ -d "$dir" ] && [ "$(basename "$dir")" != "$NDK" ]; then sudo rm -rf "$dir"; fi
+          done
+          df -h /
+
+      - name: Stamp the version into the embed packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
+            stamp "$VERSION"
+
+      # ── Build the fused release AAR (expo-brownfield) ─────────────────────
+      - name: Expo prebuild (embed, Android)
+        working-directory: embed
+        run: npm run prebuild -- --platform android
+
+      # As build-android-from-expo.yml: the template's 2 GB heap can run out in a release build,
+      # and prebuild writes gradle.properties again every run.
+      - name: Raise the Gradle heap
+        working-directory: embed/android
+        run: |
+          sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g/' gradle.properties
+          grep '^org.gradle.jvmargs=-Xmx4g' gradle.properties
+
+      - name: Build PulseKit (expo-brownfield, fused release)
+        working-directory: embed
+        run: npm run build:android
+
+      - name: Disk (after the build)
+        run: df -h /
+
+      # ── Complete the metadata, check, zip ─────────────────────────────────
+      # The fused POM and .module leave out Guava and the kotlinx runtime (S1-b); the versions to
+      # declare come from this build's resolved classpath.
+      - name: Resolved runtime dependencies
+        working-directory: embed/android
+        run: |
+          ./gradlew :pulsekit:dependencies --configuration releaseRuntimeClasspath --console=plain \
+            > "$DEPS"
+          grep -c -- '--- ' "$DEPS"
+
+      - name: Complete the POM and .module
+        run: |
+          node embed/scripts/complete-android-metadata.mjs --maven "$MAVEN" --resolved "$DEPS"
+
+      - name: Package the Android repository
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          npm run embed:package:android -- --maven embed/artifacts/android-maven --out "$OUT"
+          # Lockstep: the publication carries the tag's version.
+          POM="$MAVEN/com/mieweb/pulse/pulsekit/$VERSION/pulsekit-$VERSION.pom"
+          if [ ! -f "$POM" ]; then
+            echo "::error::No com.mieweb.pulse:pulsekit:$VERSION in the repository"
+            exit 1
+          fi
+          (cd "$OUT/release" && sha256sum -c SHA256SUMS)
+          cat "$OUT/android-dependencies.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hand the zip to the release job
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: pulsekit-android
+          path: |
+            ${{ runner.temp }}/pulsekit-android/release/PulseKit-android-maven.zip
+            ${{ runner.temp }}/pulsekit-android/release/SHA256SUMS
+            ${{ runner.temp }}/pulsekit-android/android-dependencies.md
+            ${{ runner.temp }}/pulsekit-android/android-report.json
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Disk (end)
+        if: always()
+        run: df -h /
+
   release:
+    needs: android
     if: startsWith(inputs.tag || github.ref_name, 'pulsekit-v')
     runs-on: macos-15
     timeout-minutes: 150
@@ -104,16 +271,28 @@ jobs:
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      # OUT: package-ios.mjs's output. ATTACH: the extra release assets. SOURCEMAP_FILE: React
-      # Native's bundle phase writes the composed Hermes source map there when it is set.
+      # OUT: package-ios.mjs's output. ATTACH: the extra release assets. ANDROID: the android
+      # job's artifact. SOURCEMAP_FILE: React Native's bundle phase writes the composed Hermes
+      # source map there when it is set.
       - name: Paths and disk (start)
         run: |
           {
             echo "OUT=$RUNNER_TEMP/pulsekit-ios"
             echo "ATTACH=$RUNNER_TEMP/pulsekit-attach"
+            echo "ANDROID=$RUNNER_TEMP/pulsekit-android"
             echo "SOURCEMAP_FILE=$RUNNER_TEMP/pulsekit-sourcemap/main.jsbundle.map"
           } >> "$GITHUB_ENV"
           df -h /
+
+      # ── The Android repository zip from the android job ───────────────────
+      - name: Download the Android repository zip
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: pulsekit-android
+          path: ${{ runner.temp }}/pulsekit-android
+
+      - name: Check the Android zip against its checksum
+        run: (cd "$ANDROID/release" && shasum -a 256 -c SHA256SUMS)
 
       # ── The tag's commit, with the pulse-editor native module ──────────────
       - name: Checkout the tag
@@ -310,7 +489,8 @@ jobs:
             --sign "$IDENTITY" \
             --keychain "$KEYCHAIN" \
             --attach "$ATTACH/PulseKit-main.jsbundle.map" \
-            --attach "$ATTACH/THIRD_PARTY_NOTICES.md"
+            --attach "$ATTACH/THIRD_PARTY_NOTICES.md" \
+            --attach "$ANDROID/release/PulseKit-android-maven.zip"
 
       - name: Check lockstep, signatures and checksums
         env:
@@ -356,6 +536,8 @@ jobs:
             echo
             echo 'Check the downloads with `shasum -a 256 -c SHA256SUMS`.'
             echo
+            echo 'Android: `PulseKit-android-maven.zip` is a Maven repository holding `com.mieweb.pulse:pulsekit:'"$VERSION"'`.'
+            echo
             cat "$OUT/release/size-report.md"
           } > "$NOTES"
           FLAGS=(--verify-tag --latest=false --title "PulseKit $VERSION" --notes-file "$NOTES")
@@ -395,3 +577,53 @@ jobs:
       - name: Disk (end)
         if: always()
         run: df -h /
+
+  # ── Maven Central (O5): off until the owner switches it on ──────────────────
+  # After the release, so Central (where nothing can be deleted) only ever gets a version the
+  # GitHub Release has, and the bytes of that Release's zip. Final versions only: a -rc.N tag
+  # stays on the GitHub Release (publish-maven-central.mjs refuses one as well).
+  maven-central:
+    needs: [android, release]
+    if: vars.MAVEN_CENTRAL_PUBLISH == 'true' && !contains(inputs.tag || github.ref_name, '-rc.')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download the Android repository zip
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: pulsekit-android
+          path: ${{ runner.temp }}/pulsekit-android
+
+      - name: Unzip the repository the Release carries
+        run: |
+          (cd "$RUNNER_TEMP/pulsekit-android/release" && sha256sum -c SHA256SUMS)
+          unzip -q "$RUNNER_TEMP/pulsekit-android/release/PulseKit-android-maven.zip" \
+            -d "$RUNNER_TEMP/android-maven"
+
+      - name: Publish to Maven Central
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          MAVEN_CENTRAL_PUBLISHING_TYPE: ${{ vars.MAVEN_CENTRAL_PUBLISHING_TYPE || 'USER_MANAGED' }}
+        run: |
+          node embed/scripts/publish-maven-central.mjs --maven "$RUNNER_TEMP/android-maven" \
+            --name "PulseKit $TAG"
