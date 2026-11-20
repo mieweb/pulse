@@ -1,7 +1,8 @@
 # PulseKit's consumer R8 rules (G2). They ship in the AAR (proguard.txt) and apply when a host
-# builds with minify on; PulseKit's own build doesn't minify. expo-brownfield's consumer-rules.pro
-# (Expo modules, services, records, views) ships beside these. package-android.mjs refuses an AAR
-# without these rules.
+# builds with minify on; PulseKit's own build doesn't minify. AGP's fused library bundles no
+# consumer rules, so pulsekit-android-gradle.js joins these, expo-brownfield's consumer-rules.pro
+# (Expo modules, services, records, views) and every fused module's own into the fused AAR's
+# proguard.txt. package-android.mjs refuses an AAR without these rules.
 
 # The public API (PulseKit.kt, PulseKitApi.kt). Hosts and the Capacitor and Cordova plugins call
 # it by name; Java callers use PulseKit.shared(context) and the fun interfaces.

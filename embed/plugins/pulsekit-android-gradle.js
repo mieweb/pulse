@@ -24,9 +24,19 @@ const HOST_RELEASE = 'destroy';
  * S1-a: the artifactId of the fused release publication. expo-brownfield publishes it as
  * `<libraryName>-fused-release` (S1's build: `com.mieweb.pulse:pulsekit-fused-release`); the frozen
  * coordinates are `com.mieweb.pulse:pulsekit`. null keeps expo-brownfield's name.
+ *
+ * The clash to check at the first build (IB-1): the `:pulsekit` library's own `brownfieldRelease`
+ * publication is also `com.mieweb.pulse:pulsekit:<version>` (expo-brownfield's publish plugin names
+ * it after the project, gradle-plugins/publish/.../extensions.kt), and both publish to the same
+ * `pulsekit` localDirectory repository. A fused build runs only the fused sibling's publish task,
+ * so it writes one artifact; a non-fused publish, or both tasks in one run, would overwrite it.
+ * If Gradle warns about or refuses the duplicate coordinates, set this to null.
  * @type {string | null}
  */
 const FUSED_RELEASE_ARTIFACT_ID = 'pulsekit';
+
+/** Every ABI an Android build can package. */
+const ANDROID_ABIS = /** @type {const} */ (['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64']);
 
 /**
  * @typedef {object} Stamps
@@ -124,7 +134,7 @@ function setGradleVersion(text, version) {
  * @property {string} manifest       embed/native/android/src/main/AndroidManifest.xml, relative.
  * @property {string} consumerRules  embed/native/android/consumer-rules.pro, relative.
  * @property {Stamps} stamps
- * @property {string} [version]      The Maven version to publish (PULSEKIT_VERSION), if set.
+ * @property {string} [version]      The Maven version to publish (the stamped version).
  */
 
 /**
@@ -194,10 +204,82 @@ function patchHostManager(text, opts = {}) {
 }
 
 /**
+ * What the fused AAR's bundle task gets on top of AGP's: the consumer R8 rules, and for a release
+ * build only the ABIs it ships. Appended at the end of the fused sibling's script, behind the same
+ * `brownfield.fused` guard as expo-brownfield's own fused wiring.
+ *
+ * - Rules: AGP 8.13's fused library bundles classes, resources, the manifest, jni, assets and the
+ *   AAR metadata, never a proguard.txt (FusedLibraryBundleAar; spike S1's AAR had none), so a host
+ *   that minifies would strip PulseKit and every Expo module loaded by reflection. A task joins the
+ *   consumer rules of every library module (the `:pulsekit` library's, so embed/native/android's
+ *   and expo-brownfield's, and each autolinked module's) into the AAR's proguard.txt.
+ * - ABIs: expo-build-properties `buildArchs` reaches only what is built from source. Prebuilt
+ *   dependency AARs (expo-sqlite, avif, CameraX's image util, the gif decoder) still bring every
+ *   ABI (S1: 5 libraries each in x86 and x86_64), so the bundle drops the ABIs not in `buildArchs`.
+ * FusedLibraryBundleAar is a Gradle Jar task; it is matched by class name because the class is in
+ * AGP's internal package. If AGP renames it, nothing is added and package-android.mjs's r8 and
+ * abis checks refuse the AAR.
+ * @param {'release' | 'debug'} variant
+ * @param {readonly string[]} droppedAbis
+ */
+function fusedBundleLines(variant, droppedAbis) {
+  const drop = droppedAbis.length > 0;
+  return [
+    '// PulseKit (embed/plugins/with-pulsekit-android.js writes this on prebuild): the consumer R8',
+    "// rules AGP's fused library doesn't bundle" +
+      (drop ? ', and only the ABIs embed/app.json builds.' : '.'),
+    'if (findProperty("brownfield.fused") == "true") {',
+    '  val pulsekitRulesFile = layout.buildDirectory.file("pulsekit/proguard.txt")',
+    '  val pulsekitRulesRoot = rootDir',
+    '  val pulsekitRules = tasks.register("pulsekitConsumerRules") {',
+    '    // Library modules only: the app and the fused siblings have no LibraryExtension.',
+    '    val sources = rootProject.subprojects',
+    '      .sortedBy { it.path }',
+    '      .flatMap { sub ->',
+    '        val android = sub.extensions.findByName("android") as? com.android.build.api.dsl.LibraryExtension',
+    '          ?: return@flatMap emptyList<File>()',
+    `        val buildType = android.buildTypes.findByName(${kt(variant)})`,
+    '        (android.defaultConfig.consumerProguardFiles + (buildType?.consumerProguardFiles ?: emptyList()))',
+    '          .map { sub.file(it) }',
+    '      }',
+    '      .filter { it.isFile }',
+    '      .distinct()',
+    '    inputs.files(sources)',
+    '    outputs.file(pulsekitRulesFile)',
+    '    doLast {',
+    '      val text = sources.joinToString("\\n") { f ->',
+    '        "# --- ${f.relativeTo(pulsekitRulesRoot).invariantSeparatorsPath}\\n${f.readText()}"',
+    '      }',
+    '      pulsekitRulesFile.get().asFile.apply { parentFile.mkdirs(); writeText(text) }',
+    '    }',
+    '  }',
+    ...(drop ? [`  val pulsekitDroppedAbis = setOf(${droppedAbis.map(kt).join(', ')})`] : []),
+    '  tasks.withType(org.gradle.api.tasks.bundling.Jar::class.java)',
+    '    .matching { it.javaClass.name.startsWith("com.android.build.gradle.tasks.FusedLibraryBundleAar") }',
+    '    .configureEach {',
+    '      // proguard.txt at the AAR root. If a later AGP bundles its own, the two collide here.',
+    '      from(pulsekitRules)',
+    ...(drop
+      ? [
+          '      eachFile {',
+          '        val parts = path.split("/")',
+          '        if (parts.size > 2 && parts[0] == "jni" && parts[1] in pulsekitDroppedAbis) this.exclude()',
+          '      }',
+        ]
+      : []),
+    '    }',
+    '}',
+  ];
+}
+
+/**
  * A generated fused sibling's build.gradle.kts (`pulsekit-fused-release` or `-debug`): the Maven
- * version from PULSEKIT_VERSION when set, and for the release variant the frozen artifactId.
+ * version, for the release variant the frozen artifactId, the consumer R8 rules in the AAR, and,
+ * when `abis` is given, only those ABIs' libraries (fusedBundleLines).
  * @param {string} text
- * @param {{ variant: 'release' | 'debug', version?: string, artifactId?: string | null }} opts
+ * @param {{ variant: 'release' | 'debug', version?: string, artifactId?: string | null,
+ *   abis?: readonly string[] }} opts  `abis`: the ABIs to ship (embed/app.json `buildArchs`);
+ *   omitted, the bundle keeps every ABI (the debug build, for emulators).
  */
 function patchFusedGradle(text, opts) {
   let out = stripBlock(text);
@@ -208,13 +290,23 @@ function patchFusedGradle(text, opts) {
       : opts.variant === 'release'
         ? FUSED_RELEASE_ARTIFACT_ID
         : null;
-  if (artifactId === null) return out;
-  return insertAfter(
-    out,
-    /\n([ \t]*)register<MavenPublication>\("brownfield\$\{fusedVariantCapitalized\}"\) \{\n/,
-    block('        ', [`artifactId = ${kt(artifactId)}`]),
-    'the fused brownfield publication',
-  );
+  if (artifactId !== null) {
+    out = insertAfter(
+      out,
+      /\n([ \t]*)register<MavenPublication>\("brownfield\$\{fusedVariantCapitalized\}"\) \{\n/,
+      block('        ', [`artifactId = ${kt(artifactId)}`]),
+      'the fused brownfield publication',
+    );
+  }
+  /** @type {readonly string[]} */
+  const known = ANDROID_ABIS;
+  const unknown = (opts.abis ?? []).filter((abi) => !known.includes(abi));
+  if (unknown.length > 0) throw new Error(`pulsekit-android: unknown ABI(s) ${unknown.join(', ')}`);
+  if (opts.abis !== undefined && opts.abis.length === 0) {
+    throw new Error('pulsekit-android: no ABIs to ship');
+  }
+  const dropped = opts.abis === undefined ? [] : known.filter((abi) => !opts.abis?.includes(abi));
+  return `${out.endsWith('\n') ? out : `${out}\n`}${block('', fusedBundleLines(opts.variant, dropped))}`;
 }
 
 /**
@@ -243,6 +335,7 @@ module.exports = {
   MARKER,
   HOST_RELEASE,
   FUSED_RELEASE_ARTIFACT_ID,
+  ANDROID_ABIS,
   BUILD_CONFIG_FIELDS,
   patchLibraryGradle,
   patchHostManager,

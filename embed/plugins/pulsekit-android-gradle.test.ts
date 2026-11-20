@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  ANDROID_ABIS,
   BUILD_CONFIG_FIELDS,
   FUSED_RELEASE_ARTIFACT_ID,
   HOST_RELEASE,
@@ -181,9 +182,71 @@ describe('patchFusedGradle', () => {
     expect(patchFusedGradle(patched, { variant: 'release' })).toBe(patched);
   });
 
-  it('leaves the debug publication named as expo-brownfield names it', () => {
+  it('leaves the debug publication named as expo-brownfield names it, with every ABI', () => {
     const debug = fused('debug');
-    expect(patchFusedGradle(debug, { variant: 'debug' })).toBe(debug);
+    const patched = patchFusedGradle(debug, { variant: 'debug' });
+    expect(patched).not.toContain('artifactId = "');
+    expect(patched).not.toContain('pulsekitDroppedAbis');
+    expect(patched).not.toContain('eachFile');
+    expect(patched).toContain('android.buildTypes.findByName("debug")');
+    expect(withoutBlocks(patched)).toBe(debug);
+    expect(patchFusedGradle(patched, { variant: 'debug' })).toBe(patched);
+  });
+
+  it('bundles the consumer R8 rules of every library module as the AAR proguard.txt', () => {
+    const release = fused('release');
+    const patched = patchFusedGradle(release, { variant: 'release' });
+    // A block of its own at the end of the file, after the artifactId one.
+    const begin = patched.lastIndexOf(`// ${MARKER}: begin`);
+    expect(patched.slice(0, begin)).toContain('artifactId = "pulsekit"');
+    expect(patched.startsWith(release)).toBe(false); // the artifactId block sits inside it
+    expect(patched.trimEnd().endsWith(`// ${MARKER}: end`)).toBe(true);
+    const rules = patched.slice(begin);
+    expect(rules).toContain('if (findProperty("brownfield.fused") == "true") {');
+    expect(rules).toContain('tasks.register("pulsekitConsumerRules")');
+    expect(rules).toContain('layout.buildDirectory.file("pulsekit/proguard.txt")');
+    expect(rules).toContain(
+      'sub.extensions.findByName("android") as? com.android.build.api.dsl.LibraryExtension',
+    );
+    expect(rules).toContain('android.defaultConfig.consumerProguardFiles');
+    expect(rules).toContain('android.buildTypes.findByName("release")');
+    expect(rules).toContain(
+      '.matching { it.javaClass.name.startsWith("com.android.build.gradle.tasks.FusedLibraryBundleAar") }',
+    );
+    expect(rules).toContain('from(pulsekitRules)');
+    // Kotlin's string templates and escapes come through as Kotlin source.
+    expect(rules).toContain(
+      '"# --- ${f.relativeTo(pulsekitRulesRoot).invariantSeparatorsPath}\\n${f.readText()}"',
+    );
+    expect(rules).toContain('sources.joinToString("\\n")');
+    // Balanced braces and parentheses: the block is one whole statement.
+    expect(count(rules, '{')).toBe(count(rules, '}'));
+    expect(count(rules, '(')).toBe(count(rules, ')'));
+  });
+
+  it('ships only the given ABIs in the release AAR, dropping the rest from jni/', () => {
+    const release = fused('release');
+    const abis = ['arm64-v8a', 'armeabi-v7a'];
+    const patched = patchFusedGradle(release, { variant: 'release', abis });
+    expect(patched).toContain('val pulsekitDroppedAbis = setOf("x86", "x86_64")');
+    expect(patched).toContain(
+      'if (parts.size > 2 && parts[0] == "jni" && parts[1] in pulsekitDroppedAbis) this.exclude()',
+    );
+    expect(withoutBlocks(patched)).toBe(release);
+    expect(patchFusedGradle(patched, { variant: 'release', abis })).toBe(patched);
+    // x86_64 in the list drops only the others; all four drop nothing.
+    expect(
+      patchFusedGradle(release, { variant: 'release', abis: ['arm64-v8a', 'x86_64'] }),
+    ).toContain('setOf("armeabi-v7a", "x86")');
+    expect(
+      patchFusedGradle(release, { variant: 'release', abis: [...ANDROID_ABIS] }),
+    ).not.toContain('pulsekitDroppedAbis');
+    expect(() => patchFusedGradle(release, { variant: 'release', abis: ['mips'] })).toThrow(
+      /unknown ABI\(s\) mips/,
+    );
+    expect(() => patchFusedGradle(release, { variant: 'release', abis: [] })).toThrow(
+      /no ABIs to ship/,
+    );
   });
 
   it('sets the Maven version when PULSEKIT_VERSION is given', () => {
@@ -257,11 +320,15 @@ describe('with-pulsekit-android (the finalized mod on a generated module)', () =
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  // embed/app.json's plugins: the mod takes the release ABIs from expo-build-properties.
+  const embedPlugins = JSON.parse(fs.readFileSync(path.join(repoRoot, 'embed/app.json'), 'utf8'))
+    .expo.plugins;
+
   /** Runs the plugin's finalized mod as `expo prebuild` would, with the generated module in `dir`. */
-  async function prebuild() {
+  async function prebuild(plugins: unknown[] = embedPlugins) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const withPulseKitAndroid = require('./with-pulsekit-android');
-    const config = withPulseKitAndroid({ name: 'Pulse', slug: 'pulse' });
+    const config = withPulseKitAndroid({ name: 'Pulse', slug: 'pulse', plugins });
     await config.mods.android.finalized({
       ...config,
       modRequest: { platform: 'android', platformProjectRoot: dir, projectRoot: path.dirname(dir) },
@@ -286,9 +353,33 @@ describe('with-pulsekit-android (the finalized mod on a generated module)', () =
     expect(first[0]).toContain('buildConfigField("String", "PULSEKIT_BUILD", "\\"42\\"")');
     expect(first[1]).toContain('fun release(reason: String)');
     expect(first[2]).toContain('artifactId = "pulsekit"');
-    expect(first[3]).toBe(fused('debug'));
+    // Release ships embed/app.json's buildArchs (arm64-v8a, armeabi-v7a); debug keeps every ABI.
+    expect(first[2]).toContain('val pulsekitDroppedAbis = setOf("x86", "x86_64")');
+    expect(first[2]).toContain('from(pulsekitRules)');
+    expect(first[3]).toContain('from(pulsekitRules)');
+    expect(first[3]).not.toContain('pulsekitDroppedAbis');
+    expect(withoutBlocks(first[3]).replace(/^version = ".*"$/m, 'version = "0.1.0"')).toBe(
+      fused('debug'),
+    );
     await prebuild();
     expect(snapshot()).toEqual(first);
+  });
+
+  it('publishes at the app version when PULSEKIT_VERSION is unset, as BuildConfig reports', async () => {
+    const appVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+      .version as string;
+    expect(appVersion).not.toBe('0.1.0'); // embed/app.json's brownfield version, which this replaces
+    await prebuild();
+    const [library, , release, debug] = snapshot();
+    const line = new RegExp(`^version = "${appVersion.replace(/\./g, '\\.')}"$`, 'm');
+    for (const text of [library, release, debug]) expect(text).toMatch(line);
+    expect(library).toContain(`"PULSEKIT_VERSION", "\\"${appVersion}\\""`);
+  });
+
+  it('refuses a config without buildArchs, so a release AAR never ships every ABI', async () => {
+    await expect(prebuild([['expo-build-properties', { android: {} }]])).rejects.toThrow(
+      /no android\.buildArchs/,
+    );
   });
 
   it('publishes at PULSEKIT_VERSION when it is set', async () => {

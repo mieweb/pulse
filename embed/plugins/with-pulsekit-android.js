@@ -58,10 +58,31 @@ function readStamps() {
 }
 
 /**
+ * The release ABIs: expo-build-properties' android `buildArchs` in embed/app.json (the owner's
+ * answer, 2026-11-20: arm64-v8a and armeabi-v7a). package-android.mjs checks against the same
+ * list. Refuses a config without it, so a release AAR never ships every ABI by accident.
+ * @param {{ plugins?: unknown[] }} cfg
+ * @returns {string[]}
+ */
+function buildArchs(cfg) {
+  for (const entry of cfg.plugins ?? []) {
+    if (!Array.isArray(entry) || entry[0] !== 'expo-build-properties') continue;
+    const archs = entry[1]?.android?.buildArchs;
+    if (Array.isArray(archs) && archs.length > 0) return archs.map(String);
+  }
+  throw new Error(
+    "with-pulsekit-android: embed/app.json's expo-build-properties has no android.buildArchs; " +
+      'the release AAR ships only those ABIs',
+  );
+}
+
+/**
  * Adds the Android facade (embed/native/android) to the `pulsekit` library expo-brownfield
  * generates: its Kotlin sources and resources, its manifest and consumer R8 rules, the BuildConfig
  * stamps, `ReactNativeHostManager.release(reason)`, and the frozen Maven coordinates
- * (`com.mieweb.pulse:pulsekit`, at PULSEKIT_VERSION when set).
+ * (`com.mieweb.pulse:pulsekit` at the stamped version: PULSEKIT_VERSION, else the app version).
+ * The fused AARs also get the consumer R8 rules AGP doesn't bundle, and the release one only the
+ * `buildArchs` ABIs (pulsekit-android-gradle.js `patchFusedGradle`).
  *
  * A finalized mod: expo-brownfield writes (and on every prebuild rewrites) the module's files from
  * its templates inside its AndroidManifest mod, and dangerous mods run before every other mod, so
@@ -74,8 +95,10 @@ module.exports = function withPulseKitAndroid(config) {
     (cfg) => {
       const androidRoot = cfg.modRequest.platformProjectRoot;
       const moduleDir = path.join(androidRoot, LIBRARY);
-      const version = process.env.PULSEKIT_VERSION || undefined;
       const stamps = readStamps();
+      // One version (AD18): the Maven coordinates carry the version BuildConfig and info() report.
+      const version = stamps.version;
+      const releaseAbis = buildArchs(cfg);
       for (const file of ['src/main/AndroidManifest.xml', 'consumer-rules.pro']) {
         if (!fs.existsSync(path.join(NATIVE, file))) {
           throw new Error(`with-pulsekit-android: ${path.join(NATIVE, file)} is missing`);
@@ -98,7 +121,12 @@ module.exports = function withPulseKitAndroid(config) {
       );
       for (const variant of /** @type {const} */ (['release', 'debug'])) {
         rewrite(path.join(androidRoot, `${LIBRARY}-fused-${variant}`, 'build.gradle.kts'), (text) =>
-          patchFusedGradle(text, { variant, version }),
+          patchFusedGradle(text, {
+            variant,
+            version,
+            // Debug keeps every ABI: `build:android:debug` adds x86_64 for emulators.
+            abis: variant === 'release' ? releaseAbis : undefined,
+          }),
         );
       }
       return cfg;
