@@ -163,6 +163,9 @@ class PulseKit private constructor(context: Context) {
       override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
     }
     application?.registerActivityLifecycleCallbacks(lifecycle)
+    // The presenter follows the app's Activities from here, so a Pulse task left by a dead process
+    // is found the first time the host resumes (PulseKitPresenter.keepPulseInFront).
+    application?.let { PulseKitPresenter.track(it) }
     app.registerComponentCallbacks(object : ComponentCallbacks2 {
       override fun onTrimMemory(level: Int) = trimMemory(level)
 

@@ -31,6 +31,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.ReactHost
+import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import expo.modules.ReactActivityDelegateWrapper
 import java.io.File
 import org.json.JSONObject
@@ -162,13 +163,15 @@ class PulseActivity : ReactActivity() {
         PulseKitPresenter.attach(this, requestId, token)
       }
     var startFailure: RuntimeException? = null
-    if (attach == PulseKitPresenter.Attach.MOUNT) {
-      try {
-        ReactNativeHostManager.shared.initialize(application)
-        mounted = true
-      } catch (e: RuntimeException) {
-        startFailure = e
-      }
+    try {
+      // Every path, not only the one that mounts: ReactActivity's onDestroy reads React Native's
+      // feature flags, which need its native libraries loaded (SoLoader), and reading them before
+      // React Native overrides them would make a later mount throw.
+      ReactNativeHostManager.shared.initialize(application)
+      mounted = attach == PulseKitPresenter.Attach.MOUNT
+    } catch (e: RuntimeException) {
+      startFailure = e
+      loadNativeOnly()
     }
     val hostNightMode = AppCompatDelegate.getDefaultNightMode()
     // null, as Expo's MainActivity does: react-native-screens' fragments must never be restored.
@@ -195,7 +198,11 @@ class PulseActivity : ReactActivity() {
       PulseKitPresenter.Attach.UNKNOWN -> {
         val restored = if (savedInstanceState != null) "restored" else "started"
         Log.i(TAG, "open $requestId: $restored with no flow in this process; closing")
-        if (mode == MODE_FLOW && requestId.isNotEmpty()) {
+        val kit = PulseKit.shared(this)
+        if (requestId.isNotEmpty() && kit.isLive(requestId)) {
+          // A stray copy of a screen the facade still has open (its own PulseActivity shows it).
+          Log.w(TAG, "open $requestId: a second screen for a live flow; closed without a report")
+        } else if (mode == MODE_FLOW && requestId.isNotEmpty()) {
           // The facade writes the fallback result here, before this Activity reads it below.
           PulseKit.shared(this)
             .flows
@@ -355,11 +362,26 @@ class PulseActivity : ReactActivity() {
     if (!isFinishing) finishQuietly()
   }
 
-  /** Sets the Activity result from the inbox, finishes, and cuts with no transition. */
+  /**
+   * Native libraries only, for a screen that won't mount when the React host couldn't be made
+   * (a release build without its JS bundle): what ReactNativeHostManager.initialize loads first.
+   */
+  private fun loadNativeOnly() {
+    try {
+      loadReactNative(application)
+    } catch (e: Throwable) {
+      Log.e(TAG, "open $requestId: React Native's native side couldn't load", e)
+    }
+  }
+
+  /**
+   * Sets the Activity result (the facade's reply for the flow, else the inbox's), finishes, and
+   * cuts with no transition.
+   */
   private fun finishQuietly() {
     ended = true
     if (mode == MODE_FLOW) {
-      val reply = inboxReply()
+      val reply = PulseKit.shared(this).endedReply(requestId) ?: inboxReply()
       if (reply != null) {
         setResult(Activity.RESULT_OK, Intent().putExtra(RESULT_EXTRA_JSON, reply))
       } else {

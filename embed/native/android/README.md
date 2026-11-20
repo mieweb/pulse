@@ -73,7 +73,7 @@ PR4's packages code against these names. They don't change without the owner.
 ### What `core/` exposes
 
 - `PulseContract`: `MAJOR` 1, `MINOR` 1 (what `info()` reports), `ENVELOPE_VERSION` 1,
-  `VECTORS_MINOR` 0 (the minor envelope.json was written for), `nativeMethods`, `minor1Methods`,
+  `VECTORS_MINOR` 1 (envelope.json's `contract` minor), `nativeMethods`, `minor1Methods`,
   `readMethods`, `forwardedMethods`, `methods` (PulseKit.swift's list, in its order),
   `vectorMethods` and `entries`.
 - `PulseRouter.route(text, supported, methods, forwarded)` gives `PulseRoute.Native(request)`,

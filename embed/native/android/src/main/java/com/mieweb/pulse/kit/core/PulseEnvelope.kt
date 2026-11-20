@@ -16,11 +16,12 @@ object PulseContract {
   const val ENVELOPE_VERSION = 1
 
   /**
-   * The contract minor envelope.json was written for (its `contract` section). The router's default
-   * method list is that minor's, so the vectors keep pinning PR1's rules (a minor-1 name is
-   * `method.unsupported` there) while the facade passes [methods].
+   * The contract minor in envelope.json's `contract` section (1 since contract 1.1). Its request
+   * vectors still route with the minor-0 method list ([vectorMethods], the router's default), so
+   * they keep pinning PR1's rules (a minor-1 name is `method.unsupported` there) while the facade
+   * passes [methods].
    */
-  const val VECTORS_MINOR = 0
+  const val VECTORS_MINOR = 1
 
   /** Methods the facade answers itself in contract minor 0 (PR1). */
   @JvmField

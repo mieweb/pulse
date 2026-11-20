@@ -9,6 +9,7 @@ import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -173,6 +174,9 @@ internal object PulseKitPresenter : PresenterPort {
     // Unique in this process and unlikely to repeat across processes: a screen restored after
     // process death never matches a record this process made.
     val token = SystemClock.elapsedRealtimeNanos()
+    // A record the facade dismissed whose screen was never created (a start Android dropped) would
+    // keep keepPulseInFront waiting for it forever.
+    live.values.removeAll { it.dismissed && it.screen == null }
     live[id] = Live(id, launch.mode, token)
     ended.remove(id)
     if (flow) {
@@ -193,6 +197,11 @@ internal object PulseKitPresenter : PresenterPort {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         // An instant cut: no system transition (Pulse's no-decorative-animation rule, as iOS).
         .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        // Unique per launch: a Pulse task left by an earlier process has the same affinity and
+        // PulseActivity at its root. Android only brings such a task forward (dropping this intent)
+        // when its root intent equals this one, extras aside; a different data URI makes it start
+        // this screen on top instead, and the old one reports its lost flow when it comes back.
+        .setData(Uri.parse("pulsekit://launch/$token"))
         .putExtra(PulseActivity.EXTRA_REQUEST_ID, id)
         .putExtra(PulseActivity.EXTRA_MODE, launch.mode)
         .putExtra(PulseActivity.EXTRA_REQUEST, launch.requestJson)
