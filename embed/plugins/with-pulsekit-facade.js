@@ -85,6 +85,44 @@ function addResource(project, targetUuid, groupKey, name) {
   );
 }
 
+/** The Sources build phase of the target with this uuid, or undefined. */
+function sourcesPhaseOf(project, targetUuid) {
+  const objects = project.hash.project.objects;
+  const target = (objects.PBXNativeTarget || {})[targetUuid];
+  const phase = (target?.buildPhases || []).find((p) => objects.PBXSourcesBuildPhase?.[p.value]);
+  return phase && objects.PBXSourcesBuildPhase[phase.value];
+}
+
+/**
+ * Puts `name`'s build file in the PulseKit target's Sources phase and takes it out of every other
+ * target's. addSourceFile's `target` option finds the phase by its "Sources" comment, which
+ * expo-brownfield's target doesn't have, so the xcode library files the source under the first
+ * target, the Pulse app. A `-scheme PulseKit` build then never compiles the facade, and the
+ * framework ships without its `PulseKit` class (pulsekit-v0.1.0-rc.4).
+ */
+function compileInPulseKit(project, targetUuid, name) {
+  const kit = sourcesPhaseOf(project, targetUuid);
+  if (!kit) throw new Error(`with-pulsekit-facade: the ${TARGET} target has no Sources phase.`);
+  const comment = `${name} in Sources`;
+  const phases = Object.entries(project.hash.project.objects.PBXSourcesBuildPhase || {}).filter(
+    ([key]) => !key.endsWith('_comment'),
+  );
+  let file;
+  for (const [, phase] of phases) {
+    if (phase === kit) continue;
+    const found = (phase.files || []).filter((f) => f.comment === comment);
+    if (found.length) {
+      file = file ?? found[0];
+      phase.files = phase.files.filter((f) => f.comment !== comment);
+    }
+  }
+  kit.files = kit.files || [];
+  if (file && !kit.files.some((f) => f.comment === comment)) kit.files.push(file);
+  if (!kit.files.some((f) => f.comment === comment)) {
+    throw new Error(`with-pulsekit-facade: ${name} isn't in the ${TARGET} target's sources.`);
+  }
+}
+
 /** A pbxproj name without the quotes the xcode library may keep around it (`"PulseKit"`). */
 const unquote = (value) => String(value ?? '').replace(/^"(.*)"$/, '$1');
 
@@ -123,6 +161,7 @@ module.exports = function withPulseKitFacade(config) {
     for (const name of FILES) {
       fs.copyFileSync(path.join(__dirname, '../native/ios', name), path.join(dir, name));
       if (!project.hasFile(name)) project.addSourceFile(name, { target: targetUuid }, groupKey);
+      compileInPulseKit(project, targetUuid, name);
     }
     fs.copyFileSync(
       path.join(__dirname, '../native/ios', PRIVACY_MANIFEST),
