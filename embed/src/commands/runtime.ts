@@ -3,6 +3,7 @@ import * as Brownfield from 'expo-brownfield';
 import { isOnline, setNetworkSource } from '@/core/network';
 import { expoDb, library } from '@/db/client';
 import { runMigrations } from '@/db/migrate';
+import { installLogCapture } from '@/features/logs/logger';
 import { listUploadJobs, subscribeUploadJobs } from '@/db/upload-jobs';
 import { startCatalogWriter, stopCatalogWriter } from '@/features/drafts/catalog-writer';
 import { clearClipQueue } from '@/features/transcription/clip-queue';
@@ -158,6 +159,9 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
       throw coded('storage.damaged', `Pulse couldn’t update its library: ${String(e)}`);
     }
     if (released) return;
+    // Headless and "Preparing…" roots skip PulseCore's onBoot, so logFile gets the job loop's
+    // logs only if this runtime installs the capture too (idempotent).
+    installLogCapture();
     lifetime.mark('library');
     await startCatalogWriter({ namespace, online: isOnline });
     if (released) return;
