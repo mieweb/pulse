@@ -37,6 +37,8 @@ export const ALLOWED_PERMISSIONS = [
   { name: `${P}FOREGROUND_SERVICE` },
   { name: `${P}FOREGROUND_SERVICE_DATA_SYNC` },
   { name: `${P}VIBRATE` },
+  // expo-audio's setAudioModeAsync (audio mode and speaker route); a normal permission, no prompt.
+  { name: `${P}MODIFY_AUDIO_SETTINGS` },
   { name: `${P}WRITE_EXTERNAL_STORAGE`, maxSdk: 28 },
 ];
 
@@ -53,6 +55,10 @@ export const REMOVED_PERMISSIONS = /** @type {const} */ ([
   `${P}SYSTEM_ALERT_WINDOW`,
   `${P}FOREGROUND_SERVICE_MEDIA_PROJECTION`,
   `${P}RECEIVE_BOOT_COMPLETED`,
+  // expo-file-system, expo-image, expo-image-picker and expo-media-library, up to API 32.
+  `${P}READ_EXTERNAL_STORAGE`,
+  // expo-application's install-referrer client (seen in spike S1's AAR).
+  'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE',
 ]);
 
 /** The checks package-android.mjs runs, by the name `--allow-failing` takes. */

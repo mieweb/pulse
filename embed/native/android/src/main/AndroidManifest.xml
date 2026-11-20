@@ -6,8 +6,9 @@
 
   - Requests only what Pulse uses. embed/scripts/lib/android-aar.mjs ALLOWED_PERMISSIONS is the
     same list, and package-android.mjs refuses an AAR that asks for more.
-  - Removes what Pulse dependencies would otherwise add (AD30, pulse#257): media reads beyond
-    Save to Photos, overlays, screen capture and boot receivers.
+  - Removes what Pulse dependencies would otherwise add (AD30, pulse#257): media and storage
+    reads beyond Save to Photos, overlays, screen capture, boot receivers and Play's install
+    referrer. android-aar.mjs REMOVED_PERMISSIONS is that list.
   - No application-level attributes: allowBackup, cleartext traffic and the app theme are the
     host's.
 -->
@@ -28,6 +29,12 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
   <uses-permission android:name="android.permission.VIBRATE" />
+  <!--
+    expo-audio's setAudioModeAsync (the recorder's audio focus, the editor's preview) sets the
+    AudioManager mode and speaker route, which need it. A normal permission: no prompt, no Play
+    declaration. The standalone app has it from the same module.
+  -->
+  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
   <!--
     Save to Photos on Android 7-9 only; 10+ writes through MediaStore without it. tools:replace
     caps a dependency's broader request (expo-media-library asks up to API 32).
@@ -50,6 +57,18 @@
     tools:node="remove" />
   <uses-permission
     android:name="android.permission.RECEIVE_BOOT_COMPLETED"
+    tools:node="remove" />
+  <!--
+    expo-file-system, expo-image, expo-image-picker and expo-media-library ask for it up to API 32.
+    Pulse reads no shared storage: imports go through the system picker (a content URI it may
+    read), and Save to Photos asks expo-media-library for write-only access.
+  -->
+  <uses-permission
+    android:name="android.permission.READ_EXTERNAL_STORAGE"
+    tools:node="remove" />
+  <!-- expo-application's Play install-referrer client; Pulse never reads the referrer. -->
+  <uses-permission
+    android:name="com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE"
     tools:node="remove" />
 
   <application>

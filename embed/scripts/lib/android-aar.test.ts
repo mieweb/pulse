@@ -217,13 +217,45 @@ describe('permissionCheck', () => {
 
   it('takes extra allowed permissions', () => {
     const permissions = parseManifest(
-      manifest('<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />'),
+      manifest('<uses-permission android:name="android.permission.READ_CONTACTS" />'),
     ).permissions;
+    expect(permissionCheck(permissions).problems).toHaveLength(1);
     expect(
       permissionCheck(permissions, {
-        allowed: [...ALLOWED_PERMISSIONS, { name: `${P}MODIFY_AUDIO_SETTINGS` }],
+        allowed: [...ALLOWED_PERMISSIONS, { name: `${P}READ_CONTACTS` }],
       }).problems,
     ).toEqual([]);
+  });
+
+  it("passes spike S1's merged requests once the library manifest's markers are merged in", () => {
+    // What S1's fused AAR asked for (built without this manifest), as its dependencies declare it.
+    const s1 = parseManifest(
+      manifest(`
+      <uses-permission android:name="android.permission.CAMERA" />
+      <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+      <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+      <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+      <uses-permission android:name="android.permission.INTERNET" />
+      <uses-permission android:name="android.permission.VIBRATE" />
+      <uses-permission android:name="android.permission.WAKE_LOCK" />
+      <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+      <uses-permission android:name="com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE" />`),
+    ).permissions;
+    expect(permissionCheck(s1).problems).toEqual([
+      `${P}READ_EXTERNAL_STORAGE is requested; PulseKit removes it (tools:node="remove")`,
+      `${P}READ_MEDIA_VISUAL_USER_SELECTED is requested; PulseKit removes it (tools:node="remove")`,
+      `${P}WRITE_EXTERNAL_STORAGE is requested up to API 32; the allowlist caps it at maxSdkVersion 28`,
+      'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE is requested; ' +
+        'PulseKit removes it (tools:node="remove")',
+    ]);
+
+    // The library manifest's markers and its capped WRITE_EXTERNAL_STORAGE, with S1's requests
+    // other than the one tools:replace rewrites (the merge keeps the library's maxSdkVersion).
+    const library = parseManifest(
+      fs.readFileSync(path.join(embed, 'native/android/src/main/AndroidManifest.xml'), 'utf8'),
+    ).permissions;
+    const merged = [...s1.filter((p) => p.name !== `${P}WRITE_EXTERNAL_STORAGE`), ...library];
+    expect(permissionCheck(merged).problems).toEqual([]);
   });
 
   it('matches the library manifest: it requests the allowlist and removes the removed list', () => {
