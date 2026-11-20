@@ -9,6 +9,7 @@ import { installLogCapture } from '@/features/logs/logger';
 import { configureCaptions, startCaptionsModelPolicy } from '@/features/transcription/model-policy';
 import { ToastProvider } from '@/features/toast/toast-provider';
 
+import { holdFlowDraft } from '../commands/held-draft';
 import type { FlowState } from '../flow/reducer';
 import { flowResult } from '../flow/result';
 import { planOpen, type EmbedProps, type OpenPlan } from './entries';
@@ -68,6 +69,9 @@ function EmbedFlow({ plan, namespace }: { plan: OpenPlan; namespace: string | un
   const [theme] = useState(() => themeOverrides(themeOf(request, config)));
   // The host's captions settings (models.baseUrl, captions), before any screen reads them.
   useState(() => configureCaptions(config));
+
+  // Host writes on this flow's draft refuse with draft.locked while it is up (§3 busy matrix).
+  useEffect(() => holdFlowDraft(() => store.state().draftId), [store]);
 
   // The host's close (`pulse.cmd close {reason, discard?}`), for as long as this flow is up.
   useEffect(
