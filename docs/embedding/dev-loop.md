@@ -33,11 +33,11 @@ These are the same commands the release workflow runs, without signing.
 
 A build with `headless` runs host writes and uploads with nothing on screen; without it, they show
 a brief "Preparing…" screen ([uploads.md](uploads.md#paused-uploads)). It is a build-time switch,
-off by default. Turn it on at prebuild:
+on by default (the release ships it on). To build without it, for example to see the "Preparing…" path:
 
 ```sh
 cd embed
-PULSEKIT_HEADLESS=1 npm run prebuild -- --platform ios
+PULSEKIT_HEADLESS=0 npm run prebuild -- --platform ios
 (cd ios && pod install)
 npm run build:ios
 ```

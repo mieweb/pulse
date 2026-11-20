@@ -62,10 +62,9 @@ enum PulseKitInfo {
   /// brief "Preparing…" screen instead (PulseKitPresenter.swift), and paused jobs wait for the
   /// host's "Tap to resume" (O2).
   ///
-  /// To build with it on: `PULSEKIT_HEADLESS=1 npm run prebuild -- --platform ios` in `embed/`
-  /// (plugins/with-pulsekit-facade.js adds `PULSEKIT_HEADLESS` to the PulseKit target's
-  /// `SWIFT_ACTIVE_COMPILATION_CONDITIONS`), then pods and `npm run build:ios` as usual. A prebuild
-  /// without it turns the flag off again. Without the plugin change, set the `#else` branch below to
+  /// It ships ON (S3 passed on an iPhone, 2026-11-20): every prebuild adds `PULSEKIT_HEADLESS` to
+  /// the PulseKit target's `SWIFT_ACTIVE_COMPILATION_CONDITIONS` (plugins/with-pulsekit-facade.js).
+  /// `PULSEKIT_HEADLESS=0 npm run prebuild -- --platform ios` in `embed/` builds it off. Without the plugin change, set the `#else` branch below to
   /// true. `info().capabilities` lists `headless` exactly when it is on.
   #if PULSEKIT_HEADLESS
     static let headless = true

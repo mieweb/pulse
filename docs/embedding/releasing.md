@@ -58,10 +58,9 @@ For a final release, tag `pulsekit-v0.2.0` the same way.
 ## Choose whether the release runs without a screen
 
 The `headless` capability (host writes and uploads with nothing on screen) is a build-time switch,
-off unless the prebuild runs with `PULSEKIT_HEADLESS=1` ([dev-loop.md](dev-loop.md#with-the-headless-capability)).
-`release-embed.yml` runs `npm run prebuild -- --platform ios` without it, so a release reports no
-`headless` and shows "Preparing…" instead. To ship it on, set `PULSEKIT_HEADLESS: '1'` on that
-step. Hosts read the result from `getInfo().capabilities` and change how they resume uploads
+on unless the prebuild runs with `PULSEKIT_HEADLESS=0` ([dev-loop.md](dev-loop.md#with-the-headless-capability)).
+`release-embed.yml` runs `npm run prebuild -- --platform ios` without the variable, so a release reports
+`headless`. To ship a release without it, set `PULSEKIT_HEADLESS: '0'` on that step. Hosts read the result from `getInfo().capabilities` and change how they resume uploads
 ([uploads.md](uploads.md#paused-uploads)), so say in the release notes which way it went.
 
 ## When a release run fails
