@@ -281,7 +281,7 @@ A heavier suite is opt-in and skips itself in a plain `npm test`:
 PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
 ```
 
-PulseKit's facade rules (the envelope, catalog reads and account namespaces) also run on a Mac without an iOS build, as shared vectors ([embed/native/ios/vectors/README.md](embed/native/ios/vectors/README.md)).
+PulseKit's facade rules also run on a Mac without an iOS build, as shared vectors: the envelope ([embed/native/ios/vectors/README.md](embed/native/ios/vectors/README.md)), catalog reads ([src/features/drafts/\_\_vectors\_\_/catalog.json](src/features/drafts/__vectors__/catalog.json)) and account namespaces ([embed/native/ios/namespace-vectors.json](embed/native/ios/namespace-vectors.json)).
 
 ## License
 

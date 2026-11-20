@@ -137,9 +137,11 @@ stateDiagram-v2
   ready --> preparing: Send
   preparing --> queued: ready to upload
   preparing --> draft: confirm failed or too large
+  preparing --> failed: merge failed
   queued --> waiting_network: offline, or Wi-Fi only on cellular
   waiting_network --> queued: back online
   queued --> uploading: your server gave a target
+  queued --> delivering: your server already has the video
   uploading --> queued: network error, retried later
   uploading --> delivering: all bytes sent
   queued --> needs_credentials: no answer, signed out or token expired
@@ -151,6 +153,7 @@ stateDiagram-v2
   queued --> draft: cancelUpload, rename, edit or Move to
   uploading --> draft: cancelUpload
   needs_credentials --> draft: cancelUpload, rename, edit or Move to
+  failed --> preparing: Retry (upload)
   failed --> draft: cancelUpload, rename, edit or Move to
 ```
 

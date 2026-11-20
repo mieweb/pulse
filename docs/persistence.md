@@ -193,6 +193,7 @@ stateDiagram-v2
   preparing --> [*]: confirm failed, or over maxBytes
   preparing --> failed: merge failed
   queued --> uploading: host gave a target
+  queued --> delivering: server already has the video (a resend after a kill)
   uploading --> queued: network or server error (backoff 5 s doubling, at most 15 min)
   uploading --> delivering: video bytes landed
   queued --> needs_credentials: host silent 20 s, signed out, or token expired
@@ -204,6 +205,7 @@ stateDiagram-v2
   queued --> [*]: cancel, rename, edit, Move to, delete
   uploading --> [*]: cancel
   needs_credentials --> [*]: cancel, rename, edit, Move to, delete
+  failed --> preparing: Send again
   failed --> [*]: cancel, rename, edit, Move to, delete
 ```
 
