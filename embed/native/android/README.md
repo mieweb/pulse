@@ -25,7 +25,9 @@ hands what it read to `core/`, so every rule a vector can pin lives in `core/`.
 
 ## Running the vectors
 
-From the repository root, with JDK 17 or newer:
+From the repository root, with JDK 17 or 21. The Kotlin 2.1.20 Gradle plugin can't read newer JDKs'
+version strings (JDK 27 fails before compiling), so point `JAVA_HOME` at 17 or 21 if your default
+is newer:
 
 ```sh
 gradle --offline -q -p embed/native/android/jvm-tests run --args="$PWD"
@@ -39,7 +41,7 @@ up:
 
 | File                                           | Other runners                                                       | Checks |
 | ---------------------------------------------- | ------------------------------------------------------------------- | ------ |
-| `embed/native/ios/vectors/envelope.json`       | `tests/EnvelopeVectorsMain.swift`, jest (`envelope-vectors.test.ts`) | 65     |
+| `embed/native/ios/vectors/envelope.json`       | `tests/EnvelopeVectorsMain.swift`, jest (`envelope-vectors.test.ts`) | 67     |
 | `src/features/drafts/__vectors__/catalog.json` | `tests/CatalogVectorsMain.swift`, jest (`catalog-filter.test.ts`)    | 58     |
 | `embed/native/ios/namespace-vectors.json`      | jest (`namespace-vectors.test.ts`)                                  | 31     |
 
@@ -98,6 +100,9 @@ These differences are internal; a host sees the same answers.
 - `PulseJson` objects keep insertion order. `serialized` sorts keys, as Swift's `.sortedKeys` does,
   so the text is the same. A lone UTF-16 surrogate, which a Swift String can't hold, is written as
   `\uXXXX`.
+- A non-integer number (`PulseJson.Num`) is printed by Kotlin's double formatting, which can differ
+  from Swift's `JSONEncoder` in the last digits or the exponent form for some values. Readers parse
+  the number, so the value is the same; no vector pins the text of such a number.
 - `PulseValidation.checkContextSize` is Pulse JS's 8 KB rule (`src/db/host-context.ts`) in Kotlin.
   `open`'s checks don't call it, because the Swift facade leaves that rule to Pulse JS.
 - `PulseAccountArgs.parse` is the argument half of Swift's `PulseKitAccounts.set`. The facade

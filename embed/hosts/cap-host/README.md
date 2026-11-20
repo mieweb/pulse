@@ -56,7 +56,8 @@ suite** on the host page. [src/contract/README.md](src/contract/README.md) has t
 
 ## Android
 
-Not run yet: none of the steps in this section or the two below have been run.
+These steps ran on a Galaxy S24 with Android 16 and a debug build of this host (2026-11-20); the
+results are in the [support matrix](../../../docs/embedding/support-matrix.md).
 
 You need PulseKit's local Maven repository: the folder `embed/package.json`'s `build:android`
 publishes to (`embed/artifacts/android-maven`), or an unzipped `PulseKit-android-maven.zip`.
@@ -74,7 +75,7 @@ npx cap run android
 `scripts/android-setup.sh` changes the generated `android/` project and prints each change (a second
 run prints `unchanged`):
 
-- `allprojects.repositories` in `android/build.gradle` gets `maven { url '<PULSEKIT_ANDROID_LOCAL>' }`.
+- `allprojects.repositories` in `android/build.gradle` gets `maven { url = uri('<PULSEKIT_ANDROID_LOCAL>') }`.
   The plugin lists that repository too, but the app has to list it as well. Without
   `PULSEKIT_ANDROID_LOCAL` the file is left alone.
 - `minSdkVersion = 24` in `android/variables.gradle`.
@@ -85,8 +86,9 @@ run prints `unchanged`):
 `capacitor.config.json` sets `android.allowMixedContent`, because the page (`https://localhost`) calls
 the http test server.
 
-What to look for: the page logs `ready (Capacitor)` and **Info** answers `"platform":"android"`.
-With the plugin's stub (before the PulseKit build, or with `pulsekitAndroid=false`), **Info** answers
+What to look for: the page logs `ready (Capacitor)` and **Info** answers `"platform":"android"`
+with `"supported":true` and no `headless` in `capabilities`. **Set account**, then **Record**: the
+camera and microphone prompts come from PulseKit's own manifest. With the plugin's stub (before the PulseKit build, or with `pulsekitAndroid=false`), **Info** answers
 `"supported":false` with `"unsupportedReason":"device"`, and every other Pulse button answers
 `ok:false` with code `unsupported`. A link sent with
 `adb shell am start -a android.intent.action.VIEW -d "caphost://nav?to=x"` is logged
@@ -127,14 +129,19 @@ The page is the same on iOS, so these buttons are there too.
 - **Check test server**: calls `GET /pair` once and logs the artifact id, or the error. Use it to
   check `adb reverse` or the address.
 - **Open/close ×10**: 10 rounds of opening Record, waiting 3 s, closing it, and waiting for the result.
-  It logs each round's status and time, then a count per status (`×10 done: {"closed":10}`).
+  It logs each round's status and time, then a count per status (`×10 done: {"canceled":10}` with no
+  take). A round that never gets its result waits forever: there is no timeout, so reload the page
+  to stop it.
 - **Deep link during a take**: opens Record, and 3 s later sends the app a `caphost://` link.
-  Expected: the take continues, the page logs the link as queued, and it logs
-  `🧭 navigated after the flow result` once Pulse closes. On iOS this needs a `caphost` URL type in
+  Expected: the page logs the link as queued, and it logs `🧭 navigated after the flow result` once
+  Pulse closes. On Android the take ends when the link arrives (kept as a clip) while the flow stays
+  open: the link brings the host's screen forward and the camera stops
+  ([android.md](../../../docs/embedding/android.md#a-link-or-a-notification-tap-during-a-take)). On iOS this needs a `caphost` URL type in
   Info.plist, which `ios-info-plist.sh` doesn't add. Use `adb shell am start -d` for links from
   outside the app.
 
 With `@capacitor/app` installed, the page also logs every `appUrlOpen` link and every
-`appRestoredResult` event (`♻️`, logged in full: Capacitor delivers a plugin result there when Android
-restored the app after destroying it while Pulse was open). Links that arrive while a flow is open
+`appRestoredResult` event (`♻️`, logged in full). None arrived in the S24 runs: Pulse runs in its own
+task, so Android answers the plugin's Activity result before the flow ends, and the result comes as
+`flowResult` and through **Pending**. Links that arrive while a flow is open
 are queued until its result.

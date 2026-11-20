@@ -70,10 +70,13 @@ Gradle property, or `ext` in the root `build.gradle`) names another version.
 permissions. `getInfo()` then reports `supported: false`, and every other call answers
 `unsupported`.
 
-**Results:** `open` starts Pulse's Activity through Capacitor's Activity-result bridge and resolves
-once, when the flow ends. If Android destroyed the host Activity in the meantime (low memory, or
-Developer options › Don't keep activities), the page reloads and the original promise is gone:
-Capacitor sends the reply to `App.addListener('appRestoredResult', …)` (`@capacitor/app`), with
-`pluginId: 'Pulse'`, `methodName: 'call'` and `data.json` holding the reply envelope. The result is
-also in `pendingResults()`, which stays the way to read it, and the retained `flowResult` event
-reaches the new page's listener.
+**Results:** `open` resolves once, when the flow ends, with PulseKit's reply. If Android destroyed
+the host Activity in the meantime (low memory, or Developer options › Don't keep activities), the
+page reloads and the original promise is gone: the result reaches the new page as the retained
+`flowResult` event and through `pendingResults()`. The plugin starts Pulse's Activity through
+Capacitor's Activity-result bridge, but Pulse runs in a task of its own, so Android answers that
+Activity result at once, before the flow ends; don't wait for `appRestoredResult`
+(`@capacitor/app`). It never fired in the Galaxy S24 runs (2026-11-20).
+
+The whole Android setup, including backup rules and the upload notification, is in
+[docs/embedding/android.md](../../../docs/embedding/android.md).
