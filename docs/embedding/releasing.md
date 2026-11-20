@@ -44,8 +44,12 @@ signs and publishes everything a host needs:
 3. Watch the run: `gh run watch --repo mieweb/pulse` and pick the PulseKit Release run.
 4. When it's green, check a download: download the release's assets and run
    `shasum -a 256 -c SHA256SUMS` in that folder.
-5. Try it in a host: `npm install --save-exact @mieweb/capacitor-pulse@rc` in the Capacitor test
-   host or your app, and check that `getInfo().gitSha` is the tagged commit.
+5. Try it in a host (the Capacitor test host or your app) and check that `getInfo().gitSha` is the
+   tagged commit. Install this release's own packages: while `NPM_PUBLISH` isn't `true`, npm's `@rc`
+   is an older version or nothing, so install from the Release:
+   `BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v<version>` then
+   `npm install --save-exact $BASE/mieweb-pulse-embed-<version>.tgz $BASE/mieweb-capacitor-pulse-<version>.tgz`.
+   Once npm publishing is on, `npm install --save-exact @mieweb/capacitor-pulse@rc` works too.
 
 For a final release, tag `pulsekit-v0.2.0` the same way.
 

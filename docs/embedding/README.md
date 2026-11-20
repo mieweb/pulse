@@ -104,6 +104,7 @@ Cordova, from your app's root:
 
 ```sh
 # from the Release (now)
+V=0.1.0-rc.4; BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
 npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz
 npx cordova plugin add $BASE/cordova-plugin-pulse-$V.tgz
 # from npm (once publishing is on)
