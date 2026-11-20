@@ -89,7 +89,15 @@ internal class PulseKitInbox(val dir: File) {
       try {
         Os.link(part.path, dest.path)
       } catch (e: ErrnoException) {
-        if (e.errno != OsConstants.EEXIST) throw IOException("link failed: errno ${e.errno}")
+        when (e.errno) {
+          OsConstants.EEXIST -> Unit
+          // App storage refuses hard links on many devices (the S24, Android 16: EACCES). Fall back
+          // to a move, still never over an existing name; the window between the check and the
+          // move is the only place a result Pulse JS writes at that instant could be replaced.
+          OsConstants.EACCES, OsConstants.EPERM ->
+            if (!dest.exists() && !part.renameTo(dest)) throw IOException("couldn't move $part into place")
+          else -> throw IOException("link failed: errno ${e.errno}")
+        }
       }
     } catch (e: IOException) {
       pulseKitLog("couldn't write the result for $requestId: ${e.message}")

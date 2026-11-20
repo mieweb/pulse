@@ -1,6 +1,6 @@
 // The Android side of @mieweb/capacitor-pulse. One switch picks the plugin:
 //
-// - pulsekitAndroid on (the default): src/pulsekit/java, the transport over PulseKit
+// - pulsekitAndroid on (the default): src/main/java, the transport over PulseKit
 //   (com.mieweb.pulse:pulsekit, the fused AAR, at this package's version).
 // - pulsekitAndroid=false: src/stub/java, the stub that answers every call itself (AD20). It
 //   depends on nothing but Capacitor, for hosts not ready for the PulseKit dependency.
@@ -78,11 +78,12 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
-    // src/main holds what both plugins share (the manifest and PulseUnsupported); the switch adds
-    // one PulsePlugin.java.
+    // src/main/java holds the real PulsePlugin, because `cap sync` finds a plugin's class only under
+    // src/main (it writes capacitor.plugins.json from there). src/shared/java holds what both builds
+    // use. The stub build swaps src/main/java for src/stub/java, so there's one PulsePlugin either way.
     sourceSets {
         main {
-            java.srcDirs += pulsekit ? 'src/pulsekit/java' : 'src/stub/java'
+            java.srcDirs = pulsekit ? ['src/main/java', 'src/shared/java'] : ['src/stub/java', 'src/shared/java']
         }
     }
 }
