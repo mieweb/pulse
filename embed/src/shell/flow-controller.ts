@@ -165,6 +165,13 @@ export function createFlowController(store: FlowStore, requestId: string) {
     sending(busy: boolean): void {
       store.dispatch({ type: busy ? 'sendStarted' : 'sendStopped' });
     },
+    /**
+     * Export's video is ready for the flow's draft (merged now, or the saved export still
+     * matching): the flow's stage is `exported` until a clip changes.
+     */
+    exportReady(draftId: string): void {
+      if (store.state().draftId === draftId) store.dispatch({ type: 'merged' });
+    },
     /** [Keep draft] after a failed host confirm: the flow ends `closed`, the draft unsent. */
     keepDraft(): void {
       store.dispatch({ type: 'keepDraft' });

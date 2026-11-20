@@ -71,7 +71,6 @@ const draft = (
   draftId,
   clipCount,
   lastModified: clipCount,
-  mergedSignature: null,
   context: place,
 });
 const ref = (rel: string): FileRef => ({ rel, path: `/docs/${rel}`, webUrl: '', bytes: 1 });
@@ -228,6 +227,50 @@ describe('Use this video', () => {
       draftId: 'd1',
       error: { code: 'export.failed', message: 'disk full' },
     });
+  });
+});
+
+describe("Export's ready video", () => {
+  it('an export entry on a draft whose saved export still matches ends exported', async () => {
+    // A saved export used as is writes nothing: the draft reads the same before and after.
+    mockDrafts.set('d1', draft('d1', 2));
+    const store = createFlowStore({
+      requestId: 'r6',
+      request: { entry: 'export', draftId: 'd1' },
+      onEnd: () => {},
+    });
+    const controller = createFlowController(store, 'r6');
+    controller.attach('d1');
+    store.dispatch({ type: 'mounted' });
+    controller.observe();
+    controller.exportReady('d1');
+    await controller.close();
+    expect(flowResult(store.state(), 9)).toMatchObject({ stage: 'exported', draftId: 'd1' });
+  });
+
+  it('back on the editor with nothing changed, the stage stays exported', async () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    store.dispatch({ type: 'edit' });
+    mockDrafts.set('d1', { ...draft('d1', 1), lastModified: 50 }); // a trim
+    controller.observe();
+    expect(store.state().stage).toBe('edited');
+    store.dispatch({ type: 'export' });
+    controller.exportReady('d1');
+    await controller.back();
+    expect(store.getSnapshot().items.at(-1)?.screen).toBe('editor');
+    expect(store.state().stage).toBe('exported');
+  });
+
+  it("ignores another draft's video", () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    store.dispatch({ type: 'edit' });
+    store.dispatch({ type: 'export' });
+    controller.exportReady('d2');
+    expect(store.state().stage).toBe('recorded');
   });
 });
 

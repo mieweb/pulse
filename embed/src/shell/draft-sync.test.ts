@@ -17,7 +17,6 @@ const seen = (over: Partial<DraftSeen> = {}): DraftSeen => ({
   draftId: 'd1',
   clipCount: 1,
   lastModified: 100,
-  mergedSignature: null,
   ...over,
 });
 /** Feed what the library shows into the flow, as the shell does. */
@@ -92,13 +91,10 @@ describe('syncEvents', () => {
     });
   });
 
-  it('marks a new merge on Export as merged', () => {
+  it("leaves Export's readiness to Export: the library's rows don't say it", () => {
     let s = sync(run(initFlow('r1', record), { type: 'mounted' }), seen());
     s = run(s, { type: 'edit' }, { type: 'export' });
-    const merged = seen({ mergedSignature: 'sig-1' });
-    expect(syncEvents(s, merged, seen())).toEqual([{ type: 'merged' }]);
-    expect(sync(s, merged, seen()).stage).toBe('exported');
-    expect(syncEvents(s, merged, merged)).toEqual([]);
+    expect(syncEvents(s, seen({ lastModified: 200 }), seen())).toEqual([]);
   });
 
   it('ignores another draft, an ended flow and a draft that is gone', () => {

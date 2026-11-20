@@ -24,7 +24,6 @@ export function readDraft(draftId: string): DraftRead | null {
   const row = db
     .select({
       lastModified: drafts.lastModified,
-      mergedSignature: drafts.mergedSignature,
       clipCount: count(segments.id),
       contextKey: drafts.contextKey,
       contextLabel: drafts.contextLabel,

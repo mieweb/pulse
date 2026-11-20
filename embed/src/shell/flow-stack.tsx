@@ -12,7 +12,7 @@ import { ScreenStack, ScreenStackItem } from 'react-native-screens';
 
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { EditorScreen } from '@/features/editor/editor-screen';
-import type { ExportPolicy, ExportPrimaryAction } from '@/features/export/contract';
+import type { ExportedVideo, ExportPolicy, ExportPrimaryAction } from '@/features/export/contract';
 import { ExportScreen } from '@/features/export/export-screen';
 import type { RecorderCloseResult, RecorderNewDraft } from '@/features/recorder/contract';
 import { RecorderScreen } from '@/features/recorder/recorder-screen';
@@ -235,6 +235,10 @@ function FlowScreen({
   }, [controller, store]);
   const editorAddClips = useCallback(() => store.dispatch({ type: 'addClips' }), [store]);
   const exportClose = useCallback(() => store.dispatch({ type: 'back' }), [store]);
+  const exportReady = useCallback(
+    (video: ExportedVideo) => controller.exportReady(video.draftId),
+    [controller],
+  );
   // 'pulse' mode (the default) sends through Pulse's outbox; 'file' hands the video back.
   const [primaryAction] = useState<ExportPrimaryAction>(() =>
     config.uploadMode === 'file'
@@ -290,6 +294,7 @@ function FlowScreen({
           policy={policy}
           onClose={exportClose}
           onTrim={editorUnder ? exportClose : undefined}
+          onReady={exportReady}
         />
       ) : null;
     }
