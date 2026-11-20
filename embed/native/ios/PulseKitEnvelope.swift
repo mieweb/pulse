@@ -10,7 +10,8 @@ import Foundation
 /// The contract this facade speaks (pulse-embed.d.ts, AD18).
 public enum PulseContract {
   public static let major = 1
-  public static let minor = 0
+  /// Minor 1: PR2's data API (`minor1Methods`), what the JS client's CONTRACT says too.
+  public static let minor = 1
   /// The envelope version, always 1 in contract major 1.
   public static let envelopeVersion = 1
 
@@ -231,6 +232,9 @@ public struct PulseRequest: Codable, Equatable {
   public var method: String
   public var args: [String: JSONValue]
   public var client: Client?
+  /// How long the client waits for the reply, in ms (a positive whole number, else ignored): a
+  /// call forwarded to Pulse JS waits as long before it answers `timeout`.
+  public var timeoutMs: Int? = nil
 }
 
 /// A reply envelope (§2.2). Every call gets exactly one; a Pulse error is `ok: false`.
@@ -377,9 +381,12 @@ public enum PulseRouter {
     if !supported && method != "info" {
       return fail("unsupported", "Pulse doesn't run on this device.")
     }
+    var timeoutMs: Int?
+    if let t = top["timeoutMs"]?.integer, t > 0, t <= Int64(Int32.max) { timeoutMs = Int(t) }
     return .native(
       PulseRequest(
-        v: Int(v), callId: callId, method: method, args: args, client: client))
+        v: Int(v), callId: callId, method: method, args: args, client: client,
+        timeoutMs: timeoutMs))
   }
 }
 

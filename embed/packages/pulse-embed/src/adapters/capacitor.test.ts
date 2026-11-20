@@ -104,8 +104,17 @@ describe('the Capacitor adapter', () => {
       callId: 'c-0123456789ab',
       method: 'isOpen',
       args: {},
-      client: { contract: { major: 1, minor: 0 }, version: '0.0.0-dev' },
+      client: { contract: { major: 1, minor: 1 }, version: '0.0.0-dev' },
     });
+  });
+
+  it("puts the client's timeoutMs in the envelope, so a forwarded call waits as long", async () => {
+    const cap = fakeCapacitor();
+    const a = createCapacitorAdapter({ Capacitor: cap.Capacitor })!;
+    await a.call('isOpen', {}, 'c-1', { timeoutMs: 45_000 });
+    await a.call('isOpen', {}, 'c-2');
+    expect(cap.requests[0]).toMatchObject({ callId: 'c-1', timeoutMs: 45_000 });
+    expect('timeoutMs' in (cap.requests[1] as object)).toBe(false);
   });
 
   it('passes a Pulse error through as an ok:false reply, not a rejection', async () => {

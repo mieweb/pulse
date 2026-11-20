@@ -34,6 +34,10 @@ import { confirmCopy } from '@/features/export/send-flow';
  * draft the flow opened is never deleted by the host's close: discard means the take, and that
  * draft (with its earlier clips) was the person's before the flow began; it ends as X would.
  *
+ * A Send in progress (Export's merge and the host's confirm, `sendStarted` … `sendStopped`): the
+ * host's close and a failure wait for it too, as X and back do on the screen. A Send that goes
+ * ends the flow `completed` (the waiting close is moot); one that stops lets it through.
+ *
  * A take in progress: the host's close and a failure wait for it. The recorder stops the take
  * (the shell asks it to, as the recorder's own close does), and the `stop` that follows settles
  * the end with the draft the take landed in, so a first take can't leave a draft the result says
@@ -81,6 +85,8 @@ export interface FlowState {
   mounted: boolean;
   /** A take is being recorded: navigation and X wait for it to stop. */
   recording: boolean;
+  /** Export's Send is under way (merge, host confirm): the host's close waits for it. */
+  sending: boolean;
   /** The flow's draft; null on a new recording until its first clip lands. */
   draftId: string | null;
   /** The draft was made by this flow (record, draft 'new'), so X can discard it. */
@@ -91,7 +97,7 @@ export interface FlowState {
   stage: FlowStage;
   /** The keep/discard sheet is up. */
   sheet: 'exit' | null;
-  /** The host's close or a failure came during a take; the take's `stop` settles it. */
+  /** The host's close or a failure came during a take or a Send; its end settles it. */
   pending: PendingEnd | null;
   end: FlowEnd | null;
   /** A draft the shell must delete as the flow ends (discarded, or left with no clip). */
@@ -130,6 +136,10 @@ export type FlowEvent =
   | { type: 'useVideo'; export: FileRef; durationMs: number; project?: FileRef }
   /** Export's [Keep draft] after a failed host confirm: leave with the draft kept, unsent. */
   | { type: 'keepDraft' }
+  /** Export's Send started (the merge, then the host's confirm). */
+  | { type: 'sendStarted' }
+  /** Export's Send stopped without going (refused, failed, the confirm failed). */
+  | { type: 'sendStopped' }
   /** Send (uploadMode 'pulse', PR2), once the job is persisted. */
   | { type: 'send'; sentAt: number; clientKey: string; draftKey: string; confirmedAt?: number }
   /** The host's `close` (`pulse.cmd close`). */
@@ -161,6 +171,7 @@ export function initFlow(requestId: string, request: OpenRequest, draft?: Opened
     stack: [FIRST_SCREEN[request.entry]],
     mounted: false,
     recording: false,
+    sending: false,
     changed: false,
     stage: 'none' as FlowStage,
     sheet: null,
@@ -206,8 +217,19 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
       event.type === 'hostClose'
         ? { type: 'hostClose', discard: event.discard === true }
         : { type: 'error', error: event.error };
-    if (state.recording) return { ...state, pending: mergePending(state.pending, end) };
+    if (state.recording || state.sending) {
+      return { ...state, pending: mergePending(state.pending, end) };
+    }
     return settle(state, end);
+  }
+
+  if (state.sending) {
+    // Only the Send's own end counts while it runs: the screen holds X and back meanwhile.
+    if (event.type === 'sendStopped') {
+      const after = { ...state, sending: false };
+      return state.pending ? settle({ ...after, pending: null }, state.pending) : after;
+    }
+    if (event.type !== 'send') return state;
   }
 
   if (state.sheet) {
@@ -239,6 +261,10 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
       return top === 'recorder' ? { ...state, recording: true } : state;
     case 'stop':
       return state; // no take running
+    case 'sendStarted':
+      return top === 'export' && state.draftId ? { ...state, sending: true } : state;
+    case 'sendStopped':
+      return state; // no Send running
     case 'edited':
       return {
         ...state,
@@ -393,5 +419,13 @@ function fail(state: FlowState, error: PulseErrorInfo): FlowState {
 }
 
 function finish(state: FlowState, end: FlowEnd, deleteDraft: string | null = null): FlowState {
-  return { ...state, sheet: null, recording: false, pending: null, end, deleteDraft };
+  return {
+    ...state,
+    sheet: null,
+    recording: false,
+    sending: false,
+    pending: null,
+    end,
+    deleteDraft,
+  };
 }

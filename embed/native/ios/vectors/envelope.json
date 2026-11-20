@@ -1,7 +1,7 @@
 {
   "format": "pulsekit-envelope-vectors",
   "version": 1,
-  "contract": { "major": 1, "minor": 0 },
+  "contract": { "major": 1, "minor": 1 },
   "methods": {
     "native": [
       "info",
@@ -69,6 +69,28 @@
         "method": "isOpen",
         "args": {},
         "client": { "contract": { "major": 1, "minor": 1 } }
+      },
+      "expect": { "route": "native", "method": "isOpen", "args": {} }
+    },
+    {
+      "name": "the client's timeoutMs reaches the method (a forwarded call waits as long)",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000013",
+        "method": "isOpen",
+        "args": {},
+        "timeoutMs": 45000
+      },
+      "expect": { "route": "native", "method": "isOpen", "args": {}, "timeoutMs": 45000 }
+    },
+    {
+      "name": "a timeoutMs that isn't a positive whole number is ignored",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000014",
+        "method": "isOpen",
+        "args": {},
+        "timeoutMs": "soon"
       },
       "expect": { "route": "native", "method": "isOpen", "args": {} }
     },

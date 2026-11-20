@@ -247,6 +247,7 @@ function FlowScreen({
           kind: 'send',
           onSent: (sent) => controller.sent(sent),
           onKeepDraft: () => controller.keepDraft(),
+          onSending: (busy) => controller.sending(busy),
         },
   );
   const [policy] = useState<ExportPolicy>(() => ({

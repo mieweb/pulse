@@ -27,9 +27,16 @@ export type ExportPrimaryAction =
   /**
    * Inside a host in uploadMode 'pulse' (AD23): Send through Pulse's outbox (send-flow.ts), the
    * button named by the draft's upload type. `onSent` once the job is queued; `onKeepDraft` is the
-   * [Keep draft] offered after the host's confirm failed.
+   * [Keep draft] offered after the host's confirm failed. `onSending(true)` as a Send starts (the
+   * merge, the host's confirm) and `onSending(false)` when it stops without going: the shell holds
+   * the host's close meanwhile, as the screen holds X and back.
    */
-  | { kind: 'send'; onSent: (sent: SentVideo) => void; onKeepDraft: () => void };
+  | {
+      kind: 'send';
+      onSent: (sent: SentVideo) => void;
+      onKeepDraft: () => void;
+      onSending?: (busy: boolean) => void;
+    };
 
 /** What the host lets the screen offer besides the primary action. */
 export type ExportPolicy = { allowShare: boolean; allowSaveToPhotos: boolean };

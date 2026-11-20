@@ -48,6 +48,12 @@ that answers `timeout` may still be queued: tap **Send first** again, and it ans
 keys. This page has no host services, so a Send's `hostRequest` event shows in the log and the job
 pauses after 20 s unanswered.
 
+## The contract suite
+
+`src/contract/` is a second page that runs the host contract (`runPulseContract`) against the real
+plugin: build it with `node src/contract/build.mjs` before `npx cap sync ios`, then tap **Contract
+suite** on the host page. [src/contract/README.md](src/contract/README.md) has the details.
+
 ## Android (the stub)
 
 ```sh

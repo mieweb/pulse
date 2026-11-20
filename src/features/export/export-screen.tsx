@@ -53,19 +53,17 @@ import type { ExportScreenProps } from '@/features/export/contract';
 import { exportActions } from '@/features/export/primary-action';
 import { checkSend, TRIM_LABEL, uploadRulesOf } from '@/features/export/send-checks';
 import { useExport } from '@/features/export/use-export';
-import { exportAudio, mergeWithEditor } from '@/features/export/editor-merge';
-import { resolveMergedExport } from '@/features/export/merged-export';
 import {
   confirmCopy,
   KEEP_DRAFT_LABEL,
   PREPARING_SEND_LABEL,
   runSend,
   sendLabel,
+  stoppedSend,
   TRY_AGAIN_LABEL,
-  wantsConfirm,
   type SendFlowDeps,
 } from '@/features/export/send-flow';
-import { getRecorderFormat } from '@/features/recorder/recorder-format';
+import { mergeForSend } from '@/features/export/send-merge';
 import { sendDraft } from '@/features/upload/core/outbox';
 import { MergeProgressRing } from '@/features/export/merge-progress-ring';
 import { useSaveToPhotos } from '@/features/export/use-save-to-photos';
@@ -128,22 +126,14 @@ function hostConfirmedAt(draftId: string): number | null {
   return row?.at ?? null;
 }
 
-/** Send's merge: the saved export when it still matches the clips, else a fresh merge. */
-async function mergeForSend(draftId: string): Promise<{ durationMs: number }> {
-  const segments = await segmentsForDraft(draftId);
-  const recorder = await getRecorderFormat();
-  const { durationMs } = await resolveMergedExport(draftId, segments, exportAudio(recorder), () =>
-    mergeWithEditor(segments, recorder, new AbortController().signal, () => {}),
-  );
-  return { durationMs };
-}
-
 /**
  * Where Export's Send is ('pulse' mode): ready, busy (the merge, then the host's confirm), or
- * stopped by a failed confirm, with the words for it.
+ * stopped for a type with a confirm, with the words for it and whether [Try again] can help.
  */
 type SendState =
-  { phase: 'idle' } | { phase: 'merging' | 'confirming' } | { phase: 'failed'; text: string };
+  | { phase: 'idle' }
+  | { phase: 'merging' | 'confirming' }
+  | { phase: 'failed'; text: string; retry: boolean };
 
 /** The merged file's size, or null when it can't be read. */
 function fileBytes(path: string): number | null {
@@ -335,6 +325,7 @@ export function ExportScreen({
   const startSend = async () => {
     if (primaryAction.kind !== 'send' || sendingRef.current) return;
     sendingRef.current = true;
+    primaryAction.onSending?.(true);
     setSend({ phase: 'merging' });
     const deps: SendFlowDeps = {
       isOnline,
@@ -346,6 +337,8 @@ export function ExportScreen({
       setSend({ phase }),
     );
     sendingRef.current = false;
+    // A Send that went ends the flow (onSent); any other lets a held host close through.
+    if (outcome.status !== 'sent') primaryAction.onSending?.(false);
     switch (outcome.status) {
       case 'sent':
         setSend({ phase: 'idle' });
@@ -356,17 +349,15 @@ export function ExportScreen({
         setSend({ phase: 'idle' });
         return;
       case 'confirmFailed':
-        console.warn(`[export] the host didn't confirm the Send: ${outcome.message}`);
-        setSend({ phase: 'failed', text: copy.failed });
-        return;
       case 'tooLarge':
       case 'failed': {
         const message = outcome.status === 'tooLarge' ? outcome.text : outcome.message;
-        // A type with a confirm stays on its failure (B2: "Couldn't clock out…", the person is
-        // still clocked in); any other type says why and stays ready to Send again.
-        if (wantsConfirm(uploadType)) {
-          console.warn(`[export] Send stopped before the confirm: ${message}`);
-          setSend({ phase: 'failed', text: copy.failed });
+        // A type with a confirm stays on its failure (send-flow.ts `stoppedSend`); any other type
+        // says why and stays ready to Send again.
+        const stopped = stoppedSend(outcome, uploadType);
+        if (stopped) {
+          console.warn(`[export] Send stopped (${outcome.status}): ${message}`);
+          setSend({ phase: 'failed', ...stopped });
           return;
         }
         setSend({ phase: 'idle' });
@@ -580,15 +571,17 @@ export function ExportScreen({
                   {send.text}
                 </ThemedText>
                 <View style={styles.finishedRow}>
-                  <PrimaryButton
-                    label={TRY_AGAIN_LABEL}
-                    icon="arrow.clockwise"
-                    disabled={sendCheck.block !== null}
-                    accessibilityHint={sendCheck.blockText ?? undefined}
-                    onPress={() => void startSend()}
-                    style={styles.rowButton}
-                    testID="export.sendRetry"
-                  />
+                  {send.retry && (
+                    <PrimaryButton
+                      label={TRY_AGAIN_LABEL}
+                      icon="arrow.clockwise"
+                      disabled={sendCheck.block !== null}
+                      accessibilityHint={sendCheck.blockText ?? undefined}
+                      onPress={() => void startSend()}
+                      style={styles.rowButton}
+                      testID="export.sendRetry"
+                    />
+                  )}
                   <PrimaryButton
                     variant="card"
                     label={KEEP_DRAFT_LABEL}

@@ -778,7 +778,16 @@ export interface BridgeEvent {
 export interface PulseAdapter {
   readonly kind: 'capacitor' | 'cordova' | 'fake' | (string & {});
   present(): Promise<boolean>;
-  call(method: string, args: Json, callId: string): Promise<BridgeReply>;
+  /**
+   * `options.timeoutMs`: how long the client waits for this reply (absent for `open`); the
+   * adapter sends it in the request envelope, so a facade forwarding the call waits as long.
+   */
+  call(
+    method: string,
+    args: Json,
+    callId: string,
+    options?: { timeoutMs?: number },
+  ): Promise<BridgeReply>;
   subscribe(cb: (e: BridgeEvent) => void): () => void;
   /** Native absolute path → URL the WebView can load. */
   toWebUrl(path: string): string;

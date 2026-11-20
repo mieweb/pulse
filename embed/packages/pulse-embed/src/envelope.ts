@@ -7,8 +7,11 @@ import type { BridgeEvent, BridgeReply, ContractVersion, Json, PulseErrorInfo } 
  * pin both sides, and a JS facade (the fake in ./testing) can route exactly like the Swift one.
  */
 
-/** The contract this client speaks (AD18): major 1; minor 0 is PR1, minor 1 adds PR2's data API. */
-export const CONTRACT: ContractVersion = Object.freeze({ major: 1, minor: 0 });
+/**
+ * The contract this client speaks (AD18): major 1; minor 0 is PR1, minor 1 adds PR2's data API
+ * (what PulseKit answers as `info().contract.minor`).
+ */
+export const CONTRACT: ContractVersion = Object.freeze({ major: 1, minor: 1 });
 
 /**
  * The package version, sent as `client.version` for logs. Kept equal to package.json's `version`
@@ -38,6 +41,11 @@ export interface RequestEnvelope {
   method: string;
   args: Json;
   client: { contract: { major: number; minor: number }; version: string };
+  /**
+   * How long the client waits for the reply, in ms: a facade that forwards the call to Pulse JS
+   * waits as long before it answers `timeout` (default 30 000). Absent for `open` (no deadline).
+   */
+  timeoutMs?: number;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -69,14 +77,25 @@ export function newRequestId(): string {
 }
 
 /** The request envelope a plugin passes through as one JSON string. */
-export function buildRequest(method: string, args: Json, callId: string): RequestEnvelope {
+export function buildRequest(
+  method: string,
+  args: Json,
+  callId: string,
+  timeoutMs?: number,
+): RequestEnvelope {
   return {
     v: ENVELOPE_VERSION,
     callId,
     method,
     args: args ?? {},
     client: { contract: { major: CONTRACT.major, minor: CONTRACT.minor }, version: CLIENT_VERSION },
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   };
+}
+
+/** A request's `timeoutMs` when it is a positive whole number of ms; anything else is ignored. */
+function timeoutOf(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined;
 }
 
 /** JSON with object keys sorted, so the same value always prints the same text (Swift's `.sortedKeys`). */
@@ -144,7 +163,14 @@ export function parseEvent(input: unknown): BridgeEvent | null {
 // ─── The facade's routing (native-bridge.md §2.1, §3) ───────────────────────────────────────────
 
 export type RouteResult =
-  | { route: 'native'; callId: string; method: string; args: Record<string, Json> }
+  | {
+      route: 'native';
+      callId: string;
+      method: string;
+      args: Record<string, Json>;
+      /** The client's deadline for the reply (forwarded calls wait as long). */
+      timeoutMs?: number;
+    }
   | { route: 'reply'; reply: BridgeReply & { ok: false } };
 
 export interface RouteOptions {
@@ -212,5 +238,12 @@ export function routeRequest(input: unknown, o: RouteOptions = {}): RouteResult 
   if (o.supported === false && method !== 'info') {
     return fail('unsupported', "Pulse doesn't run on this device.", callId);
   }
-  return { route: 'native', callId, method, args };
+  const timeoutMs = timeoutOf(top.timeoutMs);
+  return {
+    route: 'native',
+    callId,
+    method,
+    args,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  };
 }

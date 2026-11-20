@@ -613,3 +613,45 @@ describe('after the end', () => {
     for (const e of events) expect(flowReducer(ended, e)).toBe(ended);
   });
 });
+
+describe('a Send in progress holds the host’s close', () => {
+  const onExport = () => run(recorded(), { type: 'edit' }, { type: 'export' }, { type: 'merged' });
+
+  it('a close during the merge or the confirm waits; a Send that goes completes', () => {
+    const held = run(onExport(), { type: 'sendStarted' }, { type: 'hostClose' });
+    expect(held).toMatchObject({ sending: true, end: null, pending: { type: 'hostClose' } });
+    const s = run(held, {
+      type: 'send',
+      sentAt: 1000,
+      clientKey: 'i:d1:abcd',
+      draftKey: 'i:d1',
+      confirmedAt: 1001,
+    });
+    expect(s.end).toMatchObject({ status: 'completed', mode: 'pulse', confirmedAt: 1001 });
+    expect(s).toMatchObject({ sending: false, pending: null });
+  });
+
+  it('a Send that stops lets the waiting close (or failure) through', () => {
+    const closed = run(
+      onExport(),
+      { type: 'sendStarted' },
+      { type: 'hostClose', discard: true },
+      { type: 'sendStopped' },
+    );
+    expect(closed.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(closed.deleteDraft).toBe('d1');
+    const failed = run(onExport(), { type: 'sendStarted' }, { type: 'error', error: failure });
+    expect(failed.end).toBeNull();
+    expect(run(failed, { type: 'sendStopped' }).end).toMatchObject({ status: 'failed' });
+  });
+
+  it('nothing else moves while it runs; with nothing waiting, it just stops', () => {
+    const sending = run(onExport(), { type: 'sendStarted' });
+    for (const e of [{ type: 'close' }, { type: 'back' }, { type: 'keepDraft' }] as const) {
+      expect(flowReducer(sending, e)).toBe(sending);
+    }
+    expect(run(sending, { type: 'sendStopped' })).toMatchObject({ sending: false, end: null });
+    // Only Export sends.
+    expect(run(recorded(), { type: 'sendStarted' }).sending).toBe(false);
+  });
+});
