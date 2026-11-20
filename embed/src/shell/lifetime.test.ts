@@ -70,6 +70,26 @@ describe('memory warning', () => {
     expect(r.done).toEqual(['engines', 'library']);
   });
 
+  it('answers "keep" once the models outlast the budget, and never releases the library late', async () => {
+    const done: string[] = [];
+    let finishEngines: () => void = () => {};
+    const lifetime = createLifetime({
+      activeJobs: () => 0,
+      releaseEngines: () =>
+        new Promise<void>((resolve) => {
+          finishEngines = resolve;
+        }),
+      releaseLibrary: async () => void done.push('library'),
+      now: () => 0,
+      log: () => {},
+      engineBudgetMs: 5,
+    });
+    expect(await lifetime.memoryWarning()).toEqual({ release: false });
+    finishEngines();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toEqual([]); // PulseKit heard "keep": the library stays open
+  });
+
   it('releases nothing while a flow is open, and again once it closed', async () => {
     const r = fakeRuntime(0);
     const close = r.lifetime.flowOpened();
