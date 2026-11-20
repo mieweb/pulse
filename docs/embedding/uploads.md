@@ -245,6 +245,11 @@ Optionally, also call the class method `prepareBackgroundUploads` (by selector, 
 `application(_:didFinishLaunchingWithOptions:)`. It reattaches uploads iOS kept running even in a
 launch where your page never calls Pulse. The first `PulseKit.shared` access does the same.
 
+On Android there is nothing to forward: each upload runs in PulseKit's foreground service inside
+your app, and an upload cut off by a kill or a force-stop resumes from the server's offset the next
+time Pulse runs. [android.md](android.md#show-the-upload-notification) covers the service's
+notification and the Play Console declaration.
+
 ## What Pulse doesn't do
 
 - **It never uploads without your page.** Every target and token comes from your host services. A

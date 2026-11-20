@@ -81,8 +81,11 @@ or its store page instead, `isAvailable()` is false: see
 - **CI.** The `ios` job in `checks.yml` runs `cap sync ios`, `patch-ios-spm.py` and a Simulator
   `xcodebuild`. With the plugin added, it downloads PulseKit's frameworks (about 70 MB) on every
   run unless SwiftPM's caches are kept.
-- **Android.** The plugin's Android stub adds no permissions and no Maven dependency, but
-  `cap sync` still lists it in the two Gradle files above, so they change once.
+- **Android.** From this version the plugin's Android side runs Pulse, so TimeHuddle's Android
+  build needs PulseKit's Maven repository in `android/build.gradle` and `minSdkVersion` 24
+  ([android.md](android.md)), or `pulsekitAndroid=false` in `android/gradle.properties` to keep
+  the stub. Without either, its Android build fails to resolve `com.mieweb.pulse:pulsekit`. `cap
+sync` lists the plugin in the two Gradle files above either way.
 
 ## Work against a local PulseKit
 

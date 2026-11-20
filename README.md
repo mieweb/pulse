@@ -180,13 +180,15 @@ PulseKit is Pulse packaged for other apps: a Capacitor or Cordova app opens Puls
 record, edit or export one video, and gets one result back. Pulse then uploads the video to the
 app's own server through PulseVault, carrying on after Pulse closes and with the phone locked, or
 hands the app the finished MP4 instead. The app's own screens list each signed-in person's drafts
-and their upload states without opening Pulse. It runs on iPhone with iOS 16.4 or later. On
-Android both plugins are stubs: `isAvailable()` is false there, and the app shows its own fallback.
+and their upload states without opening Pulse. It runs on iPhone with iOS 16.4 or later, and, in a
+Capacitor app, on Android phones with Android 7.0 or later ([Android setup](docs/embedding/android.md)).
+The Cordova plugin's Android side is still a stub: `isAvailable()` is false there, and the app shows
+its own fallback.
 
 | Package                                                        | Used by        | What it is                                                         |
 | -------------------------------------------------------------- | -------------- | ------------------------------------------------------------------ |
 | [`@mieweb/pulse-embed`](embed/packages/pulse-embed/)           | Every host     | The client your page calls, its types, React hooks and a test fake |
-| [`@mieweb/capacitor-pulse`](embed/packages/capacitor-pulse/)   | Capacitor 8    | The native plugin, through Swift Package Manager                   |
+| [`@mieweb/capacitor-pulse`](embed/packages/capacitor-pulse/)   | Capacitor 8    | The native plugin: Swift Package Manager on iOS, Maven on Android  |
 | [`cordova-plugin-pulse`](embed/packages/cordova-plugin-pulse/) | cordova-ios 8+ | The native plugin, through CocoaPods                               |
 
 The three are published together, at one version, as release candidates (prereleases) on the npm
@@ -237,8 +239,9 @@ upload outbox and receipts in [docs/persistence.md](docs/persistence.md).
 | `node scripts/gen-protocol-types.mjs`     | Regenerate `src/features/upload/core/protocol.gen.ts` from the submodule's schemas and `package.json` `pulseProtocol` (`--check` fails if it's stale) |
 | `npm run check:embed`                     | Check what ships in PulseKit: dependency classification, no SQLite in native code, and PulseKit's iOS and Android JS bundles (no native build)        |
 | `npm run embed:package:ios`               | Package an `expo-brownfield` iOS build in `embed/artifacts` into PulseKit release assets (`--help` for options)                                       |
+| `npm run embed:package:android`           | Check the fused Android AAR in `embed/artifacts/android-maven` (ABIs, 16 KB pages, permissions, dependencies) and zip it as a release asset           |
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, lint, `gen-protocol-types.mjs --check`, and unit tests on every PR, the embed check (`npm run check:embed`), plus the integration suite against both the pinned PulseVault and the latest npm release. PulseKit releases run from [`release-embed.yml`](.github/workflows/release-embed.yml) on `pulsekit-v*` tags ([releasing](docs/embedding/releasing.md)).
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the typecheck, lint, `gen-protocol-types.mjs --check`, and unit tests on every PR, the embed check (`npm run check:embed`), the Android core's vectors on a JVM (`jvm-vectors`), plus the integration suite against both the pinned PulseVault and the latest npm release. PulseKit releases run from [`release-embed.yml`](.github/workflows/release-embed.yml) on `pulsekit-v*` tags ([releasing](docs/embedding/releasing.md)).
 
 ### Project structure
 
@@ -253,7 +256,9 @@ src/
 ├── components/     # shared themed UI
 ├── test-support/   # Node stand-ins for native modules, and the lint-zone tests
 └── dev/            # __DEV__-only seed tooling (dead-code-eliminated in release)
-embed/              # PulseKit: the embed shell, Swift facade, release scripts (see embed/README.md)
+embed/              # PulseKit: the embed shell, native facades, release scripts (see embed/README.md)
+├── native/ios/     # the Swift facade and its shared vectors
+├── native/android/ # the Kotlin facade, PulseActivity, the upload service, and jvm-tests/ (vectors on a JVM)
 └── packages/       # what host apps install: @mieweb/pulse-embed and the Capacitor/Cordova plugins
 modules/            # custom native modules (expo-call-detector) and the pulse-editor submodule
 plugins/            # Expo config plugins
@@ -281,7 +286,13 @@ A heavier suite is opt-in and skips itself in a plain `npm test`:
 PULSE_INTEGRATION=1 npx jest pv-integration --forceExit
 ```
 
-PulseKit's facade rules also run on a Mac without an iOS build, as shared vectors: the envelope ([embed/native/ios/vectors/README.md](embed/native/ios/vectors/README.md)), catalog reads ([src/features/drafts/\_\_vectors\_\_/catalog.json](src/features/drafts/__vectors__/catalog.json)) and account namespaces ([embed/native/ios/namespace-vectors.json](embed/native/ios/namespace-vectors.json)).
+PulseKit's facade rules also run on a Mac without an iOS build, as shared vectors: the envelope ([embed/native/ios/vectors/README.md](embed/native/ios/vectors/README.md)), catalog reads ([src/features/drafts/\_\_vectors\_\_/catalog.json](src/features/drafts/__vectors__/catalog.json)) and account namespaces ([embed/native/ios/namespace-vectors.json](embed/native/ios/namespace-vectors.json)). The Android facade's Kotlin core runs the same vectors on a JVM, with no Android build (JDK 17 or 21):
+
+```bash
+gradle --offline -q -p embed/native/android/jvm-tests run --args="$PWD"
+```
+
+[embed/native/android/README.md](embed/native/android/README.md) has the details, including the upload service's own rules.
 
 ## License
 

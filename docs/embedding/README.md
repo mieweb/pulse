@@ -1,6 +1,6 @@
 # Embedding Pulse in a host app
 
-PulseKit is Pulse packaged for another iOS app. Your web page asks for a task (record a video for a
+PulseKit is Pulse packaged for another iOS or Android app. Your web page asks for a task (record a video for a
 place, edit a draft, export a draft), Pulse opens full screen over your app, and you get one result
 back when the person is done. Pulse can then upload the video to your server itself, carrying on
 after Pulse closes and while your app is in the background, or hand you the finished MP4 to upload
@@ -17,6 +17,7 @@ result. Follow it top to bottom; it links to the other pages for each topic.
 | [drafts.md](drafts.md)                   | List, count, rename, move and delete drafts from your own screens.              |
 | [accounts.md](accounts.md)               | Keep each signed-in person's videos apart, and clean up after sign-out.         |
 | [capacitor.md](capacitor.md)             | See what is specific to a Capacitor 8 app.                                      |
+| [android.md](android.md)                 | Run Pulse in your Capacitor app on Android phones.                              |
 | [cordova.md](cordova.md)                 | See what is specific to a Cordova (cordova-ios 8) app, including Meteor's.      |
 | [timehuddle-ios.md](timehuddle-ios.md)   | Wire Pulse into TimeHuddle's iOS project (SwiftPM patch and native-sync check). |
 | [contract.md](contract.md)               | Look up a method, a result, an error code or the versioning rules.              |
@@ -48,9 +49,10 @@ of using `@mieweb/pulse-embed`, so copy their project setup, not their page code
 - **One library per signed-in person.** Drafts, uploads and results belong to the account you set
   with `setAccount()`. Nothing but `getInfo()` and `configure()` works before it: see
   [accounts.md](accounts.md).
-- **iPhone only.** iOS 16.4 or later. iPad, Mac (Designed for iPad) and Android report
-  `supported: false`. Both plugins have an Android side, but it is a stub: `isAvailable()` is false
-  there and every other call rejects with `unsupported`.
+- **Phones only.** iPhone with iOS 16.4 or later, and Android phones with Android 7.0 or later
+  through the Capacitor plugin ([android.md](android.md)). iPad, Mac (Designed for iPad) and
+  Android tablets report `supported: false`. The Cordova plugin's Android side is still a stub:
+  `isAvailable()` is false there and every other call rejects with `unsupported`.
 
 ## Versions
 
@@ -84,7 +86,10 @@ exact version (`--save-exact`). `npm view @mieweb/pulse-embed dist-tags` lists w
 - Somewhere for the video to go: a server with PulseVault and an upload route for Pulse to reach
   through your page (`uploadMode: 'pulse'`, [uploads.md](uploads.md)), or your own upload endpoint
   for the MP4 (`uploadMode: 'file'`).
-- A fallback for where Pulse isn't available: a desktop browser, Android, an iPad.
+- For Android (Capacitor only): `minSdkVersion` 24 or higher, and the setup in
+  [android.md](android.md): PulseKit's Maven repository, backup rules, and the notification
+  permission if you want the upload notification shown.
+- A fallback for where Pulse isn't available: a desktop browser, a tablet, Cordova on Android.
 
 ## Add Pulse, step by step
 
@@ -102,6 +107,9 @@ Capacitor, from your app's root:
 npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc
 npx cap sync ios
 ```
+
+For Android, add PulseKit's Maven repository first ([android.md](android.md#add-pulsekits-repository)),
+then `npx cap sync android`.
 
 Cordova, from your app's root:
 
@@ -182,8 +190,9 @@ session rejects with `restart_required`; [accounts.md](accounts.md) says what to
 
 ### 6. Open Pulse where it can run
 
-`isAvailable()` is false in a desktop browser, on Android, on an iPad and on iOS before 16.4. Show
-your fallback there: a link, a QR code to the Pulse app, a file input.
+`isAvailable()` is false in a desktop browser, on an iPad, on an Android tablet, on iOS before 16.4
+and in a Cordova app on Android. Show your fallback there: a link, a QR code to the Pulse app, a
+file input.
 
 Where it's true, open one of the three entries. Each resolves with a `FlowResult` when the flow
 ends, which can be minutes later:
@@ -280,7 +289,8 @@ async function handleResult(result: FlowResult) {
 ### 9. Build and run
 
 - **Capacitor:** `npx cap sync ios`, then `npx cap open ios` and run the `App` scheme on an iPhone
-  or an iPhone Simulator.
+  or an iPhone Simulator. For Android, `npx cap sync android`, then `npx cap run android` on a
+  phone.
 - **Cordova:** `npx cordova build ios --emulator` (or `--device`), or open
   `platforms/ios/App.xcworkspace` in Xcode and run it there.
 
@@ -389,6 +399,8 @@ Check each of these in your app:
       `MiewebCapacitorPulse`. Cordova: after `npx cordova prepare ios`, `plugins/cordova-plugin-pulse/`
       exists and `platforms/ios/Podfile` has `pod 'PulseKit'`.
 - [ ] The iOS deployment target is 16.4 or later.
+- [ ] Android: `minSdkVersion` is 24 or higher, `android/build.gradle` lists PulseKit's repository,
+      and your backup rules exclude `PulseKit` ([android.md](android.md)).
 - [ ] The app's `Info.plist` has `NSCameraUsageDescription`, `NSMicrophoneUsageDescription`,
       `NSPhotoLibraryUsageDescription`, `NSPhotoLibraryAddUsageDescription`, and
       `UIViewControllerBasedStatusBarAppearance` set to `YES`.
@@ -402,5 +414,6 @@ Check each of these in your app:
 - [ ] Your tests pass against `createFakePulse`, including a dropped result read back with
       `pendingResults()` after `fake.reload()`.
 - [ ] On an iPhone or Simulator: `getInfo()` answers `supported: true`, `record()` opens the
-      recorder, and Export's primary action gives a `completed` result.
+      recorder, and Export's primary action gives a `completed` result. The same on an Android
+      phone, if you ship there.
 - [ ] In pulse mode, the checks at the end of [uploads.md](uploads.md#done-when) too.
