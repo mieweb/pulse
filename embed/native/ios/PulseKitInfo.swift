@@ -55,11 +55,29 @@ enum PulseKitInfo {
     return .object(o)
   }
 
-  /// What this build can do. PR1 has no outbox, so no 'upload.pulse' or 'upload.background'
-  /// yet. Save to Photos needs the host's NSPhotoLibraryAddUsageDescription (AD30).
+  /// Whether host writes run Pulse JS with no screen at all (the `headless` capability, AD5).
+  /// A build-time flag, OFF by default: spike S3 (a cold-launch Send from a list row merges and
+  /// uploads with nothing presented, and a killed upload resumes the same way) decides on a phone
+  /// whether it ships ON. While it is off, a write that finds Pulse's runtime cold presents the
+  /// brief "Preparing…" screen instead (PulseKitPresenter.swift), and paused jobs wait for the
+  /// host's "Tap to resume" (O2).
+  ///
+  /// To build with it on: add `PULSEKIT_HEADLESS` to the PulseKit target's Active Compilation
+  /// Conditions (`SWIFT_ACTIVE_COMPILATION_CONDITIONS`), or set the `#else` branch below to true.
+  #if PULSEKIT_HEADLESS
+    static let headless = true
+  #else
+    static let headless = false
+  #endif
+
+  /// What this build can do: Pulse's own uploads through the host's services ('upload.pulse'),
+  /// which go on in PulseKit's background session after Pulse closes ('upload.background', O16),
+  /// and `headless` when the flag above is on. Save to Photos needs the host's
+  /// NSPhotoLibraryAddUsageDescription (AD30).
   static func capabilities() -> [String] {
-    var list = ["upload.file", "share"]
+    var list = ["upload.pulse", "upload.background", "upload.file", "share"]
     if hostHas("NSPhotoLibraryAddUsageDescription") { list.append("saveToPhotos") }
+    if headless { list.append("headless") }
     return list
   }
 
