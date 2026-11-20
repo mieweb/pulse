@@ -41,8 +41,9 @@ export function renderPodspec({ version, baseUrl, sha256 }) {
 # the 0.0.0-dev placeholder, which can't download; the release workflow writes the published one.
 #
 # Development: PULSEKIT_LOCAL=<folder of *.xcframework> (or a .zip of them) builds against a local
-# PulseKit. A folder is zipped into the system temp folder, again whenever a framework in it is
-# newer than that zip.
+# PulseKit. A folder is zipped into the system temp folder under a name that fingerprints every
+# file in its frameworks (path, mode and contents), so a rebuild that overwrites a nested binary or
+# resource in place makes a new zip, at a new URL, instead of reusing the old one.
 
 require 'digest'
 require 'tmpdir'
@@ -60,11 +61,26 @@ def pulsekit_source
   frameworks = Dir.exist?(path) ? Dir.children(path).select { |n| n.end_with?('.xcframework') }.sort : []
   raise "PULSEKIT_LOCAL=#{path} holds no .xcframework" if frameworks.empty?
 
-  zip = File.join(Dir.tmpdir, "pulsekit-local-#{Digest::SHA256.hexdigest(path)[0, 12]}.zip")
-  newest = frameworks.map { |n| File.mtime(File.join(path, n)) }.max
-  unless File.exist?(zip) && File.mtime(zip) >= newest
-    File.delete(zip) if File.exist?(zip)
-    Dir.chdir(path) { system('zip', '-qry', zip, *frameworks) || raise("Couldn't zip #{path}") }
+  entries = Dir.glob(frameworks.map { |n| "#{n}/**/*" }, File::FNM_DOTMATCH, base: path)
+  entries = (frameworks + entries).reject { |r| ['.', '..'].include?(File.basename(r)) }.uniq.sort
+  fingerprint = Digest::SHA256.new
+  entries.each do |rel|
+    full = File.join(path, rel)
+    stat = File.lstat(full)
+    body = if stat.symlink? then "link:#{File.readlink(full)}"
+           elsif stat.file? then "file:#{Digest::SHA256.file(full).hexdigest}"
+           else 'dir'
+           end
+    fingerprint << "#{rel}\\0#{stat.mode.to_s(8)}\\0#{body}\\n"
+  end
+  prefix = File.join(Dir.tmpdir, "pulsekit-local-#{Digest::SHA256.hexdigest(path)[0, 12]}")
+  zip = "#{prefix}-#{fingerprint.hexdigest[0, 16]}.zip"
+  unless File.exist?(zip)
+    Dir.glob("#{prefix}-*.zip").each { |old| File.delete(old) }
+    partial = "#{zip}.partial"
+    File.delete(partial) if File.exist?(partial)
+    Dir.chdir(path) { system('zip', '-qry', partial, *frameworks) || raise("Couldn't zip #{path}") }
+    File.rename(partial, zip)
   end
   { :http => "file://#{zip}" }
 end
