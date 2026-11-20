@@ -144,8 +144,9 @@ class PulseActivity : ReactActivity() {
     mode = if (intent.getStringExtra(EXTRA_MODE) == MODE_PREPARING) MODE_PREPARING else MODE_FLOW
     token = intent.getLongExtra(EXTRA_LAUNCH, -1L)
     PulseKitPresenter.track(application)
+    // "Preparing…" may have no id of its own (iOS uses ""); a flow always has one.
     val attach =
-      if (requestId.isEmpty()) {
+      if (requestId.isEmpty() && mode == MODE_FLOW) {
         PulseKitPresenter.Attach.UNKNOWN
       } else {
         PulseKitPresenter.attach(this, requestId, token)
@@ -185,6 +186,7 @@ class PulseActivity : ReactActivity() {
         val restored = if (savedInstanceState != null) "restored" else "started"
         Log.i(TAG, "open $requestId: $restored with no flow in this process; closing")
         if (mode == MODE_FLOW && requestId.isNotEmpty()) {
+          // The facade writes the fallback result here, before this Activity reads it below.
           PulseKit.shared(this)
             .flows
             .onRecreatedWithoutFlow(requestId, intent.getStringExtra(EXTRA_REQUEST))
