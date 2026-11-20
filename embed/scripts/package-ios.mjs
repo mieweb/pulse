@@ -298,6 +298,22 @@ function main() {
     );
   }
 
+  // Hosts find PulseKit by its Objective-C name (`@objc(PulseKit)`, native-bridge.md §8). A
+  // framework built without the facade's sources still builds, so check each slice exports it.
+  runner.step('Check the facade class');
+  for (const job of jobs.filter((j) => j.name === 'PulseKit.xcframework')) {
+    for (const lib of job.keep) {
+      const binary = path.join(job.dir, lib.id, lib.binaryPath);
+      const symbols = runner.inspect('nm', ['-gU', binary]);
+      if (symbols !== null && !/\b_OBJC_CLASS_\$_PulseKit$/m.test(symbols)) {
+        throw new Error(
+          `${job.name}/${lib.id} has no PulseKit class: the facade's Swift files weren't compiled ` +
+            'into the PulseKit target (embed/plugins/with-pulsekit-facade.js).',
+        );
+      }
+    }
+  }
+
   if (outEntries.length > 0) runner.remove(out); // checked above: only an earlier run's output
 
   const frameworksDir = path.join(out, 'xcframeworks');
