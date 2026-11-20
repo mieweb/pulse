@@ -1,7 +1,7 @@
 import type { PulseErrorInfo } from '@mieweb/pulse-embed';
 
 import { flushDraftWrites } from '@/features/editor/draft-writes';
-import type { ExportedVideo } from '@/features/export/contract';
+import type { ExportedVideo, SentVideo } from '@/features/export/contract';
 import { finalizeRecorders, recorderOnScreen } from '@/features/recorder/recorder-presence';
 
 import type { DraftSeen } from './draft-sync';
@@ -146,6 +146,20 @@ export function createFlowController(store: FlowStore, requestId: string) {
       store.dispatch({ type: 'hostClose', discard });
     },
     fail,
+    /** Send ('pulse' mode): the job is queued; the flow ends `completed{mode:'pulse'}`. */
+    sent(sent: SentVideo): void {
+      store.dispatch({
+        type: 'send',
+        sentAt: sent.sentAt,
+        clientKey: sent.clientKey,
+        draftKey: sent.draftKey,
+        ...(sent.confirmedAt !== undefined ? { confirmedAt: sent.confirmedAt } : null),
+      });
+    },
+    /** [Keep draft] after a failed host confirm: the flow ends `closed`, the draft unsent. */
+    keepDraft(): void {
+      store.dispatch({ type: 'keepDraft' });
+    },
     /** "Use this video" ('file' mode): copy the export for the host, then end the flow. */
     async useVideo(video: ExportedVideo): Promise<void> {
       if (using) return; // one copy per tap

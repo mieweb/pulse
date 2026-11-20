@@ -73,13 +73,12 @@ enum PulseKitInfo {
     static let headless = false
   #endif
 
-  /// What this build can do: Pulse's uploads go on in PulseKit's background session after Pulse
-  /// closes ('upload.background', O16), and `headless` when the flag above is on. Save to Photos
-  /// needs the host's NSPhotoLibraryAddUsageDescription (AD30). Not 'upload.pulse' yet: an open
-  /// with uploadMode 'pulse' answers `unsupported` until flow/validate.ts accepts it (PR2-I adds
-  /// the capability with it).
+  /// What this build can do: Export sends through Pulse's outbox ('upload.pulse') or hands the
+  /// video back ('upload.file'), Pulse's uploads go on in PulseKit's background session after
+  /// Pulse closes ('upload.background', O16), and `headless` when the flag above is on. Save to
+  /// Photos needs the host's NSPhotoLibraryAddUsageDescription (AD30).
   static func capabilities() -> [String] {
-    var list = ["upload.background", "upload.file", "share"]
+    var list = ["upload.pulse", "upload.background", "upload.file", "share"]
     if hostHas("NSPhotoLibraryAddUsageDescription") { list.append("saveToPhotos") }
     if headless { list.append("headless") }
     return list

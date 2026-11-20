@@ -5,6 +5,16 @@
 /** The merged video, as the screen hands it on. */
 export type ExportedVideo = { draftId: string; path: string; durationMs: number };
 
+/** A Send that reached Pulse's outbox (uploadMode 'pulse'): what the flow's result carries. */
+export type SentVideo = {
+  draftId: string;
+  clientKey: string;
+  draftKey: string;
+  sentAt: number;
+  /** When the host's `confirmSend` succeeded (types with `confirmSend` only). */
+  confirmedAt?: number;
+};
+
 /** What the screen's main button does. */
 export type ExportPrimaryAction =
   /** The Pulse app: upload to a destination picked from the paired pool. */
@@ -13,7 +23,13 @@ export type ExportPrimaryAction =
    * Inside a host: hand the video back. `label` is the button's text ("Use this video" when
    * blank).
    */
-  | { kind: 'use-video'; label: string; onUse: (video: ExportedVideo) => void };
+  | { kind: 'use-video'; label: string; onUse: (video: ExportedVideo) => void }
+  /**
+   * Inside a host in uploadMode 'pulse' (AD23): Send through Pulse's outbox (send-flow.ts), the
+   * button named by the draft's upload type. `onSent` once the job is queued; `onKeepDraft` is the
+   * [Keep draft] offered after the host's confirm failed.
+   */
+  | { kind: 'send'; onSent: (sent: SentVideo) => void; onKeepDraft: () => void };
 
 /** What the host lets the screen offer besides the primary action. */
 export type ExportPolicy = { allowShare: boolean; allowSaveToPhotos: boolean };
