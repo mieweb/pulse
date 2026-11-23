@@ -5,9 +5,11 @@ import {
   anchorFromRouteParam,
   anchorToRouteParam,
   END,
+  expectClipsAdded,
   isEnd,
   noteClipsAdded,
   onClipsAdded,
+  playheadSlot,
   sameAnchor,
   takeClipsAdded,
   type ClipAnchor,
@@ -69,6 +71,14 @@ describe('anchorForPlayhead', () => {
     expect(anchorForPlayhead(['a'], [0], 1000, 100)).toEqual({ before: 'a' });
     expect(anchorForPlayhead(['a'], [0], 1000, 600)).toEqual(END);
   });
+  it('playheadSlot gives the same rule as positions: the clip under it and the slot to add at', () => {
+    expect(playheadSlot(starts, 4000, 499)).toEqual({ clip: 0, slot: 0 });
+    expect(playheadSlot(starts, 4000, 500)).toEqual({ clip: 0, slot: 1 });
+    expect(playheadSlot(starts, 4000, 1000)).toEqual({ clip: 1, slot: 1 });
+    expect(playheadSlot(starts, 4000, 3500)).toEqual({ clip: 2, slot: 3 });
+    expect(playheadSlot(starts, 4000, 4000)).toEqual({ clip: -1, slot: 3 });
+    expect(playheadSlot([], 0, 0)).toEqual({ clip: -1, slot: 0 });
+  });
 });
 
 describe('sameAnchor / isEnd', () => {
@@ -84,9 +94,11 @@ describe('sameAnchor / isEnd', () => {
 });
 
 describe('clips added', () => {
-  it('tells listeners and keeps each draft’s ids until taken', () => {
+  it('tells listeners, and keeps an armed draft’s ids until taken', () => {
     const listener = jest.fn();
     const stop = onClipsAdded(listener);
+    const disarm1 = expectClipsAdded('d1');
+    const disarm2 = expectClipsAdded('d2');
     noteClipsAdded({ draftId: 'd1', segmentIds: ['x'], anchor: { before: 'a' } });
     noteClipsAdded({ draftId: 'd2', segmentIds: ['y'], anchor: END });
     noteClipsAdded({ draftId: 'd1', segmentIds: ['z', 'w'], anchor: { after: 'x' } });
@@ -102,6 +114,39 @@ describe('clips added', () => {
     expect(takeClipsAdded('d1')).toEqual(['x', 'z', 'w', 'v']);
     expect(takeClipsAdded('d1')).toEqual([]);
     expect(takeClipsAdded('d2')).toEqual(['y']);
+    disarm1();
+    disarm2();
+  });
+
+  it('keeps nothing for a draft no editor armed, or from before it was armed', () => {
+    noteClipsAdded({ draftId: 'd4', segmentIds: ['early'], anchor: END });
+    expect(takeClipsAdded('d4')).toEqual([]);
+    const disarm = expectClipsAdded('d4');
+    expect(takeClipsAdded('d4')).toEqual([]);
+    noteClipsAdded({ draftId: 'd4', segmentIds: ['x'], anchor: END });
+    disarm();
+    noteClipsAdded({ draftId: 'd4', segmentIds: ['late'], anchor: END });
+    expect(takeClipsAdded('d4')).toEqual([]);
+  });
+
+  it('keeps a draft armed until its last editor disarms, each disarm counting once', () => {
+    const a = expectClipsAdded('d5');
+    const b = expectClipsAdded('d5');
+    a();
+    a();
+    noteClipsAdded({ draftId: 'd5', segmentIds: ['x'], anchor: END });
+    expect(takeClipsAdded('d5')).toEqual(['x']);
+    b();
+    noteClipsAdded({ draftId: 'd5', segmentIds: ['y'], anchor: END });
+    expect(takeClipsAdded('d5')).toEqual([]);
+  });
+
+  it('keeps at most the newest 500 ids per draft', () => {
+    const disarm = expectClipsAdded('d6');
+    const many = Array.from({ length: 600 }, (_, i) => `c${i}`);
+    noteClipsAdded({ draftId: 'd6', segmentIds: many, anchor: END });
+    expect(takeClipsAdded('d6')).toEqual(many.slice(100));
+    disarm();
   });
 
   it('a listener that throws doesn’t stop the others', () => {
@@ -117,6 +162,5 @@ describe('clips added', () => {
     expect(second).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
-    takeClipsAdded('d3');
   });
 });

@@ -40,9 +40,25 @@ jest.mock('expo-crypto', () => {
 });
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
-import { onClipsAdded, takeClipsAdded, type ClipAnchor, type ClipsAdded } from '@/core/clip-anchor';
+import {
+  expectClipsAdded,
+  onClipsAdded,
+  takeClipsAdded,
+  type ClipAnchor,
+  type ClipsAdded,
+} from '@/core/clip-anchor';
 import { expoDb } from './client';
-import { addSegment, createDraft, deleteSegment, insertSegments, reorderSegments } from './drafts';
+import * as fileStore from '@/utils/file-store';
+import {
+  addSegment,
+  createDraft,
+  deleteSegment,
+  dropTakenOut,
+  insertSegments,
+  reorderSegments,
+  restoreSegments,
+  takeOutSegments,
+} from './drafts';
 /* eslint-enable import/first */
 
 const conn = expoDb as unknown as {
@@ -159,7 +175,7 @@ describe('insertSegments', () => {
 
   it('tells clips-added listeners, and keeps the ids for the editor', async () => {
     const d = await abc();
-    takeClipsAdded(d);
+    const disarm = expectClipsAdded(d);
     const heard: ClipsAdded[] = [];
     const stop = onClipsAdded((a) => heard.push(a));
     try {
@@ -174,6 +190,7 @@ describe('insertSegments', () => {
     ]);
     expect(takeClipsAdded(d)).toEqual([s(d, 'x'), s(d, 'y'), s(d, 'z')]);
     expect(takeClipsAdded(d)).toEqual([]);
+    disarm();
   });
 });
 
@@ -205,5 +222,121 @@ describe('reorderSegments with clips it was not given', () => {
       expect([...order].sort()).toEqual(['a', 'b', 'c', 'x'].map((id) => s(d, id)).sort());
       expect(order.filter((id) => id !== s(d, 'x'))).toEqual(['c', 'b', 'a'].map((id) => s(d, id)));
     }
+  });
+});
+
+describe('taking added clips out and putting them back (the editor’s undo/redo of an addition)', () => {
+  /** a x y b c: x and y added before b. */
+  async function added(): Promise<string> {
+    const d = await abc();
+    await insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'x')), clip(s(d, 'y'))]);
+    return d;
+  }
+
+  it('takes the clips out keeping their files, and puts them back where they were', async () => {
+    const d = await added();
+    const before = clips(d);
+    const del = jest.spyOn(fileStore, 'deleteSegmentFile').mockImplementation(() => {});
+    try {
+      const taken = await takeOutSegments([s(d, 'x'), s(d, 'y')]);
+      expect(ids(d)).toEqual(['a', 'b', 'c'].map((id) => s(d, id)));
+      expect(del).not.toHaveBeenCalled();
+      expect(taken?.rows.map((r) => r.id)).toEqual([s(d, 'x'), s(d, 'y')]);
+      await restoreSegments(taken!);
+      // Same places and the same badge numbers; the counter isn't touched.
+      expect(clips(d)).toEqual(before);
+      expect(lastClipNumber(d)).toBe(5);
+      expect(del).not.toHaveBeenCalled();
+    } finally {
+      del.mockRestore();
+    }
+  });
+
+  it('keeps a clip’s edit and transcript across the round trip', async () => {
+    const d = await added();
+    conn.getAllSync(
+      `UPDATE segments SET edit_state = '{"muted":true}', caption_edit = 'c' WHERE id = ?`,
+      s(d, 'x'),
+    );
+    conn.getAllSync(
+      "INSERT INTO clip_transcripts (segment_id, model, file, status, words) VALUES (?, 'm', 'f', 'done', '[]')",
+      s(d, 'x'),
+    );
+    const row = () => conn.getFirstSync('SELECT * FROM segments WHERE id = ?', s(d, 'x'));
+    const was = row();
+    const taken = await takeOutSegments([s(d, 'x')]);
+    expect(row()).toBeNull();
+    expect(
+      conn.getAllSync('SELECT * FROM clip_transcripts WHERE segment_id = ?', s(d, 'x')),
+    ).toEqual([]);
+    await restoreSegments(taken!);
+    expect(row()).toEqual(was);
+    expect(
+      conn.getAllSync('SELECT model FROM clip_transcripts WHERE segment_id = ?', s(d, 'x')),
+    ).toEqual([{ model: 'm' }]);
+  });
+
+  it('puts clips back after the clip they followed even after a reorder', async () => {
+    const d = await added(); // a x y b c
+    const taken = await takeOutSegments([s(d, 'x'), s(d, 'y')]); // a b c
+    await reorderSegments([s(d, 'c'), s(d, 'a'), s(d, 'b')]); // c a b
+    await restoreSegments(taken!);
+    expect(ids(d)).toEqual(['c', 'a', 'x', 'y', 'b'].map((id) => s(d, id)));
+  });
+
+  it('puts clips at the front before the clip they preceded, and at the end with no neighbour', async () => {
+    const d = await abc();
+    await insertSegments(d, { before: s(d, 'a') }, [clip(s(d, 'x'))]); // x a b c
+    const front = await takeOutSegments([s(d, 'x')]);
+    await restoreSegments(front!);
+    expect(ids(d)).toEqual(['x', 'a', 'b', 'c'].map((id) => s(d, id)));
+
+    const lone = await createDraft();
+    await addSegment(lone, clip(s(lone, 'p')));
+    await addSegment(lone, clip(s(lone, 'q')));
+    const taken = await takeOutSegments([s(lone, 'q')]);
+    await deleteSegment(s(lone, 'p'));
+    await addSegment(lone, clip(s(lone, 'r')));
+    await restoreSegments(taken!);
+    expect(ids(lone)).toEqual([s(lone, 'r'), s(lone, 'q')]);
+  });
+
+  it('skips clips already gone, and takes nothing out when none is left', async () => {
+    const d = await added();
+    await deleteSegment(s(d, 'x'));
+    const taken = await takeOutSegments([s(d, 'x'), s(d, 'y')]);
+    expect(taken?.rows.map((r) => r.id)).toEqual([s(d, 'y')]);
+    expect(await takeOutSegments([s(d, 'x')])).toBeNull();
+  });
+
+  it('drops the files of clips never put back, and keeps those that are back', async () => {
+    const d = await added();
+    const del = jest.spyOn(fileStore, 'deleteSegmentFile').mockImplementation(() => {});
+    try {
+      const taken = await takeOutSegments([s(d, 'x')]);
+      await dropTakenOut(taken!);
+      expect(del).toHaveBeenCalledWith(`drafts/x/segments/${s(d, 'x')}.mp4`);
+
+      del.mockClear();
+      const back = await takeOutSegments([s(d, 'y')]);
+      await restoreSegments(back!);
+      await dropTakenOut(back!);
+      expect(del).not.toHaveBeenCalled();
+    } finally {
+      del.mockRestore();
+    }
+  });
+
+  it('tells no clips-added listener when clips are put back', async () => {
+    const d = await added();
+    const taken = await takeOutSegments([s(d, 'x')]);
+    const heard: ClipsAdded[] = [];
+    const stop = onClipsAdded((a) => heard.push(a));
+    try {
+      await restoreSegments(taken!);
+    } finally {
+      stop();
+    }
+    expect(heard).toEqual([]);
   });
 });

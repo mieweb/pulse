@@ -1,30 +1,38 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { dropTakenOut, restoreSegments, takeOutSegments } from '@/db/drafts';
 import {
   closeCoalescing,
   emptyHistory,
   record as recordStep,
-  redo as redoStep,
-  undo as undoStep,
   type History,
 } from '@/features/transcription/edit-history';
 
+import {
+  planStep,
+  redoAdded,
+  snapshotOf,
+  takenOut,
+  undoAdded,
+  type Present,
+  type Step,
+} from './editor-history';
 import type { EditorClip, EditValue } from './use-editor-draft';
 
-/** The clips' order, every clip's stored edit and edited captions, by id, and where the
- * captions sit: one undo step (strings and a number, so cheap). */
-type Snapshot = {
-  order: string[];
-  edits: Record<string, EditValue>;
-  captions: Record<string, string | null>;
-  captionY: number | null;
-};
+/** Files of clips undone out of the draft, once no redo can bring them back. */
+function dropAll(steps: readonly Step[]) {
+  for (const taken of takenOut(steps)) void dropTakenOut(taken);
+}
 
 /**
- * Undo/redo for the editor's per-clip settings and captions, over edit-history.ts. A step is
- * the draft's order and edits before a change; undoing writes back only what differs. A
- * deleted clip isn't restored (delete has no undo): its entries are skipped, and a step that
- * only touched deleted clips is dropped and the next one tried. History lives for the session.
+ * Undo/redo for the editor: per-clip settings, captions, the order, and clips added (the + or a
+ * recorder over the editor), over edit-history.ts with the steps and their rules in
+ * editor-history.ts. A deleted clip isn't restored (delete has no undo): a step that only touched
+ * deleted clips is dropped and the next one tried.
+ *
+ * Undoing an addition takes its clips out of the draft but keeps their files, so a redo puts them
+ * back as they were (labels, edits, captions, transcripts). Their files go once no redo can: the
+ * redo stack cleared by a new change, or the editor closing. History lives for the session.
  */
 export function useEditorHistory(
   clips: EditorClip[],
@@ -35,77 +43,93 @@ export function useEditorHistory(
   captionY: number | null,
   setCaptionY: (y: number | null) => void,
 ) {
-  const [history, setHistory] = useState<History<Snapshot>>(emptyHistory);
+  const [history, setHistoryState] = useState<History<Step>>(emptyHistory);
+  // The same history, for the async steps and the unmount (no stale closure).
+  const latest = useRef(history);
+  const setHistory = (next: History<Step>) => {
+    latest.current = next;
+    setHistoryState(next);
+  };
+  // An addition being taken out or put back: other steps wait for it.
+  const busy = useRef(false);
+  useEffect(() => () => dropAll(latest.current.future), []);
 
-  const snapshot = (): Snapshot => ({
-    order: clips.map((c) => c.id),
-    edits: Object.fromEntries(clips.map((c) => [c.id, c.editKey])),
-    captions: Object.fromEntries(clips.map((c) => [c.id, captions.get(c.id) ?? null])),
-    captionY,
-  });
+  const present = (): Present => ({ clips, captions, captionY });
 
-  /** Writes `target` where it differs from now; false when nothing did (a no-op step). */
-  const apply = (target: Snapshot) => {
-    let changed = false;
-    for (const c of clips) {
-      if (!(c.id in target.edits) || target.edits[c.id] === c.editKey) continue;
-      setValue(c.id, target.edits[c.id]);
-      changed = true;
-    }
-    const captionsBack = new Map<string, string | null>();
-    for (const c of clips) {
-      const value = target.captions?.[c.id];
-      if (value === undefined || value === (captions.get(c.id) ?? null)) continue;
-      captionsBack.set(c.id, value);
-    }
-    if (captionsBack.size) {
-      setCaptions(captionsBack);
-      changed = true;
-    }
-    // Where the captions sit (a step from before it was recorded has none).
-    if (target.captionY !== undefined && target.captionY !== captionY) {
-      setCaptionY(target.captionY);
-      changed = true;
-    }
-    // The order, among the clips still here.
-    const ids = clips.map((c) => c.id);
-    const order = target.order.filter((id) => ids.includes(id));
-    const rest = ids.filter((id) => !order.includes(id));
-    if (order.join() !== ids.filter((id) => order.includes(id)).join()) {
-      reorder([...order, ...rest]);
-      changed = true;
-    }
-    return changed;
+  /** A new step: whatever the redo stack held is gone for good. */
+  const push = (step: Step, opKey: string | null) => {
+    const h = latest.current;
+    dropAll(h.future);
+    setHistory(recordStep(h, step, opKey, Date.now()));
   };
 
   const step = (direction: 'undo' | 'redo') => {
-    let h = history;
-    const now = snapshot();
-    while (true) {
-      const r = direction === 'undo' ? undoStep(h, now) : redoStep(h, now);
-      if (!r) {
-        setHistory(h);
+    if (busy.current) return;
+    const plan = planStep(latest.current, direction, present());
+    switch (plan.kind) {
+      case 'none':
+        setHistory(plan.history);
+        return;
+      case 'state': {
+        const { diff } = plan;
+        for (const [id, value] of diff.edits) setValue(id, value);
+        if (diff.captions.size) setCaptions(diff.captions);
+        if (diff.captionY !== undefined) setCaptionY(diff.captionY);
+        if (diff.order) reorder(diff.order);
+        setHistory(plan.history);
         return;
       }
-      if (apply(r.value)) {
-        setHistory(r.history);
+      case 'takeOut': {
+        setHistory(plan.history);
+        busy.current = true;
+        void takeOutSegments(plan.ids)
+          .then((taken) => {
+            const h = latest.current;
+            // Nothing came out (gone meanwhile): the step has nothing left to undo.
+            if (!taken) {
+              if (h.past[h.past.length - 1] === plan.step) {
+                setHistory({ ...h, past: h.past.slice(0, -1) });
+              }
+              return;
+            }
+            const next = undoAdded(h, plan.step, taken);
+            // A change came in meanwhile and cleared the redo stack: the clips stay out.
+            if (next) setHistory(next);
+            else void dropTakenOut(taken);
+          })
+          .catch((e: unknown) => console.warn('[editor] undo of an addition failed', e))
+          .finally(() => {
+            busy.current = false;
+          });
         return;
       }
-      // Nothing left to change in that step: drop it, keep the other stack as it was.
-      h =
-        direction === 'undo' ? { ...r.history, future: h.future } : { ...r.history, past: h.past };
+      case 'putBack': {
+        setHistory(plan.history);
+        busy.current = true;
+        void restoreSegments(plan.step.taken)
+          .then(() => {
+            const next = redoAdded(latest.current, plan.step);
+            if (next) setHistory(next);
+          })
+          .catch((e: unknown) => console.warn('[editor] redo of an addition failed', e))
+          .finally(() => {
+            busy.current = false;
+          });
+        return;
+      }
     }
   };
 
   return {
     /** Call before an edit. `opKey` (e.g. `speed:<id>`) merges quick repeats into one step. */
-    record: (opKey: string | null) => {
-      const before = snapshot();
-      const at = Date.now();
-      setHistory((h) => recordStep(h, before, opKey, at));
+    record: (opKey: string | null) =>
+      push({ kind: 'state', snapshot: snapshotOf(present()) }, opKey),
+    /** Clips were added to the draft (already in it): one step that takes them all out. */
+    recordAdded: (ids: string[]) => {
+      if (ids.length) push({ kind: 'added', ids, taken: null }, null);
     },
     /** Ends a merge window (a drag let go). */
-    close: () => setHistory(closeCoalescing),
+    close: () => setHistory(closeCoalescing(latest.current)),
     undo: () => step('undo'),
     redo: () => step('redo'),
     canUndo: history.past.length > 0,

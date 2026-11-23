@@ -24,7 +24,7 @@ import {
   type HostContext,
   type HostContextColumns,
 } from './host-context';
-import type { Draft, Segment } from './schema';
+import type { ClipTranscript, Draft, Segment } from './schema';
 import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
 import { deleteSavedLink } from './secure-token';
 import {
@@ -321,17 +321,7 @@ export async function insertSegments(
     if (!counter) throw new Error(`insertSegments: draft ${draftId} not found`);
 
     const at = insertSlot(tx, draftId, anchor);
-    if (at.shift) {
-      const from = sql`${segments.draftId} = ${draftId} and ${segments.order} >= ${at.order}`;
-      tx.update(segments)
-        .set({ order: sql`-${segments.order} - 1` })
-        .where(from)
-        .run();
-      tx.update(segments)
-        .set({ order: sql`-${segments.order} - 1 + ${k}` })
-        .where(and(eq(segments.draftId, draftId), sql`${segments.order} < 0`))
-        .run();
-    }
+    if (at.shift) shiftFrom(tx, draftId, at.order, k);
 
     const firstLabel = counter.clipNumber - k + 1;
     tx.insert(segments)
@@ -354,6 +344,21 @@ export async function insertSegments(
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Move the draft's clips from slot `from` on up by `k`, in two passes (parked on distinct
+ * negatives first) so the unique (draft, order) index never sees two rows on one slot.
+ */
+function shiftFrom(tx: Tx, draftId: string, from: number, k: number): void {
+  tx.update(segments)
+    .set({ order: sql`-${segments.order} - 1` })
+    .where(sql`${segments.draftId} = ${draftId} and ${segments.order} >= ${from}`)
+    .run();
+  tx.update(segments)
+    .set({ order: sql`-${segments.order} - 1 + ${k}` })
+    .where(and(eq(segments.draftId, draftId), sql`${segments.order} < 0`))
+    .run();
+}
 
 /**
  * The slot new clips take for `anchor`, and whether the clips from that slot on must move up: the
@@ -571,22 +576,137 @@ export async function deleteSegment(segmentId: string): Promise<void> {
 
   // The draft's timestamp on its own, so a file that won't delete can't leave Home's order stale.
   await afterCommit('delete clip', () => touchDraft(seg.draftId));
-  await afterCommit('delete clip', async () => {
-    const [{ value: stillReferenced }] = await db
-      .select({ value: count() })
+  await afterCommit('delete clip', () => deleteRowFiles(seg));
+}
+
+/**
+ * The files a deleted segment row used: its clip (unless another row still plays it), its legacy
+ * edited file and both covers. The row must be gone first.
+ */
+async function deleteRowFiles(seg: Segment): Promise<void> {
+  const [{ value: stillReferenced }] = await db
+    .select({ value: count() })
+    .from(segments)
+    .where(eq(segments.originalFilename, seg.originalFilename));
+  if (stillReferenced === 0) deleteSegmentFile(seg.originalFilename);
+  // The edited file and both thumbnails are per-segment (never shared) — delete with the row.
+  if (seg.editedFilename) {
+    deleteSegmentFile(seg.editedFilename);
+    deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
+  }
+  deleteSegmentFile(thumbRelPath(seg.draftId, seg.id));
+  // The row's cover may not match either derived path (e.g. a prior revision's thumb kept as a
+  // fallback after a failed regeneration) — delete whatever the row actually references too.
+  if (seg.thumbnail) deleteSegmentFile(seg.thumbnail);
+}
+
+/**
+ * Clips taken out of a draft by the editor's undo of an addition, kept so a redo can put them
+ * back (`restoreSegments`): the rows as they were, their transcripts, and the draft's order then.
+ * Their files stay on disk until `dropTakenOut`.
+ */
+export type TakenOutClips = {
+  draftId: string;
+  /** The draft's clip ids in order, before they were taken out. */
+  order: string[];
+  rows: Segment[];
+  transcripts: ClipTranscript[];
+};
+
+/**
+ * Take clips out of their draft (the undo of adding them), keeping their files: the rows go (the
+ * draft reads as if they were never added), and what's needed to put them back is returned.
+ * Clips already gone are skipped; null when none of them is left.
+ */
+export async function takeOutSegments(
+  segmentIds: readonly string[],
+): Promise<TakenOutClips | null> {
+  if (segmentIds.length === 0) return null;
+  const [first] = await db
+    .select({ draftId: segments.draftId })
+    .from(segments)
+    .where(inArray(segments.id, [...segmentIds]))
+    .limit(1);
+  if (!first) return null;
+  const { draftId } = first;
+  await beginClipMutation(draftId);
+  const taken = db.transaction((tx) => {
+    const all = tx
+      .select()
       .from(segments)
-      .where(eq(segments.originalFilename, seg.originalFilename));
-    if (stillReferenced === 0) deleteSegmentFile(seg.originalFilename);
-    // The edited file and both thumbnails are per-segment (never shared) — delete with the row.
-    if (seg.editedFilename) {
-      deleteSegmentFile(seg.editedFilename);
-      deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
-    }
-    deleteSegmentFile(thumbRelPath(seg.draftId, segmentId));
-    // The row's cover may not match either derived path (e.g. a prior revision's thumb kept as a
-    // fallback after a failed regeneration) — delete whatever the row actually references too.
-    if (seg.thumbnail) deleteSegmentFile(seg.thumbnail);
+      .where(eq(segments.draftId, draftId))
+      .orderBy(asc(segments.order))
+      .all();
+    const wanted = new Set(segmentIds);
+    const rows = all.filter((r) => wanted.has(r.id));
+    if (rows.length === 0) return null;
+    const ids = rows.map((r) => r.id);
+    const transcripts = tx
+      .select()
+      .from(clipTranscripts)
+      .where(inArray(clipTranscripts.segmentId, ids))
+      .all();
+    tx.delete(segments).where(inArray(segments.id, ids)).run();
+    tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
+    return { draftId, order: all.map((r) => r.id), rows, transcripts };
   });
+  return taken;
+}
+
+/**
+ * Put clips `takeOutSegments` took out back (the redo of adding them), with their labels, edits,
+ * captions and transcripts: each where it was, after the clip it followed then (or before the one
+ * it preceded) if that clip is still here, else at the end. Tells no clips-added listener: this
+ * is the same addition again, not a new one. A draft that has gone takes nothing back.
+ */
+export async function restoreSegments(taken: TakenOutClips): Promise<void> {
+  const { draftId } = taken;
+  if (taken.rows.length === 0) return;
+  await beginClipMutation(draftId);
+  db.transaction((tx) => {
+    const draft = tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, draftId)).get();
+    if (!draft) return;
+    const byId = new Map(taken.rows.map((r) => [r.id, r]));
+    const present = new Set(
+      tx
+        .select({ id: segments.id })
+        .from(segments)
+        .where(eq(segments.draftId, draftId))
+        .all()
+        .map((r) => r.id),
+    );
+    // In the old order, so each clip finds the one before it already back.
+    for (const [i, id] of taken.order.entries()) {
+      const row = byId.get(id);
+      if (!row || present.has(id)) continue;
+      const before = taken.order
+        .slice(0, i)
+        .reverse()
+        .find((x) => present.has(x));
+      const after = taken.order.slice(i + 1).find((x) => present.has(x));
+      const anchor: ClipAnchor = before ? { after: before } : after ? { before: after } : END;
+      const at = insertSlot(tx, draftId, anchor);
+      if (at.shift) shiftFrom(tx, draftId, at.order, 1);
+      tx.insert(segments)
+        .values({ ...row, draftId, order: at.order })
+        .run();
+      present.add(id);
+    }
+    const back = taken.transcripts.filter((t) => byId.has(t.segmentId));
+    if (back.length) tx.insert(clipTranscripts).values(back).onConflictDoNothing().run();
+    tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
+  });
+}
+
+/**
+ * The files of clips taken out and never put back (the editor's redo history is gone): deleted as
+ * `deleteSegment` would. A clip that is back in a draft keeps its files.
+ */
+export async function dropTakenOut(taken: TakenOutClips): Promise<void> {
+  for (const row of taken.rows) {
+    if (await segmentExists(row.id)) continue;
+    await afterCommit('drop undone clip', () => deleteRowFiles(row));
+  }
 }
 
 /**
