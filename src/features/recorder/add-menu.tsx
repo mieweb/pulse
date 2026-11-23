@@ -3,23 +3,22 @@ import { ImportButton } from './import-button';
 import { PlusMenu } from './plus-menu';
 
 /**
- * The recorder's "+": Import video or Record screen (the shared `PlusMenu`: the iOS system menu,
- * an Android popover). Without screen recording a tap imports, as before.
+ * The recorder's "+": Import video, Import image or screenshot, or Record screen where it's
+ * offered (the shared `PlusMenu`: the iOS system menu, an Android popover).
  */
 export function AddMenu({
   onImport,
+  onImportImages,
   onRecordScreen,
   screenAvailable,
   disabled,
   busy,
   progress,
+  progressText,
 }: AddMenuProps) {
-  if (!screenAvailable) {
-    return <ImportButton onPress={onImport} disabled={disabled} busy={busy} progress={progress} />;
-  }
   return (
     <PlusMenu
-      actions={addMenuActions({ onImport, onRecordScreen })}
+      actions={addMenuActions({ onImport, onImportImages, onRecordScreen, screenAvailable })}
       enabled={!disabled && !busy}
       label="Add a clip"
       renderButton={(onPress) => (
@@ -28,6 +27,7 @@ export function AddMenu({
           disabled={disabled}
           busy={busy}
           progress={progress}
+          progressText={progressText}
           label="Add a clip"
         />
       )}

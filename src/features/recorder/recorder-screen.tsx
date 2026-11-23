@@ -185,8 +185,10 @@ export function RecorderScreen({
     setInsertAnchor,
     getInsertAnchor,
     importClip,
+    importImages,
     isImporting,
     importProgress,
+    importProgressText,
     startHoldRecording,
     endHoldRecording,
     flipCamera,
@@ -982,6 +984,7 @@ export function RecorderScreen({
               style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
               <AddMenu
                 onImport={importClip}
+                onImportImages={importImages}
                 onRecordScreen={recordScreen}
                 // Importing works during a screen take; only a second screen take can't start.
                 screenAvailable={screenCapture != null && !screenLive}
@@ -989,6 +992,7 @@ export function RecorderScreen({
                 // A screen recording converting into a draft shows here too, as a Photos import.
                 busy={isImporting || screen.importing}
                 progress={isImporting ? importProgress : screen.progress}
+                progressText={isImporting ? importProgressText : undefined}
               />
             </Animated.View>
           </View>
