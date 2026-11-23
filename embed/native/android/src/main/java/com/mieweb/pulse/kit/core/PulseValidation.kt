@@ -38,6 +38,12 @@ object PulseValidation {
    * namespaces become file and folder names, so nothing else gets near the file system.
    */
   @JvmStatic
+  /**
+   * A requestId: a plain name that doesn't end in `.project`. Its result is `<id>.json` in the inbox,
+   * and `<id>.project.json` is a project document there, never a result (as on iOS).
+   */
+  fun isRequestId(s: String): Boolean = isPlainName(s) && !s.endsWith(".project")
+
   fun isPlainName(s: String): Boolean =
     s.isNotEmpty() && s.length <= PLAIN_NAME_MAX && s != "." && s != ".." &&
       s.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "._-" }
@@ -61,8 +67,10 @@ object PulseValidation {
     val r = args["requestId"]
     if (r != null && r != PulseJson.Null) {
       val s = r.string
-      if (s == null || !isPlainName(s)) {
-        return bad("requestId must be 1–64 letters, digits, dots, dashes or underscores.")
+      if (s == null || !isRequestId(s)) {
+        return bad(
+          "requestId must be 1–64 letters, digits, dots, dashes or underscores, not ending in .project.",
+        )
       }
       requestId = s
     }

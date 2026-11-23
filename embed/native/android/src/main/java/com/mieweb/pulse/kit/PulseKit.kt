@@ -288,7 +288,7 @@ class PulseKit private constructor(context: Context) {
       "pendingResults" -> withRoots(callId, respond) { PulseJson.Arr(it.inbox.pending()) }
       "acknowledge" -> {
         val requestId = req.args["requestId"]?.string
-        if (requestId == null || !PulseValidation.isPlainName(requestId)) {
+        if (requestId == null || !PulseValidation.isRequestId(requestId)) {
           return respond(
             ReplyEnvelope.failure("invalid_options", "acknowledge needs a requestId.", callId),
           )
