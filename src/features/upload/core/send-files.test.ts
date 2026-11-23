@@ -95,17 +95,20 @@ function addDraft() {
 }
 
 /** The cues of a WebVTT document: `[start, text]`. */
+
+/** Cue text without its markup (`<v Name>`, `<c>`): drops every character from `<` to `>`. */
+function stripTags(acc: { inTag: boolean; out: string }, ch: string) {
+  if (ch === '<') return { inTag: true, out: acc.out };
+  if (ch === '>') return { inTag: false, out: acc.out };
+  return acc.inTag ? acc : { inTag: false, out: acc.out + ch };
+}
 function cues(vtt: string): [string, string][] {
   const blocks = vtt.split('\n\n').filter((b) => b.includes('-->'));
   return blocks.map((b) => {
     const [timing, ...text] = b.split('\n');
     return [
       timing.split(' --> ')[0],
-      text
-        .join(' ')
-        .replace(/<[^>]*>/g, '')
-        .replace(/[<>]/g, '') // a stray bracket left by a tag the line break cut
-        .trim(),
+      text.join(' ').split('').reduce(stripTags, { inTag: false, out: '' }).out.trim(),
     ];
   });
 }
