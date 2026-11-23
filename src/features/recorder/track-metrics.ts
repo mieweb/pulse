@@ -10,8 +10,14 @@ export const TRACK_GAP = Spacing.two;
  *  sit exactly where the record button is (clean swap as one fades out and the other in). */
 export const RECORD_BUTTON_SIZE = 76;
 export const RECORD_BAR_GAP = Spacing.three;
-/** Room above and below the thumbs inside the bar's viewport. */
+/** Room above and below the thumbs inside the bar's viewport: the insert cursor's tags ride it. */
 export const BAR_LANE = 12;
+/** The insert cursor's grab tags (insert-cursor.tsx): width, height. */
+export const CURSOR_TAG_WIDTH = 18;
+export const CURSOR_TAG_HEIGHT = 12;
+/** The clips' inset at each end of the strip, so the cursor's tags before the first clip and after
+ *  the last (centred in this inset's outer gap) aren't clipped by the viewport. */
+export const CURSOR_INSET = CURSOR_TAG_WIDTH / 2 + TRACK_GAP / 2;
 /** Ordinal badge-pill diameter. Half of it rides above the thumb's top edge; POP_LANE (the
  *  vertical breathing room inside the scroll frame) must be at least BADGE_SIZE / 2. */
 export const BADGE_SIZE = 18;

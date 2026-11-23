@@ -37,6 +37,7 @@ import {
 } from '@/features/recorder/lens-selector';
 import { PermissionGate } from '@/features/recorder/permission-gate';
 import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
+import { cursorAfterReorder } from '@/features/recorder/insert-point';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
 import { checkDiskForRecording, NOT_ENOUGH_SPACE } from '@/features/recorder/low-disk';
@@ -180,6 +181,8 @@ export function RecorderScreen({
     toggleRecording,
     finalizeRecording,
     ensureDraft,
+    insertAnchor,
+    setInsertAnchor,
     getInsertAnchor,
     importClip,
     isImporting,
@@ -998,7 +1001,21 @@ export function RecorderScreen({
                 <TipAnchor id="clips" shown={clipsTip.shown} onDismiss={clipsTip.dismiss} />
               )
             }
-            onReorder={reorderSegments}
+            onReorder={(ids) => {
+              // The insert cursor keeps its place on the strip while the clips move round it.
+              setInsertAnchor(
+                cursorAfterReorder(
+                  getInsertAnchor(),
+                  bar.segments.map((s) => s.id),
+                  ids,
+                ),
+              );
+              reorderSegments(ids);
+            }}
+            insertAnchor={insertAnchor}
+            onInsertAnchorChange={setInsertAnchor}
+            // Held still while a take records: it's where the take goes.
+            cursorEnabled={!isRecording}
             // Drag-to-trash deletes at once.
             onDelete={deleteSegment}
             onDragActiveChange={setDragging}
