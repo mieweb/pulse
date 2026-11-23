@@ -1,6 +1,6 @@
 import type { ClipAnchor } from '@/core/clip-anchor';
 import type { EditorView } from '@/db/settings';
-import type { ScreenCapturePort } from '@/features/recorder/contract';
+import type { PlaceLabels, ScreenCapturePort } from '@/features/recorder/contract';
 
 /**
  * What the editor screen is given: the draft to open and where its exits go. The standalone route
@@ -31,4 +31,6 @@ export type EditorScreenProps = {
   screenCapture?: ScreenCapturePort;
   /** Captions with no model, the model control and the "pick a model" status open the model sheet. */
   onOpenModelSheet: () => void;
+  /** What paired places are called, for drafts named after one ("From another Pulse"). */
+  placeLabels?: PlaceLabels;
 };

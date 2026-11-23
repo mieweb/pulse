@@ -6,6 +6,7 @@ import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { peekRecorderPlace, takeRecorderPlace } from '@/features/recorder/link-place';
 import { RecorderScreen } from '@/features/recorder/recorder-screen';
 import { screenCapturePort } from '@/features/screen-capture/screen-capture';
+import { usePlaceLabels } from '@/features/upload/pairing/use-destinations';
 import { closeToHome } from '@/shell/standalone/navigation';
 
 /** The stack as this route sees it: enough to tell which screen is under this one. */
@@ -29,6 +30,7 @@ function editorBelow(state: StackState | undefined, draftId: string): boolean {
 export default function RecorderRoute() {
   const focused = useIsFocused();
   const navigation = useNavigation();
+  const placeLabels = usePlaceLabels();
   // A link for a place opens the recorder for that place: a draft made here is recorded for it,
   // and named with the link's `name`, if it has one. The place comes from memory, never from the
   // route (see `link-place.ts`): `forLink` only says this recorder was opened for a link. A
@@ -72,6 +74,7 @@ export default function RecorderRoute() {
         // Screen recording is the Pulse app's: the embed's recorder has no Record screen.
         screenCapture={screenCapturePort}
         insertAnchor={insertAnchor}
+        placeLabels={placeLabels}
       />
     </ScreenFocusProvider>
   );

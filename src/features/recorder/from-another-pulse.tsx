@@ -18,7 +18,13 @@ import { PrimaryButton } from '@/components/primary-button';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import type { ClipAnchor } from '@/core/clip-anchor';
-import { copyClipsInto, draftDisplayName, otherDraftsQuery, segmentsForDraft } from '@/db/drafts';
+import {
+  anotherDraftClipQuery,
+  copyClipsInto,
+  draftDisplayName,
+  otherDraftsQuery,
+  segmentsForDraft,
+} from '@/db/drafts';
 import type { Segment } from '@/db/schema';
 import { useToast } from '@/features/toast/toast-provider';
 import { useNow } from '@/hooks/use-now';
@@ -30,6 +36,7 @@ import { effMs } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
 
 import { fromAnotherPulseAction } from './add-menu-actions';
+import type { PlaceLabels } from './contract';
 
 type DraftRow = Awaited<ReturnType<typeof otherDraftsQuery>>[number];
 
@@ -48,34 +55,50 @@ const THUMB_TEXT_SCALE = 1.2;
  * the copies land there whatever moves while the sheet is open, as the menu's other items do.
  *
  * The sheet is the screen's own (a React Native Modal: a page sheet on iOS, full screen on
- * Android), not a route, so the Pulse app and the embed present it the same way.
+ * Android), not a route, so the Pulse app and the embed present it the same way. Only a cheap "is
+ * there a clip elsewhere" check stays live for the menu item; the drafts list is read while the
+ * sheet shows. A draft named after its place shows that place's label where `placeLabels` is
+ * given (the Pulse app, as on Home); the embed has no paired places, so "Untitled".
  */
 export function useFromAnotherPulse({
   draftId,
   target,
   anchor,
   onOpen,
+  placeLabels,
 }: {
   draftId: string | null;
   target: () => Promise<string>;
   anchor: () => ClipAnchor;
   /** Before the sheet shows (the editor pauses its preview). */
   onOpen?: () => void;
-}): { action: ReturnType<typeof fromAnotherPulseAction> | null; sheet: ReactElement | null } {
-  const { data: others } = useLiveQuery(otherDraftsQuery(draftId), [draftId]);
+  placeLabels?: PlaceLabels;
+}): {
+  action: ReturnType<typeof fromAnotherPulseAction> | null;
+  /** The sheet is showing (the recorder holds its camera meanwhile). */
+  open: boolean;
+  sheet: ReactElement | null;
+} {
+  const { data: elsewhere } = useLiveQuery(anotherDraftClipQuery(draftId), [draftId]);
   // Open: at the anchor taken as the item was picked.
   const [open, setOpen] = useState<{ anchor: ClipAnchor } | null>(null);
   const show = () => {
     onOpen?.();
-    setOpen({ anchor: anchor() });
+    const at = anchor();
+    // The next turn of the run loop, not now: on iOS the item is a SwiftUI Menu's action, and a
+    // Modal presented while that menu is still dismissing can fail to show (the + then looks
+    // dead). Not a delay or an animation, only out of the menu's dismissal.
+    setTimeout(() => setOpen({ anchor: at }), 0);
   };
   return {
-    action: others.length > 0 ? fromAnotherPulseAction(show) : null,
+    action: elsewhere.length > 0 ? fromAnotherPulseAction(show) : null,
+    open: open !== null,
     sheet: open ? (
       <FromAnotherPulseSheet
-        drafts={others}
+        draftId={draftId}
         target={target}
         anchor={open.anchor}
+        placeLabels={placeLabels}
         onClose={() => setOpen(null)}
       />
     ) : null,
@@ -83,19 +106,24 @@ export function useFromAnotherPulse({
 }
 
 function FromAnotherPulseSheet({
-  drafts,
+  draftId,
   target,
   anchor,
+  placeLabels,
   onClose,
 }: {
-  drafts: DraftRow[];
+  draftId: string | null;
   target: () => Promise<string>;
   anchor: ClipAnchor;
+  placeLabels?: PlaceLabels;
   onClose: () => void;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { showToast } = useToast();
+  const { data: drafts, updatedAt } = useLiveQuery(otherDraftsQuery(draftId), [draftId]);
+  const nameOf = (d: DraftRow) =>
+    draftDisplayName(d.name, placeLabels?.(d.contextServer, d.contextRef) ?? null);
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [copying, setCopying] = useState<{ done: number; total: number } | null>(null);
@@ -125,9 +153,9 @@ function FromAnotherPulseSheet({
     running.current = true;
     setCopying({ done: 0, total: chosen.length });
     try {
-      const into = await target();
+      // A recorder's draft is made only once a clip has a file to copy.
       const { segmentIds, skipped } = await copyClipsInto(
-        into,
+        target,
         sourceId,
         chosen,
         anchor,
@@ -176,7 +204,7 @@ function FromAnotherPulseSheet({
         </Pressable>
       ) : null}
       <ThemedText type="headline" numberOfLines={1} style={styles.title} accessibilityRole="header">
-        {source ? draftDisplayName(source.name, null) : 'From another Pulse'}
+        {source ? nameOf(source) : 'From another Pulse'}
       </ThemedText>
       {source && clips.length > 0 ? (
         <Pressable
@@ -184,6 +212,9 @@ function FromAnotherPulseSheet({
           disabled={!!copying}
           hitSlop={8}
           accessibilityRole="button"
+          accessibilityHint={
+            allChosen ? 'Unchecks every clip.' : 'Checks every clip of this Pulse to add.'
+          }
           style={({ pressed }) => [pressed && styles.pressed]}>
           <ThemedText type="subheadlineEmphasized" style={{ color: theme.accent }}>
             {allChosen ? 'Deselect all' : 'Select all'}
@@ -244,9 +275,11 @@ function FromAnotherPulseSheet({
               />
             </View>
           </>
-        ) : (
+        ) : updatedAt === undefined ? null : (
+          // Nothing until the list is read (a beat), so its empty state never flashes.
           <DraftList
             drafts={drafts}
+            nameOf={nameOf}
             bottomInset={insets.bottom}
             onPick={(id) => {
               setSelected(new Set());
@@ -261,10 +294,12 @@ function FromAnotherPulseSheet({
 
 function DraftList({
   drafts,
+  nameOf,
   bottomInset,
   onPick,
 }: {
   drafts: DraftRow[];
+  nameOf: (draft: DraftRow) => string;
   bottomInset: number;
   onPick: (id: string) => void;
 }) {
@@ -280,7 +315,7 @@ function DraftList({
         </ThemedText>
       }
       renderItem={({ item }) => (
-        <DraftRowView draft={item} now={now} onPress={() => onPick(item.id)} />
+        <DraftRowView draft={item} name={nameOf(item)} now={now} onPress={() => onPick(item.id)} />
       )}
     />
   );
@@ -289,10 +324,12 @@ function DraftList({
 /** A draft as Home's card shows it: its cover, name, clip count, length and date. */
 function DraftRowView({
   draft,
+  name,
   now,
   onPress,
 }: {
   draft: DraftRow;
+  name: string;
   now: number;
   onPress: () => void;
 }) {
@@ -302,7 +339,6 @@ function DraftRowView({
     draft.firstSegmentFilename,
     draft.firstSegmentEditState,
   );
-  const name = draftDisplayName(draft.name, null);
   const details = `${formatClipCount(draft.segmentCount)} · ${formatDuration(
     draft.durationMs > 0 ? Math.max(draft.durationMs, 1000) : 0,
   )} · ${formatRelativeDate(draft.lastModified, now)}`;

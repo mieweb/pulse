@@ -9,6 +9,7 @@ import {
   deleteSegmentFile,
   editCoverRelPath,
   editedThumbRelPath,
+  relFileExists,
   thumbRelPath,
 } from '@/utils/file-store';
 import { type ClipAnchor, END, noteClipsAdded } from '@/core/clip-anchor';
@@ -101,6 +102,20 @@ export function otherDraftsQuery(draftId: string | null) {
     .where(draftId ? ne(drafts.id, draftId) : undefined)
     .groupBy(drafts.id)
     .orderBy(desc(drafts.lastModified));
+}
+
+/**
+ * A clip of another draft than `draftId` (any draft's, for `null`), or none: whether "From another
+ * Pulse" has anything to offer. It stops at the first such clip, cheap enough to keep live while a
+ * screen is open (it re-runs on every clip write); the full list (`otherDraftsQuery`) is read only
+ * while its sheet shows.
+ */
+export function anotherDraftClipQuery(draftId: string | null) {
+  return db
+    .select({ id: segments.id })
+    .from(segments)
+    .where(draftId ? ne(segments.draftId, draftId) : undefined)
+    .limit(1);
 }
 
 /**
@@ -1103,6 +1118,8 @@ function clipFileRemap(draftId: string, stemFor: (stem: string) => string) {
 
 /** What `copyClipsInto` did. */
 export type CopiedClips = {
+  /** The draft they went to; null when a function target was never needed (nothing to copy). */
+  draftId: string | null;
   /** The copies' ids, in their order in the target draft (the source's order). */
   segmentIds: string[];
   /** Clips asked for and not copied: gone from the source by then, or their video missing. */
@@ -1116,31 +1133,33 @@ export type CopiedClips = {
  * and its clip transcripts, their paths pointing at the copies. The copies get the target's next
  * clip numbers, and go in through `insertSegments`, so they're one addition (the editor's one undo
  * step). The source is only read: it may be locked (uploading); the target may not, and a locked
- * one is refused before anything is copied.
+ * one is refused before anything is copied. `target` may be a function (a recorder that hasn't
+ * made its draft yet): it's called just before the first file is copied, so a copy with nothing
+ * to copy (every video missing) makes no draft (`draftId` null).
  *
  * The clips are as they were when the copy started: a clip deleted from the source meanwhile, or
  * one whose video is missing, is skipped (`skipped`); one whose cover went meanwhile (an edit
  * replacing it) comes without one and shows its own first frame. The files are copied first
- * (`onProgress(done, total)` after each clip), then the rows go in in one transaction; if that
- * fails, the copies' files are deleted and the error is thrown.
+ * (`onProgress(done, total)` after each clip), then the rows go in in one transaction. A file
+ * copy that fails (a full disk), or a transaction that does, deletes every copy's files and
+ * throws: nothing is added.
  */
 export async function copyClipsInto(
-  targetDraftId: string,
+  target: string | (() => Promise<string>),
   sourceDraftId: string,
   segmentIds: readonly string[],
   anchor: ClipAnchor | (() => ClipAnchor),
   onProgress?: (done: number, total: number) => void,
 ): Promise<CopiedClips> {
   assertEditable();
-  if (targetDraftId === sourceDraftId) {
-    throw new Error('copyClipsInto: clips are copied into another draft');
-  }
-  await assertNotUploading(targetDraftId);
-  const [target] = await db
-    .select({ id: drafts.id })
-    .from(drafts)
-    .where(eq(drafts.id, targetDraftId));
-  if (!target) throw new LibraryError('not_found', `Draft ${targetDraftId} doesn't exist.`);
+  const checkTarget = async (id: string) => {
+    if (id === sourceDraftId) throw new Error('copyClipsInto: clips are copied into another draft');
+    await assertNotUploading(id);
+    const [row] = await db.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, id));
+    if (!row) throw new LibraryError('not_found', `Draft ${id} doesn't exist.`);
+  };
+  let targetDraftId = typeof target === 'string' ? target : null;
+  if (targetDraftId !== null) await checkTarget(targetDraftId);
 
   const wanted = new Set(segmentIds);
   const rows = (await segmentsForDraft(sourceDraftId)).filter((s) => wanted.has(s.id));
@@ -1160,19 +1179,45 @@ export async function copyClipsInto(
   // A file named after something else (a clip sharing another's original) gets a fresh name too:
   // the target may already hold an earlier copy of it under its old one.
   const otherStems = new Map<string, string>();
-  const remap = clipFileRemap(targetDraftId, (stem) => {
+  const stemFor = (stem: string) => {
     const id = newIds.get(stem) ?? otherStems.get(stem) ?? Crypto.randomUUID();
     if (!newIds.has(stem)) otherStems.set(stem, id);
     return id;
-  });
+  };
+  // The target's paths, once it's known: a function target is called (and checked) just before
+  // the first file is copied, so nothing to copy makes no draft.
+  let remapInto: ((rel: string) => string) | null = null;
+  const remap = (rel: string) => {
+    if (!remapInto) throw new Error('copyClipsInto: no target yet');
+    return remapInto(rel);
+  };
+  const resolveTarget = async () => {
+    if (targetDraftId === null) {
+      targetDraftId = await (target as () => Promise<string>)();
+      await checkTarget(targetDraftId);
+    }
+    remapInto ??= clipFileRemap(targetDraftId, stemFor);
+  };
 
-  // Each file once (clips can share an original), and every copy written, for the clean-up.
+  // Each file once (clips can share an original), and every copy written, for the clean-up. False
+  // only when the source file is missing (that clip is skipped); a copy that fails (a full disk)
+  // throws, its partial file removed, and ends the whole copy below.
   const copiedOk = new Map<string, boolean>();
   const written: string[] = [];
   const copy = async (rel: string): Promise<boolean> => {
     const known = copiedOk.get(rel);
     if (known !== undefined) return known;
-    const ok = await copyRelFile(rel, remap(rel)).catch(() => false);
+    let ok = relFileExists(rel);
+    if (ok) {
+      await resolveTarget();
+      const to = remap(rel);
+      try {
+        ok = await copyRelFile(rel, to);
+      } catch (e) {
+        deleteQuietly(absolutize(to));
+        throw e;
+      }
+    }
     copiedOk.set(rel, ok);
     if (ok) written.push(remap(rel));
     return ok;
@@ -1190,7 +1235,7 @@ export async function copyClipsInto(
       let ok = true;
       for (const rel of videos) ok = ok && (await copy(rel));
       if (ok) {
-        // A cover that won't copy leaves none (the clip shows its own first frame).
+        // A missing cover leaves none (the clip shows its own first frame).
         const thumbnail =
           seg.thumbnail && (await copy(seg.thumbnail)) ? remap(seg.thumbnail) : null;
         const caption = parseCaptionEdit(seg.captionEdit);
@@ -1222,7 +1267,9 @@ export async function copyClipsInto(
   );
   deleteWritten(used);
   const skipped = wanted.size - copies.length;
-  if (copies.length === 0) return { segmentIds: [], skipped };
+  if (copies.length === 0 || targetDraftId === null) {
+    return { draftId: targetDraftId, segmentIds: [], skipped };
+  }
 
   try {
     const added = await insertSegments(
@@ -1233,7 +1280,7 @@ export async function copyClipsInto(
         .filter((t) => copiedFrom.has(t.segmentId))
         .map((t) => ({ ...t, segmentId: newIds.get(t.segmentId)!, file: remap(t.file) })),
     );
-    return { segmentIds: added, skipped };
+    return { draftId: targetDraftId, segmentIds: added, skipped };
   } catch (e) {
     deleteWritten();
     throw e;

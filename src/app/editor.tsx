@@ -5,6 +5,7 @@ import { ScreenFocusProvider } from '@/core/navigation/focus';
 import type { EditorView } from '@/db/settings';
 import { EditorScreen } from '@/features/editor/editor-screen';
 import { screenCapturePort } from '@/features/screen-capture/screen-capture';
+import { usePlaceLabels } from '@/features/upload/pairing/use-destinations';
 
 /** Back to the recorder (or Home, when the editor was opened by a link). */
 const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
@@ -31,6 +32,7 @@ export default function EditorRoute() {
     view?: string;
   }>();
   const focused = useIsFocused();
+  const placeLabels = usePlaceLabels();
   return (
     <ScreenFocusProvider focused={focused}>
       <EditorScreen
@@ -43,6 +45,7 @@ export default function EditorRoute() {
         // Screen recording is the Pulse app's: the embed's editor has no Record screen.
         screenCapture={screenCapturePort}
         onOpenModelSheet={openModelSheet}
+        placeLabels={placeLabels}
       />
     </ScreenFocusProvider>
   );

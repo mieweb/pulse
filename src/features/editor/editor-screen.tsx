@@ -203,6 +203,7 @@ export function EditorScreen({
   onAddClips,
   onOpenModelSheet,
   screenCapture,
+  placeLabels,
 }: EditorScreenProps) {
   // Not compiled by the React Compiler (as before): its memoization here leaves the track's
   // animated opacity stale until a re-render. To be turned on as a change of its own, tested.
@@ -600,6 +601,7 @@ export function EditorScreen({
     target: async () => draftId,
     anchor: anchorNow,
     onOpen: () => ctl.pause(),
+    placeLabels,
   });
   const addActions: MenuAction[] = [
     // Into the recorder, its insert cursor here; back here with the new clips on Edit.

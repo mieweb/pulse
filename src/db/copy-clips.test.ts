@@ -53,9 +53,15 @@ jest.mock('expo-crypto', () => {
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { onClipsAdded, type ClipsAdded } from '@/core/clip-anchor';
-import { env } from '@/test-support/expo-fs-node';
+import { env, File } from '@/test-support/expo-fs-node';
 import { expoDb } from './client';
-import { addSegment, copyClipsInto, createDraft, otherDraftsQuery } from './drafts';
+import {
+  addSegment,
+  anotherDraftClipQuery,
+  copyClipsInto,
+  createDraft,
+  otherDraftsQuery,
+} from './drafts';
 /* eslint-enable import/first */
 
 const conn = expoDb as unknown as {
@@ -274,10 +280,30 @@ describe('copyClipsInto', () => {
     const dst = await target();
     rmSync(join(env.docDir, 'drafts', src.draftId), { recursive: true });
     expect(await copyClipsInto(dst.draftId, src.draftId, [src.a], { at: 'end' })).toEqual({
+      draftId: dst.draftId,
       segmentIds: [],
       skipped: 1,
     });
     expect(rows(dst.draftId)).toHaveLength(2);
+  });
+
+  it('makes a target draft only once a clip has something to copy', async () => {
+    const src = await source();
+    const make = jest.fn(async () => createDraft());
+    rmSync(join(env.docDir, `drafts/${src.draftId}/segments/${src.a}.mp4`));
+    // Only a's video was asked for, and it's missing: no draft.
+    expect(await copyClipsInto(make, src.draftId, [src.a], { at: 'end' })).toEqual({
+      draftId: null,
+      segmentIds: [],
+      skipped: 1,
+    });
+    expect(make).not.toHaveBeenCalled();
+    // a missing, b and c there: one draft, made once, holding the two copies.
+    const result = await copyClipsInto(make, src.draftId, [src.a, src.b, src.c], { at: 'end' });
+    expect(make).toHaveBeenCalledTimes(1);
+    expect(result.skipped).toBe(1);
+    expect(rows(result.draftId!).map((r) => r.id)).toEqual(result.segmentIds);
+    expect(result.segmentIds).toHaveLength(2);
   });
 
   it('skips a clip deleted from the source during the copy', async () => {
@@ -306,6 +332,32 @@ describe('copyClipsInto', () => {
       }),
     ).rejects.toThrow();
     expect(filesOf(dst.draftId)).toEqual([`${dst.x}.mp4`, `${dst.y}.mp4`]);
+  });
+
+  it('stops at a copy that fails (a full disk): nothing is added, no file is left', async () => {
+    const src = await source();
+    const dst = await target();
+    const realCopy = File.prototype.copy;
+    // The second clip's video runs out of space part-way: a partial file, then a throw.
+    const copy = jest.spyOn(File.prototype, 'copy').mockImplementation(async function (
+      this: File,
+      dest: File,
+    ) {
+      if (!this.path.endsWith(`${src.b}.mp4`)) return realCopy.call(this, dest);
+      writeFileSync(dest.path, 'part');
+      throw new Error('No space left on device');
+    });
+    try {
+      await expect(
+        copyClipsInto(dst.draftId, src.draftId, [src.a, src.b, src.c], { at: 'end' }),
+      ).rejects.toThrow(/No space left/);
+    } finally {
+      copy.mockRestore();
+    }
+    // Not taken for a missing video: c was never tried, and a's copies are gone with b's part.
+    expect(copy.mock.calls.some(([dest]) => dest.path.includes(src.c))).toBe(false);
+    expect(filesOf(dst.draftId)).toEqual([`${dst.x}.mp4`, `${dst.y}.mp4`]);
+    expect(rows(dst.draftId)).toHaveLength(2);
   });
 
   it('refuses a target that is uploading before copying anything', async () => {
@@ -386,5 +438,15 @@ describe('otherDraftsQuery', () => {
     expect((await otherDraftsQuery(null)).map((d) => d.id)).toEqual(
       expect.arrayContaining([src.draftId, dst.draftId]),
     );
+  });
+
+  it('says whether another draft has a clip (the menu item), cheaply', async () => {
+    const only = await target();
+    const empty = await createDraft();
+    // Every draft so far is this file's: only the other drafts' clips count.
+    conn.runSync('DELETE FROM segments WHERE draft_id != ?', only.draftId);
+    expect(await anotherDraftClipQuery(only.draftId)).toEqual([]);
+    expect(await anotherDraftClipQuery(empty)).toHaveLength(1);
+    expect(await anotherDraftClipQuery(null)).toHaveLength(1);
   });
 });

@@ -55,7 +55,16 @@ export type RecorderScreenProps = {
    * add position when the editor's "Record a clip here" opened it. Default: the end.
    */
   insertAnchor?: ClipAnchor;
+  /** What paired places are called, for drafts named after one ("From another Pulse"). */
+  placeLabels?: PlaceLabels;
 };
+
+/**
+ * What a place in the Pulse app's paired pool is called (`usePlaceLabels`, standalone-only), so a
+ * draft recorded for one is listed under that label, as on Home. Live: a new function when the
+ * pool changes. The embed has no paired places and passes none (its drafts show their own names).
+ */
+export type PlaceLabels = (server: string | null, ref: string | null) => string | null;
 
 /** `live`: a screen take of Pulse's own is capturing. `stopping`: Stop asked, file settling. */
 export type ScreenPhase = 'idle' | 'live' | 'stopping';

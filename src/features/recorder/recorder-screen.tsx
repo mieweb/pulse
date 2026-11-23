@@ -143,6 +143,7 @@ export function RecorderScreen({
   onClose,
   screenCapture,
   insertAnchor: initialInsertAnchor,
+  placeLabels,
 }: RecorderScreenProps) {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
@@ -206,6 +207,7 @@ export function RecorderScreen({
     draftId,
     target: ensureDraft,
     anchor: getInsertAnchor,
+    placeLabels,
   });
 
   // A refused microphone (embedded, PLAN-final §5.3): the recorder records without sound instead
@@ -746,8 +748,10 @@ export function RecorderScreen({
   // call detection re-poll first. `|| isRecording` keeps the session up while a clip finalizes in
   // background, so the segment saves before we tear it down. `!recovering` drops it for one bounce
   // after a mic-priority error so it rebuilds cleanly, and `!audioHandoff` holds the restart after
-  // the editor closes until the recording session config is back (see the handoff above).
-  const cameraActive = !audioHandoff && focused && (appActive || isRecording) && !recovering;
+  // the editor closes until the recording session config is back (see the handoff above). The
+  // "From another Pulse" sheet covers it too (full screen on Android): no camera behind it.
+  const cameraActive =
+    !audioHandoff && focused && (appActive || isRecording) && !recovering && !anotherPulse.open;
 
   // Close: finalize any in-flight clip (saving it into the draft) before the shell leaves, so the
   // segment isn't lost when the camera unmounts. (Hooks above the early returns register the same
