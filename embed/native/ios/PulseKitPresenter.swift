@@ -109,7 +109,8 @@ final class PulseKitContainerViewController: UIViewController {
   // MARK: Messages from Pulse JS
 
   /// `pulse.ui` from Pulse JS: `{ type: 'pulse.ui', statusBar?: 'light'|'dark'|'auto',
-  /// statusBarHidden?: bool, hasTake?: bool }`. Each field is optional and sticks until the next
+  /// statusBarHidden?: bool, hasTake?: bool, sending?: bool }` (`sending` is PulseKit's: its
+  /// close watchdog). Each field is optional and sticks until the next
   /// message sets it; unknown fields and values are ignored ('auto' and anything else → the
   /// system default for the appearance).
   func apply(ui: JSONValue) {

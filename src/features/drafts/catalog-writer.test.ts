@@ -50,6 +50,7 @@ const PART = `${CATALOG}.part`;
 let lib!: {
   roots: typeof import('@/utils/storage-root');
   client: typeof import('@/db/client');
+  captions: typeof import('@/db/captions');
   drafts: typeof import('@/db/drafts');
   host: typeof import('@/db/host-context');
   project: typeof import('@/db/project');
@@ -68,6 +69,7 @@ beforeAll(async () => {
   lib = {
     roots,
     client: jest.requireActual('@/db/client'),
+    captions: jest.requireActual('@/db/captions'),
     drafts: jest.requireActual('@/db/drafts'),
     host: jest.requireActual('@/db/host-context'),
     project: jest.requireActual('@/db/project'),
@@ -252,6 +254,41 @@ describe('catalog writer', () => {
     await lib.writer.startCatalogWriter({ namespace: 'com.example.host-0123456789abcdef' });
     expect(readCatalog().drafts[0].name).toBe('Fifth take');
     expect(existsSync(PART)).toBe(false);
+  });
+
+  it('the captions switch rewrites it: hasCaptions follows the draft’s captions-off setting', async () => {
+    const [draft] = readCatalog().drafts;
+    await lib.drafts.addSegment(draft.id, {
+      id: 'cap-1',
+      originalFilename: `drafts/${draft.id}/segments/cap-1.mp4`,
+      durationMs: 2000,
+      thumbnail: null,
+    });
+    await lib.captions.setCaptionEdits(
+      new Map([
+        [
+          'cap-1',
+          JSON.stringify({
+            file: `drafts/${draft.id}/segments/cap-1.mp4`,
+            words: [{ text: 'Hello', t0: 10, t1: 50 }],
+          }),
+        ],
+      ]),
+    );
+    let n = writes();
+    change('segments');
+    await waitForWrites(++n);
+    expect(readCatalog().drafts[0].hasCaptions).toBe(true);
+
+    // The switch writes only `settings` (as SQLite's update hook reports it): that is watched.
+    await lib.drafts.setDraftCaptionsOff(draft.id, true);
+    change('settings');
+    await waitForWrites(++n);
+    expect(readCatalog().drafts[0].hasCaptions).toBe(false);
+    await lib.drafts.setDraftCaptionsOff(draft.id, false);
+    change('settings');
+    await waitForWrites(++n);
+    expect(readCatalog().drafts[0].hasCaptions).toBe(true);
   });
 
   it('a library a newer Pulse migrated is written with readOnly: true', async () => {

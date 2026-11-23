@@ -120,4 +120,21 @@ describe('redactEntry', () => {
     const entry = redactEntry(text);
     expect(entry).not.toContain('s3cr3t');
   });
+
+  it('blanks a quoted credential longer than the redacted stretch, whose closing quote is past it', () => {
+    for (const [open, close] of [
+      ['{"password": "', '"}'],
+      ["{'apiKey': '", "'}"],
+    ]) {
+      const secret = 'pw'.repeat(MAX_ENTRY_CHARS * 2); // runs past the stretch redactEntry scans
+      const entry = redactEntry(`${'x '.repeat(MAX_ENTRY_CHARS / 4)}${open}${secret}${close} end`);
+      expect(entry).not.toContain('pwpw');
+      expect(entry.endsWith(`"${REDACTED}"`)).toBe(true);
+    }
+  });
+
+  it('keeps what follows a quoted credential that closes inside the stretch', () => {
+    const entry = redactEntry(`{"token": "abc", "note": "${'n'.repeat(MAX_ENTRY_CHARS * 3)}`);
+    expect(entry.startsWith(`{"token": "${REDACTED}", "note": "nnn`)).toBe(true);
+  });
 });

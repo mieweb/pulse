@@ -55,7 +55,7 @@ and swipe-to-dismiss (AD22), so Pulse JS's status-bar port and its "a take exist
 native through it:
 
 ```ts
-{ type: 'pulse.ui', statusBar?: 'light' | 'dark' | 'auto', statusBarHidden?: boolean, hasTake?: boolean }
+{ type: 'pulse.ui', statusBar?: 'light' | 'dark' | 'auto', statusBarHidden?: boolean, hasTake?: boolean, sending?: boolean }
 ```
 
 - Every field is optional and stays as last set; unknown fields are ignored.
@@ -64,14 +64,19 @@ native through it:
   dark skeleton.
 - `hasTake: true` turns swipe-to-dismiss off (`isModalInPresentation`). The facade also uses the
   last value when it has to end a flow itself (below).
+- `sending: true` while a Send runs (Export's merge, then the host's confirm), `false` once it
+  stops. Pulse JS finishes a Send before it ends the flow for `close`, so the close watchdog waits
+  for it (below).
 - No reply. A message while no flow is open is dropped.
 
 ### Results the facade writes itself, and double delivery
 
-When `close` gets no `pulse.result` within 5 s, or the host dismisses Pulse itself, the facade
-writes the result: `closed` (`reason` `host` or `interrupted`, `stage: 'recorded'`) when the last
-`pulse.ui` said `hasTake` and the request names a draft (`draftId` or `draft.continue`), otherwise
-`canceled` with `stage: 'none'`. `closed` needs a draftId, which the facade doesn't know for a new
+When `close` gets no `pulse.result` in time, or the host dismisses Pulse itself, the facade writes
+the result. In time means 5 s, or 30 s (the host confirm's 20 s, plus 10) while the last `pulse.ui`
+said `sending`; the watchdog is armed by `close` and armed again, from that moment, by each
+`pulse.ui` that changes `sending` while it is armed. The facade's result is `closed` (`reason`
+`host` or `interrupted`, `stage: 'recorded'`) when the last `pulse.ui` said `hasTake` and the
+request names a draft (`draftId` or `draft.continue`), otherwise `canceled` with `stage: 'none'`. `closed` needs a draftId, which the facade doesn't know for a new
 recording, so a forced close of a fresh take reads `canceled` even though Pulse JS may still keep
 the take.
 

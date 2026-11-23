@@ -137,7 +137,8 @@ Ends the open flow without asking the person. A new take is kept as a draft (`cl
 `reason: 'host'`). With `discard: true`, for shared phones, a draft this flow made is deleted and
 the flow ends `canceled`; a draft the flow opened (`edit`, `export`, `record` with `continue`) is
 never deleted. A take being recorded is stopped first, and a Send in progress is finished first. If
-Pulse doesn't end the flow within 5 seconds, PulseKit dismisses it and writes the result itself.
+Pulse doesn't end the flow within 5 seconds (30 while a Send is running), PulseKit dismisses it and
+writes the result itself.
 
 ## Results
 
@@ -275,7 +276,7 @@ expo-brownfield's `BrownfieldMessaging`, with the same messages on both platform
 | `pulse.released`                            | JS → native | `namespace`                                                   | The runtime closed its library for good; the facade sends it nothing more and starts a fresh one next.                                                                             |
 | `pulse.result`                              | JS → native | `requestId`                                                   | The flow's result file is written; the facade reads it, resolves `open` and dismisses.                                                                                             |
 | `pulse.error`                               | JS → native | `requestId, message`                                          | The embed root couldn't start; the flow ends `failed{runtime.error}`.                                                                                                              |
-| `pulse.ui`                                  | JS → native | `statusBar?, statusBarHidden?, hasTake?`                      | The container's status bar and swipe-to-dismiss; each field sticks until set again.                                                                                                |
+| `pulse.ui`                                  | JS → native | `statusBar?, statusBarHidden?, hasTake?, sending?`            | The container's status bar and swipe-to-dismiss, and whether a Send is running (the `close` watchdog waits for it); each field sticks until set again.                              |
 | `pulse.upload`                              | JS → native | `op` (`hello`, `patch`, `attach`, `cancel`, `sweep`), `id`, … | A TUS PATCH for PulseKit's background uploader (`PulseKitBackground.swift`; `PulseKitUploads.kt` on Android).                                                                      |
 | `pulse.upload.progress`, `pulse.upload.end` | native → JS | `id, sent` / `id, ok, status?, …`                             | That PATCH's progress and end.                                                                                                                                                     |
 

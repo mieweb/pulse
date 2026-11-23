@@ -427,4 +427,31 @@ describe('hasCaptions', () => {
     expect(has('model-a')).toBe(true);
     expect(has('model-b')).toBe(false); // another model's transcripts don't count
   });
+
+  it('is false while the draft’s captions are turned off, and back once they’re on', async () => {
+    const id = await lib.drafts.createDraft({ name: 'Switch' });
+    await lib.drafts.addSegment(id, {
+      id: 'o1',
+      originalFilename: `drafts/${id}/segments/o1.mp4`,
+      durationMs: 2000,
+      thumbnail: null,
+    });
+    lib.client.db
+      .update(lib.schema.segments)
+      .set({
+        captionEdit: JSON.stringify({
+          file: `drafts/${id}/segments/o1.mp4`,
+          words: [{ text: 'Hello', t0: 10, t1: 50 }],
+        }),
+      })
+      .where(eq(lib.schema.segments.id, 'o1'))
+      .run();
+    const has = () => draftIn(project(), id)?.hasCaptions ?? null;
+    expect(has()).toBe(true);
+
+    await lib.drafts.setDraftCaptionsOff(id, true);
+    expect(has()).toBe(false); // what getDraftCaptions sends: none
+    await lib.drafts.setDraftCaptionsOff(id, false);
+    expect(has()).toBe(true);
+  });
 });

@@ -124,7 +124,8 @@ Export's wording around the confirm comes from the type's `id`:
 | any other      | "Sending…"              | "Couldn't send. Your video is saved."      | "Keep draft"                            |
 
 If your page closes Pulse with `close()` while Send is running, Pulse finishes the Send first. If
-it hasn't ended within 5 seconds, PulseKit ends the flow itself, as for any `close()`.
+it hasn't ended within 30 seconds (your handler's 20, plus time for the merge), PulseKit ends the
+flow itself, as for any `close()`.
 
 ## What your list shows
 

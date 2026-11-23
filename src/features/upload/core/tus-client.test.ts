@@ -494,6 +494,38 @@ describe('uploadViaTus', () => {
     expect(chunks[0].headers.Authorization).toBe('Bearer fresh-token');
   });
 
+  it('never resumes a kept upload on another origin: it creates the upload on this server', async () => {
+    const file = fakeFile(10);
+    const { fetchImpl, calls } = createFetchStub({
+      POST: [new Response(null, { status: 201, headers: { location: '/pulsevault/upload/new' } })],
+      HEAD: [new Response(null, { status: 200, headers: { 'upload-offset': '0' } })],
+    });
+    const { uploadChunk, calls: chunks } = createChunkStub([chunkOk(10)]);
+    const created: string[] = [];
+
+    const result = await uploadViaTus({
+      server: SERVER,
+      token: 'current-token',
+      artifactId: ARTIFACT_ID,
+      filename: 'video.mp4',
+      kind: 'video',
+      file: file as never,
+      resumeUrl: 'https://old-vault.example.test/pulsevault/upload/abc',
+      fetchImpl,
+      uploadChunk,
+      onResourceCreated: (url) => created.push(url),
+    });
+
+    const fresh = `${new URL(SERVER).origin}/pulsevault/upload/new`;
+    expect(result.resourceUrl).toBe(fresh);
+    expect(created).toEqual([fresh]);
+    expect(calls.map((c) => [c.init?.method, new URL(c.url).origin])).toEqual([
+      ['POST', new URL(SERVER).origin],
+      ['HEAD', new URL(SERVER).origin],
+    ]);
+    expect(chunks).toHaveLength(1);
+  });
+
   it('fails a resume terminally with 404 when the server no longer has the upload', async () => {
     const { fetchImpl, calls } = createFetchStub({ HEAD: [new Response(null, { status: 404 })] });
     const { uploadChunk } = createChunkStub([]);

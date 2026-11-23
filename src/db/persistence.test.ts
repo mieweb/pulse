@@ -1468,6 +1468,10 @@ describe('a library a newer Pulse migrated (downgrade guard)', () => {
       await expect(drafts.renameDraft(D, 'Renamed')).rejects.toMatchObject({
         code: 'storage.newer_schema',
       });
+      // The captions switch too, before it takes the fixture's Send out.
+      await expect(drafts.setDraftCaptionsOff(D, true)).rejects.toMatchObject({
+        code: 'storage.newer_schema',
+      });
       await expect(
         drafts.setDraftContext(D2, { key: 'ticket:t-7', label: 'Other ticket' }),
       ).rejects.toMatchObject({ code: 'storage.newer_schema' });

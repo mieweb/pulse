@@ -58,7 +58,7 @@ export async function setCaptionY(draftId: string, y: number | null): Promise<vo
 }
 
 /** Captions turned off for one draft (the embed's per-video switch, O6): `captions.off:<id>`. */
-const CAPTIONS_OFF_KEY_PREFIX = 'captions.off:';
+export const CAPTIONS_OFF_KEY_PREFIX = 'captions.off:';
 
 /** Live-queryable: the draft's captions-off row (none while its captions are on). */
 export function captionsOffQuery(draftId: string) {
