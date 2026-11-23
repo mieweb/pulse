@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import { getInfoAsync } from 'expo-file-system/legacy';
 
 import { deleteDestination } from '@/db/destinations';
@@ -14,7 +14,6 @@ import {
 import { deleteSavedLink, getSavedLink, setSavedLink } from '@/db/secure-token';
 import { linesToVtt } from '@/features/transcription/vtt';
 import { getDraftCaptions } from '@/features/transcription/draft-captions';
-import { copyToClipboard } from '@/utils/clipboard';
 import { absolutize, toFileUri } from '@/utils/file-store';
 import { hostOf } from '@/utils/format';
 import { userMessage } from '@/utils/user-message';
@@ -48,6 +47,7 @@ import type {
   UploadSession,
 } from './types';
 import { requestViewLink } from './view-link';
+import { cacheDir } from '@/utils/storage-root';
 
 /** Every failure spends the link, so the way to try again is a new one. */
 const NEW_LINK = 'open a new link to try again.';
@@ -150,7 +150,7 @@ async function md5Checksum(file: File): Promise<string> {
 }
 
 function tempFile(name: string): File {
-  const dir = new Directory(Paths.cache, TEMP_DIR_NAME);
+  const dir = new Directory(cacheDir(), TEMP_DIR_NAME);
   dir.create({ intermediates: true, idempotent: true });
   const file = new File(dir, name);
   if (file.exists) file.delete();
@@ -244,6 +244,16 @@ class BackgroundUploadManager {
     this.showToast = showToast;
   }
 
+  /**
+   * How a finished upload's link reaches the clipboard, set by the Pulse app's shell; resolves
+   * whether it got there. The embed sets none (it has no clipboard), so nothing is copied there.
+   * Injected, like the toast, so this module never imports the clipboard.
+   */
+  private copyLink: ((text: string) => Promise<boolean>) | null = null;
+  setCopyLink(copyLink: ((text: string) => Promise<boolean>) | null): void {
+    this.copyLink = copyLink;
+  }
+
   // ---- subscription surface (useSyncExternalStore) ----
 
   readonly subscribe = (cb: () => void): (() => void) => {
@@ -315,7 +325,7 @@ class BackgroundUploadManager {
     }
     cleanupStaleUploadTempFiles();
     try {
-      const temps = new Directory(Paths.cache, TEMP_DIR_NAME);
+      const temps = new Directory(cacheDir(), TEMP_DIR_NAME);
       if (temps.exists) temps.delete();
     } catch {
       // Locked — the next launch tries again.
@@ -628,7 +638,9 @@ class BackgroundUploadManager {
     // A newer upload of the draft took over meanwhile: still say this one landed, but copy
     // nothing, and leave what the upload screen offers (its way back) to the newer one.
     const current = () => this.watchLinks.get(draftId) === link;
-    const copied = current() && link.shareable && (await copyToClipboard(link.url));
+    const copy = this.copyLink;
+    const copied =
+      current() && link.shareable && copy !== null && (await copy(link.url).catch(() => false));
     uploadLog.info(`${draftLabel(draftId)}: link ${copied ? 'copied' : 'not copied'}`);
     this.showToast?.(copied ? 'Share link copied to clipboard' : 'Uploaded');
     void uploadNotify.complete(copied);

@@ -1,0 +1,6 @@
+{
+  "appId": "org.mieweb.caphost",
+  "appName": "CapHost",
+  "webDir": "www",
+  "loggingBehavior": "production"
+}

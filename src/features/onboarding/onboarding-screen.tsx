@@ -21,6 +21,8 @@ const FEATURE_ICON_COLUMN = 40;
  * First launch: one welcome screen, like Apple's own apps open with — what Pulse is for, a word on
  * privacy and Continue, which goes straight to the recorder. Nothing to swipe through or skip;
  * the controls are taught by one-time tips beside them as they're first used (features/tips).
+ *
+ * Standalone only: it navigates with expo-router itself, so only src/app imports it.
  */
 export function OnboardingScreen() {
   const theme = useTheme();

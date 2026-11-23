@@ -10,6 +10,9 @@ const FORCE_ONBOARDING_IN_DEV = false;
  * Runs once on home-screen mount: if the user hasn't completed onboarding, push
  * the flow on top of home (as a full-screen modal). Home stays mounted beneath,
  * so its live queries keep running while the tour is shown.
+ *
+ * Standalone only, like the welcome screen: it pushes a route, so only src/app (Home's route)
+ * calls it, never a feature screen a host shell could mount.
  */
 export function useOnboardingRedirect(): void {
   useEffect(() => {

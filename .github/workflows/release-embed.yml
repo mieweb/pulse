@@ -1,0 +1,397 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PulseKit release (K4): pulsekit-v<version> tags only
+#
+# Builds PulseKit (embed/, expo-brownfield), packages and signs it, and publishes:
+#   - a GitHub Release on the tag: one zip per xcframework, the all-in-one zip CocoaPods uses,
+#     SHA256SUMS, the dSYMs, the Hermes source map, THIRD_PARTY_NOTICES and the size report;
+#   - @mieweb/pulse-embed, @mieweb/capacitor-pulse and cordova-plugin-pulse to npm at the tag's
+#     version, with provenance, under the `rc` dist-tag for -rc.N tags.
+# Each step calls a script that also runs locally (embed/scripts/*.mjs).
+#
+# Tags: pulsekit-v<major>.<minor>.<patch> or pulsekit-v<major>.<minor>.<patch>-rc.<n>. A person
+# pushes the tag (a GITHUB_TOKEN-created tag starts no workflow), or a workflow calls this one
+# (workflow_call) or someone dispatches it, naming an existing tag. app-v* tags (store builds) never
+# start it, and nothing here runs on pull requests (AD18).
+#
+# Version: the tag's version is written into embed/packages/*/package.json, embed/app.json and the
+# Cordova plugin.xml in this checkout only (nothing is committed). After packaging, the tag, every
+# package and PulseKit.framework's Info.plist must agree (lockstep), or nothing is published.
+# PulseKit's CFBundleShortVersionString (from app.json's expo.ios.version) is only the numeric
+# X.Y.Z, also on -rc.N tags: App Store Connect refuses a suffix there (ITMS-90060), even in an
+# embedded framework. PulseKitVersion and the npm packages carry the full version.
+#
+# Signing: the distribution certificate comes from the org's fastlane match repo, through the
+# match setup of mieweb/actions v2.5.0 (sign-archive-upload-ios's Gemfile and Matchfile), into a
+# temporary keychain; every xcframework is signed with `codesign --timestamp`.
+#
+# Credentials (P0.6):
+#   APPLE_TEAM_ID, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_API_KEY_P8_BASE64,
+#   MATCH_GIT_BASIC_AUTHORIZATION, MATCH_PASSWORD
+#                  the same secrets as build-ios-from-expo.yml; match runs read-only.
+#   npm            trusted publishing (OIDC) for the three packages, configured on npmjs.com
+#                  for this repository and this workflow file; or NPM_TOKEN (optional secret) for
+#                  a bootstrap publish before trusted publishing is set up.
+#   GITHUB_TOKEN   contents: write (the release) and id-token: write (npm provenance).
+#   A workflow that calls this one (workflow_call) runs under its own file name in the OIDC token
+#   npm checks, so it may need its own trusted-publisher entry for each package on npmjs.com.
+#
+# A failed publish: the GitHub Release is created before npm, and npm takes the packages one at a
+# time, so a failure there leaves a Release (and maybe some packages) behind, and a re-run stops at
+# "Check that nothing is published at this version yet".
+#   - Nothing reached npm: delete the Release and keep the tag (`gh release delete <tag> --yes`),
+#     fix the cause (trusted publishing, NPM_TOKEN) and re-run.
+#   - Some packages reached npm: that version can't be published again. Tag the next version
+#     (the next -rc.N for a release candidate).
+#
+# Every step runs in bash with pipefail (defaults below), so a failure inside a pipe fails the step.
+# Third-party actions are pinned to commit SHAs and npm to an exact version.
+# ─────────────────────────────────────────────────────────────────────────────
+name: PulseKit Release
+
+on:
+  push:
+    tags:
+      - 'pulsekit-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'An existing pulsekit-v<version> tag to build and publish'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: 'An existing pulsekit-v<version> tag to build and publish'
+        required: true
+        type: string
+    secrets:
+      APPLE_TEAM_ID:
+        required: true
+      APPLE_API_KEY_ID:
+        required: true
+      APPLE_API_ISSUER_ID:
+        required: true
+      APPLE_API_KEY_P8_BASE64:
+        required: true
+      MATCH_GIT_BASIC_AUTHORIZATION:
+        required: true
+      MATCH_PASSWORD:
+        required: true
+      NPM_TOKEN:
+        required: false
+
+# One run per tag; a second run for the same tag waits instead of racing the first.
+concurrency:
+  group: release-embed-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# Explicit bash: GitHub then runs `bash --noprofile --norc -eo pipefail`, not the default `bash -e`.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    if: startsWith(inputs.tag || github.ref_name, 'pulsekit-v')
+    runs-on: macos-15
+    timeout-minutes: 150
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # npm provenance and trusted publishing
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      # OUT: package-ios.mjs's output. ATTACH: the extra release assets. SOURCEMAP_FILE: React
+      # Native's bundle phase writes the composed Hermes source map there when it is set.
+      - name: Paths and disk (start)
+        run: |
+          {
+            echo "OUT=$RUNNER_TEMP/pulsekit-ios"
+            echo "ATTACH=$RUNNER_TEMP/pulsekit-attach"
+            echo "SOURCEMAP_FILE=$RUNNER_TEMP/pulsekit-sourcemap/main.jsbundle.map"
+          } >> "$GITHUB_ENV"
+          df -h /
+
+      # ── The tag's commit, with the pulse-editor native module ──────────────
+      - name: Checkout the tag
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          submodules: true
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: |
+          # As mieweb/actions prepare-expo-env: Xcode 26 if the runner has it, else the newest
+          # stable Xcode.
+          SELECTED=/Applications/Xcode_26.app
+          if [ ! -d "$SELECTED/Contents/Developer" ]; then
+            SELECTED=$(ls -td /Applications/Xcode_26*.app 2>/dev/null | head -n 1 || true)
+          fi
+          if [ -z "$SELECTED" ]; then
+            SELECTED=$(ls -td /Applications/Xcode*.app \
+              | grep -v -i -E '(beta|rc|gm|seed|preview)' | head -n 1)
+          fi
+          echo "Selected Xcode: $SELECTED"
+          sudo xcode-select -s "$SELECTED/Contents/Developer"
+          xcodebuild -version
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          # No `cache:`: a release build installs from the lockfile, never from a cache.
+
+      # Trusted publishing needs npm >= 11.5.1; an exact version, so a new npm can't change a release.
+      - name: Update npm
+        run: |
+          npm install -g npm@11.17.0
+          npm --version
+
+      # ── Version: from the tag, checked before anything slow ───────────────
+      - name: Read the version from the tag
+        id: version
+        run: |
+          # A malformed tag fails here: the assignment carries node's exit status, and pipefail
+          # covers the tee.
+          LINES=$(node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
+            tag "$TAG")
+          echo "$LINES" | tee -a "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Check that nothing is published at this version yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$VERSION" ]; then
+            echo "::error::No version came from $TAG."
+            exit 1
+          fi
+          node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
+            publishable "$GITHUB_REPOSITORY"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::A GitHub Release for $TAG already exists. If no package reached npm, delete it (keep the tag) and re-run; otherwise tag a new version. See the header of release-embed.yml."
+            exit 1
+          fi
+          for pkg in embed/packages/*/package.json; do
+            name=$(node -p "require('./$pkg').name")
+            if [ -n "$(npm view "$name@$VERSION" version 2>/dev/null)" ]; then
+              echo "::error::$name@$VERSION is already on npm; npm versions can't be republished. Tag a new version."
+              exit 1
+            fi
+          done
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Stamp the version into the embed packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
+            stamp "$VERSION"
+
+      # ── Build PulseKit (expo-brownfield, Release, device + Simulator) ──────
+      - name: Expo prebuild (embed, iOS)
+        working-directory: embed
+        run: npm run prebuild -- --platform ios
+
+      - name: Pod install (embed)
+        working-directory: embed/ios
+        run: pod install
+
+      - name: Disk (before the build)
+        run: df -h /
+
+      # SOURCEMAP_FILE (set above) makes React Native's bundle phase write the composed Hermes
+      # source map there; the device and Simulator builds bundle the same JS.
+      - name: Build PulseKit (expo-brownfield)
+        working-directory: embed
+        run: |
+          mkdir -p "$(dirname "$SOURCEMAP_FILE")"
+          npm run build:ios -- --verbose
+
+      - name: Disk (after the build)
+        run: df -h /
+
+      # ── Signing identity (match, read-only) ───────────────────────────────
+      - name: Checkout mieweb/actions v2.5.0 (match setup)
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: mieweb/actions
+          ref: df2ee7b96f5631bfedf22b0b6ecc43ab02fe6757 # v2.5.0
+          path: .mieweb-actions
+          persist-credentials: false
+
+      - name: Setup Ruby and Fastlane
+        uses: ruby/setup-ruby@afeafc3d1ab54a631816aba4c914a0081c12ff2f # v1.310.0
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+          working-directory: .mieweb-actions/sign-archive-upload-ios
+
+      - name: Fetch the distribution certificate (match)
+        id: sign
+        working-directory: .mieweb-actions/sign-archive-upload-ios
+        env:
+          MATCH_GIT_URL: https://github.com/mieweb/mobile-signing
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_TYPE: appstore
+          APP_IDENTIFIER: com.mieweb.pulse
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          FASTLANE_SKIP_UPDATE_CHECK: '1'
+          FASTLANE_DISABLE_COLORS: '1'
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/pulsekit-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          read -r -a SEARCH <<< "$(security list-keychains -d user | tr -d '"' | xargs)"
+          security list-keychains -d user -s "$KEYCHAIN" "${SEARCH[@]}"
+
+          API_KEY="$RUNNER_TEMP/asc-api-key.json"
+          node -e "require('fs').writeFileSync(process.argv[1], JSON.stringify({ key_id: process.env.APPLE_API_KEY_ID, issuer_id: process.env.APPLE_API_ISSUER_ID, key: Buffer.from(process.env.APPLE_API_KEY_P8_BASE64, 'base64').toString('utf8'), in_house: false }))" "$API_KEY"
+
+          bundle exec fastlane match appstore \
+            --readonly true \
+            --app_identifier "$APP_IDENTIFIER" \
+            --team_id "$APPLE_TEAM_ID" \
+            --keychain_name "$KEYCHAIN" \
+            --keychain_password "$KEYCHAIN_PASSWORD" \
+            --api_key_path "$API_KEY"
+          rm -f "$API_KEY"
+
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk '/"(Apple|iPhone) Distribution/ { print $2; exit }')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::match put no Apple Distribution identity in the keychain"
+            exit 1
+          fi
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+
+      # ── Package: prune, dSYMs, strip, stamp, privacy manifests, sign, zip ──
+      - name: Source map and third-party notices
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "$ATTACH"
+          if [ ! -s "$SOURCEMAP_FILE" ]; then
+            echo "::error::The build wrote no source map at $SOURCEMAP_FILE"
+            exit 1
+          fi
+          cp "$SOURCEMAP_FILE" "$ATTACH/PulseKit-main.jsbundle.map"
+          node embed/scripts/third-party-notices.mjs --strict --pods embed/ios/Pods \
+            --version "$VERSION" --out "$ATTACH/THIRD_PARTY_NOTICES.md"
+
+      - name: Package PulseKit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+          IDENTITY: ${{ steps.sign.outputs.identity }}
+          KEYCHAIN: ${{ steps.sign.outputs.keychain }}
+        run: |
+          node embed/scripts/package-ios.mjs \
+            --input embed/artifacts \
+            --out "$OUT" \
+            --version "$VERSION" \
+            --build "$GITHUB_RUN_NUMBER" \
+            --git-sha "$SHA" \
+            --sign "$IDENTITY" \
+            --keychain "$KEYCHAIN" \
+            --attach "$ATTACH/PulseKit-main.jsbundle.map" \
+            --attach "$ATTACH/THIRD_PARTY_NOTICES.md"
+
+      - name: Check lockstep, signatures and checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
+            lockstep "$VERSION" "$OUT/xcframeworks"
+          for x in "$OUT"/xcframeworks/*.xcframework; do
+            echo "$(basename "$x"):"
+            codesign -dv --verbose=2 "$x" 2>&1 | grep -E '^(Authority|Timestamp|TeamIdentifier)=' | sed 's/^/  /'
+          done
+          (cd "$OUT/release" && shasum -a 256 -c SHA256SUMS)
+          cat "$OUT/release/size-report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Package.swift and the podspec point at this release ───────────────
+      - name: Write Package.swift and PulseKit.podspec
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          node embed/scripts/write-package-swift.mjs \
+            --sums "$OUT/release/SHA256SUMS" --version "$VERSION" --base-url "$BASE"
+          node embed/scripts/write-podspec.mjs \
+            --sums "$OUT/release/SHA256SUMS" --version "$VERSION" --base-url "$BASE"
+          # SwiftPM evaluates the manifest (no download); Ruby parses the podspec.
+          (cd embed/packages/capacitor-pulse && swift package dump-package > /dev/null)
+          ruby -c embed/packages/cordova-plugin-pulse/PulseKit.podspec
+
+      - name: Disk (before publishing)
+        run: df -h /
+
+      # ── Publish: the GitHub Release first, then npm ───────────────────────
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          NOTES="$RUNNER_TEMP/release-notes.md"
+          {
+            echo "PulseKit $VERSION, built from $SHA."
+            echo
+            echo 'Check the downloads with `shasum -a 256 -c SHA256SUMS`.'
+            echo
+            cat "$OUT/release/size-report.md"
+          } > "$NOTES"
+          FLAGS=(--verify-tag --latest=false --title "PulseKit $VERSION" --notes-file "$NOTES")
+          if [ "$PRERELEASE" = true ]; then FLAGS+=(--prerelease); fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${FLAGS[@]}" "$OUT"/release/*
+
+      - name: Publish to npm
+        env:
+          DIST_TAG: ${{ steps.version.outputs.dist_tag }}
+          # The first publish of a new package needs a token (trusted publishing can only be set up
+          # for a package that exists): NPM_TOKEN if the repo sets one, else the org's npm secret.
+          # Once trusted publishing is configured on npmjs.com, neither is needed.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NPM_PUBLISH_SECRET }}
+        run: |
+          for pkg in pulse-embed capacitor-pulse cordova-plugin-pulse; do
+            echo "::group::$pkg"
+            (cd "embed/packages/$pkg" && npm publish --provenance --access public --tag "$DIST_TAG")
+            echo "::endgroup::"
+          done
+
+      - name: Keep the packaged assets of a failed run
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: pulsekit-${{ env.TAG }}-failed
+          path: ${{ runner.temp }}/pulsekit-ios/release
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/pulsekit-signing.keychain-db"
+          if [ -f "$KEYCHAIN" ]; then security delete-keychain "$KEYCHAIN" || true; fi
+          rm -f "$RUNNER_TEMP/asc-api-key.json"
+
+      - name: Disk (end)
+        if: always()
+        run: df -h /

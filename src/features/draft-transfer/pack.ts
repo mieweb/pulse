@@ -1,20 +1,10 @@
-import { Directory, File, Paths } from 'expo-file-system';
-import { strToU8, zipSync } from 'fflate';
+import { Directory, File } from 'expo-file-system';
+import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { getDraftForExport } from '@/db/drafts';
-import { readRelBytes } from '@/utils/file-store';
-import {
-  MANIFEST_NAME,
-  MEDIA_DIR,
-  PULSE_FORMAT,
-  PULSE_VERSION,
-  type BundleDraft,
-  type BundleSegment,
-  type PulseManifest,
-} from './manifest';
-
-/** Cache subdir for built bundles. Wiped on each export — these are transient share artifacts. */
-const EXPORT_DIRNAME = 'pulse-exports';
+import { buildProject, PROJECT_NAME } from '@/db/project';
+import { absolutize } from '@/utils/file-store';
+import { zipFlat } from './native-zip';
+import { exportWorkspace } from './workspace';
 
 /** Reduce a draft name to a filesystem-safe slug for the single-draft filename. */
 function safeName(name: string | null): string {
@@ -26,86 +16,60 @@ function safeName(name: string | null): string {
   return slug || 'untitled';
 }
 
+/** A stored file's size, or null when it's gone. */
+const byteLength = (rel: string) => {
+  const file = new File(absolutize(rel));
+  return file.exists ? (file.size ?? 0) : null;
+};
+
 /**
- * Pack the given drafts into a single `.pulse` ZIP (manifest + raw clips) in the cache and
- * return its `file://` uri for sharing. Segments whose clip is missing on disk are skipped;
- * a draft that ends up empty is dropped. Throws if nothing exportable remains.
+ * Pack the given drafts into a `.pulse` file in the cache and return its `file://` uri for
+ * sharing: `project.json` (a `pulse-project` v2 document: every row and column of the drafts) and
+ * their files, zipped natively and flat, each under the `entry` the document lists for it.
  *
  * `now` is supplied by the caller (the bundle timestamp + filename) so this stays pure of clocks.
  */
-export async function exportDrafts(draftIds: string[], now: number): Promise<string> {
+export async function exportDrafts(
+  conn: SQLiteDatabase,
+  draftIds: string[],
+  now: number,
+): Promise<string> {
   if (draftIds.length === 0) throw new Error('No drafts selected.');
+  const doc = buildProject(conn, { draftIds, now, byteLength });
+  const drafts = doc.tables.drafts;
+  if (drafts.length === 0) throw new Error('The selected drafts are gone.');
 
-  const files: Record<string, Uint8Array> = {};
-  const bundleDrafts: BundleDraft[] = [];
-  let singleExportName: string | null = null;
-
-  for (let draftIndex = 0; draftIndex < draftIds.length; draftIndex++) {
-    const loaded = await getDraftForExport(draftIds[draftIndex]);
-    if (!loaded) continue;
-    const { draft, segments } = loaded;
-    const bundleSegments: BundleSegment[] = [];
-
-    for (let segIndex = 0; segIndex < segments.length; segIndex++) {
-      const seg = segments[segIndex];
-      const origBytes = await readRelBytes(seg.originalFilename);
-      if (!origBytes) continue; // clip file vanished — skip this segment
-      const original = `${MEDIA_DIR}/d${draftIndex}-s${segIndex}.mp4`;
-      files[original] = origBytes;
-
-      // Preserve full fidelity: an edit travels as its settings (the recipient previews, keeps
-      // editing and exports it exactly like here); only a legacy baked edit — no settings —
-      // ships its cut file.
-      let edited: string | null = null;
-      if (seg.editedFilename && !seg.editState) {
-        const editedBytes = await readRelBytes(seg.editedFilename);
-        if (editedBytes) {
-          edited = `${MEDIA_DIR}/d${draftIndex}-s${segIndex}.edited.mp4`;
-          files[edited] = editedBytes;
-        }
-      }
-
-      bundleSegments.push({
-        order: seg.order,
-        durationMs: seg.durationMs,
-        original,
-        edited,
-        editedDurationMs: edited ? seg.editedDurationMs : null,
-        editState: seg.editState,
-      });
-    }
-
-    if (bundleSegments.length === 0) continue; // nothing to carry for this draft
-    if (bundleDrafts.length === 0) singleExportName = draft.name;
-    bundleDrafts.push({
-      name: draft.name,
-      createdAt: draft.createdAt,
-      segments: bundleSegments,
-    });
-  }
-
-  if (bundleDrafts.length === 0) throw new Error('The selected drafts have no clips to export.');
-
-  const manifest: PulseManifest = {
-    format: PULSE_FORMAT,
-    version: PULSE_VERSION,
-    exportedAt: now,
-    drafts: bundleDrafts,
-  };
-  files[MANIFEST_NAME] = strToU8(JSON.stringify(manifest));
-
-  // STORE (level 0): the clips are already H.264 — recompressing would burn CPU for nothing.
-  const zipped = zipSync(files, { level: 0 });
-
+  const dir = exportWorkspace('drafts', now); // its own folder: a backup may be running too
+  const stage = new Directory(dir, 'stage');
+  stage.create({ intermediates: true, idempotent: true });
   const fileName =
-    bundleDrafts.length === 1
-      ? `pulse-draft-${safeName(singleExportName)}-${now}.pulse`
+    drafts.length === 1
+      ? `pulse-draft-${safeName(drafts[0].name as string | null)}-${now}.pulse`
       : `pulse-backup-${now}.pulse`;
-
-  const dir = new Directory(Paths.cache, EXPORT_DIRNAME);
-  if (dir.exists) dir.delete(); // clear stale exports so the cache doesn't grow unbounded
-  dir.create({ intermediates: true });
   const out = new File(dir, fileName);
-  out.write(zipped);
-  return out.uri;
+  let done = false;
+  try {
+    await zipFlat(
+      doc.media.map((m) => ({ path: m.path, file: new File(absolutize(m.path)) })),
+      stage,
+      out,
+      {
+        names: [PROJECT_NAME],
+        write: (files) => {
+          doc.media = files.map((f) => ({
+            path: f.path,
+            byteLength: f.size,
+            md5: f.md5,
+            entry: f.entry,
+          }));
+          new File(stage, PROJECT_NAME).write(JSON.stringify(doc));
+        },
+      },
+    );
+    done = true;
+    return out.uri;
+  } finally {
+    if (stage.exists) stage.delete();
+    if (!done && dir.exists) dir.delete(); // a half-written file is no use to anyone
+  }
 }

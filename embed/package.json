@@ -1,0 +1,67 @@
+{
+  "name": "pulse-embed",
+  "private": true,
+  "version": "2.6.0",
+  "main": "index.ts",
+  "scripts": {
+    "prebuild": "expo prebuild --clean --no-install",
+    "build:ios": "expo-brownfield build:ios --release",
+    "build:android": "expo-brownfield build:android --release"
+  },
+  "dependencies": {
+    "@expo/ui": "*",
+    "@shopify/react-native-skia": "*",
+    "buffer": "*",
+    "drizzle-orm": "*",
+    "expo": "*",
+    "expo-application": "*",
+    "expo-asset": "*",
+    "expo-audio": "*",
+    "expo-brownfield": "*",
+    "expo-build-properties": "*",
+    "expo-constants": "*",
+    "expo-crypto": "*",
+    "expo-device": "*",
+    "expo-file-system": "*",
+    "expo-font": "*",
+    "expo-glass-effect": "*",
+    "expo-haptics": "*",
+    "expo-image": "*",
+    "expo-image-picker": "*",
+    "expo-localization": "*",
+    "expo-media-library": "*",
+    "expo-secure-store": "*",
+    "expo-sharing": "*",
+    "expo-sqlite": "*",
+    "expo-symbols": "*",
+    "expo-system-ui": "*",
+    "expo-video": "*",
+    "fflate": "*",
+    "lucide-react-native": "*",
+    "react": "*",
+    "react-native": "*",
+    "react-native-gesture-handler": "*",
+    "react-native-nitro-image": "*",
+    "react-native-nitro-modules": "*",
+    "react-native-reanimated": "*",
+    "react-native-safe-area-context": "*",
+    "react-native-screens": "*",
+    "react-native-sortables": "*",
+    "react-native-svg": "*",
+    "react-native-vision-camera": "*",
+    "react-native-vision-camera-worklets": "*",
+    "react-native-worklets": "*",
+    "react-native-zip-archive": "*",
+    "whisper.rn": "*"
+  },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "../modules",
+      "ios": {
+        "buildFromSource": [
+          "expo-file-system"
+        ]
+      }
+    }
+  }
+}

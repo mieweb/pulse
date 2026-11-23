@@ -10,7 +10,16 @@ const HEIGHT = 32;
 /** The editor control left of the record button, opposite the "+" import: opens the draft in the
  *  editor from its start. Labelled, so the editor is easy to find; the same size and corners as
  *  the Export button. */
-export function EditButton({ onPress, disabled }: { onPress: () => void; disabled: boolean }) {
+export function EditButton({
+  onPress,
+  disabled,
+  testID,
+}: {
+  onPress: () => void;
+  disabled: boolean;
+  /** For UI automation. */
+  testID?: string;
+}) {
   // Dims with the record controls while a clip records, as the "+" does.
   return (
     <Animated.View style={[CONTROLS_FADE, { opacity: disabled ? Opacity.disabled : 1 }]}>
@@ -21,6 +30,7 @@ export function EditButton({ onPress, disabled }: { onPress: () => void; disable
         accessibilityRole="button"
         accessibilityLabel="Edit clips"
         accessibilityState={{ disabled }}
+        testID={testID}
         style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
         <Icon name="scissors" size={15} weight="semibold" tintColor="#000" />
         <Text style={styles.text} numberOfLines={1} maxFontSizeMultiplier={1.3}>

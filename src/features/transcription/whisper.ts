@@ -1,24 +1,17 @@
 import { extractAudio } from '@mieweb/pulse-editor';
 import { initParakeet, initWhisper, type ParakeetContext, type WhisperContext } from 'whisper.rn';
 
+import type { TranscriptWord } from '@/core/types/transcription';
+
 import { wholeWords } from './group-lines';
 import { isModelReady, modelFileUri } from './model';
 import type { WhisperModel } from './models';
 import { hasSpeech } from './vad';
 import { whisperJsiReady } from './whisper-jsi';
 
-/**
- * One word of a transcript. `t0`/`t1` are whisper.cpp timestamps in **centiseconds** (1/100s)
- * relative to the clip's audio start. Words drive word-level (karaoke) caption highlighting.
- */
-export type TranscriptWord = { text: string; t0: number; t1: number };
-
-/**
- * One transcribed line (caption cue). `t0`/`t1` are **centiseconds** relative to the clip's
- * audio start — divide by 100 for seconds when rendering. `words` (when present) carries the
- * per-word timing within the line; older stored rows may omit it and render line-level only.
- */
-export type TranscriptLine = { text: string; t0: number; t1: number; words?: TranscriptWord[] };
+// The transcript shapes are defined in core (the database stores them); re-exported here for the
+// feature's own modules.
+export type { TranscriptLine, TranscriptWord } from '@/core/types/transcription';
 
 /**
  * Whether the clip has no speech worth transcribing. Runs the VAD pre-gate; if the VAD itself is
