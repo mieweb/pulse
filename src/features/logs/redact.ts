@@ -30,6 +30,15 @@ const JSON_FIELD = new RegExp(
   'gi',
 );
 
+/**
+ * `"password": "…` with no closing quote before the end: a quoted credential the window cut
+ * (`redactEntry`). Its value runs past the end, so everything after its opening quote goes.
+ */
+const JSON_FIELD_OPEN = new RegExp(
+  String.raw`(["'])(${SECRET_KEY})\1(\s*:\s*)(?:"(?:[^"\\]|\\.)*\\?|'(?:[^'\\]|\\.)*\\?)$`,
+  'i',
+);
+
 /** `"token": eyJ…` style unquoted JSON values (a number, or a bare word). */
 const JSON_BARE = new RegExp(
   String.raw`(["'])(${SECRET_KEY})\1(\s*:\s*)(?!["'\[{]|null\b|true\b|false\b)[^\s,}\]]+`,
@@ -57,11 +66,15 @@ export const MAX_ENTRY_CHARS = 16 * 1024;
 /**
  * An entry as the log keeps it: redacted, and cut to `MAX_ENTRY_CHARS`. Redaction runs on a
  * stretch twice that long before the cut, so a credential that crosses the cut is still found
- * whole and blanked rather than left half-matched; the rest of a huge string is never scanned.
+ * whole and blanked rather than left half-matched; the rest of a huge string is never scanned. A
+ * quoted credential still open where that stretch ends (longer than it) is blanked to its end.
  */
 export function redactEntry(text: string): string {
   if (text.length <= MAX_ENTRY_CHARS) return redact(text);
-  const cleaned = redact(text.slice(0, MAX_ENTRY_CHARS * 2));
+  const cleaned = redact(text.slice(0, MAX_ENTRY_CHARS * 2)).replace(
+    JSON_FIELD_OPEN,
+    (_m, q: string, key: string, sep: string) => `${q}${key}${q}${sep}"${REDACTED}"`,
+  );
   if (cleaned.length <= MAX_ENTRY_CHARS) return cleaned;
   return `${cleaned.slice(0, MAX_ENTRY_CHARS)}… [${text.length} characters, cut]`;
 }
