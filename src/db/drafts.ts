@@ -681,6 +681,8 @@ export async function renameDraft(draftId: string, name: string | null): Promise
  * Setting what is already set changes nothing, a queued Send included.
  */
 export async function setDraftCaptionsOff(draftId: string, off: boolean): Promise<void> {
+  // An edit, refused before the queued Send is taken out.
+  assertEditable();
   if ((await isCaptionsOff(draftId)) === off) return;
   await takeOutForChange(draftId, 'edited');
   await setCaptionsOff(draftId, off);

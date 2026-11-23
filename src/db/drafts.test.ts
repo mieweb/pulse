@@ -379,6 +379,7 @@ describe('a library a newer Pulse migrated (AD34)', () => {
       ['deleteSegment', () => d.deleteSegment('s1')],
       ['reorderSegments', () => d.reorderSegments(['s1'])],
       ['renameDraft', () => d.renameDraft('d1', 'New name')],
+      ['setDraftCaptionsOff', () => d.setDraftCaptionsOff('d1', true)],
       ['duplicateDraft', () => d.duplicateDraft('d1')],
     ];
     for (const [name, write] of writes) {

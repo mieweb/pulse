@@ -463,17 +463,17 @@ export function ExportScreen({
             {captionsSwitch && (
               <Pressable
                 onPress={toggleCaptions}
-                disabled={uploading}
+                disabled={uploading || !editable}
                 accessibilityRole="switch"
                 accessibilityLabel="Captions"
-                accessibilityState={{ checked: !captionsOff, disabled: uploading }}
+                accessibilityState={{ checked: !captionsOff, disabled: uploading || !editable }}
                 testID="export.captions"
                 // 34pt pill + 5 each side = a 44pt tap target.
                 hitSlop={5}
                 style={({ pressed }) => [
                   styles.smallButton,
                   elementSurface,
-                  uploading && styles.disabled,
+                  (uploading || !editable) && styles.disabled,
                   pressed && styles.pressed,
                 ]}>
                 <Icon
