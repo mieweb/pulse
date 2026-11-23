@@ -629,10 +629,16 @@ export function EditorScreen({
       ctl.pause();
       importer.importVideo(draftId, anchorNow);
     }),
-    // One clip per image, in the order picked, from the playhead's boundary on.
+    // One clip per image, in the order picked, from the playhead's boundary on; its clips are
+    // told apart as they're written, to be one undo step together.
     importImagesAction(() => {
       ctl.pause();
-      void images.importImages(draftId, anchorNow);
+      void images.importImages(draftId, anchorNow, {
+        onWriting: (id) => {
+          imageBatch.current ??= { ids: new Set(), landed: [] };
+          imageBatch.current.ids.add(id);
+        },
+      });
     }),
     // Copies of another draft's clips, with their edits and captions.
     ...(anotherPulse.action ? [anotherPulse.action] : []),
@@ -642,6 +648,10 @@ export function EditorScreen({
   // playhead goes right after the last one, and the addition is one undo step. Taken when they
   // land while the editor is on top, else all together once it is back on top.
   useEffect(() => expectClipsAdded(draftId), [draftId]);
+  // A batch of images lands one clip at a time: its clips (by id, `onWriting`) are kept here as
+  // they land and taken together once it's over; any other clip landing meanwhile (a screen take
+  // stopped mid-batch) is its own undo step.
+  const imageBatch = useRef<{ ids: Set<string>; landed: string[] } | null>(null);
   const placeAfter = useRef<{ id: string; until: number } | null>(null);
   /** The playhead right after clip `id` (at the next clip's start, or the end). */
   const placeAfterClip = (id: string, rebuilt: boolean) => {
@@ -653,16 +663,28 @@ export function EditorScreen({
     else ctl.seekTo(at);
     return true;
   };
-  const takeAdded = useEffectEvent(() => {
-    // A batch of images lands one clip at a time: its clips are taken together once it's over.
-    if (images.importing) return;
-    const ids = takeClipsAdded(draftId);
+  /** One addition: one undo step, the playhead right after its last clip. */
+  const recordAddition = (ids: string[]) => {
     if (ids.length === 0) return;
     history.recordAdded(ids);
     const last = ids[ids.length - 1];
     if (mode === 'edit') setMode('main');
     if (placeAfterClip(last, false)) return;
     placeAfter.current = { id: last, until: Date.now() + 5000 };
+  };
+  const takeAdded = useEffectEvent(() => {
+    const ids = takeClipsAdded(draftId);
+    const batch = imageBatch.current;
+    if (!batch) {
+      recordAddition(ids);
+      return;
+    }
+    const others: string[] = [];
+    for (const id of ids) (batch.ids.has(id) ? batch.landed : others).push(id);
+    recordAddition(others);
+    if (images.importing) return;
+    imageBatch.current = null;
+    recordAddition(batch.landed);
   });
   useEffect(() => {
     const p = placeAfter.current;
@@ -1133,6 +1155,7 @@ export function EditorScreen({
                     : screen.progress
               }
               progressText={images.importing ? images.stepText : undefined}
+              progressCount={images.importing ? images.stepCount : undefined}
               hint={addPositionHint(addSlot, clips.length)}
               // Paused as the "+" is pressed: the position picked is the one the hint just named.
               onOpen={ctl.pause}

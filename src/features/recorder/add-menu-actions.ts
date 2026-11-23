@@ -38,6 +38,8 @@ export type AddMenuProps = {
   progress: number | null;
   /** What the busy "+" is doing, for screen readers ("Adding 2 of 5"). */
   progressText?: string;
+  /** Shown beside the busy "+" during a batch of images ("2/5"). */
+  progressCount?: string;
 };
 
 /**

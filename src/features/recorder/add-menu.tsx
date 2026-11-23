@@ -17,6 +17,7 @@ export function AddMenu({
   busy,
   progress,
   progressText,
+  progressCount,
 }: AddMenuProps) {
   return (
     <PlusMenu
@@ -36,6 +37,7 @@ export function AddMenu({
           busy={busy}
           progress={progress}
           progressText={progressText}
+          progressCount={progressCount}
           label="Add a clip"
         />
       )}

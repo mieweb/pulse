@@ -11,9 +11,12 @@ import { useToast } from '@/features/toast/toast-provider';
 import { describeError, formatSeconds } from '@/features/upload/core/upload-log';
 import { deleteQuietly } from '@/utils/file-store';
 import {
+  imageBatchFailureTitle,
   imageBatchNotice,
   imageFailureCopy,
+  imageStepCount,
   imageStepText,
+  imageStoppedMessage,
   isOutOfSpace,
 } from '@/utils/import-copy';
 import { userMessage } from '@/utils/user-message';
@@ -57,7 +60,15 @@ export function useImportImages() {
   async function importImages(
     draftId: string | (() => Promise<string>),
     anchor: () => ClipAnchor,
-    onAdded?: (segmentId: string) => void,
+    {
+      onWriting,
+      onAdded,
+    }: {
+      /** A clip's id just before its row is written (`addImageClips`). */
+      onWriting?: (segmentId: string) => void;
+      /** A clip's id once it's in the draft. */
+      onAdded?: (segmentId: string) => void;
+    } = {},
   ): Promise<void> {
     if (abortRef.current) return;
     if (Platform.OS === 'ios' && !libraryPermission?.granted) {
@@ -73,11 +84,14 @@ export function useImportImages() {
         return;
       }
       const next = await requestLibraryPermission();
-      if (!next.granted) return;
+      // The screen may have closed while the system asked.
+      if (!next.granted || unmounted.current) return;
     }
     const abort = new AbortController();
     abortRef.current = abort;
     let picked: string[] = [];
+    // Counted as they go in, for a batch that throws part-way (the clips before it stay).
+    let added = 0;
     let appStateSub: ReturnType<typeof AppState.addEventListener> | null = null;
     try {
       const result = await launchImageLibraryAsync({
@@ -105,7 +119,11 @@ export function useImportImages() {
         signal: abort.signal,
         anchor,
         onProgress: setStep,
-        onAdded,
+        onWriting,
+        onAdded: (id) => {
+          added++;
+          onAdded?.(id);
+        },
       });
       if (outcome.cancelled) {
         const after = formatSeconds(Date.now() - started);
@@ -114,12 +132,14 @@ export function useImportImages() {
           return;
         }
         importLog.warn(`images cancelled after ${after}: Pulse left the screen`);
-        const kept = outcome.added.length;
         // An alert, not a toast: this fires while Pulse is in the background.
         Alert.alert(
           'Import stopped',
-          `Pulse left the screen before all the images were added (${kept} of ${picked.length} added). ` +
-            'Pick the rest again and keep Pulse open until it’s done.',
+          imageStoppedMessage({
+            total: picked.length,
+            added: outcome.added.length,
+            skipped: outcome.skipped.length,
+          }),
         );
         return;
       }
@@ -127,11 +147,12 @@ export function useImportImages() {
       if (notice && !unmounted.current) showToast(notice);
     } catch (e) {
       const why = describeError(e);
-      importLog.warn(`images failed: ${why}`);
+      importLog.warn(`images failed after ${added} of ${picked.length}: ${why}`);
       if (!unmounted.current) {
         showToast({
           kind: 'error',
-          title: picked.length === 1 ? 'Couldn’t add the image' : 'Couldn’t add the images',
+          // The clips added before it stay: say how many went in.
+          title: imageBatchFailureTitle(picked.length, added),
           message: isOutOfSpace(why)
             ? imageFailureCopy(why)
             : userMessage(e, 'Try again.', 'import'),
@@ -160,5 +181,7 @@ export function useImportImages() {
     progress: step ? (step.index + step.fraction) / step.total : null,
     /** "Adding 2 of 5" while a batch runs, for screen readers. */
     stepText: step ? imageStepText(step.index, step.total) : undefined,
+    /** "2/5" while a batch of several runs, shown by the "+"; undefined otherwise. */
+    stepCount: (step && imageStepCount(step.index, step.total)) ?? undefined,
   };
 }

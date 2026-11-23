@@ -8,6 +8,7 @@ import { Icon } from '@/components/icon';
 import { ProgressRing } from '@/components/progress-ring';
 import { Opacity } from '@/constants/theme';
 import { playheadSlot } from '@/core/clip-anchor';
+import { BatchCount } from '@/features/recorder/batch-count';
 import { PlusMenu } from '@/features/recorder/plus-menu';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -53,6 +54,7 @@ export function EditorAddMenu({
   busy,
   progress,
   progressText,
+  progressCount,
   hint,
   onOpen,
 }: {
@@ -63,6 +65,8 @@ export function EditorAddMenu({
   progress: number | null;
   /** What it's busy with, read with the progress ("Adding 2 of 5"). */
   progressText?: string;
+  /** Shown beside the ring during a batch of images ("2/5"). */
+  progressCount?: string;
   hint: string;
 }) {
   const theme = useTheme();
@@ -103,6 +107,9 @@ export function EditorAddMenu({
           ) : (
             <Icon name="plus" size={24} weight="medium" tintColor={theme.background} />
           )}
+          {busy && progressCount ? (
+            <BatchCount text={progressCount} color={theme.text} background={theme.background} />
+          ) : null}
         </Pressable>
       )}
     />

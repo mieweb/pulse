@@ -34,7 +34,8 @@ export type ExternalClipResult =
  * `segmentId` defaults to `{draftId}-{now}`; a caller that retries passes its own to stay
  * idempotent. `signal` cancels it at every step, undoing what's been done, so the clip lands whole
  * in its draft or not at all. `onProgress` gets the conversion's progress in whole percents (and
- * never after a cancel). `onAdded` runs synchronously right after the segment row is written.
+ * never after a cancel). `onAdded` runs once the segment row is written, before this resolves: a
+ * beat after the insert is announced (`onClipsAdded` listeners have run by then), not with it.
  * `anchor` says where in the draft the clip goes (default the end); it is called just before the
  * row is written (`insertSegments`), so a caller that passes its live cursor (the recorder's
  * import) follows a cursor moved during the conversion, and one that passes a fixed place (a screen

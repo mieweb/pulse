@@ -413,13 +413,26 @@ export function useRecorder(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reuses the current draft, or lazily creates one on the first clip/import of the session.
-  async function ensureDraft(): Promise<string> {
-    if (draftId) return draftId;
-    const id = await createDraft(newDraft);
-    sessionDraftId.current = id;
-    setDraftId(id);
-    return id;
+  // Reuses the current draft, or lazily creates one on the first clip/import of the session. Read
+  // from refs, not the `draftId` state: an import or a batch of images holds the function from the
+  // render it started in, and a take (or another import) may make the draft meanwhile; a call while
+  // one is creating it waits for that one. Either way the session gets one draft.
+  const creatingDraft = useRef<Promise<string> | null>(null);
+  function ensureDraft(): Promise<string> {
+    const current = draftIdRef.current;
+    if (current) return Promise.resolve(current);
+    creatingDraft.current ??= (async () => {
+      try {
+        const id = await createDraft(newDraft);
+        sessionDraftId.current = id;
+        draftIdRef.current = id;
+        setDraftId(id);
+        return id;
+      } finally {
+        creatingDraft.current = null;
+      }
+    })();
+    return creatingDraft.current;
   }
 
   // A clip an import just wrote, reflected synchronously in the unmount-cleanup refs (see the
@@ -656,7 +669,9 @@ export function useRecorder(
     if (isRecordingRef.current || isImporting || imagesRunningRef.current) return;
     imagesRunningRef.current = true;
     try {
-      await images.importImages(ensureDraft, () => anchorRef.current, noteSegmentAdded);
+      await images.importImages(ensureDraft, () => anchorRef.current, {
+        onAdded: noteSegmentAdded,
+      });
     } finally {
       imagesRunningRef.current = false;
       // The recorder closed while this ran: the empty-draft cleanup it left to the batch.
@@ -796,6 +811,7 @@ export function useRecorder(
     isImporting: isImporting || images.importing,
     importProgress: isImporting ? importProgress : images.progress,
     importProgressText: isImporting ? undefined : images.stepText,
+    importProgressCount: isImporting ? undefined : images.stepCount,
     prefsReady,
     facing,
     torch,

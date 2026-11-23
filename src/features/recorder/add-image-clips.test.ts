@@ -96,6 +96,7 @@ beforeEach(() => {
 
 const conn = expoDb as unknown as {
   getAllSync: <T>(sql: string, ...params: unknown[]) => T[];
+  runSync: (sql: string, ...params: unknown[]) => unknown;
 };
 const ids = (draftId: string) =>
   conn
@@ -157,6 +158,57 @@ describe('addImageClips', () => {
       anchor: () => ({ after: s(d, 'a') }),
     });
     expect(ids(d)).toEqual([s(d, 'a'), ...result.added, s(d, 'b'), s(d, 'c')]);
+  });
+
+  it('keeps its place when its latest clip is deleted mid-batch', async () => {
+    const d = await abc();
+    const added: string[] = [];
+    mockImageClip.mockImplementation(async (uri) => {
+      // The first image's clip is deleted (the editor's trash) while the second is being made.
+      if (uri.includes('two')) conn.runSync('DELETE FROM segments WHERE id = ?', added[0]);
+      return makeClip(uri);
+    });
+    const result = await addImageClips(images('one', 'two', 'three'), d, {
+      signal: signal(),
+      anchor: () => ({ after: s(d, 'a') }),
+      onAdded: (id) => added.push(id),
+    });
+    // Two and three still between a and b, not at the end.
+    expect(ids(d)).toEqual([s(d, 'a'), ...result.added.slice(1), s(d, 'b'), s(d, 'c')]);
+  });
+
+  it('tells each clip’s id before its row is written, then once it is', async () => {
+    const d = await abc();
+    const events: string[] = [];
+    const stop = onClipsAdded((added) => events.push(`inserted ${added.segmentIds.join()}`));
+    try {
+      await addImageClips(images('one'), d, {
+        signal: signal(),
+        onWriting: (id) => events.push(`writing ${id}`),
+        onAdded: (id) => events.push(`added ${id}`),
+      });
+    } finally {
+      stop();
+    }
+    const id = events[0].slice('writing '.length);
+    expect(events).toEqual([`writing ${id}`, `inserted ${id}`, `added ${id}`]);
+  });
+
+  it('reports progress in whole percents of the batch', async () => {
+    const d = await abc();
+    mockImageClip.mockImplementation(async (uri, _options, { onProgress }) => {
+      for (let i = 1; i <= 1000; i++) onProgress?.(i / 1000);
+      return makeClip(uri);
+    });
+    const steps: { index: number; fraction: number }[] = [];
+    await addImageClips(images('one', 'two'), d, {
+      signal: signal(),
+      onProgress: ({ index, fraction }) => steps.push({ index, fraction }),
+    });
+    // Each image's start, each whole percent of the batch (50 per image), and each image's end.
+    expect(steps.length).toBeLessThanOrEqual(2 * 52);
+    expect(steps.filter((p) => p.fraction === 0).map((p) => p.index)).toEqual([0, 1]);
+    expect(steps.filter((p) => p.fraction === 1).map((p) => p.index)).toEqual([0, 1]);
   });
 
   it('moves the recorder’s cursor past the batch, one insert per image', async () => {

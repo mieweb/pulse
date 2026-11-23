@@ -190,14 +190,6 @@ function audioReasons(audio: ProbeAudio | undefined, target?: RecorderFormat): s
   return [];
 }
 
-/**
- * Decide how an imported clip enters the draft: byte-for-byte passthrough, an audio-only
- * conform (video samples copied), or a full re-encode. Pure — feed it a `probe()` result.
- *
- * Without `target`, only the reels contract is enforced (upload / unpack gates). With it, the
- * clip must also match the recorder's signature to pass through, and every conform writes that
- * signature (rotation tag, AAC rate/channels) so the merge can join it by copy.
- */
 /** A full re-encode's format, without the source's say. */
 export type EncodeFormat = Omit<ConformOptions, 'copyVideo'>;
 
@@ -229,6 +221,14 @@ export function recorderEncodeFormat(target: RecorderFormat): EncodeFormat {
 /** Which phone decides (the module stays free of react-native so it tests as pure code). */
 export type ImportPlatform = 'ios' | 'android';
 
+/**
+ * Decide how an imported clip enters the draft: byte-for-byte passthrough, an audio-only
+ * conform (video samples copied), or a full re-encode. Pure — feed it a `probe()` result.
+ *
+ * Without `target`, only the reels contract is enforced (upload / unpack gates). With it, the
+ * clip must also match the recorder's signature to pass through, and every conform writes that
+ * signature (rotation tag, AAC rate/channels) so the merge can join it by copy.
+ */
 export function decideImport(
   probe: ProbeResult,
   target?: RecorderFormat,

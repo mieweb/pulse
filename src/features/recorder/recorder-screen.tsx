@@ -189,6 +189,7 @@ export function RecorderScreen({
     isImporting,
     importProgress,
     importProgressText,
+    importProgressCount,
     startHoldRecording,
     endHoldRecording,
     flipCamera,
@@ -1000,6 +1001,7 @@ export function RecorderScreen({
                 busy={isImporting || screen.importing}
                 progress={isImporting ? importProgress : screen.progress}
                 progressText={isImporting ? importProgressText : undefined}
+                progressCount={isImporting ? importProgressCount : undefined}
               />
             </Animated.View>
           </View>

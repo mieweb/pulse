@@ -82,6 +82,41 @@ export function imageStepText(index: number, total: number): string {
   return total > 1 ? `Adding ${index + 1} of ${total}` : 'Adding the image';
 }
 
+/** "2/5", shown by the busy "+" while a batch of several images runs; null for one image. */
+export function imageStepCount(index: number, total: number): string | null {
+  return total > 1 ? `${index + 1}/${total}` : null;
+}
+
+/**
+ * The title when a batch stops on an error (a full disk) after `added` of its `total` images went
+ * in: those stay, so it says how many ("Added 2 of 5 images"), else that none were.
+ */
+export function imageBatchFailureTitle(total: number, added: number): string {
+  if (added > 0) return `Added ${added} of ${total} images`;
+  return total === 1 ? 'Couldn’t add the image' : 'Couldn’t add the images';
+}
+
+/**
+ * What the alert says when leaving Pulse stopped a batch: how many went in, how many couldn't be
+ * (picking those again won't help), and that the rest (the last ones picked) can be picked again.
+ */
+export function imageStoppedMessage({
+  total,
+  added,
+  skipped,
+}: {
+  total: number;
+  added: number;
+  skipped: number;
+}): string {
+  const left = Math.max(1, total - added - skipped);
+  const counts = `${added} of ${total} added` + (skipped > 0 ? `, ${skipped} couldn’t be` : '');
+  return (
+    `Pulse left the screen before all the images were added (${counts}). ` +
+    `Pick the last ${left === 1 ? 'one' : left} again and keep Pulse open until it’s done.`
+  );
+}
+
 /**
  * What to say once a batch of images is done: nothing when every image was added; else which
  * weren't and why (the first reason: a batch fails for one reason far more often than for many).
