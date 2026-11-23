@@ -69,7 +69,7 @@ refresh }`.
 | `setDraftContext(id, context)` | Move to…: the draft now belongs to another place.                           | `not_found`, `draft.locked`                                           |
 | `deleteDraft(id)`              | Deletes the draft and its clips from the phone.                             | `not_found`, `draft.locked`                                           |
 | `upload(id)`                   | Send from your list: merges the clips if needed, then queues the upload.    | `not_found`, `draft.locked`, `upload.too_large`, `host_misconfigured` |
-| `cancelUpload(id)`             | Takes a queued, uploading, paused or failed upload back to a draft.         | `not_found`, `draft.locked` (preparing or processing)                 |
+| `cancelUpload(id)`             | Takes a queued, uploading, paused or failed upload back to a draft.         | `not_found`, `draft.locked` (preparing or delivering)                 |
 | `retireDraft(id)`              | File mode: deletes a draft whose MP4 you uploaded. Pulse mode: a hint only. | `not_found`                                                           |
 | `dismissReceipt(id)`           | Stops a `kept` receipt counting for attention.                              | `not_found`                                                           |
 

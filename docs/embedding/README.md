@@ -46,8 +46,8 @@ of using `@mieweb/pulse-embed`, so copy their project setup, not their page code
   Pulse asks your page for an upload target, sends the video to your PulseVault server, and keeps
   going in the background and with the phone locked. See [uploads.md](uploads.md).
 - **One library per signed-in person.** Drafts, uploads and results belong to the account you set
-  with `setAccount()`. Nothing but `getInfo()` and `configure()` works before it: see
-  [accounts.md](accounts.md).
+  with `setAccount()`. Before it, only `getInfo()`, `configure()`, `prewarm()` and
+  `listNamespaces()` work: see [accounts.md](accounts.md).
 - **iPhone only.** iOS 16.4 or later. iPad, Mac (Designed for iPad) and Android report
   `supported: false`. Both plugins have an Android side, but it is a stub: `isAvailable()` is false
   there and every other call rejects with `unsupported`.
@@ -265,13 +265,17 @@ async function handleResult(result: FlowResult) {
   if (result.status === 'completed' && result.mode === 'file') {
     const video = await (await fetch(result.export.webUrl)).blob();
     await uploadVideo(result.context?.key, video, result.durationMs);
+    // Pulse deletes its copy. not_found: a retry after a reload already did.
+    await pulse.retireDraft(result.draftId).catch((e) => {
+      if (!isPulseError(e) || e.code !== 'not_found') throw e;
+    });
   }
   await pulse.acknowledge(result.requestId);
 }
 ```
 
-- If the upload throws, the result isn't acknowledged: it stays in `pendingResults()` and your
-  next page load retries it.
+- If the upload throws, the result isn't acknowledged and the draft isn't retired: the result
+  stays in `pendingResults()` and your next page load retries it.
 - In rare cases PulseKit ends a flow itself and Pulse's own result for the same `requestId` arrives
   later, with another status. The handler above treats it as new; act on the latest one
   ([contract.md](contract.md#results)).
