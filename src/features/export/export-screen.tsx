@@ -157,6 +157,7 @@ export function ExportScreen({
   onClose,
   onTrim,
   onBackToHost,
+  onReady,
 }: ExportScreenProps) {
   const insets = useSafeAreaInsets();
 
@@ -179,6 +180,13 @@ export function ExportScreen({
     mergedRef.current =
       state.status === 'done' ? { path: state.outputPath, durationMs: state.durationMs } : null;
   }, [state]);
+  // Tell the shell the video is ready from the merge's own state, a saved export used as is
+  // included: that one writes nothing to the library, so the shell can't see it there.
+  useEffect(() => {
+    if (state.status === 'done') {
+      onReady?.({ draftId, path: state.outputPath, durationMs: state.durationMs });
+    }
+  }, [state, draftId, onReady]);
 
   // Embedded, the person can turn captions off for this video (O6): its clips aren't
   // transcribed for it from then on, and it goes without them (getDraftCaptions). The Pulse app

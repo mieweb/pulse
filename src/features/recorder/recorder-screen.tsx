@@ -585,6 +585,9 @@ export function RecorderScreen({
     recordingShown.set(recordingShownNow());
   }, [endHoldRecording, recordingShownNow, recordingShown]);
 
+  // The record button's gestures, and a screen reader's activation of it: not while "Record
+  // without sound?" waits for an answer.
+  const recordEnabled = cameraReady && !dragging && !micQuestion;
   const {
     zoomSv,
     chipTarget,
@@ -600,8 +603,7 @@ export function RecorderScreen({
     onHoldStart,
     onHoldEnd,
     onFocus,
-    // Not while "Record without sound?" waits for an answer.
-    enabled: cameraReady && !dragging && !micQuestion,
+    enabled: recordEnabled,
     neutralZoom,
     minZoom: device?.minZoom ?? 1,
     maxZoom: device ? Math.min(device.maxZoom, MAX_ZOOM_FACTOR) : 1,
@@ -893,6 +895,8 @@ export function RecorderScreen({
               isRecording={(isRecording && recordStoppedAt == null) || startQueued}
               cameraReady={cameraReady}
               dragging={dragging}
+              enabled={recordEnabled}
+              onToggle={onToggle}
               testID="recorder.record"
             />
             {recordTip.mounted && (

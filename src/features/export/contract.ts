@@ -71,4 +71,9 @@ export type ExportScreenProps = {
    * offers no way back.
    */
   onBackToHost?: (url: string) => void;
+  /**
+   * The video matches the draft's clips now: a merge finished, or the export saved on an earlier
+   * visit still matched and was used as is. Called each time the merge reaches done.
+   */
+  onReady?: (video: ExportedVideo) => void;
 };

@@ -15,7 +15,14 @@ import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/v
 import { parseCaptionEdit } from './captions';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
-import { assertEditable, hostContextColumns, LibraryError, type HostContext } from './host-context';
+import {
+  assertEditable,
+  hostContextColumns,
+  hostContextOf,
+  LibraryError,
+  type HostContext,
+  type HostContextColumns,
+} from './host-context';
 import type { Draft, Segment } from './schema';
 import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
 import { deleteSavedLink } from './secure-token';
@@ -141,6 +148,24 @@ export async function createDraft(
     createdVia: opts.createdVia ?? 'app',
   });
   return id;
+}
+
+/**
+ * The host place a draft's columns hold, as the host handed it over (with its upload type and
+ * `data`), and with `kind` and `id` taken from the key (`kind:id`) when it didn't spell them out:
+ * what a flow that reopens the draft returns as its context. Null for a draft without one.
+ */
+export function draftHostContext(columns: {
+  [K in keyof HostContextColumns]: HostContextColumns[K] | null;
+}): (HostContext & { kind: string; id: string }) | null {
+  const context = hostContextOf(columns);
+  if (!context) return null;
+  const colon = context.key.indexOf(':');
+  return {
+    ...context,
+    kind: typeof context.kind === 'string' ? context.kind : context.key.slice(0, colon),
+    id: typeof context.id === 'string' ? context.id : context.key.slice(colon + 1),
+  };
 }
 
 /**

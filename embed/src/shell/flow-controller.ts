@@ -81,8 +81,8 @@ export function createFlowController(store: FlowStore, requestId: string) {
 
   return {
     /**
-     * The library gate passed: read the draft the entry opens and watch the library from now on.
-     * Returns false when that draft doesn't exist.
+     * The library gate passed: read the draft the entry opens (its clips and the host place it is
+     * for) and watch the library from now on. Returns false when that draft doesn't exist.
      */
     attach(draftId: string | null): boolean {
       attached = true;
@@ -90,7 +90,8 @@ export function createFlowController(store: FlowStore, requestId: string) {
         const seen = readDraft(draftId);
         if (!seen) return false;
         last = seen;
-        store.open({ context: null, clipCount: seen.clipCount });
+        // The draft's own place (and host data): what the flow's result names as its context.
+        store.open({ context: seen.context, clipCount: seen.clipCount });
       }
       return true;
     },
@@ -163,6 +164,13 @@ export function createFlowController(store: FlowStore, requestId: string) {
      */
     sending(busy: boolean): void {
       store.dispatch({ type: busy ? 'sendStarted' : 'sendStopped' });
+    },
+    /**
+     * Export's video is ready for the flow's draft (merged now, or the saved export still
+     * matching): the flow's stage is `exported` until a clip changes.
+     */
+    exportReady(draftId: string): void {
+      if (store.state().draftId === draftId) store.dispatch({ type: 'merged' });
     },
     /** [Keep draft] after a failed host confirm: the flow ends `closed`, the draft unsent. */
     keepDraft(): void {

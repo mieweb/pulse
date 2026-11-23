@@ -1,5 +1,7 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterAll, describe, expect, it } from '@jest/globals';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { placeholderPodspec, renderPodspec, xcframeworksZipSha256 } from './release-podspec.mjs';
@@ -60,5 +62,68 @@ describe('the committed PulseKit.podspec', () => {
       'utf8',
     );
     expect(committed).toBe(placeholderPodspec());
+  });
+});
+
+describe('the PULSEKIT_LOCAL zip', () => {
+  const text = placeholderPodspec();
+  // The podspec's source picker on its own, without CocoaPods.
+  const picker = text.slice(text.indexOf('def pulsekit_source'), text.indexOf('\nend\n') + 5);
+
+  it('is named by a fingerprint of the files inside the frameworks, not their folders’ mtimes', () => {
+    expect(picker).not.toContain('File.mtime');
+    expect(picker).toContain('Digest::SHA256.file(full)');
+    expect(picker).toContain('zip = "#{prefix}-#{fingerprint.hexdigest[0, 16]}.zip"');
+  });
+
+  // Runs the picker with Ruby and zip, as `pod install` would (both are on macOS and CI's Ubuntu).
+  const tools = ['ruby', 'zip'].every((t) => spawnSync(t, ['-v']).status === 0);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsekit-local-test-'));
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  (tools ? it : it.skip)('is made again when a nested file is overwritten in place', () => {
+    const frameworks = path.join(root, 'xcframeworks');
+    const binary = path.join(frameworks, 'PulseKit.xcframework', 'ios-arm64', 'PulseKit');
+    fs.mkdirSync(path.dirname(binary), { recursive: true });
+    fs.writeFileSync(path.join(frameworks, 'PulseKit.xcframework', 'Info.plist'), '<plist/>');
+    fs.writeFileSync(binary, 'build-1');
+    const tmp = path.join(root, 'tmp');
+    fs.mkdirSync(tmp);
+    const script = path.join(root, 'picker.rb');
+    fs.writeFileSync(
+      script,
+      `require 'digest'\nrequire 'tmpdir'\n${picker}\nputs pulsekit_source[:http]\n`,
+    );
+    const pick = () => {
+      const run = spawnSync('ruby', [script], {
+        env: { ...process.env, PULSEKIT_LOCAL: frameworks, TMPDIR: tmp },
+        encoding: 'utf8',
+      });
+      expect(run.stderr).toBe('');
+      return run.stdout.trim().replace(/^file:\/\//, '');
+    };
+
+    const first = pick();
+    expect(fs.existsSync(first)).toBe(true);
+    expect(pick()).toBe(first); // nothing changed: the same zip
+
+    // An in-place rebuild: same size, and the folders' (and even the file's) mtimes kept.
+    const folderTimes = fs.statSync(path.join(frameworks, 'PulseKit.xcframework'));
+    const fileTimes = fs.statSync(binary);
+    fs.writeFileSync(binary, 'build-2');
+    fs.utimesSync(binary, fileTimes.atime, fileTimes.mtime);
+    fs.utimesSync(
+      path.join(frameworks, 'PulseKit.xcframework'),
+      folderTimes.atime,
+      folderTimes.mtime,
+    );
+
+    const second = pick();
+    expect(second).not.toBe(first);
+    expect(fs.existsSync(first)).toBe(false); // the stale zip is gone
+    const listed = spawnSync('unzip', ['-p', second, 'PulseKit.xcframework/ios-arm64/PulseKit'], {
+      encoding: 'utf8',
+    });
+    expect(listed.stdout).toBe('build-2');
   });
 });
