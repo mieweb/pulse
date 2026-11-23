@@ -53,6 +53,14 @@ signs and publishes everything a host needs:
 
 For a final release, tag `pulsekit-v0.2.0` the same way.
 
+## After a final release: re-pin TimeHuddle
+
+TimeHuddle pins the client and the Capacitor plugin exactly. After `pulsekit-vX.Y.Z` is published,
+in TimeHuddle: `npm install --save-exact @mieweb/pulse-embed@X.Y.Z @mieweb/capacitor-pulse@X.Y.Z`
+(or the Release's `.tgz` files while npm publishing is off), remove any vendored `0.0.0-dev`
+client tarball, run its native-sync check, and build it on an iPhone as in
+[timehuddle-ios.md](timehuddle-ios.md).
+
 ## When a release run fails
 
 The GitHub Release is created before npm, and npm takes the packages one at a time, so a failure
