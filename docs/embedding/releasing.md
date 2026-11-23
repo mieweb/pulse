@@ -44,10 +44,22 @@ signs and publishes everything a host needs:
 3. Watch the run: `gh run watch --repo mieweb/pulse` and pick the PulseKit Release run.
 4. When it's green, check a download: download the release's assets and run
    `shasum -a 256 -c SHA256SUMS` in that folder.
-5. Try it in a host: `npm install --save-exact @mieweb/capacitor-pulse@rc` in the Capacitor test
-   host or your app, and check that `getInfo().gitSha` is the tagged commit.
+5. Try it in a host (the Capacitor test host or your app) and check that `getInfo().gitSha` is the
+   tagged commit. Install this release's own packages: while `NPM_PUBLISH` isn't `true`, npm's `@rc`
+   is an older version or nothing, so install from the Release:
+   `BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v<version>` then
+   `npm install --save-exact $BASE/mieweb-pulse-embed-<version>.tgz $BASE/mieweb-capacitor-pulse-<version>.tgz`.
+   Once npm publishing is on, `npm install --save-exact @mieweb/capacitor-pulse@rc` works too.
 
 For a final release, tag `pulsekit-v0.2.0` the same way.
+
+## After a final release: re-pin TimeHuddle
+
+TimeHuddle pins the client and the Capacitor plugin exactly. After `pulsekit-vX.Y.Z` is published,
+in TimeHuddle: `npm install --save-exact @mieweb/pulse-embed@X.Y.Z @mieweb/capacitor-pulse@X.Y.Z`
+(or the Release's `.tgz` files while npm publishing is off), remove any vendored `0.0.0-dev`
+client tarball, run its native-sync check, and build it on an iPhone as in
+[timehuddle-ios.md](timehuddle-ios.md).
 
 ## When a release run fails
 
@@ -67,8 +79,7 @@ version yet".
 | What                 | Where it comes from                                                                                                                                                                                                                                                         |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Signing certificate  | The org's fastlane match repo, read-only, through mieweb/actions v2.5.0's match setup. Secrets: `APPLE_TEAM_ID`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8_BASE64`, `MATCH_GIT_BASIC_AUTHORIZATION`, `MATCH_PASSWORD` (the same as the app's iOS build). |
-| npm, first publish   | `NPM_TOKEN` if the repo sets one, otherwise the org secret `NPM_PUBLISH_SECRET`. A package's first version needs a token, because trusted publishing can only be set up for a package that exists.                                                                          |
-| npm, later publishes | Trusted publishing (OIDC) on npmjs.com for each package, bound to mieweb/pulse and `release-embed.yml`. Once that is set up, no token is needed.                                                                                                                            |
+| npm                  | Trusted publishing (OIDC), the way mieweb/pulsevault publishes: no token. Each package's trusted publisher on npmjs.com is GitHub Actions, repository `mieweb/pulse`, workflow `release-embed.yml`. A new package's first version is published by hand (below). |
 | The Release          | The workflow's `GITHUB_TOKEN` (`contents: write`, `id-token: write`).                                                                                                                                                                                                       |
 
 ## Symbolicate a crash
@@ -86,8 +97,38 @@ Every release attaches what you need to read a PulseKit crash from a host app:
 > **UNTESTED.** Both procedures are standard for these files, but neither has been tried on a
 > PulseKit crash yet.
 
-## Before the first release candidate of a new package
+## The first npm version of a new package
 
-- Someone has to own the `cordova-plugin-pulse` name on npm (it is unscoped).
-- After the first publish, set up trusted publishing for each package on npmjs.com, so later
-  releases need no token.
+Trusted publishing can only be set up for a package that already exists on npm, so a new package's
+first version goes up by hand, once. This is how `@mieweb/pulsevault` started too.
+
+1. Let the release run publish the GitHub Release. While the repository variable `NPM_PUBLISH`
+   isn't `true`, its npm step is skipped and the three npm packages are attached to the Release as
+   `.tgz` files, built from the tag with the version stamped and `Package.swift` and
+   `PulseKit.podspec` written, and listed in `SHA256SUMS`.
+2. Download those three files and check them:
+
+   ```sh
+   V=<version>
+   gh release download "pulsekit-v$V" -R mieweb/pulse -p '*.tgz' -p SHA256SUMS
+   shasum -a 256 -c --ignore-missing SHA256SUMS
+   ```
+
+   `0.1.0-rc.4` came before this workflow: its `SHA256SUMS` doesn't list the tarballs. Check them
+   against `npm-packages.sha256` instead (`-p npm-packages.sha256`, then
+   `shasum -a 256 -c npm-packages.sha256`).
+
+   Don't pack them yourself: a fresh checkout has no `node_modules` for `pulse-embed`'s `prepack`
+   (run `npm ci` at the root first), and the version stamp only runs through the workflow's call,
+   `node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" stamp "$V"`.
+3. As a member of the `mieweb` npm org (`npm login`), publish each tarball:
+   `npm publish <file>.tgz --tag rc --access public --provenance=false` (`--tag latest` for a final
+   release). `@mieweb/pulse-embed`'s manifest asks for provenance, which npm can only generate in a
+   supported CI run, so this first version goes up without an attestation; every later version
+   comes from the workflow with one. The unscoped `cordova-plugin-pulse` is then owned by that
+   account; add the org's maintainers.
+4. On npmjs.com, for each package: Settings → Trusted publisher → GitHub Actions,
+   organization `mieweb`, repository `pulse`, workflow `release-embed.yml`.
+   Then set the repository variable `NPM_PUBLISH` to `true` (Settings → Secrets and variables →
+   Actions → Variables). From then on the workflow publishes with no token. Until it is set, the
+   npm step is skipped and the Release's `.tgz` assets (listed in `SHA256SUMS`) are how hosts install.

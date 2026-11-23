@@ -4,8 +4,9 @@
 # Builds PulseKit (embed/, expo-brownfield), packages and signs it, and publishes:
 #   - a GitHub Release on the tag: one zip per xcframework, the all-in-one zip CocoaPods uses,
 #     SHA256SUMS, the dSYMs, the Hermes source map, THIRD_PARTY_NOTICES and the size report;
-#   - @mieweb/pulse-embed, @mieweb/capacitor-pulse and cordova-plugin-pulse to npm at the tag's
-#     version, with provenance, under the `rc` dist-tag for -rc.N tags.
+#   - @mieweb/pulse-embed, @mieweb/capacitor-pulse and cordova-plugin-pulse: always as .tgz files on
+#     the Release; to npm (trusted publishing, `rc` dist-tag for -rc.N) only while the repository
+#     variable NPM_PUBLISH is `true` (docs/embedding/releasing.md).
 # Each step calls a script that also runs locally (embed/scripts/*.mjs).
 #
 # Tags: pulsekit-v<major>.<minor>.<patch> or pulsekit-v<major>.<minor>.<patch>-rc.<n>. A person
@@ -39,7 +40,7 @@
 # time, so a failure there leaves a Release (and maybe some packages) behind, and a re-run stops at
 # "Check that nothing is published at this version yet".
 #   - Nothing reached npm: delete the Release and keep the tag (`gh release delete <tag> --yes`),
-#     fix the cause (trusted publishing, NPM_TOKEN) and re-run.
+#     fix the cause (trusted publishing) and re-run.
 #   - Some packages reached npm: that version can't be published again. Tag the next version
 #     (the next -rc.N for a release candidate).
 #
@@ -339,6 +340,15 @@ jobs:
           (cd embed/packages/capacitor-pulse && swift package dump-package > /dev/null)
           ruby -c embed/packages/cordova-plugin-pulse/PulseKit.podspec
 
+      - name: Pack the npm packages for the Release
+        # Attached to every Release, so a host can install the exact packages from GitHub
+        # (`npm install <release download URL>/<file>.tgz`) whether or not npm publishing is on.
+        run: |
+          for pkg in pulse-embed capacitor-pulse cordova-plugin-pulse; do
+            (cd "embed/packages/$pkg" && npm pack --pack-destination "$OUT/release")
+          done
+          (cd "$OUT/release" && shasum -a 256 *.tgz >> SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+
       - name: Disk (before publishing)
         run: df -h /
 
@@ -363,12 +373,16 @@ jobs:
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${FLAGS[@]}" "$OUT"/release/*
 
       - name: Publish to npm
+        # Off until the repo variable NPM_PUBLISH is 'true': a package's first version is published
+        # by hand and its trusted publisher set up first (docs/embedding/releasing.md). Until then
+        # the Release's .tgz assets are how hosts install.
+        if: vars.NPM_PUBLISH == 'true'
         env:
           DIST_TAG: ${{ steps.version.outputs.dist_tag }}
-          # The first publish of a new package needs a token (trusted publishing can only be set up
-          # for a package that exists): NPM_TOKEN if the repo sets one, else the org's npm secret.
-          # Once trusted publishing is configured on npmjs.com, neither is needed.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NPM_PUBLISH_SECRET }}
+          # No token: npm trusted publishing (OIDC), as mieweb/pulsevault publishes. Each package's
+          # trusted publisher on npmjs.com is GitHub Actions, mieweb/pulse, release-embed.yml.
+          # A new package's FIRST version is published by hand (see docs/embedding/releasing.md),
+          # because trusted publishing can only be set up for a package that already exists.
         run: |
           for pkg in pulse-embed capacitor-pulse cordova-plugin-pulse; do
             echo "::group::$pkg"
