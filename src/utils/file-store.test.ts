@@ -43,14 +43,26 @@ describe('deleteDraftDir', () => {
     expect(existsSync(join(DOCS, 'drafts', 'd1'))).toBe(true);
   });
 
-  it.each(['..', '.', '', 'd2/..', '../d2', 'd1/segments', 'd1\\segments', 'd1\0'])(
-    'refuses %j, which is not one folder name, and deletes nothing',
-    (id) => {
-      seed();
-      expect(() => deleteDraftDir(id)).toThrow(/Refusing to delete/);
-      expect(existsSync(join(DOCS, 'drafts', 'd1', 'segments', 'c1.mp4'))).toBe(true);
-      expect(existsSync(join(DOCS, 'drafts', 'd2', 'export.mp4'))).toBe(true);
-      expect(existsSync(join(DOCS, 'library.db'))).toBe(true);
-    },
-  );
+  it.each([
+    '..',
+    '.',
+    '',
+    'd2/..',
+    '../d2',
+    'd1/segments',
+    'd1\\segments',
+    'd1\0',
+    // Percent-encoded: a file URI decodes these to `..` or a separator.
+    '%2e%2e',
+    '%2E%2E',
+    '.%2e',
+    'd2%2f..',
+    '%2e%2e%2fd2',
+  ])('refuses %j, which is not one folder name, and deletes nothing', (id) => {
+    seed();
+    expect(() => deleteDraftDir(id)).toThrow(/Refusing to delete/);
+    expect(existsSync(join(DOCS, 'drafts', 'd1', 'segments', 'c1.mp4'))).toBe(true);
+    expect(existsSync(join(DOCS, 'drafts', 'd2', 'export.mp4'))).toBe(true);
+    expect(existsSync(join(DOCS, 'library.db'))).toBe(true);
+  });
 });
