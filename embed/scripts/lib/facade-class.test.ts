@@ -37,9 +37,12 @@ function nmBy(outputs: Record<string, string | null>) {
   const calls: string[] = [];
   const inspect = (cmd: string, args: readonly string[]) => {
     expect(cmd).toBe('nm');
-    expect(args[0]).toBe('-gU');
-    calls.push(args[1]);
-    return outputs[args[1]] ?? null;
+    const arch = args[0] === '-arch' ? args[1] : null;
+    const rest = arch ? args.slice(2) : args;
+    expect(rest[0]).toBe('-gU');
+    const key = arch ? `${rest[1]}#${arch}` : rest[1];
+    calls.push(key);
+    return outputs[key] ?? null;
   };
   return { inspect, calls };
 }
@@ -91,6 +94,26 @@ describe('slicesMissingFacadeClass', () => {
     const { inspect, calls } = nmBy({});
     expect(slicesMissingFacadeClass([pulseKit], inspect)).toEqual([]);
     expect(calls).toEqual([deviceBinary, simulatorBinary]);
+  });
+
+  it('reads each architecture of a universal slice, and names the one without the class', () => {
+    const universal = {
+      ...pulseKit,
+      keep: [
+        DEVICE,
+        { ...SIMULATOR, id: 'ios-arm64_x86_64-simulator', archs: ['arm64', 'x86_64'] },
+      ],
+    };
+    const sim = '/in/PulseKit.xcframework/ios-arm64_x86_64-simulator/PulseKit.framework/PulseKit';
+    const { inspect, calls } = nmBy({
+      [deviceBinary]: WITH_FACADE,
+      [`${sim}#arm64`]: WITH_FACADE,
+      [`${sim}#x86_64`]: WITHOUT_FACADE,
+    });
+    expect(slicesMissingFacadeClass([universal], inspect)).toEqual([
+      'PulseKit.xcframework/ios-arm64_x86_64-simulator (x86_64)',
+    ]);
+    expect(calls).toEqual([deviceBinary, `${sim}#arm64`, `${sim}#x86_64`]);
   });
 
   it('looks for the facade class by its exact name', () => {
