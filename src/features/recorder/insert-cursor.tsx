@@ -18,6 +18,8 @@ import {
   edgeScrollSpeed,
   nearestBoundary,
   onClip,
+  scrollToShow,
+  stepBoundary,
   type StripGeometry,
   TAP_SLOP,
 } from './insert-point';
@@ -45,6 +47,8 @@ export const STRIP: StripGeometry = {
 const FRAME = 14;
 /** The dragged cursor stays this far in from the viewport's edges, and edge scrolling starts there. */
 const EDGE_PAD = FRAME;
+/** Room kept either side of the cursor when VoiceOver's adjust scrolls it into view. */
+const A11Y_MARGIN = 40;
 
 /**
  * The insert cursor (#308) over the clip strip: the recorder's old playhead cursor (a white line
@@ -109,7 +113,8 @@ export function InsertCursor({
   const onFrame = useCallback(
     (frame: FrameInfo) => {
       'worklet';
-      if (!fingerDown.get()) return;
+      // Held (a take started under the finger): the drag goes on but moves nothing.
+      if (!fingerDown.get() || !enabledSv.get()) return;
       const vw = viewportW.get();
       if (vw <= 0) return;
       const dt = (frame.timeSincePreviousFrame ?? 16) / 1000;
@@ -129,6 +134,7 @@ export function InsertCursor({
     },
     [
       fingerDown,
+      enabledSv,
       viewportW,
       contentW,
       scrollOffset,
@@ -181,11 +187,21 @@ export function InsertCursor({
     transform: [{ translateX: boundaryX(cursorAt.get(), STRIP) - scrollOffset.get() - FRAME / 2 }],
   }));
 
+  // One boundary per adjust, the strip scrolled to keep the cursor in view.
   const onAccessibilityAction = (e: AccessibilityActionEvent) => {
     if (!enabled) return;
-    const step = e.nativeEvent.actionName === 'increment' ? 1 : -1;
-    const k = Math.min(count, Math.max(0, at + step));
-    if (k !== at) onMove(k, false);
+    const k = stepBoundary(at, e.nativeEvent.actionName === 'increment' ? 1 : -1, count);
+    if (k === at) return;
+    onMove(k, false);
+    const x = boundaryX(k, STRIP);
+    const target = scrollToShow(
+      scrollOffset.get(),
+      viewportW.get(),
+      contentW.get(),
+      x - A11Y_MARGIN,
+      x + A11Y_MARGIN,
+    );
+    if (target != null) scrollRef.current?.scrollTo({ x: target, animated: false });
   };
 
   return (

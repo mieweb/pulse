@@ -9,6 +9,7 @@ import {
   cursorAfterAdd,
   cursorAfterRemoval,
   cursorAfterReorder,
+  cursorBeforeDelete,
   edgeScrollSpeed,
   EDGE_ZONE,
   insertChipText,
@@ -17,6 +18,8 @@ import {
   nearestBoundary,
   normalizeCursor,
   onClip,
+  orderShown,
+  resolvePinned,
   scrollToShow,
   stepBoundary,
   timeAtBoundary,
@@ -197,5 +200,65 @@ describe('following the draft', () => {
   it('keeps its boundary across a reorder', () => {
     expect(cursorAfterReorder({ before: 'b' }, ids, ['c', 'a', 'b'])).toEqual({ before: 'a' });
     expect(cursorAfterReorder(END, ids, ['c', 'a', 'b'])).toEqual(END);
+  });
+
+  it('moves off a clip the trash is about to delete (the retake, the cursor’s own clip)', () => {
+    // a b c, cursor before c; b (the take before it) trashed: it stays before c.
+    expect(cursorBeforeDelete({ before: 'c' }, ids, 'b')).toEqual({ before: 'c' });
+    // Its own clip trashed: before the next.
+    expect(cursorBeforeDelete({ before: 'b' }, ids, 'b')).toEqual({ before: 'c' });
+    expect(cursorBeforeDelete({ before: 'c' }, ids, 'c')).toEqual(END);
+    expect(cursorBeforeDelete(END, ids, 'c')).toBe(END);
+  });
+});
+
+describe('the order on screen after a drop', () => {
+  const stored = ['a', 'b', 'c'];
+  const base = { clips: 'v1' };
+
+  it('goes by the dropped order until the draft’s clips change', () => {
+    const pending = { base, ids: ['c', 'a', 'b'] };
+    expect(orderShown(base, stored, pending)).toEqual(['c', 'a', 'b']);
+    // The live query caught up (a new list, in the dropped order or not): the draft's.
+    expect(orderShown({ clips: 'v2' }, ['c', 'a', 'b'], pending)).toEqual(['c', 'a', 'b']);
+    expect(orderShown({ clips: 'v2' }, ['a', 'c', 'b'], pending)).toEqual(['a', 'c', 'b']);
+    expect(orderShown(base, stored, null)).toBe(stored);
+  });
+
+  it('a cursor kept across a reorder is drawn at its boundary in the order on screen', () => {
+    const dropped = ['c', 'a', 'b'];
+    const anchor = cursorAfterReorder({ before: 'b' }, stored, dropped); // was at boundary 1
+    const shown = orderShown(base, stored, { base, ids: dropped });
+    expect(boundaryOf(anchor, shown)).toBe(1);
+    expect(
+      insertChipText(
+        boundaryOf(anchor, shown),
+        shown.map((label) => ({ label, durationMs: 1000 })),
+      ),
+    ).toBe('Adding at 0:01 · between clips c and a');
+    // Against the stored order, not caught up yet, it would be drawn a boundary off.
+    expect(boundaryOf(anchor, stored)).toBe(0);
+    // A tap maps against the order on screen too.
+    expect(anchorAtBoundary(2, shown)).toEqual({ before: 'b' });
+  });
+});
+
+describe('a screen take’s pinned spot', () => {
+  const live = new Set(['a', 'c']); // b deleted while it converted
+  const there = (id: string) => live.has(id);
+  const first = () => 'a';
+
+  it('keeps its anchor while its clip is there, and for older rows', () => {
+    expect(resolvePinned({ before: 'a' }, null, there, first)).toEqual({ before: 'a' });
+    expect(resolvePinned({ before: 'b' }, undefined, there, first)).toEqual({ before: 'b' });
+    expect(resolvePinned(END, 'x', there, first)).toBe(END);
+    expect(resolvePinned({ after: 'b' }, 'a', there, first)).toEqual({ after: 'b' });
+  });
+
+  it('goes after the clip before it when its clip has gone, or at the start', () => {
+    expect(resolvePinned({ before: 'b' }, 'a', there, first)).toEqual({ after: 'a' });
+    expect(resolvePinned({ before: 'b' }, null, there, first)).toEqual({ before: 'a' });
+    expect(resolvePinned({ before: 'b' }, null, there, () => null)).toEqual(END);
+    expect(resolvePinned({ before: 'b' }, 'gone', there, first)).toEqual(END);
   });
 });

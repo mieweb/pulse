@@ -88,6 +88,54 @@ export function normalizeCursor(cursor: ClipAnchor, ids: readonly string[]): Cli
   return anchorAtBoundary(i + 1, ids);
 }
 
+/** The cursor as a clip is about to be deleted from `ids` (the recorder's trash): as if gone. */
+export function cursorBeforeDelete(
+  cursor: ClipAnchor,
+  ids: readonly string[],
+  id: string,
+): ClipAnchor {
+  return cursorAfterRemoval(
+    cursor,
+    ids,
+    ids.filter((other) => other !== id),
+  );
+}
+
+/**
+ * The clip order the strip shows: one it has just set itself (a drop: a reorder or a delete) until
+ * the draft's clips next change, else the draft's. The draft's live clips catch up a beat after a
+ * drop; until then the cursor, its chip and taps go by the order on screen. `pending.base` is the
+ * clips list the drop was made over: any newer list (the drop stored, or anything else) wins.
+ */
+export function orderShown<T>(
+  clips: T,
+  ids: readonly string[],
+  pending: { base: T; ids: readonly string[] } | null,
+): readonly string[] {
+  return pending && pending.base === clips ? pending.ids : ids;
+}
+
+/**
+ * Where a screen take goes, resolved as it's added: it was pinned at Record screen's tap as
+ * `pinned` (the cursor then) with `prevId`, the clip before that spot (null: the draft's start).
+ * Long takes convert for a while, and the clip after the spot may be deleted meanwhile: then it
+ * goes after the clip before it, or at the start if it was there; with both gone, the end.
+ * `prevId` undefined (a row saved before it was kept) keeps `pinned` as it is.
+ */
+export function resolvePinned(
+  pinned: ClipAnchor,
+  prevId: string | null | undefined,
+  stillThere: (id: string) => boolean,
+  firstId: () => string | null,
+): ClipAnchor {
+  if (!('before' in pinned) || prevId === undefined || stillThere(pinned.before)) return pinned;
+  if (prevId === null) {
+    const first = firstId();
+    return first ? { before: first } : END;
+  }
+  return stillThere(prevId) ? { after: prevId } : END;
+}
+
 /** The cursor's boundary kept where it was across a reorder (`before` → `after` orders). */
 export function cursorAfterReorder(
   cursor: ClipAnchor,

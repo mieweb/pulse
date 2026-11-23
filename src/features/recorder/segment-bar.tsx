@@ -35,7 +35,9 @@ import {
   boundaryOf,
   boundaryX,
   cursorA11yValue,
+  cursorAfterReorder,
   insertChipText,
+  orderShown,
   scrollToShow,
 } from './insert-point';
 import {
@@ -142,6 +144,22 @@ function Bar({
   // Opened with the cursor inside the draft (from the editor's "Record a clip here"): it's shown
   // once the thumbs have laid out, however far along it is.
   const revealCursor = useRef(boundaryOf(insertAnchor, ids) < ids.length);
+  // Whichever of the viewport's layout and the content's size comes second does it: with either
+  // width unknown (0) the scroll can't be worked out.
+  const showCursorOnce = (content: number) => {
+    const viewport = viewportW.get();
+    if (!revealCursor.current || viewport <= 0 || content <= 0) return;
+    revealCursor.current = false;
+    const x = boundaryX(boundaryOf(insertAnchor, ids), STRIP);
+    const target = scrollToShow(
+      scrollOffset.get(),
+      viewport,
+      content,
+      x - REVEAL_MARGIN,
+      x + REVEAL_MARGIN,
+    );
+    if (target != null) scrollRef.current?.scrollTo({ x: target, animated: false });
+  };
   useEffect(() => {
     if (ids.length < prevIds.current.length) restoreOffset.current = scrollOffset.get();
     else if (ids.length > prevIds.current.length) {
@@ -152,13 +170,17 @@ function Bar({
   }, [ids, scrollOffset]);
 
   // The insert cursor (insert-cursor.tsx): dragged by its own pan, moved by a tap off the clips
-  // (CursorTapArea) or VoiceOver's adjust. Moving it plays nothing.
-  const cursorAt = boundaryOf(insertAnchor, ids);
-  const atEnd = cursorAt >= ids.length;
-  const clipInfo = useMemo(
-    () => segments.map((s) => ({ label: s.label, durationMs: effMs(s) })),
-    [segments],
-  );
+  // (CursorTapArea) or VoiceOver's adjust. Moving it plays nothing. It goes by the order on screen:
+  // after a drop, the grid shows the new order a beat before the draft's clips catch up.
+  const [dropped, setDropped] = useState<{ base: Segment[]; ids: string[] } | null>(null);
+  const shownIds = orderShown(segments, ids, dropped);
+  const cursorAt = boundaryOf(insertAnchor, shownIds);
+  const atEnd = cursorAt >= shownIds.length;
+  const byId = new Map(segments.map((s) => [s.id, s]));
+  const clipInfo = shownIds.flatMap((id) => {
+    const s = byId.get(id);
+    return s ? [{ label: s.label, durationMs: effMs(s) }] : [];
+  });
   const chip = insertChipText(cursorAt, clipInfo);
   // A reorder hides the cursor and the chip (the clips move under them); a cursor drag holds the
   // strip's own scrolling still (the cursor scrolls it at the edges).
@@ -205,7 +227,10 @@ function Bar({
     onReorder,
     onDragActiveChange,
     onInsertAnchorChange,
-    ids,
+    insertAnchor,
+    segments,
+    shownIds,
+    cursorLive,
   });
   useEffect(() => {
     latest.current = {
@@ -213,14 +238,20 @@ function Bar({
       onReorder,
       onDragActiveChange,
       onInsertAnchorChange,
-      ids,
+      insertAnchor,
+      segments,
+      shownIds,
+      cursorLive,
     };
   });
 
-  // From the cursor's drag and a tap off the clips (a tick each), and VoiceOver's adjust.
+  // From the cursor's drag and a tap off the clips (a tick each), and VoiceOver's adjust. Never
+  // while the cursor is held (a take recording: it's where the take goes), even for a move a drag
+  // begun before the take had already sent.
   const moveCursor = useCallback((k: number, tick: boolean) => {
+    if (!latest.current.cursorLive) return;
     if (tick) haptics.tap();
-    latest.current.onInsertAnchorChange(anchorAtBoundary(k, latest.current.ids));
+    latest.current.onInsertAnchorChange(anchorAtBoundary(k, latest.current.shownIds));
   }, []);
 
   const onDragStart = useCallback(
@@ -283,11 +314,17 @@ function Bar({
       // A delete leaves the trash red as it fades: easing it back to grey at the moment the
       // delete lands read as "cancelled". (The next drag starts it grey again.)
       if (!deleting) over.set(withTiming(0, TRASH_HOVER));
+      const { segments: base, shownIds: before, insertAnchor: cursor } = latest.current;
       if (deleting && key) {
         haptics.drop();
+        setDropped({ base, ids: before.filter((id) => id !== key) });
         latest.current.onDelete(key);
       } else {
-        latest.current.onReorder(data.map((s) => s.id));
+        const order = data.map((s) => s.id);
+        setDropped({ base, ids: order });
+        // The cursor keeps its place on the strip while the clips move round it.
+        latest.current.onInsertAnchorChange(cursorAfterReorder(cursor, before, order));
+        latest.current.onReorder(order);
       }
       overTrash.set(false);
       draggedKey.current = null;
@@ -346,7 +383,7 @@ function Bar({
         {/* Also bounds the clips tip: its callout shows only while the first clip is in here. */}
         <CursorTapArea
           at={cursorAt}
-          count={ids.length}
+          count={shownIds.length}
           enabled={cursorLive && !cursorDragging}
           onMove={moveCursor}
           scrollOffset={scrollOffset}>
@@ -354,6 +391,7 @@ function Bar({
             style={styles.viewport}
             onLayout={(e) => {
               viewportW.set(e.nativeEvent.layout.width);
+              showCursorOnce(contentW.get());
             }}>
             <Animated.ScrollView
               ref={scrollRef}
@@ -369,18 +407,7 @@ function Bar({
                   restoreOffset.current = null;
                   scrollRef.current?.scrollTo({ x: target, animated: false });
                 }
-                if (revealCursor.current) {
-                  revealCursor.current = false;
-                  const x = boundaryX(cursorAt, STRIP);
-                  const target = scrollToShow(
-                    scrollOffset.get(),
-                    viewportW.get(),
-                    w,
-                    x - REVEAL_MARGIN,
-                    x + REVEAL_MARGIN,
-                  );
-                  if (target != null) scrollRef.current?.scrollTo({ x: target, animated: false });
-                }
+                showCursorOnce(w);
                 // Bring new clips into view, with the cursor after them, now they've laid out.
                 const added = reveal.current;
                 if (added) {
@@ -425,7 +452,7 @@ function Bar({
             {!reordering && (
               <InsertCursor
                 at={cursorAt}
-                count={ids.length}
+                count={shownIds.length}
                 atEnd={atEnd}
                 enabled={cursorLive}
                 onMove={moveCursor}

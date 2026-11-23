@@ -48,12 +48,14 @@ import {
 } from '@/core/clip-anchor';
 import { expoDb } from '@/db/client';
 import { addSegment, createDraft, deleteSegment } from '@/db/drafts';
-import { cursorAfterAdd, cursorAfterRemoval } from './insert-point';
+import { cursorAfterAdd, cursorBeforeDelete, resolvePinned } from './insert-point';
 /* eslint-enable import/first */
 
 const conn = expoDb as unknown as {
   getAllSync: <T>(sql: string, ...params: unknown[]) => T[];
+  getFirstSync: <T>(sql: string, ...params: unknown[]) => T | null;
 };
+const there = (id: string) => !!conn.getFirstSync('SELECT id FROM segments WHERE id = ?', id);
 const clip = (id: string) => ({
   id,
   originalFilename: `drafts/x/segments/${id}.mp4`,
@@ -83,13 +85,9 @@ describe('the recorder’s insert cursor over real inserts', () => {
     });
     return {
       get: () => cursor,
+      // As the trash does: the cursor moves off the clip first, then the clip goes.
       remove: async (id: string) => {
-        const before = ids(draftId);
-        cursor = cursorAfterRemoval(
-          cursor,
-          before,
-          before.filter((other) => other !== id),
-        );
+        cursor = cursorBeforeDelete(cursor, ids(draftId), id);
         await deleteSegment(id);
       },
       stop,
@@ -150,5 +148,28 @@ describe('the recorder’s insert cursor over real inserts', () => {
     } finally {
       cursor.stop();
     }
+  });
+
+  it('a screen take keeps its spot when the clip after it goes while it converts', async () => {
+    const d = await abc();
+    // Pinned at the tap between a and b: before b, with a before it.
+    const row = { anchor: anchorToRouteParam({ before: s(d, 'b') }), prevId: s(d, 'a') };
+    const pinned = () =>
+      resolvePinned(anchorFromRouteParam(row.anchor), row.prevId, there, () => ids(d)[0] ?? null);
+    await deleteSegment(s(d, 'b'));
+    await addSegment(d, clip(`${d}-screen-1`), pinned);
+    expect(ids(d)).toEqual([s(d, 'a'), `${d}-screen-1`, s(d, 'c')]);
+    // At the start, its next clip gone: the new start.
+    const atStart = { anchor: anchorToRouteParam({ before: s(d, 'a') }), prevId: null };
+    await deleteSegment(s(d, 'a'));
+    await addSegment(d, clip(`${d}-screen-2`), () =>
+      resolvePinned(
+        anchorFromRouteParam(atStart.anchor),
+        atStart.prevId,
+        there,
+        () => ids(d)[0] ?? null,
+      ),
+    );
+    expect(ids(d)[0]).toBe(`${d}-screen-2`);
   });
 });
