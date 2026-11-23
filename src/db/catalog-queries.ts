@@ -1,10 +1,12 @@
 import { asc, count, eq, gte, sql } from 'drizzle-orm';
 
+import { CAPTIONS_OFF_KEY_PREFIX } from './captions';
 import { db } from './client';
 import {
   clipTranscripts,
   drafts,
   segments,
+  settings,
   uploadJobs,
   uploadReceipts,
   type Segment,
@@ -35,6 +37,8 @@ export type CatalogDraftRow = {
   durationMs: number;
   /** The first clip's persisted cover (relative path), as Home's draft card shows it. */
   coverThumbnail: string | null;
+  /** The person turned the draft's captions off (`captions.off:<id>`, isCaptionsOff). */
+  captionsOff: boolean;
 };
 
 /** A clip transcript row for the captions model in use. */
@@ -83,6 +87,10 @@ export function readCatalogRows(now: number, captionModel: string | null): Catal
         coverThumbnail: sql<
           string | null
         >`(select thumbnail from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
+        captionsOff:
+          sql<boolean>`exists(select 1 from ${settings} where ${settings.key} = ${CAPTIONS_OFF_KEY_PREFIX} || ${drafts.id} and ${settings.value} = 'true')`.mapWith(
+            Boolean,
+          ),
       })
       .from(drafts)
       .leftJoin(segments, eq(segments.draftId, drafts.id))

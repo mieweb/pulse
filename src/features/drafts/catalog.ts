@@ -283,7 +283,8 @@ export function projectCatalog(
       clipCount: d.clipCount,
       durationMs: d.durationMs,
       ...(current ? { bytes } : null),
-      hasCaptions: hasCaptions(clips, transcriptOf, captionModel != null),
+      // Turned off, none go up (getDraftCaptions), whatever the clips hold.
+      hasCaptions: !d.captionsOff && hasCaptions(clips, transcriptOf, captionModel != null),
       ...(d.hostConfirmedAt != null ? { confirmedAt: d.hostConfirmedAt } : null),
       poster: d.coverThumbnail ? fileRef(root, d.coverThumbnail) : null,
       ...(current ? { export: fileRef(root, exportRelPath(d.id), bytes) } : null),
