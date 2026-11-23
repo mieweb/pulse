@@ -22,15 +22,15 @@ import { CATALOG_FILE, CATALOG_PART, parseCatalog } from './catalog-filter';
 // PulseKit can answer listDrafts, getDraft and countDrafts without starting Pulse. Only the embedded
 // runtime starts it (useCatalogWriter): the Pulse app writes no catalog.
 //
-// It is rewritten at boot and after every change to the tables it is projected from, at most once
-// per CATALOG_DEBOUNCE_MS. Each write goes to `catalog.json.part` and is then moved over
+// It is rewritten at boot and after every change to the tables it is projected from: once per burst
+// of changes (one JS task), after any write already running. No timer: on Android, React Native
+// pauses timers while no Pulse screen is resumed, so a catalog waiting on one kept a sent draft
+// "queued" after its upload finished. Each write goes to `catalog.json.part` and is then moved over
 // `catalog.json`, so a write killed midway leaves the previous catalog. expo-file-system has no
 // rename-over call: its move with `overwrite` deletes `catalog.json` and then moves the `.part` in
 // (results.ts says more). In that gap, and after a kill inside it, the finished `.part` is the only
 // catalog, so the reader reads it whenever `catalog.json` is missing (readCatalogFile), and the next
 // write puts such a `.part` back in place before it starts its own.
-
-export const CATALOG_DEBOUNCE_MS = 250;
 
 /**
  * The tables the catalog is projected from (pulse-schema.md §5's four, plus what decides
@@ -53,7 +53,7 @@ type Writer = {
 };
 
 let writer: Writer | null = null;
-let timer: ReturnType<typeof setTimeout> | null = null;
+let scheduled = false;
 /** Writes run one after another; `queued` keeps it to one waiting behind the running one. */
 let chain: Promise<void> = Promise.resolve();
 let queued = false;
@@ -153,15 +153,16 @@ function flush(): Promise<void> {
 }
 
 /**
- * Rewrite the catalog CATALOG_DEBOUNCE_MS after the first change since the last write: a burst of
- * writes (a merge, an upload's progress) makes one catalog, and a steady stream one per period.
+ * Rewrite the catalog once the current burst of changes is done (a microtask, so a merge's rows make
+ * one catalog), after any write already running; changes during a write make one more.
  */
 export function scheduleCatalogWrite(): void {
-  if (!writer || timer) return;
-  timer = setTimeout(() => {
-    timer = null;
-    void flush();
-  }, CATALOG_DEBOUNCE_MS);
+  if (!writer || scheduled) return;
+  scheduled = true;
+  queueMicrotask(() => {
+    scheduled = false;
+    if (writer) void flush();
+  });
 }
 
 /**
@@ -192,8 +193,7 @@ export function startCatalogWriter(opts: {
 export function stopCatalogWriter(): Promise<void> {
   writer?.unsubscribe();
   writer = null;
-  if (timer) clearTimeout(timer);
-  timer = null;
+  scheduled = false;
   return chain;
 }
 

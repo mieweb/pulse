@@ -152,37 +152,31 @@ describe('catalog writer', () => {
     expect(writes()).toBe(1);
   });
 
-  it('debounce: a burst of writes makes one catalog, and other tables make none', async () => {
+  it('a burst of writes makes one catalog without a timer, and other tables make none', async () => {
     const [draft] = readCatalog().drafts;
     await lib.drafts.renameDraft(draft.id, 'First take');
-    fakeTimers();
+    // No timer may stand between a change and its write: Android pauses timers while no Pulse
+    // screen is resumed, and a catalog waiting on one showed a sent draft as queued.
+    const timers = jest.spyOn(global, 'setTimeout');
     try {
       for (let i = 0; i < 20; i++) change(i % 2 ? 'drafts' : 'segments');
       change('upload_jobs');
-      expect(jest.getTimerCount()).toBe(1); // the whole burst waits on one timer
-      jest.advanceTimersByTime(lib.writer.CATALOG_DEBOUNCE_MS - 1);
-      expect(writes()).toBe(1); // still inside the window
-      expect(jest.getTimerCount()).toBe(1);
-      jest.advanceTimersByTime(1); // the window ends: one write starts
-      expect(jest.getTimerCount()).toBe(0);
+      await Promise.resolve();
+      expect(timers).not.toHaveBeenCalled();
     } finally {
-      jest.useRealTimers();
+      timers.mockRestore();
     }
-    await waitForWrites(2);
-    expect(readCatalog().drafts[0].name).toBe('First take');
+    await waitForWrites(2); // the whole burst: one write
+    await sleep(50);
+    expect(writes()).toBe(2);
 
-    fakeTimers();
-    try {
-      change('local_settings'); // not projected: no write
-      change('upload_destinations');
-      expect(jest.getTimerCount()).toBe(0);
-      change('upload_receipts');
-      expect(jest.getTimerCount()).toBe(1);
-      jest.advanceTimersByTime(lib.writer.CATALOG_DEBOUNCE_MS);
-    } finally {
-      jest.useRealTimers();
-    }
+    change('local_settings'); // not projected: no write
+    change('upload_destinations');
+    await sleep(50);
+    expect(writes()).toBe(2);
+    change('upload_receipts');
     await waitForWrites(3);
+    expect(readCatalog().drafts[0].name).toBe('First take');
   });
 
   it('a write killed midway leaves the previous catalog, whole', async () => {

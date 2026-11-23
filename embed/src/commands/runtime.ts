@@ -71,8 +71,6 @@ export function startRuntimeServices(props: RuntimeProps): RuntimeServices | nul
 /** A coded error the channel replies with (messaging.ts `errorInfo`). */
 const coded = (code: string, message: string) => Object.assign(new Error(message), { code });
 
-/** How long job notices wait to be written together (an upload's steps come in bursts). */
-const CHANGES_DEBOUNCE_MS = 250;
 
 export function uploadModeOf(config: unknown): 'pulse' | 'file' {
   const mode = (config as { uploadMode?: unknown } | null | undefined)?.uploadMode;
@@ -109,15 +107,19 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
     channel.event('draftsChanged', { namespace, ids: [...ids] });
   }
   const jobChanges = new Set<string>();
-  let jobTimer: ReturnType<typeof setTimeout> | null = null;
+  // Job notices in one burst go out together. A microtask, not a timer: on Android, timers are
+  // paused while no Pulse screen is resumed, which is when background uploads finish.
+  let jobsQueued = false;
   const jobsChanged = (ids: readonly string[]) => {
     ids.forEach((id) => jobChanges.add(id));
-    jobTimer ??= setTimeout(() => {
-      jobTimer = null;
+    if (jobsQueued) return;
+    jobsQueued = true;
+    queueMicrotask(() => {
+      jobsQueued = false;
       const batch = [...jobChanges];
       jobChanges.clear();
       void changed(batch).catch((e: unknown) => log(`draftsChanged not sent: ${String(e)}`));
-    }, CHANGES_DEBOUNCE_MS);
+    });
   };
 
   // 1. The network, before the job loop reads it.
@@ -231,8 +233,7 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
     await ready.catch(() => {});
     runner?.setAccountActive(false);
     for (const stop of stops.splice(0)) stop();
-    if (jobTimer) clearTimeout(jobTimer);
-    jobTimer = null;
+    jobChanges.clear();
     setBackgroundUploads(null);
     setNetworkSource(null);
     // Nothing below may stop `pulse.released`: the handlers are gone already, so PulseKit must
