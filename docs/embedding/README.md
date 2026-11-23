@@ -55,7 +55,16 @@ of using `@mieweb/pulse-embed`, so copy their project setup, not their page code
 ## Versions
 
 PulseKit is published as release candidates, which are prereleases: GitHub tags
-`pulsekit-v<x.y.z>-rc.<n>`, and the npm dist-tag `rc`. Install with `@rc`. A final release goes to
+`pulsekit-v<x.y.z>-rc.<n>`, and the npm dist-tag `rc`. Install with `@rc`. Until npm publishing is switched on (see [releasing.md](releasing.md#the-first-npm-version-of-a-new-package)), install from the GitHub Release instead: every release attaches the three npm packages as `.tgz` files, for example
+
+```sh
+V=0.1.0
+BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
+npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz $BASE/mieweb-capacitor-pulse-$V.tgz
+```
+
+For Cordova: `npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz`, then
+`npx cordova plugin add $BASE/cordova-plugin-pulse-$V.tgz`. A final release goes to
 the npm `latest` tag ([releasing.md](releasing.md#tags-and-versions)).
 
 The three npm packages are released together with the same version. Install them at the same
@@ -96,9 +105,14 @@ upload instead, do these steps, then [uploads.md](uploads.md).
 
 ### 1. Install the packages
 
-Capacitor, from your app's root:
+Until the packages are on npm, install them from the GitHub Release (as above) and skip the `@rc`
+commands below. Capacitor, from your app's root:
 
 ```sh
+# from the Release (now)
+V=0.1.0; BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
+npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz $BASE/mieweb-capacitor-pulse-$V.tgz
+# from npm (once publishing is on)
 npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc
 npx cap sync ios
 ```
@@ -106,6 +120,11 @@ npx cap sync ios
 Cordova, from your app's root:
 
 ```sh
+# from the Release (now)
+V=0.1.0; BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
+npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz
+npx cordova plugin add $BASE/cordova-plugin-pulse-$V.tgz
+# from npm (once publishing is on)
 npm install --save-exact @mieweb/pulse-embed@rc
 npx cordova plugin add cordova-plugin-pulse@rc
 ```
