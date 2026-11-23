@@ -322,6 +322,15 @@ function resolveLocation(location: string, base: string): string {
   return resolved.toString();
 }
 
+/** `url` resolved against `base` when it stays on `base`'s origin; null otherwise (or unparseable). */
+function sameOriginUrl(url: string, base: string): string | null {
+  try {
+    return resolveLocation(url, base);
+  } catch {
+    return null;
+  }
+}
+
 async function createUpload(opts: TusUploadOptions, fetchImpl: typeof fetch): Promise<string> {
   const res = await fetchImpl(`${opts.server}/upload`, {
     method: 'POST',
@@ -487,10 +496,19 @@ export async function uploadViaTus(opts: TusUploadOptions): Promise<TusUploadRes
       opts.kind,
     );
 
-  if (opts.resumeUrl) {
+  // A kept upload URL gets the same origin check as a fresh `Location`: one made on an earlier
+  // target's endpoint must never see this target's token or bytes. It's left behind, and the
+  // upload is created again on the current server.
+  const resumeUrl = opts.resumeUrl ? sameOriginUrl(opts.resumeUrl, opts.server) : null;
+  if (opts.resumeUrl && !resumeUrl) {
+    opts.log?.warn(
+      `${opts.kind}: the kept upload for ${shortId(opts.artifactId)} is on another server; creating it again`,
+    );
+  }
+  if (resumeUrl) {
     opts.log?.info(`${opts.kind}: resuming the upload for ${shortId(opts.artifactId)}`);
-    await transfer(opts.resumeUrl);
-    return { resourceUrl: opts.resumeUrl };
+    await transfer(resumeUrl);
+    return { resourceUrl: resumeUrl };
   }
 
   // Without `resumeUrl`, a call creates its own upload and only resumes within itself. (A create

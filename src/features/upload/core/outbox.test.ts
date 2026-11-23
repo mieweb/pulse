@@ -346,6 +346,30 @@ describe('nextJobState: pulse-schema.md §3.3', () => {
     ]);
   });
 
+  it('the same artifact on another origin drops the old server’s uploads, keeping the ids', () => {
+    const sent = PARTS.map((p) => ({
+      ...p,
+      artifactId: p.artifactId ?? 'v-1',
+      tusUrl: `https://old.pv/uploads/${p.role}`,
+      done: p.role === 'captions',
+    }));
+    const was = job('uploading', {
+      partsJson: JSON.stringify(sent),
+      artifactId: 'v-1',
+      endpoint: 'https://old.pv/vault',
+    });
+    const moved = nextJobState(was, { ...TARGET, endpoint: 'https://new.pv/vault' }, ctx());
+    if (moved.kind !== 'update') throw new Error('expected an update');
+    expect(moved.set.bytesSent).toBe(0);
+    expect(JSON.parse(moved.set.partsJson!)).toEqual(
+      sent.map((p) => ({ ...p, tusUrl: null, done: false })),
+    );
+    // Another path on the same origin keeps them.
+    const samePlace = nextJobState(was, { ...TARGET, endpoint: 'https://old.pv/other' }, ctx());
+    if (samePlace.kind !== 'update') throw new Error('expected an update');
+    expect(samePlace.set.partsJson).toBeUndefined();
+  });
+
   it('backs off 5 s · 2^n, capped at 15 min', () => {
     expect([0, 1, 2, 3, 7, 8, 50].map(backoffMs)).toEqual([
       5_000, 10_000, 20_000, 40_000, 640_000, 900_000, 900_000,

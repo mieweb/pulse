@@ -159,16 +159,33 @@ export function renewParts(
   }));
 }
 
-/** The video part's id set to the target's; a different one than before renews every part. */
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The video part's id set to the target's; a different one than before renews every part. The
+ * same artifact on another origin keeps its ids but none of its uploads: their URLs belong to the
+ * old server, and HEAD/PATCH/DELETE there would carry this target's token.
+ */
 function partsForTarget(
   job: UploadJob,
   artifactId: string,
+  endpoint: string,
   newId: () => string,
 ): string | undefined {
   const parts = parseParts(job.partsJson);
   if (parts.length === 0) return undefined;
   const previous = parts.find((p) => p.role === 'video')?.artifactId ?? null;
-  if (previous === artifactId) return undefined;
+  if (previous === artifactId) {
+    const moved = job.endpoint !== null && originOf(job.endpoint) !== originOf(endpoint);
+    if (!moved || !parts.some((p) => p.tusUrl || p.done)) return undefined;
+    return serializeParts(parts.map((p) => ({ ...p, tusUrl: null, done: false })));
+  }
   if (previous === null) {
     return serializeParts(
       parts.map((p) => (p.role === 'video' ? { ...p, artifactId, tusUrl: null, done: false } : p)),
@@ -254,7 +271,7 @@ export function nextJobState(
       // The server has the video already (a resend after a kill): straight to its outcome.
       const landed =
         event.state === 'processing' || event.state === 'delivered' || event.state === 'kept';
-      const partsJson = partsForTarget(job, event.artifactId, ctx.newId);
+      const partsJson = partsForTarget(job, event.artifactId, event.endpoint, ctx.newId);
       return update(landed ? 'delivering' : 'uploading', {
         uploadId: event.uploadId,
         artifactId: event.artifactId,
