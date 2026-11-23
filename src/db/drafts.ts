@@ -1,10 +1,11 @@
-import { and, asc, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
   absolutize,
   copyRelFile,
   deleteDraftDir,
+  deleteQuietly,
   deleteSegmentFile,
   editCoverRelPath,
   editedThumbRelPath,
@@ -37,46 +38,70 @@ import {
 const now = sql`(unixepoch('subsec') * 1000)`;
 
 /** A new clip for a draft; `thumbnail` is populated only when the camera/importer already
- * produced one, otherwise it's derived later from the first frame. */
+ * produced one, otherwise it's derived later from the first frame. A clip copied from another
+ * draft (`copyClipsInto`) also brings its edit and captions. */
 export type NewSegment = {
   id: string;
   originalFilename: string;
   durationMs: number;
   thumbnail?: string | null;
+  editedFilename?: string | null;
+  editedDurationMs?: number | null;
+  editState?: string | null;
+  captionEdit?: string | null;
+};
+
+/** A draft list row's columns: its segment count, trim-aware duration, and cover clip. */
+const draftListFields = {
+  id: drafts.id,
+  name: drafts.name,
+  lastModified: drafts.lastModified,
+  // Persisted upload status, so a draft card can show its own upload state on the home screen.
+  uploadStatus: drafts.uploadStatus,
+  segmentCount: count(segments.id),
+  // Effective duration = sum of each clip's edited duration (if edited) else its original.
+  durationMs: sql<number>`coalesce(sum(coalesce(${segments.editedDurationMs}, ${segments.durationMs})), 0)`,
+  // Cover frame: the first clip's persisted thumbnail (+ its effective file as a legacy fallback).
+  firstSegmentFilename: sql<
+    string | null
+  >`(select coalesce(edited_filename, original_filename) from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
+  firstSegmentThumbnail: sql<
+    string | null
+  >`(select thumbnail from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
+  // Its edit as settings (none for a legacy baked file), so the fallback shows the edited frame.
+  firstSegmentEditState: sql<
+    string | null
+  >`(select case when edited_filename is null then edit_state end from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
+  // The place it was recorded for, if a link opened its recorder (see `drafts.contextServer`).
+  // An unnamed draft is called by that place's label while the place's destination is in the
+  // pool: read live from the pool by whoever shows it (`usePlaceLabels`), never stored here.
+  contextServer: drafts.contextServer,
+  contextRef: drafts.contextRef,
 };
 
 /** One row per draft with its segment count, trim-aware duration, and cover clip. */
 export const draftListQuery = db
-  .select({
-    id: drafts.id,
-    name: drafts.name,
-    lastModified: drafts.lastModified,
-    // Persisted upload status, so a draft card can show its own upload state on the home screen.
-    uploadStatus: drafts.uploadStatus,
-    segmentCount: count(segments.id),
-    // Effective duration = sum of each clip's edited duration (if edited) else its original.
-    durationMs: sql<number>`coalesce(sum(coalesce(${segments.editedDurationMs}, ${segments.durationMs})), 0)`,
-    // Cover frame: the first clip's persisted thumbnail (+ its effective file as a legacy fallback).
-    firstSegmentFilename: sql<
-      string | null
-    >`(select coalesce(edited_filename, original_filename) from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
-    firstSegmentThumbnail: sql<
-      string | null
-    >`(select thumbnail from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
-    // Its edit as settings (none for a legacy baked file), so the fallback shows the edited frame.
-    firstSegmentEditState: sql<
-      string | null
-    >`(select case when edited_filename is null then edit_state end from ${segments} where ${segments.draftId} = ${drafts.id} order by sort_order limit 1)`,
-    // The place it was recorded for, if a link opened its recorder (see `drafts.contextServer`).
-    // An unnamed draft is called by that place's label while the place's destination is in the
-    // pool: read live from the pool by whoever shows it (`usePlaceLabels`), never stored here.
-    contextServer: drafts.contextServer,
-    contextRef: drafts.contextRef,
-  })
+  .select(draftListFields)
   .from(drafts)
   .leftJoin(segments, eq(segments.draftId, drafts.id))
   .groupBy(drafts.id)
   .orderBy(desc(drafts.lastModified));
+
+/**
+ * The drafts clips can be copied from into `draftId` ("From another Pulse"): every other draft
+ * with a clip, newest first, as `draftListQuery` rows. `null`: every draft with a clip (a recorder
+ * that hasn't made its draft yet). The library is the account's (one per namespace in the embed,
+ * `setStorageRoots`), so this is the account's drafts.
+ */
+export function otherDraftsQuery(draftId: string | null) {
+  return db
+    .select(draftListFields)
+    .from(drafts)
+    .innerJoin(segments, eq(segments.draftId, drafts.id))
+    .where(draftId ? ne(drafts.id, draftId) : undefined)
+    .groupBy(drafts.id)
+    .orderBy(desc(drafts.lastModified));
+}
 
 /**
  * What a draft is called where it's shown: its own name, else the label of the place it was
@@ -295,6 +320,7 @@ export async function addSegment(
  * once the draft's earlier clip writes are done, just before the transaction, so a cursor that
  * moved meanwhile (another clip landing at it) is followed. Returns the new clips' ids in order,
  * and tells `onClipsAdded` listeners once they're committed, with the clips either side of them.
+ * `transcripts` (copied clips' `clip_transcripts` rows, keyed by the new ids) go in with them.
  *
  * Everything is read-then-write, so it all runs inside one transaction: each badge number comes
  * from the draft's monotonic `lastClipNumber` counter (bumped by `k` and read back atomically;
@@ -309,6 +335,7 @@ export async function insertSegments(
   draftId: string,
   anchorOrGet: ClipAnchor | (() => ClipAnchor),
   newSegments: readonly NewSegment[],
+  transcripts: readonly (typeof clipTranscripts.$inferInsert)[] = [],
 ): Promise<string[]> {
   if (newSegments.length === 0) return [];
   await beginClipMutation(draftId);
@@ -337,9 +364,17 @@ export async function insertSegments(
           originalFilename: segment.originalFilename,
           durationMs: segment.durationMs,
           thumbnail: segment.thumbnail ?? null,
+          editedFilename: segment.editedFilename ?? null,
+          editedDurationMs: segment.editedDurationMs ?? null,
+          editState: segment.editState ?? null,
+          captionEdit: segment.captionEdit ?? null,
         })),
       )
       .run();
+    if (transcripts.length > 0)
+      tx.insert(clipTranscripts)
+        .values([...transcripts])
+        .run();
 
     const neighbour = (where: ReturnType<typeof sql>, order: typeof asc) =>
       tx
@@ -982,14 +1017,9 @@ export async function duplicateDraft(draftId: string): Promise<string> {
   if (!source) throw new Error(`duplicateDraft: draft ${draftId} not found`);
   const copyId = Crypto.randomUUID();
   const newIds = new Map(source.segments.map((s) => [s.id, Crypto.randomUUID()]));
-  // `drafts/{draft}/segments/{clip}.….mp4` → the copy's draft and clip id; a file named after
-  // something else (e.g. a clip sharing another's original) keeps its name.
-  const remap = (rel: string) => {
-    const name = rel.slice(rel.lastIndexOf('/') + 1);
-    const stem = name.split('.')[0];
-    const id = newIds.get(stem);
-    return `drafts/${copyId}/segments/${id ? id + name.slice(stem.length) : name}`;
-  };
+  // A file named after something else (e.g. a clip sharing another's original) keeps its name:
+  // the copy's folder is new.
+  const remap = clipFileRemap(copyId, (stem) => newIds.get(stem) ?? stem);
   const transcripts =
     newIds.size === 0
       ? []
@@ -1056,6 +1086,158 @@ export async function duplicateDraft(draftId: string): Promise<string> {
     throw e;
   }
   return copyId;
+}
+
+/**
+ * Where a copied clip's files go in draft `draftId`: `drafts/{draft}/segments/{stem}.…` → the
+ * draft's segments folder, the name's stem (a clip id, for every file but a clip sharing another's
+ * original) given by `stemFor`, the rest of the name (`.edited.{rev}.mp4`, `.cover.{rev}.jpg`) kept.
+ */
+function clipFileRemap(draftId: string, stemFor: (stem: string) => string) {
+  return (rel: string) => {
+    const name = rel.slice(rel.lastIndexOf('/') + 1);
+    const stem = name.split('.')[0];
+    return `drafts/${draftId}/segments/${stemFor(stem)}${name.slice(stem.length)}`;
+  };
+}
+
+/** What `copyClipsInto` did. */
+export type CopiedClips = {
+  /** The copies' ids, in their order in the target draft (the source's order). */
+  segmentIds: string[];
+  /** Clips asked for and not copied: gone from the source by then, or their video missing. */
+  skipped: number;
+};
+
+/**
+ * Copy clips of one draft into another at `anchor` ("From another Pulse", #308), in the source's
+ * order: each clip's files (its video, a legacy baked edit's file, its cover) under fresh ids, and
+ * its row with its edit (trim, speed, rotation, flip, crop, mute), its captions (`captionEdit`)
+ * and its clip transcripts, their paths pointing at the copies. The copies get the target's next
+ * clip numbers, and go in through `insertSegments`, so they're one addition (the editor's one undo
+ * step). The source is only read: it may be locked (uploading); the target may not, and a locked
+ * one is refused before anything is copied.
+ *
+ * The clips are as they were when the copy started: a clip deleted from the source meanwhile, or
+ * one whose video is missing, is skipped (`skipped`); one whose cover went meanwhile (an edit
+ * replacing it) comes without one and shows its own first frame. The files are copied first
+ * (`onProgress(done, total)` after each clip), then the rows go in in one transaction; if that
+ * fails, the copies' files are deleted and the error is thrown.
+ */
+export async function copyClipsInto(
+  targetDraftId: string,
+  sourceDraftId: string,
+  segmentIds: readonly string[],
+  anchor: ClipAnchor | (() => ClipAnchor),
+  onProgress?: (done: number, total: number) => void,
+): Promise<CopiedClips> {
+  assertEditable();
+  if (targetDraftId === sourceDraftId) {
+    throw new Error('copyClipsInto: clips are copied into another draft');
+  }
+  await assertNotUploading(targetDraftId);
+  const [target] = await db
+    .select({ id: drafts.id })
+    .from(drafts)
+    .where(eq(drafts.id, targetDraftId));
+  if (!target) throw new LibraryError('not_found', `Draft ${targetDraftId} doesn't exist.`);
+
+  const wanted = new Set(segmentIds);
+  const rows = (await segmentsForDraft(sourceDraftId)).filter((s) => wanted.has(s.id));
+  const transcripts =
+    rows.length === 0
+      ? []
+      : await db
+          .select()
+          .from(clipTranscripts)
+          .where(
+            inArray(
+              clipTranscripts.segmentId,
+              rows.map((r) => r.id),
+            ),
+          );
+  const newIds = new Map(rows.map((r) => [r.id, Crypto.randomUUID()]));
+  // A file named after something else (a clip sharing another's original) gets a fresh name too:
+  // the target may already hold an earlier copy of it under its old one.
+  const otherStems = new Map<string, string>();
+  const remap = clipFileRemap(targetDraftId, (stem) => {
+    const id = newIds.get(stem) ?? otherStems.get(stem) ?? Crypto.randomUUID();
+    if (!newIds.has(stem)) otherStems.set(stem, id);
+    return id;
+  });
+
+  // Each file once (clips can share an original), and every copy written, for the clean-up.
+  const copiedOk = new Map<string, boolean>();
+  const written: string[] = [];
+  const copy = async (rel: string): Promise<boolean> => {
+    const known = copiedOk.get(rel);
+    if (known !== undefined) return known;
+    const ok = await copyRelFile(rel, remap(rel)).catch(() => false);
+    copiedOk.set(rel, ok);
+    if (ok) written.push(remap(rel));
+    return ok;
+  };
+  const deleteWritten = (keep: ReadonlySet<string> = new Set()) => {
+    for (const rel of written) if (!keep.has(rel)) deleteQuietly(absolutize(rel));
+  };
+
+  const copies: NewSegment[] = [];
+  const copiedFrom = new Set<string>();
+  try {
+    for (const [i, seg] of rows.entries()) {
+      // The files the editor plays: the original, and a legacy baked edit's file.
+      const videos = [seg.originalFilename, seg.editedFilename].filter((f): f is string => !!f);
+      let ok = true;
+      for (const rel of videos) ok = ok && (await copy(rel));
+      if (ok) {
+        // A cover that won't copy leaves none (the clip shows its own first frame).
+        const thumbnail =
+          seg.thumbnail && (await copy(seg.thumbnail)) ? remap(seg.thumbnail) : null;
+        const caption = parseCaptionEdit(seg.captionEdit);
+        copies.push({
+          id: newIds.get(seg.id)!,
+          originalFilename: remap(seg.originalFilename),
+          durationMs: seg.durationMs,
+          thumbnail,
+          editedFilename: seg.editedFilename ? remap(seg.editedFilename) : null,
+          editedDurationMs: seg.editedDurationMs,
+          editState: seg.editState,
+          captionEdit: caption ? JSON.stringify({ ...caption, file: remap(caption.file) }) : null,
+        });
+        copiedFrom.add(seg.id);
+      } else {
+        console.warn('[drafts] copy clips: a clip’s video is missing; skipped', seg.id);
+      }
+      onProgress?.(i + 1, rows.length);
+    }
+  } catch (e) {
+    deleteWritten();
+    throw e;
+  }
+  // The files of clips skipped part-way (their cover, a first file) go now.
+  const used = new Set(
+    copies.flatMap((c) =>
+      [c.originalFilename, c.editedFilename, c.thumbnail].filter((f): f is string => !!f),
+    ),
+  );
+  deleteWritten(used);
+  const skipped = wanted.size - copies.length;
+  if (copies.length === 0) return { segmentIds: [], skipped };
+
+  try {
+    const added = await insertSegments(
+      targetDraftId,
+      anchor,
+      copies,
+      transcripts
+        .filter((t) => copiedFrom.has(t.segmentId))
+        .map((t) => ({ ...t, segmentId: newIds.get(t.segmentId)!, file: remap(t.file) })),
+    );
+    return { segmentIds: added, skipped };
+  } catch (e) {
+    deleteWritten();
+    throw e;
+  }
 }
 
 /** Delete a draft (segments cascade), its on-disk directory (clips + export) and its saved link. */

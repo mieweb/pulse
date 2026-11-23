@@ -95,6 +95,7 @@ import {
   importVideoAction,
   recordScreenAction,
 } from '@/features/recorder/add-menu-actions';
+import { useFromAnotherPulse } from '@/features/recorder/from-another-pulse';
 import { useScreenTake } from '@/features/recorder/screen-take';
 import { useImportImages } from '@/features/recorder/use-import-images';
 import { useImportVideo } from '@/features/recorder/use-import-video';
@@ -594,6 +595,12 @@ export function EditorScreen({
   const screenHere = screen.draftId === draftId && (screenLive || screen.starting);
   const addBusy =
     importer.importing || images.importing || (screen.importing && screen.draftId === draftId);
+  const anotherPulse = useFromAnotherPulse({
+    draftId,
+    target: async () => draftId,
+    anchor: anchorNow,
+    onOpen: () => ctl.pause(),
+  });
   const addActions: MenuAction[] = [
     // Into the recorder, its insert cursor here; back here with the new clips on Edit.
     ...(onAddClips
@@ -609,15 +616,6 @@ export function EditorScreen({
           },
         ]
       : []),
-    importVideoAction(() => {
-      ctl.pause();
-      importer.importVideo(draftId, anchorNow);
-    }),
-    // One clip per image, in the order picked, from the playhead's boundary on.
-    importImagesAction(() => {
-      ctl.pause();
-      void images.importImages(draftId, anchorNow);
-    }),
     // Pulse app only, one take at a time: the clip lands here once the take is stopped.
     ...(screenCapture && !screenLive && !screen.importing
       ? [
@@ -627,7 +625,17 @@ export function EditorScreen({
           }),
         ]
       : []),
-    // Later ways to add (#308: clips from another Pulse) go here.
+    importVideoAction(() => {
+      ctl.pause();
+      importer.importVideo(draftId, anchorNow);
+    }),
+    // One clip per image, in the order picked, from the playhead's boundary on.
+    importImagesAction(() => {
+      ctl.pause();
+      void images.importImages(draftId, anchorNow);
+    }),
+    // Copies of another draft's clips, with their edits and captions.
+    ...(anotherPulse.action ? [anotherPulse.action] : []),
   ];
 
   // Clips added to this draft while the editor is open, from its "+" or a recorder over it: the
@@ -1225,6 +1233,7 @@ export function EditorScreen({
             onDone={finishCrop}
           />
         )}
+        {anotherPulse.sheet}
         {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
         <TipLayer />
       </KeyboardAvoidingView>

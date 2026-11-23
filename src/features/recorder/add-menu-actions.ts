@@ -31,6 +31,8 @@ export type AddMenuProps = {
   onRecordScreen: () => void;
   /** False without screen recording (the embed) or while a screen take runs: no Record screen. */
   screenAvailable: boolean;
+  /** "From another Pulse": copy clips of another draft here. Absent: no other draft has clips. */
+  onFromAnotherPulse?: () => void;
   disabled: boolean;
   busy: boolean;
   progress: number | null;
@@ -39,8 +41,8 @@ export type AddMenuProps = {
 };
 
 /**
- * The "+ menu" items both screens share: Import video, Import image or screenshot, and Record
- * screen where it's offered.
+ * The "+ menu" items both screens share: Record screen where it's offered, Import video, Import
+ * image or screenshot, and From another Pulse while another draft has clips.
  */
 export const importVideoAction = (onPress: () => void): MenuAction => ({
   key: 'import',
@@ -61,19 +63,29 @@ export const recordScreenAction = (onPress: () => void): MenuAction => ({
   onPress,
 });
 
+/** "From another Pulse": copy clips of another draft here, with their edits and captions. */
+export const fromAnotherPulseAction = (onPress: () => void): MenuAction => ({
+  key: 'another',
+  label: 'From another Pulse',
+  icon: 'rectangle.stack',
+  onPress,
+});
+
 /** The recorder "+" menu's items. */
 export function addMenuActions({
   onImport,
   onImportImages,
   onRecordScreen,
   screenAvailable,
+  onFromAnotherPulse,
 }: Pick<
   AddMenuProps,
-  'onImport' | 'onImportImages' | 'onRecordScreen' | 'screenAvailable'
+  'onImport' | 'onImportImages' | 'onRecordScreen' | 'screenAvailable' | 'onFromAnotherPulse'
 >): MenuAction[] {
   return [
+    ...(screenAvailable ? [recordScreenAction(onRecordScreen)] : []),
     importVideoAction(onImport),
     importImagesAction(onImportImages),
-    ...(screenAvailable ? [recordScreenAction(onRecordScreen)] : []),
+    ...(onFromAnotherPulse ? [fromAnotherPulseAction(onFromAnotherPulse)] : []),
   ];
 }
