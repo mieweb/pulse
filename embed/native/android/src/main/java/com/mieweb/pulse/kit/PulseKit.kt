@@ -856,21 +856,31 @@ class PulseKit private constructor(context: Context) {
 
   /**
    * `close`: ask Pulse JS to end the flow (it writes the result, as for X), and dismiss anyway
-   * after 5 s if it doesn't.
+   * if it doesn't in time ([armForceClose]).
    */
   private fun close(req: PulseRequest, respond: (ReplyEnvelope) -> Unit) {
     val open = flow ?: return respond(ReplyEnvelope.success(req.callId))
     val args = LinkedHashMap(req.args)
     if (args["reason"] == null) args["reason"] = PulseJson.Str("host")
     runtime.sendCommand("close", PulseJson.Obj(args))
-    if (open.forceClose == null) {
-      open.forceClose = after(FORCE_CLOSE_MS) {
-        if (flow !== open) return@after
-        log("close: Pulse didn't end ${open.requestId} in ${FORCE_CLOSE_MS / 1000} s; dismissing")
-        finish(open.roots.inbox.read(open.requestId) ?: interrupted(open, "host"))
-      }
-    }
+    if (open.forceClose == null) armForceClose(open)
     respond(ReplyEnvelope.success(req.callId))
+  }
+
+  /**
+   * The host's close watchdog, from now: 5 s, or while a Send runs its own deadline (Pulse JS
+   * finishes the Send before it ends the flow, and a clock action must not run behind a flow
+   * already dismissed). Armed by `close`, and again each time `pulse.ui` changes `sending` while
+   * it is armed, so a Send that stops leaves Pulse JS 5 s to end the flow. As on iOS.
+   */
+  private fun armForceClose(open: PulseKitFlow) {
+    open.forceClose?.let { cancel(it) }
+    val delayMs = if (open.sending) SENDING_CLOSE_MS else FORCE_CLOSE_MS
+    open.forceClose = after(delayMs) {
+      if (flow !== open) return@after
+      log("close: Pulse didn't end ${open.requestId} in ${delayMs / 1000} s; dismissing")
+      finish(open.roots.inbox.read(open.requestId) ?: interrupted(open, "host"))
+    }
   }
 
   /**
@@ -933,6 +943,11 @@ class PulseKit private constructor(context: Context) {
     val open = flow ?: return
     val hasTake = message["hasTake"]?.bool
     if (hasTake != null) open.hasTake = hasTake
+    val sending = message["sending"]?.bool
+    if (sending != null && sending != open.sending) {
+      open.sending = sending
+      if (open.forceClose != null) armForceClose(open)
+    }
     val statusBar = message["statusBar"]?.string
     presenter.applyUi(UiState(statusBar, message["statusBarHidden"]?.bool, hasTake))
   }
@@ -1082,6 +1097,9 @@ class PulseKit private constructor(context: Context) {
     /** `close` waits this long for Pulse JS before the facade ends the flow itself. */
     internal const val FORCE_CLOSE_MS = 5_000L
 
+    /** The close watchdog while a Send runs: the host confirm's deadline, plus 10 s around it. */
+    internal const val SENDING_CLOSE_MS = PulseKitRuntime.HOST_REQUEST_TIMEOUT_MS + 10_000L
+
     /** A purge waits this long for Pulse JS to let go of the library. */
     internal const val PURGE_TIMEOUT_MS = 15_000L
 
@@ -1134,6 +1152,9 @@ internal class PulseKitFlow(
 
   /** The last `pulse.ui` hasTake: a take would be lost if the flow ended now. */
   var hasTake = false
+
+  /** The last `pulse.ui` sending: a Send (merge, then the host's confirm) is running. */
+  var sending = false
 
   /** PulseActivity said the flow is on screen. */
   var shown = false
