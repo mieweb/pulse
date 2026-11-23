@@ -169,11 +169,53 @@ describe('insertSegments', () => {
       stop();
     }
     expect(heard).toEqual([
-      { draftId: d, segmentIds: [s(d, 'x'), s(d, 'y')], anchor: { before: s(d, 'a') } },
-      { draftId: d, segmentIds: [s(d, 'z')], anchor: { at: 'end' } },
+      {
+        draftId: d,
+        segmentIds: [s(d, 'x'), s(d, 'y')],
+        anchor: { before: s(d, 'a') },
+        prevId: null,
+        nextId: s(d, 'a'),
+      },
+      {
+        draftId: d,
+        segmentIds: [s(d, 'z')],
+        anchor: { at: 'end' },
+        prevId: s(d, 'c'),
+        nextId: null,
+      },
     ]);
     expect(takeClipsAdded(d)).toEqual([s(d, 'x'), s(d, 'y'), s(d, 'z')]);
     expect(takeClipsAdded(d)).toEqual([]);
+  });
+});
+
+describe('where clips land, for the recorder’s cursor', () => {
+  it('reports the clips either side, whichever anchor named the slot', async () => {
+    const d = await abc();
+    const heard: ClipsAdded[] = [];
+    const stop = onClipsAdded((a) => heard.push(a));
+    try {
+      await insertSegments(d, { after: s(d, 'a') }, [clip(s(d, 'x'))]);
+      await insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'y'))]);
+      await insertSegments(d, { after: 'gone' }, [clip(s(d, 'z'))]);
+    } finally {
+      stop();
+    }
+    expect(heard.map((a) => [a.prevId, a.nextId])).toEqual([
+      [s(d, 'a'), s(d, 'b')],
+      [s(d, 'x'), s(d, 'b')],
+      [s(d, 'c'), null],
+    ]);
+  });
+
+  it('reads an anchor given as a function once the draft’s earlier writes are done', async () => {
+    const d = await abc();
+    let anchor: ClipAnchor = { before: s(d, 'a') };
+    const write = insertSegments(d, () => anchor, [clip(s(d, 'x'))]);
+    // Moved after the call, before the write: the write follows it.
+    anchor = { before: s(d, 'c') };
+    await write;
+    expect(ids(d)).toEqual(['a', 'b', 'x', 'c'].map((id) => s(d, id)));
   });
 });
 

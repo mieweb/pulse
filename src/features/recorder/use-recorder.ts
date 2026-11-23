@@ -14,7 +14,7 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 
-import { type ClipAnchor, END, isEnd, onClipsAdded, sameAnchor } from '@/core/clip-anchor';
+import { type ClipAnchor, END, onClipsAdded, sameAnchor } from '@/core/clip-anchor';
 import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 import {
   addSegment,
@@ -45,6 +45,7 @@ import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorMo
 import { addExternalClip } from './add-external-clip';
 import type { RecorderNewDraft, ScreenCapturePort } from './contract';
 import { importLog } from './import-log';
+import { cursorAfterAdd, cursorAfterRemoval, normalizeCursor } from './insert-point';
 import { learnRecorderFormat } from './recorder-format';
 import { useScreenTake } from './screen-take';
 import { useCallState } from './use-call-state';
@@ -301,27 +302,43 @@ export function useRecorder(
   }, []);
 
   // The insert cursor (#308): where takes, imports and screen recordings go in the draft. Read
-  // through the ref when a clip is written; the state is for rendering. When clips land at it
-  // (from here or a screen take's import), it moves past them, so a run of takes stays in order.
-  // An anchor whose clip has gone means the end (`insertSegments`).
+  // through the ref as late as possible (`insertSegments` calls the getter just before it writes);
+  // the state is for rendering. It's kept in the `before` form (insert-point.ts), which stays put
+  // as clips land at it, so a run of takes stays in order, and survives a retake (the take before
+  // it deleted). One `after` a clip moves past clips that land right after that clip. When its own
+  // clip goes (deleted here or in the editor), it stays in the same place, before the next clip.
   const [insertAnchor, setAnchorState] = useState<ClipAnchor>(initialAnchor);
   const anchorRef = useRef(insertAnchor);
   const setInsertAnchor = (next: ClipAnchor) => {
+    if (sameAnchor(next, anchorRef.current)) return;
     anchorRef.current = next;
     setAnchorState(next);
   };
   useEffect(
     () =>
       onClipsAdded((added) => {
-        const anchor = anchorRef.current;
-        if (isEnd(anchor) || added.draftId !== draftIdRef.current) return;
-        if (!sameAnchor(anchor, added.anchor)) return;
-        const next = { after: added.segmentIds[added.segmentIds.length - 1] };
+        if (added.draftId !== draftIdRef.current) return;
+        const next = cursorAfterAdd(anchorRef.current, added);
+        if (sameAnchor(next, anchorRef.current)) return;
         anchorRef.current = next;
         setAnchorState(next);
       }),
     [],
   );
+  // The clips as last seen, to tell which went; and an `after` cursor in its `before` form.
+  const shownIds = useRef<string[]>([]);
+  useEffect(() => {
+    const ids = segments.map((s) => s.id);
+    const moved = normalizeCursor(
+      cursorAfterRemoval(anchorRef.current, shownIds.current, ids),
+      ids,
+    );
+    shownIds.current = ids;
+    if (!sameAnchor(moved, anchorRef.current)) {
+      anchorRef.current = moved;
+      setAnchorState(moved);
+    }
+  }, [segments]);
 
   // Hydrate persisted camera prefs once on mount, then mark ready so the camera can render.
   useEffect(() => {
@@ -473,7 +490,7 @@ export function useRecorder(
       await addSegment(
         id,
         { id: segmentId, originalFilename, durationMs, thumbnail: null },
-        anchorRef.current,
+        () => anchorRef.current,
       );
       everHadSegments.current = true;
       segmentCount.current = Math.max(segmentCount.current, 1);
@@ -721,6 +738,15 @@ export function useRecorder(
   // No confirm: the clip goes at once (drag-to-trash in the clip bar).
   async function removeSegment(id: string) {
     try {
+      // The cursor leaves a clip that's going now, before a take can be written at it.
+      const ids = shownIds.current;
+      setInsertAnchor(
+        cursorAfterRemoval(
+          anchorRef.current,
+          ids,
+          ids.filter((other) => other !== id),
+        ),
+      );
       dropClipJobs({ segmentIds: [id] });
       await deleteSegment(id);
     } catch (e) {

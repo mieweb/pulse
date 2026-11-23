@@ -79,6 +79,14 @@ export type ClipsAdded = {
   segmentIds: string[];
   /** The anchor they were added at (as asked, before it was resolved). */
   anchor: ClipAnchor;
+  /**
+   * Where they landed, by their neighbours once written: the clip right before them (null at the
+   * start) and right after them (null at the end). Two anchors can name the same slot (`after:X`
+   * and `before:Y` when Y follows X), so a listener asking "did they land at my slot?" compares
+   * these rather than the anchor. Absent when not known.
+   */
+  prevId?: string | null;
+  nextId?: string | null;
 };
 
 const listeners = new Set<(added: ClipsAdded) => void>();
