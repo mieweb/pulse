@@ -283,7 +283,7 @@ export async function findOpenDraftForContext(context: DraftContext): Promise<st
 export async function addSegment(
   draftId: string,
   segment: NewSegment,
-  anchor: ClipAnchor = END,
+  anchor: ClipAnchor | (() => ClipAnchor) = END,
 ): Promise<void> {
   await insertSegments(draftId, anchor, [segment]);
 }
@@ -291,8 +291,10 @@ export async function addSegment(
 /**
  * Add clips to a draft, contiguously and in the order given, at `anchor`: before or after a clip
  * of this draft, or at the end. An anchor whose clip has gone (deleted, or in another draft)
- * means the end, so a stale cursor never loses a take. Returns the new clips' ids in order, and
- * tells `onClipsAdded` listeners once they're committed.
+ * means the end, so a stale cursor never loses a take. `anchor` may be a function: it is then read
+ * once the draft's earlier clip writes are done, just before the transaction, so a cursor that
+ * moved meanwhile (another clip landing at it) is followed. Returns the new clips' ids in order,
+ * and tells `onClipsAdded` listeners once they're committed, with the clips either side of them.
  *
  * Everything is read-then-write, so it all runs inside one transaction: each badge number comes
  * from the draft's monotonic `lastClipNumber` counter (bumped by `k` and read back atomically;
@@ -305,13 +307,14 @@ export async function addSegment(
  */
 export async function insertSegments(
   draftId: string,
-  anchor: ClipAnchor,
+  anchorOrGet: ClipAnchor | (() => ClipAnchor),
   newSegments: readonly NewSegment[],
 ): Promise<string[]> {
   if (newSegments.length === 0) return [];
   await beginClipMutation(draftId);
+  const anchor = typeof anchorOrGet === 'function' ? anchorOrGet() : anchorOrGet;
   const k = newSegments.length;
-  db.transaction((tx) => {
+  const neighbours = db.transaction((tx) => {
     const [counter] = tx
       .update(drafts)
       .set({ lastClipNumber: sql`${drafts.lastClipNumber} + ${k}`, lastModified: now })
@@ -337,9 +340,22 @@ export async function insertSegments(
         })),
       )
       .run();
+
+    const neighbour = (where: ReturnType<typeof sql>, order: typeof asc) =>
+      tx
+        .select({ id: segments.id })
+        .from(segments)
+        .where(and(eq(segments.draftId, draftId), where))
+        .orderBy(order(segments.order))
+        .limit(1)
+        .get()?.id ?? null;
+    return {
+      prevId: neighbour(sql`${segments.order} < ${at.order}`, desc),
+      nextId: neighbour(sql`${segments.order} >= ${at.order + k}`, asc),
+    };
   });
   const segmentIds = newSegments.map((s) => s.id);
-  noteClipsAdded({ draftId, segmentIds, anchor });
+  noteClipsAdded({ draftId, segmentIds, anchor, ...neighbours });
   return segmentIds;
 }
 

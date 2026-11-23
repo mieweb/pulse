@@ -1,4 +1,4 @@
-import type { ClipAnchor } from '@/core/clip-anchor';
+import { type ClipAnchor, END } from '@/core/clip-anchor';
 import { addSegment } from '@/db/drafts';
 import { describeError, formatSeconds } from '@/features/upload/core/upload-log';
 import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
@@ -35,8 +35,10 @@ export type ExternalClipResult =
  * idempotent. `signal` cancels it at every step, undoing what's been done, so the clip lands whole
  * in its draft or not at all. `onProgress` gets the conversion's progress in whole percents (and
  * never after a cancel). `onAdded` runs synchronously right after the segment row is written.
- * `anchor` says where in the draft the clip goes (default the end); it is read just before the row
- * is written, so a cursor moved during the conversion is followed.
+ * `anchor` says where in the draft the clip goes (default the end); it is called just before the
+ * row is written (`insertSegments`), so a caller that passes its live cursor (the recorder's
+ * import) follows a cursor moved during the conversion, and one that passes a fixed place (a screen
+ * take, pinned where the cursor was when Record screen was tapped) gets that place.
  *
  * Throws on anything other than a cancel or a conversion refusal (a copy or a db write failing).
  */
@@ -117,7 +119,7 @@ export async function addExternalClip(
   await addSegment(
     id,
     { id: segId, originalFilename, durationMs, thumbnail: ok ? thumbRel : null },
-    anchor?.(),
+    anchor ?? END,
   );
   onAdded?.();
   return { status: 'added', draftId: id, segmentId: segId };
