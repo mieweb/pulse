@@ -196,6 +196,9 @@ jobs:
         run: |
           node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" \
             stamp "$VERSION"
+          # The Android plugin takes its Maven version and BuildConfig stamp from PULSEKIT_VERSION
+          # (else the app's package.json version), so every later step gets the tag's version.
+          echo "PULSEKIT_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       # ── Build the fused release AAR (expo-brownfield) ─────────────────────
       - name: Expo prebuild (embed, Android)
