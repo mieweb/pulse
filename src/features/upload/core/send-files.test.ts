@@ -47,7 +47,7 @@ jest.mock('@/utils/video', () => ({
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { expoDb } from '@/db/client';
-import { setCaptionsOff } from '@/db/settings';
+import { setCaptionsOff } from '@/db/captions';
 import { env } from '@/test-support/expo-fs-node';
 import { generateCoverFile } from '@/utils/video';
 import { sendDirRelPath, writeSendFiles } from './send-files';

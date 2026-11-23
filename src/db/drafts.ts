@@ -12,7 +12,7 @@ import {
 } from '@/utils/file-store';
 import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
 import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
-import { parseCaptionEdit } from './captions';
+import { isCaptionsOff, parseCaptionEdit, setCaptionsOff } from './captions';
 import { db } from './client';
 import type { PairedDestination } from './destinations';
 import {
@@ -672,6 +672,18 @@ export async function renameDraft(draftId: string, name: string | null): Promise
   assertEditable();
   await takeOutForChange(draftId, 'edited');
   await db.update(drafts).set({ name, lastModified: now }).where(eq(drafts.id, draftId));
+}
+
+/**
+ * Turn the draft's captions off or back on (the embed's per-video switch). Locked like a rename:
+ * the captions ride the Send as their own part, so a queued, paused or failed Send is taken out
+ * (the next Send writes its parts again) and one that is uploading refuses with `draft.locked`.
+ * Setting what is already set changes nothing, a queued Send included.
+ */
+export async function setDraftCaptionsOff(draftId: string, off: boolean): Promise<void> {
+  if ((await isCaptionsOff(draftId)) === off) return;
+  await takeOutForChange(draftId, 'edited');
+  await setCaptionsOff(draftId, off);
 }
 
 /**
