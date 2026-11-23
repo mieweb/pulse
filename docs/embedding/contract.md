@@ -19,7 +19,8 @@ this page and that file disagree, the file is right.
 - **Check for a capability** the same way: `getInfo().capabilities` lists what this build can do:
   `upload.pulse`, `upload.file`, `upload.background`, `captions`, `share`, `saveToPhotos`, and
   `headless` when host writes and uploads run with nothing on screen
-  ([uploads.md](uploads.md#paused-uploads)).
+  ([uploads.md](uploads.md#paused-uploads)). Android's PulseKit never lists `headless` in this
+  version ([android.md](android.md#no-headless-on-android)).
 - Error codes, draft states, entry names, event names and fields are only ever added, never renamed
   or reused. Treat an error code you don't know as `unknown` (the client does: it keeps the
   original in `reason`), a draft state you don't know as `draft`, and ignore events you don't know.
@@ -201,37 +202,38 @@ work later with no change by the person) and `callId` (it appears in PulseKit's 
 `isPulseError(e)` to tell one apart. A `failed` result, and an upload's `upload.error`, carry the
 same shape.
 
-| Code                   | Where                                       | Meaning                                                                                                                            |
-| ---------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `unavailable`          | any call                                    | No Pulse plugin on this page (a browser, or the plugin isn't installed or linked).                                                 |
-| `unsupported`          | any call but `getInfo`; a `failed` result   | This device can't run Pulse; or, in a result, the options ask for something this PulseKit can't do.                                |
-| `contract.unsupported` | any call                                    | PulseKit's contract major isn't the client's.                                                                                      |
-| `method.unsupported`   | any call                                    | This PulseKit doesn't list the method.                                                                                             |
-| `busy`                 | `open`, `setAccount`, `purge`               | A flow is open (with another `requestId`), or your app is presenting something.                                                    |
-| `invalid_options`      | any call; a `failed` result                 | A required field is missing or has the wrong type.                                                                                 |
-| `no_account`           | `open`, `pendingResults`, drafts calls      | No `setAccount()` yet, or after `setAccount(null)`.                                                                                |
-| `restart_required`     | `setAccount`, then `open` and drafts writes | Another person's library is open in this app session.                                                                              |
-| `not_found`            | drafts calls, `logFile`; a `failed` result  | No such draft (or it was sent), or logs are off.                                                                                   |
-| `draft.locked`         | drafts writes; a `failed` result            | The draft is sending, open in the current flow, or bound to a confirmed Send (`reason: 'clock_bound'`).                            |
-| `host_misconfigured`   | `open`, `upload`; an upload's error         | A purpose string is missing, no view controller to present from, `upload` in file mode, or a target that doesn't echo `clientKey`. |
-| `timeout`              | calls that start Pulse                      | Pulse didn't answer in time (30 s by default).                                                                                     |
-| `storage.full`         | `failed` result                             | The phone is out of space. The videos are still there.                                                                             |
-| `storage.damaged`      | `failed` result                             | Pulse couldn't open or update its library on this phone.                                                                           |
-| `storage.newer_schema` | drafts writes; a `failed` result            | A newer PulseKit wrote this library; lists, sends and deletes still work.                                                          |
-| `export.failed`        | `failed` result                             | After "Use this video", the video couldn't be copied out for your app. The draft is kept.                                          |
-| `runtime.error`        | `failed` result                             | A JavaScript error inside Pulse. Your app keeps running, and the next `open` starts fresh.                                         |
-| `upload.too_large`     | `upload`; an upload's error                 | Over the upload type's `maxBytes` or your server's limit.                                                                          |
-| `upload.refused`       | an upload's error                           | Your server or PulseVault refused the upload for good.                                                                             |
-| `upload.failed`        | an upload's error                           | A network or server failure; Pulse retries it.                                                                                     |
-| `destination.gone`     | an upload's error                           | Your server said the place is gone or the person lost access.                                                                      |
-| `host.unavailable`     | an upload's error                           | Your page didn't answer a host request within 20 s, or refused it without a code.                                                  |
-| `credentials.expired`  | an upload's error                           | The upload's token expired and couldn't be refreshed.                                                                              |
-| `unknown`              | anywhere                                    | Anything else, including a code this client doesn't know (see `reason`).                                                           |
+| Code                   | Where                                       | Meaning                                                                                                                                                                                                                  |
+| ---------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `unavailable`          | any call                                    | No Pulse plugin on this page (a browser, or the plugin isn't installed or linked).                                                                                                                                       |
+| `unsupported`          | any call but `getInfo`; a `failed` result   | This device can't run Pulse; or, in a result, the options ask for something this PulseKit can't do.                                                                                                                      |
+| `contract.unsupported` | any call                                    | PulseKit's contract major isn't the client's.                                                                                                                                                                            |
+| `method.unsupported`   | any call                                    | This PulseKit doesn't list the method.                                                                                                                                                                                   |
+| `busy`                 | `open`, `setAccount`, `purge`               | A flow is open (with another `requestId`), or your app is presenting something.                                                                                                                                          |
+| `invalid_options`      | any call; a `failed` result                 | A required field is missing or has the wrong type.                                                                                                                                                                       |
+| `no_account`           | `open`, `pendingResults`, drafts calls      | No `setAccount()` yet, or after `setAccount(null)`.                                                                                                                                                                      |
+| `restart_required`     | `setAccount`, then `open` and drafts writes | Another person's library is open in this app session.                                                                                                                                                                    |
+| `not_found`            | drafts calls, `logFile`; a `failed` result  | No such draft (or it was sent), or logs are off.                                                                                                                                                                         |
+| `draft.locked`         | drafts writes; a `failed` result            | The draft is sending, open in the current flow, or bound to a confirmed Send (`reason: 'clock_bound'`).                                                                                                                  |
+| `host_misconfigured`   | `open`, `upload`; an upload's error         | A purpose string is missing (iOS) or `CAMERA` / `RECORD_AUDIO` isn't in the merged manifest (Android), no view controller or Activity to present from, `upload` in file mode, or a target that doesn't echo `clientKey`. |
+| `timeout`              | calls that start Pulse                      | Pulse didn't answer in time (30 s by default).                                                                                                                                                                           |
+| `storage.full`         | `failed` result                             | The phone is out of space. The videos are still there.                                                                                                                                                                   |
+| `storage.damaged`      | `failed` result                             | Pulse couldn't open or update its library on this phone.                                                                                                                                                                 |
+| `storage.newer_schema` | drafts writes; a `failed` result            | A newer PulseKit wrote this library; lists, sends and deletes still work.                                                                                                                                                |
+| `export.failed`        | `failed` result                             | After "Use this video", the video couldn't be copied out for your app. The draft is kept.                                                                                                                                |
+| `runtime.error`        | `failed` result                             | A JavaScript error inside Pulse. Your app keeps running, and the next `open` starts fresh.                                                                                                                               |
+| `upload.too_large`     | `upload`; an upload's error                 | Over the upload type's `maxBytes` or your server's limit.                                                                                                                                                                |
+| `upload.refused`       | an upload's error                           | Your server or PulseVault refused the upload for good.                                                                                                                                                                   |
+| `upload.failed`        | an upload's error                           | A network or server failure; Pulse retries it.                                                                                                                                                                           |
+| `destination.gone`     | an upload's error                           | Your server said the place is gone or the person lost access.                                                                                                                                                            |
+| `host.unavailable`     | an upload's error                           | Your page didn't answer a host request within 20 s, or refused it without a code.                                                                                                                                        |
+| `credentials.expired`  | an upload's error                           | The upload's token expired and couldn't be refreshed.                                                                                                                                                                    |
+| `unknown`              | anywhere                                    | Anything else, including a code this client doesn't know (see `reason`).                                                                                                                                                 |
 
-The contract defines three codes this PulseKit never sends: `permission.camera`,
+The contract defines two codes this PulseKit never sends: `permission.camera` and
 `permission.microphone` (without camera or microphone access, the recorder shows its own permission
-screen instead of ending the flow) and `runtime.paused`. [troubleshooting.md](troubleshooting.md)
-says what to do about each code.
+screen instead of ending the flow). `runtime.paused` is sent only on Android, by a drafts write or
+`resumeOutbox()` that has to start Pulse while your app isn't on screen; iOS never sends it.
+[troubleshooting.md](troubleshooting.md) says what to do about each code.
 
 ## On the wire
 
@@ -260,8 +262,9 @@ Swift facade and the client's Jest tests both run.
 ## Inside PulseKit: the facade and Pulse's JavaScript
 
 Hosts never see these; they are for working on PulseKit itself. The facade
-(`embed/native/ios/PulseKit.swift`) and Pulse's JavaScript (`embed/src/shell/messaging.ts`,
-`embed/src/commands/runtime.ts`) talk over expo-brownfield's `BrownfieldMessaging`:
+(`embed/native/ios/PulseKit.swift`, and its Android twin `embed/native/android/.../PulseKit.kt`) and
+Pulse's JavaScript (`embed/src/shell/messaging.ts`, `embed/src/commands/runtime.ts`) talk over
+expo-brownfield's `BrownfieldMessaging`, with the same messages on both platforms:
 
 | `type`                                      | Direction   | Fields                                                        | Meaning                                                                                                                                                                            |
 | ------------------------------------------- | ----------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -274,7 +277,7 @@ Hosts never see these; they are for working on PulseKit itself. The facade
 | `pulse.result`                              | JS → native | `requestId`                                                   | The flow's result file is written; the facade reads it, resolves `open` and dismisses.                                                                                             |
 | `pulse.error`                               | JS → native | `requestId, message`                                          | The embed root couldn't start; the flow ends `failed{runtime.error}`.                                                                                                              |
 | `pulse.ui`                                  | JS → native | `statusBar?, statusBarHidden?, hasTake?, sending?`            | The container's status bar and swipe-to-dismiss, and whether a Send is running (the `close` watchdog waits for it); each field sticks until set again.                              |
-| `pulse.upload`                              | JS → native | `op` (`hello`, `patch`, `attach`, `cancel`, `sweep`), `id`, … | A TUS PATCH for PulseKit's background session (`PulseKitBackground.swift`).                                                                                                        |
+| `pulse.upload`                              | JS → native | `op` (`hello`, `patch`, `attach`, `cancel`, `sweep`), `id`, … | A TUS PATCH for PulseKit's background uploader (`PulseKitBackground.swift`; `PulseKitUploads.kt` on Android).                                                                      |
 | `pulse.upload.progress`, `pulse.upload.end` | native → JS | `id, sent` / `id, ok, status?, …`                             | That PATCH's progress and end.                                                                                                                                                     |
 
 Internal `pulse.cmd` methods:
@@ -284,7 +287,7 @@ Internal `pulse.cmd` methods:
 | `close`          | `{ reason, discard? }`        | yes           | The host's `close()`.                                                                                                                         |
 | `configure`      | the host's options            | none          | The host's latest `configure` options, on each `pulse.ready` and each later `configure`.                                                      |
 | `accountActive`  | `{ active }`                  | none          | `setAccount` made the runtime's account the signed-in one, or not; the job loop pauses while it isn't.                                        |
-| `network`        | `{ online, wifi, expensive }` | none          | Every reachability change PulseKit's path monitor sees.                                                                                       |
+| `network`        | `{ online, wifi, expensive }` | none          | Every reachability change PulseKit sees (`NWPathMonitor`; `ConnectivityManager` on Android).                                                  |
 | `hostTimeout`    | `{ hostCallId }`              | none          | A host request reached its 20 s deadline unanswered.                                                                                          |
 | `releaseLibrary` | `{ namespace }`               | yes           | A purge of the runtime's namespace: stop the job loop and close the database, then `pulse.released`.                                          |
 | `memoryWarning`  | `{}`                          | `{ release }` | A memory warning with nothing open. Pulse lets go of the captions models, and of the whole runtime only with no flow, command or live upload. |

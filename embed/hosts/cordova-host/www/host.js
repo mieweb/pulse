@@ -1,6 +1,7 @@
 // Transport test page for the Pulse plugin: raw request envelopes in, reply and event envelopes
-// shown as they come back (native-bridge.md §2). It runs in the Capacitor host and the Cordova
-// host alike; cap-host/www/host.js and cordova-host/www/host.js are identical copies.
+// shown as they come back (native-bridge.md §2). It began as a copy of cap-host/www/host.js, which
+// has since gained the test-server host services, the open/close ×10 run and the deep-link queue;
+// this copy has none of them.
 (function () {
   'use strict';
 

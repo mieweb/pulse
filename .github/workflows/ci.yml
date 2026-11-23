@@ -56,6 +56,27 @@ jobs:
       - name: Embed bundle check
         run: npm run check:embed
 
+  # PulseKit's Android core (embed/native/android, plain Kotlin) against the shared vectors the
+  # Swift runners and jest check, plus the upload service's rules: a JVM-only Gradle build with no
+  # Android Gradle Plugin and no expo (embed/native/android/README.md). No Android build on PRs.
+  jvm-vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-version: '8.14' # jvm-tests has no wrapper; 8.14 is the Gradle of the local runs
+      - name: Shared vectors (envelope, catalog, namespace, Kotlin-only)
+        run: gradle -p embed/native/android/jvm-tests run --args="$GITHUB_WORKSPACE"
+      - name: Upload service rules
+        run: |
+          gradle -p embed/native/android/jvm-tests run \
+            -PmainClass=com.mieweb.pulse.kit.vectors.UploadRulesMain --args="$GITHUB_WORKSPACE"
+
   # The same suite against two servers:
   # - pinned: the pulsevault commit this app pins in its submodule (what it was built against);
   # - npm-latest: the latest pulsevault release on npm (what deployments are running).

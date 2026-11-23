@@ -20,6 +20,12 @@ native-bridge.md §2 (envelopes), §3 (methods and the busy matrix) and §6.2 (r
 - **Jest**, in `embed/packages/pulse-embed/src/envelope-vectors.test.ts`, through the client's
   envelope and validation code.
 
+- **Kotlin**, on a JVM, with no Android build. `embed/native/android/jvm-tests` compiles the
+  Android facade's plain-Kotlin core (`embed/native/android/src/main/java/com/mieweb/pulse/kit/core`)
+  and runs this file, `namespace-vectors.json` and the catalog vectors with the same checks:
+  `gradle --offline -q -p embed/native/android/jvm-tests run --args="$PWD"` from the repository
+  root (see `embed/native/android/README.md`).
+
 ## Sections
 
 | Section       | Each case                                                                   | Checks                                                                                                                                                                                                   |

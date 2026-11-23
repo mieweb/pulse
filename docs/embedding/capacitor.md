@@ -1,8 +1,9 @@
 # Add Pulse to a Capacitor app
 
 You add two npm packages: `@mieweb/pulse-embed` (the client your page calls) and
-`@mieweb/capacitor-pulse` (the native plugin, `Pulse`). The plugin pulls PulseKit's frameworks from
-the PulseKit GitHub Release through Swift Package Manager.
+`@mieweb/capacitor-pulse` (the native plugin, `Pulse`). On iOS the plugin pulls PulseKit's
+frameworks from the PulseKit GitHub Release through Swift Package Manager; on Android it depends on
+PulseKit's Android library, from a Maven repository your app lists ([android.md](android.md)).
 
 The whole path, from install to a first result, is in [README.md](README.md#add-pulse-step-by-step).
 This page has what is specific to Capacitor.
@@ -65,9 +66,14 @@ next `draftsChanged` naming it.
 
 ## Android
 
-The Android side of `@mieweb/capacitor-pulse` is a stub. It adds no permissions and no
-dependencies, `getInfo()` answers `supported: false` with `unsupportedReason: 'device'`, and every
-other call rejects with `unsupported`. Show your Android fallback when `isAvailable()` is false.
+`@mieweb/capacitor-pulse` runs Pulse on Android phones too, with the same page code. Your app's
+Android project needs PulseKit's Maven repository, `minSdkVersion` 24, and backup rules that leave
+Pulse's folder out; [android.md](android.md) has the steps and what differs from iOS.
+
+To keep Pulse off Android for now, set `pulsekitAndroid=false` in `android/gradle.properties`
+([android.md](android.md#opt-out-on-android)): the plugin then builds a stub that answers
+`supported: false` and adds no permissions and no dependencies. Show your fallback wherever
+`isAvailable()` is false.
 
 ## Try it in the reference host
 
@@ -79,7 +85,8 @@ contract suite against the real plugin on the phone.
 
 ## Use a PulseKit you built
 
-Set `PULSEKIT_LOCAL` to a folder of PulseKit `*.xcframework` files and start Xcode with it. See
+Set `PULSEKIT_LOCAL` to a folder of PulseKit `*.xcframework` files and start Xcode with it, or, for
+Android, `PULSEKIT_ANDROID_LOCAL` to a local PulseKit Maven repository. See
 [dev-loop.md](dev-loop.md#capacitor), and
 [README.md](README.md#use-a-local-build-instead-of-npm) for installing the packages from local
 tarballs.
