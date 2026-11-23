@@ -99,9 +99,9 @@ const isEmpty = (d: SnapshotDiff) =>
  * The next undo or redo to carry out, skipping (and dropping) steps that would change nothing: a
  * state step that only touched deleted clips, or an addition whose clips have all gone. An
  * addition that would leave the draft with no clips is dropped too (the editor closes on an empty
- * draft). `history` is the history once the step is done, except for an addition: its undo takes
- * the clips out first, so the hook moves the step itself (`undoAdded` / `redoAdded`), and
- * `history` is the one to move it from.
+ * draft). `history` is the history once the step is done, except for an addition, which takes
+ * its clips out or puts them back first: `history` is the one it starts from, the step still on
+ * top (editor-history-store.ts moves it).
  */
 export type Plan =
   | { kind: 'none'; history: History<Step> }
@@ -138,25 +138,6 @@ export function planStep(h: History<Step>, direction: 'undo' | 'redo', now: Pres
         ? { ...h, past: h.past.slice(0, -1) }
         : { ...h, future: h.future.slice(0, -1) };
   }
-}
-
-/**
- * An addition undone: the step goes onto the redo stack with what was taken out. Null when the
- * step is no longer the top of the undo stack (a change came in meanwhile): it can't be redone.
- */
-export function undoAdded(
-  h: History<Step>,
-  step: AddedStep,
-  taken: TakenOutClips,
-): History<Step> | null {
-  if (h.past[h.past.length - 1] !== step) return null;
-  return undoStep(h, { ...step, taken })!.history;
-}
-
-/** An addition redone: the step goes back onto the undo stack, its clips in the draft again. */
-export function redoAdded(h: History<Step>, step: AddedStep): History<Step> | null {
-  if (h.future[h.future.length - 1] !== step) return null;
-  return redoStep(h, { ...step, taken: null })!.history;
 }
 
 /** The clips taken out by additions on the redo stack: their files go when it's cleared. */

@@ -369,6 +369,34 @@ describe('taking added clips out and putting them back (the editor’s undo/redo
     }
   });
 
+  it('never deletes a file another row shares, or one held for a redo', async () => {
+    const d = await createDraft();
+    const shared = { originalFilename: 'drafts/x/segments/shared.mp4', durationMs: 1 };
+    await addSegment(d, { id: s(d, 'p'), ...shared });
+    await addSegment(d, { id: s(d, 'q'), ...shared });
+    await addSegment(d, clip(s(d, 'r')));
+    const del = jest.spyOn(fileStore, 'deleteSegmentFile').mockImplementation(() => {});
+    try {
+      // q taken out (its redo needs the shared file), then p deleted: the file stays.
+      const taken = await takeOutSegments([s(d, 'q')]);
+      await deleteSegment(s(d, 'p'));
+      expect(del).not.toHaveBeenCalledWith(shared.originalFilename);
+      // Nothing can put q back now: the file goes.
+      await dropTakenOut(taken!);
+      expect(del).toHaveBeenCalledWith(shared.originalFilename);
+
+      // Dropping a take-out whose sharer is still in the draft keeps the file.
+      del.mockClear();
+      await addSegment(d, { id: s(d, 'u'), ...shared });
+      await addSegment(d, { id: s(d, 'v'), ...shared });
+      const one = await takeOutSegments([s(d, 'u')]);
+      await dropTakenOut(one!);
+      expect(del).not.toHaveBeenCalledWith(shared.originalFilename);
+    } finally {
+      del.mockRestore();
+    }
+  });
+
   it('tells no clips-added listener when clips are put back', async () => {
     const d = await added();
     const taken = await takeOutSegments([s(d, 'x')]);

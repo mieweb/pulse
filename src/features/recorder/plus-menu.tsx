@@ -10,7 +10,7 @@ import type { PlusMenuProps } from './add-menu-actions';
  * system menu, plus-menu.ios.tsx). With one item the "+" is that item, no one-item menu. The
  * recorder's and the editor's "+" are both this, each with its own items and button.
  */
-export function PlusMenu({ actions, enabled, renderButton }: PlusMenuProps) {
+export function PlusMenu({ actions, enabled, onOpen, renderButton }: PlusMenuProps) {
   const ref = useRef<View>(null);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const close = () => setAnchor(null);
@@ -26,7 +26,9 @@ export function PlusMenu({ actions, enabled, renderButton }: PlusMenuProps) {
     <>
       <View ref={ref} collapsable={false}>
         {renderButton(() => {
-          if (enabled) setAsked((n) => n + 1);
+          if (!enabled) return;
+          onOpen?.();
+          setAsked((n) => n + 1);
         })}
       </View>
       <ActionMenu
