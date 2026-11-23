@@ -91,6 +91,7 @@ import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
 import { loadCustomSpeeds, speedMenu } from '@/features/editor/editor-speeds';
 import { importVideoAction, recordScreenAction } from '@/features/recorder/add-menu-actions';
+import { useFromAnotherPulse } from '@/features/recorder/from-another-pulse';
 import { useScreenTake } from '@/features/recorder/screen-take';
 import { useImportVideo } from '@/features/recorder/use-import-video';
 import { TipAnchor } from '@/features/tips/tip-anchor';
@@ -586,6 +587,12 @@ export function EditorScreen({
   const screenLive = screen.phase !== 'idle';
   const screenHere = screen.draftId === draftId && (screenLive || screen.starting);
   const addBusy = importer.importing || (screen.importing && screen.draftId === draftId);
+  const anotherPulse = useFromAnotherPulse({
+    draftId,
+    target: async () => draftId,
+    anchor: anchorNow,
+    onOpen: () => ctl.pause(),
+  });
   const addActions: MenuAction[] = [
     // Into the recorder, its insert cursor here; back here with the new clips on Edit.
     ...(onAddClips
@@ -614,7 +621,9 @@ export function EditorScreen({
           }),
         ]
       : []),
-    // Later ways to add (#308: an image or screenshot, clips from another Pulse) go here.
+    // Copies of another draft's clips, with their edits and captions.
+    ...(anotherPulse.action ? [anotherPulse.action] : []),
+    // Later ways to add (#308: an image or screenshot) go here.
   ];
 
   // Clips added to this draft while the editor is open, from its "+" or a recorder over it: the
@@ -1195,6 +1204,7 @@ export function EditorScreen({
             onDone={finishCrop}
           />
         )}
+        {anotherPulse.sheet}
         {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
         <TipLayer />
       </KeyboardAvoidingView>

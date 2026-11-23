@@ -27,6 +27,7 @@ import { CameraControls } from '@/features/recorder/camera-controls';
 import { holdsCamera, releaseCamera, takeCamera } from '@/features/recorder/camera-holder';
 import { ExportButton } from '@/components/export-button';
 import { AddMenu } from '@/features/recorder/add-menu';
+import { useFromAnotherPulse } from '@/features/recorder/from-another-pulse';
 import { CloseAction, CloseButton } from '@/features/recorder/close-button';
 import { ContextBanner, RecorderNotice } from '@/features/recorder/context-banner';
 import { EditButton } from '@/features/recorder/edit-button';
@@ -197,6 +198,12 @@ export function RecorderScreen({
     reorderSegments,
   } = useRecorder(initialDraftId, newDraft, screenCapture, {
     insertAnchor: initialInsertAnchor,
+  });
+  // Clips copied from another draft go in at the insert cursor, into this draft (made if needed).
+  const anotherPulse = useFromAnotherPulse({
+    draftId,
+    target: ensureDraft,
+    anchor: getInsertAnchor,
   });
 
   // A refused microphone (embedded, PLAN-final §5.3): the recorder records without sound instead
@@ -983,6 +990,7 @@ export function RecorderScreen({
               <AddMenu
                 onImport={importClip}
                 onRecordScreen={recordScreen}
+                onFromAnotherPulse={anotherPulse.action?.onPress}
                 // Importing works during a screen take; only a second screen take can't start.
                 screenAvailable={screenCapture != null && !screenLive}
                 disabled={isRecording || dragging}
@@ -1029,6 +1037,7 @@ export function RecorderScreen({
         </View>
       </View>
 
+      {anotherPulse.sheet}
       {/* Over everything: the recorder's tips are callouts, which leave the shutter tappable. */}
       <TipLayer />
     </View>
