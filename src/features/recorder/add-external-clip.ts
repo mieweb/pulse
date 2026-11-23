@@ -98,29 +98,69 @@ export async function addExternalClip(
     return { status: 'cancelled' };
   }
   const segId = segmentId ?? `${id}-${Date.now()}`;
-  const originalFilename = await copyIntoSegments(conformed?.path ?? uri, id, segId);
-  // The conform output lives in the OS-purgeable cache dir; drop it once copied.
-  if (conformed) deleteQuietly(conformed.path);
+  const added = await storeClip(conformed?.path ?? uri, {
+    draftId: id,
+    segmentId: segId,
+    owned: conformed != null,
+    signal,
+    anchor: anchor ?? END,
+  });
+  if (!added) return { status: 'cancelled' };
+  onAdded?.();
+  return { status: 'added', draftId: id, segmentId: segId };
+}
+
+/**
+ * The steps after the conversion, shared by every clip made outside the recorder (an import, a
+ * screen recording, an image): `file`, already in the recorder's format, is copied into draft
+ * `draftId`'s segments folder as clip `segmentId`, its length read, its cover rendered, and its row
+ * written at `anchor` (`insertSegments`). `owned` says `file` is a conversion's output in the
+ * OS-purgeable cache dir: it's deleted once copied (or the copy failed); otherwise it's only read.
+ *
+ * Resolves true once the row is written, false when `signal` aborted on the way (nothing is left
+ * behind). Throws when the copy, the length or the db write fails.
+ */
+export async function storeClip(
+  file: string,
+  {
+    draftId,
+    segmentId,
+    owned,
+    signal,
+    anchor,
+  }: {
+    draftId: string;
+    segmentId: string;
+    owned: boolean;
+    signal: AbortSignal;
+    anchor: ClipAnchor | (() => ClipAnchor);
+  },
+): Promise<boolean> {
+  let originalFilename: string;
+  try {
+    originalFilename = await copyIntoSegments(file, draftId, segmentId);
+  } finally {
+    if (owned) deleteQuietly(file);
+  }
   const durationMs = await getDurationMs(absolutize(originalFilename));
   if (signal.aborted) {
     deleteSegmentFile(originalFilename);
-    return { status: 'cancelled' };
+    return false;
   }
 
   // The cover first, then the row: an import can be cancelled while its cover renders, and then
   // nothing is added.
-  const thumbRel = thumbRelPath(id, segId);
+  const thumbRel = thumbRelPath(draftId, segmentId);
   const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
   if (signal.aborted) {
     if (ok) deleteSegmentFile(thumbRel);
     deleteSegmentFile(originalFilename);
-    return { status: 'cancelled' };
+    return false;
   }
   await addSegment(
-    id,
-    { id: segId, originalFilename, durationMs, thumbnail: ok ? thumbRel : null },
-    anchor ?? END,
+    draftId,
+    { id: segmentId, originalFilename, durationMs, thumbnail: ok ? thumbRel : null },
+    anchor,
   );
-  onAdded?.();
-  return { status: 'added', draftId: id, segmentId: segId };
+  return true;
 }

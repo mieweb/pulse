@@ -90,9 +90,14 @@ import { usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
 import { loadCustomSpeeds, speedMenu } from '@/features/editor/editor-speeds';
-import { importVideoAction, recordScreenAction } from '@/features/recorder/add-menu-actions';
+import {
+  importImagesAction,
+  importVideoAction,
+  recordScreenAction,
+} from '@/features/recorder/add-menu-actions';
 import { useFromAnotherPulse } from '@/features/recorder/from-another-pulse';
 import { useScreenTake } from '@/features/recorder/screen-take';
+import { useImportImages } from '@/features/recorder/use-import-images';
 import { useImportVideo } from '@/features/recorder/use-import-video';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
@@ -571,9 +576,10 @@ export function EditorScreen({
   const openExport = () => openOver(() => onExport(draftId));
 
   // --- Adding clips (the "+") ---------------------------------------------------------------
-  // Where the "+" adds: the playhead's clip boundary (`anchorForPlayhead`), worked out when an item
-  // is picked; selected clip or not, the playhead decides. The slot follows the playhead for the
-  // button's hint.
+  // Where the "+" adds: the playhead's clip boundary (`anchorForPlayhead`), worked out once, as an
+  // item is picked (the playhead paused as the "+" was pressed), and kept: an import's long
+  // conversion or a screen take lands there whatever is scrubbed, trimmed or reordered meanwhile.
+  // Selected clip or not, the playhead decides. The slot follows the playhead for the hint.
   const anchorNow = () =>
     anchorForPlayhead(
       clips.map((c) => c.id),
@@ -583,10 +589,12 @@ export function EditorScreen({
     );
   const addSlot = usePlayheadSlot(layout.starts, layout.totalMs, values.timeMs);
   const importer = useImportVideo();
+  const images = useImportImages();
   const screen = useScreenTake(screenCapture);
   const screenLive = screen.phase !== 'idle';
   const screenHere = screen.draftId === draftId && (screenLive || screen.starting);
-  const addBusy = importer.importing || (screen.importing && screen.draftId === draftId);
+  const addBusy =
+    importer.importing || images.importing || (screen.importing && screen.draftId === draftId);
   const anotherPulse = useFromAnotherPulse({
     draftId,
     target: async () => draftId,
@@ -608,10 +616,6 @@ export function EditorScreen({
           },
         ]
       : []),
-    importVideoAction(() => {
-      ctl.pause();
-      importer.importVideo(draftId, anchorNow);
-    }),
     // Pulse app only, one take at a time: the clip lands here once the take is stopped.
     ...(screenCapture && !screenLive && !screen.importing
       ? [
@@ -621,9 +625,17 @@ export function EditorScreen({
           }),
         ]
       : []),
+    importVideoAction(() => {
+      ctl.pause();
+      importer.importVideo(draftId, anchorNow);
+    }),
+    // One clip per image, in the order picked, from the playhead's boundary on.
+    importImagesAction(() => {
+      ctl.pause();
+      void images.importImages(draftId, anchorNow);
+    }),
     // Copies of another draft's clips, with their edits and captions.
     ...(anotherPulse.action ? [anotherPulse.action] : []),
-    // Later ways to add (#308: an image or screenshot) go here.
   ];
 
   // Clips added to this draft while the editor is open, from its "+" or a recorder over it: the
@@ -642,6 +654,8 @@ export function EditorScreen({
     return true;
   };
   const takeAdded = useEffectEvent(() => {
+    // A batch of images lands one clip at a time: its clips are taken together once it's over.
+    if (images.importing) return;
     const ids = takeClipsAdded(draftId);
     if (ids.length === 0) return;
     history.recordAdded(ids);
@@ -658,6 +672,12 @@ export function EditorScreen({
     // Only a change of the clips places it (the layout follows them).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clips]);
+  const imagesWere = useRef(false);
+  useEffect(() => {
+    const ended = imagesWere.current && !images.importing;
+    imagesWere.current = images.importing;
+    if (ended && focused) takeAdded();
+  }, [focused, images.importing]);
   useEffect(() => {
     if (!focused) return;
     // Those added while a recorder covered the editor, just after it's back on top.
@@ -1105,8 +1125,17 @@ export function EditorScreen({
             <EditorAddMenu
               actions={addActions}
               busy={addBusy}
-              progress={importer.importing ? importer.progress : screen.progress}
+              progress={
+                importer.importing
+                  ? importer.progress
+                  : images.importing
+                    ? images.progress
+                    : screen.progress
+              }
+              progressText={images.importing ? images.stepText : undefined}
               hint={addPositionHint(addSlot, clips.length)}
+              // Paused as the "+" is pressed: the position picked is the one the hint just named.
+              onOpen={ctl.pause}
             />
           </View>
         </Animated.View>

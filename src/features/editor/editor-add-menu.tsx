@@ -52,11 +52,17 @@ export function EditorAddMenu({
   actions,
   busy,
   progress,
+  progressText,
   hint,
+  onOpen,
 }: {
   actions: MenuAction[];
+  /** The "+" was pressed, before the menu opens. */
+  onOpen?: () => void;
   busy: boolean;
   progress: number | null;
+  /** What it's busy with, read with the progress ("Adding 2 of 5"). */
+  progressText?: string;
   hint: string;
 }) {
   const theme = useTheme();
@@ -66,6 +72,7 @@ export function EditorAddMenu({
     <PlusMenu
       actions={actions}
       enabled={!busy}
+      onOpen={onOpen}
       label={label}
       hint={hint}
       size={ADD_SIZE}
@@ -79,7 +86,9 @@ export function EditorAddMenu({
           accessibilityHint={hint}
           accessibilityState={{ busy, disabled: busy }}
           accessibilityValue={
-            ring != null ? { min: 0, max: 100, now: Math.round(ring * 100) } : undefined
+            ring != null
+              ? { min: 0, max: 100, now: Math.round(ring * 100), text: progressText }
+              : undefined
           }
           testID="editor.addClips"
           style={({ pressed }) => [

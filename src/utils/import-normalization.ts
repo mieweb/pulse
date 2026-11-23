@@ -198,6 +198,34 @@ function audioReasons(audio: ProbeAudio | undefined, target?: RecorderFormat): s
  * clip must also match the recorder's signature to pass through, and every conform writes that
  * signature (rotation tag, AAC rate/channels) so the merge can join it by copy.
  */
+/** A full re-encode's format, without the source's say. */
+export type EncodeFormat = Omit<ConformOptions, 'copyVideo'>;
+
+/**
+ * What every full re-encode writes: the portrait canvas, scale-fit + centered letterbox to exactly
+ * CANVAS_WxH (display), H.264 8-bit SDR (HDR tone-mapped), at the recorder's frame rate and
+ * bitrate. With a merge target the pixels are written in the recorder's coded orientation under
+ * its rotation tag.
+ */
+function encodeFormat(rotation: number, audio: MergeAudio): EncodeFormat {
+  return {
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+    rotation,
+    fps: NORMALIZE_TARGET_FPS,
+    bitrate: NORMALIZE_TARGET_BITRATE,
+    audio,
+  };
+}
+
+/**
+ * The recorder's exact format, for a clip made from scratch (an image, pulse-editor `imageClip`):
+ * what a conform to `target` writes, so the clip joins recordings without re-encoding.
+ */
+export function recorderEncodeFormat(target: RecorderFormat): EncodeFormat {
+  return encodeFormat(target.rotation, conformAudio(undefined, target));
+}
+
 /** Which phone decides (the module stays free of react-native so it tests as pure code). */
 export type ImportPlatform = 'ios' | 'android';
 
@@ -227,16 +255,8 @@ export function decideImport(
     platform === 'android' &&
     audio.length > 0 &&
     audio.every((r) => r.includes('differs from the recorder'));
-  // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to exactly
-  // CANVAS_WxH (display), H.264 8-bit SDR (HDR tone-mapped). With a merge target the pixels are
-  // written in the recorder's coded orientation under its rotation tag.
   const options: ConformOptions = {
-    width: CANVAS_WIDTH,
-    height: CANVAS_HEIGHT,
-    rotation: target?.rotation ?? 0,
-    fps: NORMALIZE_TARGET_FPS,
-    bitrate: NORMALIZE_TARGET_BITRATE,
-    audio: conformAudio(probe.audio, target),
+    ...encodeFormat(target?.rotation ?? 0, conformAudio(probe.audio, target)),
     copyVideo: false,
   };
 

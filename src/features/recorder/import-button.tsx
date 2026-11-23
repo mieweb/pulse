@@ -16,6 +16,7 @@ export function ImportButton({
   busy = false,
   progress = null,
   label = 'Import video',
+  progressText,
 }: {
   onPress: () => void;
   disabled: boolean;
@@ -23,6 +24,8 @@ export function ImportButton({
   progress?: number | null;
   /** Screen-reader label. */
   label?: string;
+  /** What it's busy with, read with the progress ("Adding 2 of 5"). */
+  progressText?: string;
 }) {
   const ring = busy ? progress : null;
   // Busy isn't disabled: it can't be pressed again, but the spinner (or the ring) stays at full
@@ -38,7 +41,9 @@ export function ImportButton({
         accessibilityLabel={label}
         accessibilityState={{ busy, disabled: disabled || busy }}
         accessibilityValue={
-          ring != null ? { min: 0, max: 100, now: Math.round(ring * 100) } : undefined
+          ring != null
+            ? { min: 0, max: 100, now: Math.round(ring * 100), text: progressText }
+            : undefined
         }
         style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
         {ring != null ? (

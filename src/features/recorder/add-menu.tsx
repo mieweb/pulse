@@ -3,25 +3,30 @@ import { ImportButton } from './import-button';
 import { PlusMenu } from './plus-menu';
 
 /**
- * The recorder's "+": Import video, Record screen or From another Pulse (the shared `PlusMenu`: the
- * iOS system menu, an Android popover). With import the only item a tap imports, as before.
+ * The recorder's "+": Record screen where it's offered, Import video, Import image or screenshot,
+ * and From another Pulse while another draft has clips (the shared `PlusMenu`: the iOS system
+ * menu, an Android popover).
  */
 export function AddMenu({
   onImport,
+  onImportImages,
   onRecordScreen,
   screenAvailable,
   onFromAnotherPulse,
   disabled,
   busy,
   progress,
+  progressText,
 }: AddMenuProps) {
-  const actions = addMenuActions({ onImport, onRecordScreen, screenAvailable, onFromAnotherPulse });
-  if (actions.length === 1) {
-    return <ImportButton onPress={onImport} disabled={disabled} busy={busy} progress={progress} />;
-  }
   return (
     <PlusMenu
-      actions={actions}
+      actions={addMenuActions({
+        onImport,
+        onImportImages,
+        onRecordScreen,
+        screenAvailable,
+        onFromAnotherPulse,
+      })}
       enabled={!disabled && !busy}
       label="Add a clip"
       renderButton={(onPress) => (
@@ -30,6 +35,7 @@ export function AddMenu({
           disabled={disabled}
           busy={busy}
           progress={progress}
+          progressText={progressText}
           label="Add a clip"
         />
       )}

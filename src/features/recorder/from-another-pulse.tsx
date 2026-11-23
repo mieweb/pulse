@@ -44,7 +44,8 @@ const THUMB_TEXT_SCALE = 1.2;
  * (none while no other draft has clips) and its sheet. Pick a draft, then some of its clips; they
  * are copied into this draft at the "+"'s place (`copyClipsInto`) with their edits and captions,
  * and the source is unchanged. The draft the clips go into is `draftId`, or the one `target` makes
- * (a recorder before its first take); `anchor` is read as the copies go in.
+ * (a recorder before its first take). `anchor` is read once, as the item is picked, and kept:
+ * the copies land there whatever moves while the sheet is open, as the menu's other items do.
  *
  * The sheet is the screen's own (a React Native Modal: a page sheet on iOS, full screen on
  * Android), not a route, so the Pulse app and the embed present it the same way.
@@ -62,10 +63,11 @@ export function useFromAnotherPulse({
   onOpen?: () => void;
 }): { action: ReturnType<typeof fromAnotherPulseAction> | null; sheet: ReactElement | null } {
   const { data: others } = useLiveQuery(otherDraftsQuery(draftId), [draftId]);
-  const [open, setOpen] = useState(false);
+  // Open: at the anchor taken as the item was picked.
+  const [open, setOpen] = useState<{ anchor: ClipAnchor } | null>(null);
   const show = () => {
     onOpen?.();
-    setOpen(true);
+    setOpen({ anchor: anchor() });
   };
   return {
     action: others.length > 0 ? fromAnotherPulseAction(show) : null,
@@ -73,8 +75,8 @@ export function useFromAnotherPulse({
       <FromAnotherPulseSheet
         drafts={others}
         target={target}
-        anchor={anchor}
-        onClose={() => setOpen(false)}
+        anchor={open.anchor}
+        onClose={() => setOpen(null)}
       />
     ) : null,
   };
@@ -88,7 +90,7 @@ function FromAnotherPulseSheet({
 }: {
   drafts: DraftRow[];
   target: () => Promise<string>;
-  anchor: () => ClipAnchor;
+  anchor: ClipAnchor;
   onClose: () => void;
 }) {
   const theme = useTheme();
