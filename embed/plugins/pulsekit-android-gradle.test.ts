@@ -371,8 +371,9 @@ describe('with-pulsekit-android (the finalized mod on a generated module)', () =
     expect(appVersion).not.toBe('0.1.0'); // embed/app.json's brownfield version, which this replaces
     await prebuild();
     const [library, , release, debug] = snapshot();
-    const line = new RegExp(`^version = "${appVersion.replace(/\./g, '\\.')}"$`, 'm');
-    for (const text of [library, release, debug]) expect(text).toMatch(line);
+    for (const text of [library, release, debug]) {
+      expect(text.split('\n')).toContain(`version = "${appVersion}"`);
+    }
     expect(library).toContain(`"PULSEKIT_VERSION", "\\"${appVersion}\\""`);
   });
 

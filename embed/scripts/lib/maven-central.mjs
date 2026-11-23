@@ -13,6 +13,8 @@ import crypto from 'node:crypto';
 
 import { zipSync } from 'fflate';
 
+import { stripXmlComments } from './android-aar.mjs';
+
 /** The Central Publisher API. */
 export const CENTRAL_API = 'https://central.sonatype.com/api/v1/publisher';
 
@@ -97,9 +99,10 @@ export const PULSEKIT_POM_INFO = {
 
 /** The project-level part of a POM: no dependencies, build, parent or profiles. */
 function projectLevel(/** @type {string} */ xml) {
-  return xml
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<(dependencies|dependencyManagement|build|parent|profiles)>[\s\S]*?<\/\1>/g, '');
+  return stripXmlComments(xml).replace(
+    /<(dependencies|dependencyManagement|build|parent|profiles)>[\s\S]*?<\/\1>/g,
+    '',
+  );
 }
 
 /** @param {string} block @param {string} tag */

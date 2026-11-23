@@ -241,6 +241,23 @@ export function abiProblems(byAbi, expected, abiSpecific = ABI_SPECIFIC_LIBRARIE
  */
 
 /**
+ * XML without its comments, by scanning for `<!--` and `-->` (an unclosed comment runs to the end).
+ * @param {string} xml
+ */
+export function stripXmlComments(xml) {
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const start = xml.indexOf('<!--', i);
+    if (start === -1) return out + xml.slice(i);
+    out += xml.slice(i, start);
+    const end = xml.indexOf('-->', start + 4);
+    if (end === -1) return out;
+    i = end + 3;
+  }
+}
+
+/**
  * Reads a text AndroidManifest.xml (what an AAR carries): the minSdk and the permissions, with
  * `tools:node="remove"` markers told apart from requests. Comments are ignored, and the android
  * and tools prefixes are taken from the xmlns declarations.
@@ -248,20 +265,22 @@ export function abiProblems(byAbi, expected, abiSpecific = ABI_SPECIFIC_LIBRARIE
  * @returns {{ minSdk: number | null, permissions: ManifestPermission[] }}
  */
 export function parseManifest(xml) {
-  const text = xml.replace(/<!--[\s\S]*?-->/g, '');
+  const text = stripXmlComments(xml);
   const prefixOf = (/** @type {string} */ uri, /** @type {string} */ fallback) => {
-    const m = new RegExp(`xmlns:([\\w.-]+)\\s*=\\s*["']${uri.replace(/[.]/g, '\\.')}["']`).exec(
-      text,
-    );
-    return m ? m[1] : fallback;
+    for (const m of text.matchAll(/xmlns:([\w.-]+)\s*=\s*(["'])(.*?)\2/g)) {
+      if (m[3] === uri) return m[1];
+    }
+    return fallback;
   };
   const android = prefixOf('http://schemas.android.com/apk/res/android', 'android');
   const tools = prefixOf('http://schemas.android.com/tools', 'tools');
 
   /** @param {string} tag @param {string} attr */
   const attrOf = (tag, attr) => {
-    const m = new RegExp(`\\s${attr.replace(/[.]/g, '\\.')}\\s*=\\s*(["'])(.*?)\\1`).exec(tag);
-    return m ? m[2] : null;
+    for (const m of tag.matchAll(/\s([\w.:-]+)\s*=\s*(["'])(.*?)\2/g)) {
+      if (m[1] === attr) return m[3];
+    }
+    return null;
   };
 
   let minSdk = null;
@@ -364,8 +383,7 @@ const field = (block, tag) => {
  *   dependencies: PomDependency[] }}
  */
 export function parsePom(xml) {
-  const text = xml
-    .replace(/<!--[\s\S]*?-->/g, '')
+  const text = stripXmlComments(xml)
     .replace(/<dependencyManagement>[\s\S]*?<\/dependencyManagement>/g, '')
     .replace(/<exclusions>[\s\S]*?<\/exclusions>/g, '');
   const own = text
