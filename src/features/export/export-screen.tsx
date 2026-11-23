@@ -43,11 +43,10 @@ import {
 } from '@/constants/theme';
 import { isOnline, subscribeNetwork } from '@/core/network';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { captionYQuery } from '@/db/captions';
+import { captionsOffQuery, captionYQuery } from '@/db/captions';
 import { db } from '@/db/client';
 import { libraryNewerSchema } from '@/db/host-context';
-import { captionsOffQuery, setCaptionsOff } from '@/db/settings';
-import { renameDraft, segmentsForDraft } from '@/db/drafts';
+import { renameDraft, segmentsForDraft, setDraftCaptionsOff } from '@/db/drafts';
 import { drafts } from '@/db/schema';
 import type { ExportScreenProps } from '@/features/export/contract';
 import { exportActions } from '@/features/export/primary-action';
@@ -195,7 +194,7 @@ export function ExportScreen({
   const { data: captionsOffRows } = useLiveQuery(captionsOffQuery(draftId), [draftId]);
   const captionsOff = captionsOffRows[0]?.value === 'true';
   const toggleCaptions = () => {
-    setCaptionsOff(draftId, !captionsOff).catch((e) =>
+    setDraftCaptionsOff(draftId, !captionsOff).catch((e) =>
       showToast({
         kind: 'error',
         title: captionsOff ? 'Couldn’t turn captions on' : 'Couldn’t turn captions off',

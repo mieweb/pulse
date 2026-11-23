@@ -25,6 +25,15 @@ export function isPlainName(s: unknown): s is string {
   return typeof s === 'string' && s.length <= 64 && s !== '.' && s !== '..' && PLAIN.test(s);
 }
 
+/**
+ * A requestId: a plain name that doesn't end in `.project`. Its result is `<id>.json` in the
+ * inbox, and `<id>.project.json` is a project document there, never a result, so
+ * `take.project`'s result would never reach `pendingResults`.
+ */
+export function isRequestId(s: unknown): s is string {
+  return isPlainName(s) && !s.endsWith('.project');
+}
+
 const HOST_ID = /^[a-z0-9.-]{1,40}$/;
 
 /** ConfigureOptions.hostId: 1–40 of [a-z0-9.-] with at least one letter or digit. */
@@ -43,8 +52,10 @@ export function checkOpen(args: unknown): OpenCheck {
   if (!isObject(args)) return bad('open needs an object.');
   let requestId: string | null = null;
   if (args.requestId !== undefined && args.requestId !== null) {
-    if (!isPlainName(args.requestId)) {
-      return bad('requestId must be 1–64 letters, digits, dots, dashes or underscores.');
+    if (!isRequestId(args.requestId)) {
+      return bad(
+        'requestId must be 1–64 letters, digits, dots, dashes or underscores, not ending in .project.',
+      );
     }
     requestId = args.requestId;
   }
@@ -121,7 +132,9 @@ const CHECKS: Record<string, (args: Record<string, unknown>) => Problem> = {
     return null;
   },
   acknowledge: (a) =>
-    isPlainName(a.requestId) ? null : 'requestId must be 1–64 of [A-Za-z0-9._-].',
+    isRequestId(a.requestId)
+      ? null
+      : 'requestId must be 1–64 of [A-Za-z0-9._-], not ending in .project.',
   setAccount: (a) => {
     // `{}` is the wire form of setAccount(null) (a null args becomes {} on the facade).
     if (Object.keys(a).length === 0) return null;

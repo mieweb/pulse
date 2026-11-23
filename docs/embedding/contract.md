@@ -111,7 +111,9 @@ button is hidden whatever `policy` says.
 | `'edit'`   | `draftId`, optional `clipId`                                                | Editor       |
 | `'export'` | `draftId`                                                                   | Export       |
 
-Every request takes an optional `requestId` (default: a new UUID) and an optional `theme`.
+Every request takes an optional `requestId` (default: a new UUID) and an optional `theme`. A
+`requestId` is 1–64 of `[A-Za-z0-9._-]`, not `.` or `..`, and doesn't end in `.project`
+(`<id>.project.json` is a project document's name in the inbox).
 
 - **One flow at a time.** While a flow is open, `open` with the same `requestId` resolves with the
   same result; any other `requestId` rejects with `busy`. `open` is also `busy` while your app is

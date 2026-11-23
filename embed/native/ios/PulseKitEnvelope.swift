@@ -401,6 +401,13 @@ public func pulseIsPlainName(_ s: String) -> Bool {
     }
 }
 
+/// A requestId: a plain name that doesn't end in `.project`. Its result is `<id>.json` in the
+/// inbox, and `<id>.project.json` is a project document there, never a result, so
+/// `take.project`'s result would never reach `pendingResults`.
+public func pulseIsRequestId(_ s: String) -> Bool {
+  pulseIsPlainName(s) && !s.hasSuffix(".project")
+}
+
 /// `open`'s arguments after the facade's checks. The rest of the request goes to Pulse JS whole.
 public struct PulseOpenArgs: Equatable {
   /// The caller's idempotency key; nil means "make one".
@@ -419,8 +426,10 @@ public enum PulseArgs {
     }
     var requestId: String?
     if let r = args["requestId"], r != .null {
-      guard let s = r.string, pulseIsPlainName(s) else {
-        return bad("requestId must be 1–64 letters, digits, dots, dashes or underscores.")
+      guard let s = r.string, pulseIsRequestId(s) else {
+        return bad(
+          "requestId must be 1–64 letters, digits, dots, dashes or underscores, not ending in .project."
+        )
       }
       requestId = s
     }

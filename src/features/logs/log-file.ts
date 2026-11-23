@@ -14,6 +14,12 @@ import { documentDir } from '@/utils/storage-root';
 export const LOG_FILE_REL = 'logs/pulse.log';
 /** The largest the file grows before it rolls. */
 export const MAX_LOG_FILE_BYTES = 2 * 1024 * 1024;
+/**
+ * The most a roll (or the launch rewrite) writes: half the cap, so the appends after it have
+ * room. The kept entries can be far bigger (2,000 of up to 16 KB each); writing them all would
+ * leave the file past the cap and make every later flush rewrite it again.
+ */
+export const ROLL_TARGET_BYTES = MAX_LOG_FILE_BYTES / 2;
 
 const logDir = () => new Directory(documentDir(), 'logs');
 
@@ -37,9 +43,44 @@ export function shouldRoll(opts: {
   return entriesInFile + adding > maxEntries * 2 || fileBytes > maxBytes;
 }
 
+/** UTF-8 byte length of `text` (what it takes in the file). */
+function utf8Bytes(text: string): number {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
+      n += 4; // a surrogate pair is one 4-byte character
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+
+/** The newest `entries` whose lines (each with its newline) fit in `maxBytes`, oldest first. */
+export function tailWithin(entries: readonly string[], maxBytes: number): string[] {
+  let bytes = 0;
+  let start = entries.length;
+  while (start > 0) {
+    const next = bytes + utf8Bytes(entries[start - 1]) + 1;
+    if (next > maxBytes) break;
+    bytes = next;
+    start--;
+  }
+  return entries.slice(start);
+}
+
+/** Start the file over with the newest of `entries` that fit in `ROLL_TARGET_BYTES`; returns how many. */
+function startOver(file: File, entries: readonly string[]): number {
+  const tail = tailWithin(entries, ROLL_TARGET_BYTES);
+  file.write(tail.length > 0 ? `${tail.join('\n')}\n` : '');
+  return tail.length;
+}
+
 /**
- * Write `batch` to the file: appended, or the file started over with `kept()` (which includes the
- * batch) when it rolls. Returns how many entries the file holds now. Throws when the disk can't
+ * Write `batch` to the file: appended, or the file started over with the newest of `kept()`
+ * (which includes the batch) when it rolls. Returns how many entries the file holds now. Throws when the disk can't
  * be written; the caller keeps the entries in memory.
  */
 export function writeLogBatch(
@@ -52,9 +93,7 @@ export function writeLogBatch(
   const file = logFile();
   const fileBytes = file.exists ? (file.size ?? 0) : 0;
   if (shouldRoll({ entriesInFile, adding: batch.length, maxEntries, fileBytes })) {
-    const all = kept();
-    file.write(all.length > 0 ? `${all.join('\n')}\n` : '');
-    return all.length;
+    return startOver(file, kept());
   }
   file.write(`${batch.join('\n')}\n`, { append: true });
   return entriesInFile + batch.length;
@@ -70,8 +109,11 @@ export function readLogFile(): string | null {
   }
 }
 
-/** Start the file over with `entries` (at launch, so it can't grow across launches). */
-export function rewriteLogFile(entries: readonly string[]): void {
+/**
+ * Start the file over with the newest of `entries` that fit in `ROLL_TARGET_BYTES` (at launch, so
+ * it can't grow across launches); returns how many it wrote.
+ */
+export function rewriteLogFile(entries: readonly string[]): number {
   logDir().create({ intermediates: true, idempotent: true });
-  logFile().write(entries.length > 0 ? `${entries.join('\n')}\n` : '');
+  return startOver(logFile(), entries);
 }

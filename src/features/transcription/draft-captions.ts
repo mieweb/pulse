@@ -1,10 +1,10 @@
 import { Platform } from 'react-native';
 
-import { getCaptionY } from '@/db/captions';
+import { getCaptionY, isCaptionsOff } from '@/db/captions';
 import { getClipTranscripts } from '@/db/clip-transcripts';
 import { segmentsForDraft } from '@/db/drafts';
 import { adoptMergedCaptionEdit } from '@/db/transcripts';
-import { isCaptionsOff, selectedModelQuery } from '@/db/settings';
+import { selectedModelQuery } from '@/db/settings';
 import { effMs } from '@/utils/segment-window';
 
 import { composeCaptions, type CaptionLine } from './compose';

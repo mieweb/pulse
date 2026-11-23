@@ -78,7 +78,14 @@ jest.mock('./upload-log', () => ({
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { expoDb } from '@/db/client';
-import { deleteDraft, renameDraft, reorderSegments, setDraftContext } from '@/db/drafts';
+import {
+  deleteDraft,
+  renameDraft,
+  reorderSegments,
+  setDraftCaptionsOff,
+  setDraftContext,
+} from '@/db/drafts';
+import { isCaptionsOff } from '@/db/captions';
 import { getUploadJob } from '@/db/upload-jobs';
 import {
   applyTransition,
@@ -564,6 +571,7 @@ beforeEach(() => {
   conn.execSync('DELETE FROM upload_jobs');
   conn.execSync('DELETE FROM drafts');
   conn.execSync('DELETE FROM local_settings');
+  conn.execSync('DELETE FROM settings');
   asked.length = 0;
   answer = () => undefined;
   setHostRequestSink((p) => {
@@ -645,6 +653,32 @@ describe('sendDraft and cancelJob', () => {
     expect(conn.getFirstSync(`SELECT context_key FROM drafts WHERE id = 'd3'`)).toEqual({
       context_key: 'clock:e2',
     });
+  });
+
+  it('turning captions off takes a queued Send out, so the next Send writes its parts again', async () => {
+    addDraft('d1');
+    const first = await sendDraft('d1', merge);
+    // Setting what is already set leaves the Send queued.
+    await setDraftCaptionsOff('d1', false);
+    expect(getUploadJob('d1')).toMatchObject({ state: 'queued', clientKey: first.clientKey });
+
+    await setDraftCaptionsOff('d1', true);
+    expect(getUploadJob('d1')).toBeNull();
+    expect(await isCaptionsOff('d1')).toBe(true);
+    jest.mocked(writeSendFiles).mockClear();
+    const second = await sendDraft('d1', merge);
+    expect(writeSendFiles).toHaveBeenCalledWith('d1', 4000);
+    expect(second.draftKey).toBe(first.draftKey);
+    expect(getUploadJob('d1')).toMatchObject({ state: 'queued' });
+  });
+
+  it('the captions switch is refused while the Send uploads, and changes nothing', async () => {
+    addDraft('d1');
+    await sendDraft('d1', merge);
+    applyTransition('d1', TARGET);
+    await expect(setDraftCaptionsOff('d1', true)).rejects.toMatchObject({ code: 'draft.locked' });
+    expect(await isCaptionsOff('d1')).toBe(false);
+    expect(getUploadJob('d1')).toMatchObject({ state: 'uploading' });
   });
 
   it('Delete takes the job out through the outbox: the host is told and the uploads deleted', async () => {

@@ -63,8 +63,7 @@ export function installLogCapture(): void {
       // Redacted again: a file an older build wrote may hold what today's rules blank out.
       buffer.load(splitEntries(text).map(redactEntry));
       // Start the file over with just the kept entries, so it can't grow across launches.
-      rewriteLogFile(buffer.all());
-      entriesInFile = buffer.size;
+      entriesInFile = rewriteLogFile(buffer.all());
     }
   } catch {
     // Unreadable file: start fresh.
