@@ -311,6 +311,21 @@
       "name": "a theme that isn't an object",
       "args": { "entry": "edit", "draftId": "d-1", "theme": "dark" },
       "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId ending in .project, whose result would read as a project document",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": "take.project" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId that is only .project",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": ".project" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId with project elsewhere in it",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": "project.take.projects" },
+      "expect": { "ok": true, "entry": "edit", "requestId": "project.take.projects" }
     }
   ],
   "busy": [

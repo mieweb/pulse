@@ -28,7 +28,7 @@ import type {
   UploadTarget,
   UploadTargetRequest,
 } from '../types';
-import { checkConfigure, checkOpen, isPlainName } from '../validate';
+import { checkConfigure, checkOpen, isRequestId } from '../validate';
 import { pollOutcome, sizeOf, TusError, uploadArtifact, type FetchLike } from './tus';
 
 /**
@@ -1386,7 +1386,7 @@ export function createFakePulse(script: FakeScript = {}): FakePulseHandle {
       case 'pendingResults':
         return [...inbox.values()];
       case 'acknowledge':
-        if (!isPlainName(a.requestId))
+        if (!isRequestId(a.requestId))
           throw new Failure('invalid_options', 'requestId is required.');
         inbox.delete(a.requestId);
         return null;

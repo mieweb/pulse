@@ -257,7 +257,7 @@ public final class PulseKit: NSObject {
     case "pendingResults":
       withRoots(callId, respond) { .array($0.inbox.pending()) }
     case "acknowledge":
-      guard let requestId = req.args["requestId"]?.string, pulseIsPlainName(requestId) else {
+      guard let requestId = req.args["requestId"]?.string, pulseIsRequestId(requestId) else {
         return respond(.failure("invalid_options", "acknowledge needs a requestId.", callId: callId))
       }
       // Signed out there is no inbox to delete from: like an unknown id, a no-op.

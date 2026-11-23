@@ -442,8 +442,16 @@ describe('argument checks', () => {
       'a requestId that could leave the results folder',
       (c: PulseClient) => c.edit('d-1', { requestId: '../x' }),
     ],
+    [
+      'a requestId whose result would read as a project document',
+      (c: PulseClient) => c.edit('d-1', { requestId: 'take.project' }),
+    ],
     ['configure with a bad hostId', (c: PulseClient) => c.configure({ hostId: 'Upper' })],
     ['acknowledge without a requestId', (c: PulseClient) => c.acknowledge('')],
+    [
+      'acknowledge a requestId ending in .project',
+      (c: PulseClient) => c.acknowledge('take.project'),
+    ],
     ['getDraft without an id', (c: PulseClient) => c.getDraft('')],
     [
       'countDrafts by something else',
