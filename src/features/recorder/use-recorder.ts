@@ -48,6 +48,7 @@ import { importLog } from './import-log';
 import { cursorAfterAdd, cursorAfterRemoval, normalizeCursor } from './insert-point';
 import { learnRecorderFormat } from './recorder-format';
 import { useScreenTake } from './screen-take';
+import { useImportImages } from './use-import-images';
 import { useCallState } from './use-call-state';
 
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
@@ -250,6 +251,10 @@ export function useRecorder(
   // unmount cleanup), and whether we've left (that cancel is silent: no alert on a closed screen).
   const importAbortRef = useRef<AbortController | null>(null);
   const unmountedRef = useRef(false);
+  // Images from the + (one clip each, at the cursor). The hook stops its batch when the recorder
+  // closes; while one runs, the empty-draft cleanup is left to it, as for a video import.
+  const images = useImportImages();
+  const imagesRunningRef = useRef(false);
 
   // Drop an empty draft on leave so it doesn't litter Home: either one we created this
   // session and never kept a clip in, or a resumed draft whose every clip was deleted.
@@ -290,7 +295,7 @@ export function useRecorder(
       // An import still running is cancelled: the clip would otherwise land in a draft the user
       // has left. It may be mid-save (creating the draft, copying the file), so it drops an empty
       // draft itself once it has stopped; deleting it here could race that save.
-      const importing = importAbortRef.current != null;
+      const importing = importAbortRef.current != null || imagesRunningRef.current;
       importAbortRef.current?.abort();
       // Backstop for a recording still live at unmount — the gesture's onFinalize is the
       // primary stop path. Stopping the recorder finalizes the file (the clip is then dropped
@@ -534,7 +539,7 @@ export function useRecorder(
   // Pick an existing device video (system picker — no permission prompt) and add it as a
   // segment: conformed to the recorder's own format unless it's already in it (addExternalClip).
   async function importClip() {
-    if (isRecordingRef.current || isImporting) return;
+    if (isRecordingRef.current || isImporting || imagesRunningRef.current) return;
     if (Platform.OS === 'ios' && !libraryPermission?.granted) {
       if (libraryPermission && !libraryPermission.canAskAgain) {
         Alert.alert(
@@ -638,6 +643,19 @@ export function useRecorder(
       if (pickedUri) deleteQuietly(pickedUri);
       setImportProgress(null);
       setIsImporting(false);
+    }
+  }
+
+  // Pick images (several at once) and add them at the cursor, one clip each, in the order picked.
+  async function importImages() {
+    if (isRecordingRef.current || isImporting || imagesRunningRef.current) return;
+    imagesRunningRef.current = true;
+    try {
+      await images.importImages(ensureDraft, () => anchorRef.current, noteSegmentAdded);
+    } finally {
+      imagesRunningRef.current = false;
+      // The recorder closed while this ran: the empty-draft cleanup it left to the batch.
+      if (unmountedRef.current) dropEmptyDraft();
     }
   }
 
@@ -776,8 +794,10 @@ export function useRecorder(
     startQueued,
     recordingShownNow,
     cameraReady,
-    isImporting,
-    importProgress,
+    // A video import or a batch of images: the + is busy with either.
+    isImporting: isImporting || images.importing,
+    importProgress: isImporting ? importProgress : images.progress,
+    importProgressText: isImporting ? undefined : images.stepText,
     prefsReady,
     facing,
     torch,
@@ -802,6 +822,7 @@ export function useRecorder(
     setInsertAnchor,
     getInsertAnchor: () => anchorRef.current,
     importClip: () => void importClip(),
+    importImages: () => void importImages(),
     startHoldRecording,
     endHoldRecording,
     flipCamera,

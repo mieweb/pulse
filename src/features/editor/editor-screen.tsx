@@ -90,8 +90,13 @@ import { usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
 import { loadCustomSpeeds, speedMenu } from '@/features/editor/editor-speeds';
-import { importVideoAction, recordScreenAction } from '@/features/recorder/add-menu-actions';
+import {
+  importImagesAction,
+  importVideoAction,
+  recordScreenAction,
+} from '@/features/recorder/add-menu-actions';
 import { useScreenTake } from '@/features/recorder/screen-take';
+import { useImportImages } from '@/features/recorder/use-import-images';
 import { useImportVideo } from '@/features/recorder/use-import-video';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
@@ -583,10 +588,12 @@ export function EditorScreen({
     );
   const addSlot = usePlayheadSlot(layout.starts, layout.totalMs, values.timeMs);
   const importer = useImportVideo();
+  const images = useImportImages();
   const screen = useScreenTake(screenCapture);
   const screenLive = screen.phase !== 'idle';
   const screenHere = screen.draftId === draftId && (screenLive || screen.starting);
-  const addBusy = importer.importing || (screen.importing && screen.draftId === draftId);
+  const addBusy =
+    importer.importing || images.importing || (screen.importing && screen.draftId === draftId);
   const addActions: MenuAction[] = [
     // Into the recorder, its insert cursor here; back here with the new clips on Edit.
     ...(onAddClips
@@ -606,6 +613,11 @@ export function EditorScreen({
       ctl.pause();
       importer.importVideo(draftId, anchorNow);
     }),
+    // One clip per image, in the order picked, from the playhead's boundary on.
+    importImagesAction(() => {
+      ctl.pause();
+      void images.importImages(draftId, anchorNow);
+    }),
     // Pulse app only, one take at a time: the clip lands here once the take is stopped.
     ...(screenCapture && !screenLive && !screen.importing
       ? [
@@ -615,7 +627,7 @@ export function EditorScreen({
           }),
         ]
       : []),
-    // Later ways to add (#308: an image or screenshot, clips from another Pulse) go here.
+    // Later ways to add (#308: clips from another Pulse) go here.
   ];
 
   // Clips added to this draft while the editor is open, from its "+" or a recorder over it: the
@@ -634,6 +646,8 @@ export function EditorScreen({
     return true;
   };
   const takeAdded = useEffectEvent(() => {
+    // A batch of images lands one clip at a time: its clips are taken together once it's over.
+    if (images.importing) return;
     const ids = takeClipsAdded(draftId);
     if (ids.length === 0) return;
     history.recordAdded(ids);
@@ -650,6 +664,12 @@ export function EditorScreen({
     // Only a change of the clips places it (the layout follows them).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clips]);
+  const imagesWere = useRef(false);
+  useEffect(() => {
+    const ended = imagesWere.current && !images.importing;
+    imagesWere.current = images.importing;
+    if (ended && focused) takeAdded();
+  }, [focused, images.importing]);
   useEffect(() => {
     if (!focused) return;
     // Those added while a recorder covered the editor, just after it's back on top.
@@ -1097,7 +1117,14 @@ export function EditorScreen({
             <EditorAddMenu
               actions={addActions}
               busy={addBusy}
-              progress={importer.importing ? importer.progress : screen.progress}
+              progress={
+                importer.importing
+                  ? importer.progress
+                  : images.importing
+                    ? images.progress
+                    : screen.progress
+              }
+              progressText={images.importing ? images.stepText : undefined}
               hint={addPositionHint(addSlot, clips.length)}
               // Paused as the "+" is pressed: the position picked is the one the hint just named.
               onOpen={ctl.pause}
