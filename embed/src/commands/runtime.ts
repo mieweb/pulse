@@ -71,7 +71,6 @@ export function startRuntimeServices(props: RuntimeProps): RuntimeServices | nul
 /** A coded error the channel replies with (messaging.ts `errorInfo`). */
 const coded = (code: string, message: string) => Object.assign(new Error(message), { code });
 
-
 export function uploadModeOf(config: unknown): 'pulse' | 'file' {
   const mode = (config as { uploadMode?: unknown } | null | undefined)?.uploadMode;
   return mode === 'file' ? 'file' : 'pulse';
