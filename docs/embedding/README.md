@@ -50,7 +50,7 @@ PulseKit is published as release candidates, which are prereleases: GitHub tags
 `pulsekit-v<x.y.z>-rc.<n>`, and the npm dist-tag `rc`. Install with `@rc`. Until npm publishing is switched on (see [releasing.md](releasing.md#the-first-npm-version-of-a-new-package)), install from the GitHub Release instead: every release attaches the three npm packages as `.tgz` files, for example
 
 ```sh
-V=0.1.0-rc.4
+V=0.1.0
 BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
 npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz $BASE/mieweb-capacitor-pulse-$V.tgz
 ```
@@ -93,7 +93,7 @@ commands below. Capacitor, from your app's root:
 
 ```sh
 # from the Release (now)
-V=0.1.0-rc.4; BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
+V=0.1.0; BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
 npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz $BASE/mieweb-capacitor-pulse-$V.tgz
 # from npm (once publishing is on)
 npm install --save-exact @mieweb/pulse-embed@rc @mieweb/capacitor-pulse@rc
@@ -104,7 +104,7 @@ Cordova, from your app's root:
 
 ```sh
 # from the Release (now)
-V=0.1.0-rc.4; BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
+V=0.1.0; BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v$V
 npm install --save-exact $BASE/mieweb-pulse-embed-$V.tgz
 npx cordova plugin add $BASE/cordova-plugin-pulse-$V.tgz
 # from npm (once publishing is on)

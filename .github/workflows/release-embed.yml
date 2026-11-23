@@ -4,8 +4,9 @@
 # Builds PulseKit (embed/, expo-brownfield), packages and signs it, and publishes:
 #   - a GitHub Release on the tag: one zip per xcframework, the all-in-one zip CocoaPods uses,
 #     SHA256SUMS, the dSYMs, the Hermes source map, THIRD_PARTY_NOTICES and the size report;
-#   - @mieweb/pulse-embed, @mieweb/capacitor-pulse and cordova-plugin-pulse to npm at the tag's
-#     version, with provenance, under the `rc` dist-tag for -rc.N tags.
+#   - @mieweb/pulse-embed, @mieweb/capacitor-pulse and cordova-plugin-pulse: always as .tgz files on
+#     the Release; to npm (trusted publishing, `rc` dist-tag for -rc.N) only while the repository
+#     variable NPM_PUBLISH is `true` (docs/embedding/releasing.md).
 # Each step calls a script that also runs locally (embed/scripts/*.mjs).
 #
 # Tags: pulsekit-v<major>.<minor>.<patch> or pulsekit-v<major>.<minor>.<patch>-rc.<n>. A person
@@ -39,7 +40,7 @@
 # time, so a failure there leaves a Release (and maybe some packages) behind, and a re-run stops at
 # "Check that nothing is published at this version yet".
 #   - Nothing reached npm: delete the Release and keep the tag (`gh release delete <tag> --yes`),
-#     fix the cause (trusted publishing, NPM_TOKEN) and re-run.
+#     fix the cause (trusted publishing) and re-run.
 #   - Some packages reached npm: that version can't be published again. Tag the next version
 #     (the next -rc.N for a release candidate).
 #
