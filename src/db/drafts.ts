@@ -10,6 +10,7 @@ import {
   editedThumbRelPath,
   thumbRelPath,
 } from '@/utils/file-store';
+import { type ClipAnchor, END, noteClipsAdded } from '@/core/clip-anchor';
 import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
 import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
 import { isCaptionsOff, parseCaptionEdit, setCaptionsOff } from './captions';
@@ -35,9 +36,9 @@ import {
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
-/** A new clip to append to a draft; `thumbnail` is populated only when the camera/importer
- * already produced one, otherwise it's derived later from the first frame. */
-type NewSegment = {
+/** A new clip for a draft; `thumbnail` is populated only when the camera/importer already
+ * produced one, otherwise it's derived later from the first frame. */
+export type NewSegment = {
   id: string;
   originalFilename: string;
   durationMs: number;
@@ -278,42 +279,107 @@ export async function findOpenDraftForContext(context: DraftContext): Promise<st
   return row?.id ?? null;
 }
 
-export async function addSegment(draftId: string, segment: NewSegment): Promise<void> {
+/** Add a clip at the end of the draft, or at `anchor` (`insertSegments`). */
+export async function addSegment(
+  draftId: string,
+  segment: NewSegment,
+  anchor: ClipAnchor = END,
+): Promise<void> {
+  await insertSegments(draftId, anchor, [segment]);
+}
+
+/**
+ * Add clips to a draft, contiguously and in the order given, at `anchor`: before or after a clip
+ * of this draft, or at the end. An anchor whose clip has gone (deleted, or in another draft)
+ * means the end, so a stale cursor never loses a take. Returns the new clips' ids in order, and
+ * tells `onClipsAdded` listeners once they're committed.
+ *
+ * Everything is read-then-write, so it all runs inside one transaction: each badge number comes
+ * from the draft's monotonic `lastClipNumber` counter (bumped by `k` and read back atomically;
+ * never decremented, so deletes/renames can't cause reuse), and the new clips take the `k` slots
+ * from the anchor's, the clips from there on moving up by `k` (holes after deletes are kept). The
+ * unique (draftId, order) index is checked row by row, so those clips are parked on distinct
+ * negatives first and then set to their old slot + k, as `reorderSegments` does. drizzle's
+ * expo-sqlite transactions are synchronous (they commit when the callback returns), so the
+ * callback awaits nothing and runs each statement with the sync `.all()` / `.get()` / `.run()`.
+ */
+export async function insertSegments(
+  draftId: string,
+  anchor: ClipAnchor,
+  newSegments: readonly NewSegment[],
+): Promise<string[]> {
+  if (newSegments.length === 0) return [];
   await beginClipMutation(draftId);
-  // Everything is read-then-write, so it all runs inside one transaction: the badge number
-  // comes from the draft's monotonic `lastClipNumber` counter (bump + read back atomically;
-  // never decremented, so deletes/renames can't cause reuse), and `order` is the next free
-  // slot (max + 1, race-safe and hole-tolerant after deletes — the unique (draftId, order)
-  // index backstops any regression). drizzle's expo-sqlite transactions are synchronous (they
-  // commit when the callback returns), so the callback awaits nothing and runs each statement
-  // with the sync `.all()` / `.get()` / `.run()`.
+  const k = newSegments.length;
   db.transaction((tx) => {
     const [counter] = tx
       .update(drafts)
-      .set({ lastClipNumber: sql`${drafts.lastClipNumber} + 1`, lastModified: now })
+      .set({ lastClipNumber: sql`${drafts.lastClipNumber} + ${k}`, lastModified: now })
       .where(eq(drafts.id, draftId))
       .returning({ clipNumber: drafts.lastClipNumber })
       .all();
-    if (!counter) throw new Error(`addSegment: draft ${draftId} not found`);
+    if (!counter) throw new Error(`insertSegments: draft ${draftId} not found`);
 
-    const [{ maxOrder }] = tx
-      .select({ maxOrder: sql<number | null>`max(${segments.order})` })
-      .from(segments)
-      .where(eq(segments.draftId, draftId))
-      .all();
+    const at = insertSlot(tx, draftId, anchor);
+    if (at.shift) {
+      const from = sql`${segments.draftId} = ${draftId} and ${segments.order} >= ${at.order}`;
+      tx.update(segments)
+        .set({ order: sql`-${segments.order} - 1` })
+        .where(from)
+        .run();
+      tx.update(segments)
+        .set({ order: sql`-${segments.order} - 1 + ${k}` })
+        .where(and(eq(segments.draftId, draftId), sql`${segments.order} < 0`))
+        .run();
+    }
 
+    const firstLabel = counter.clipNumber - k + 1;
     tx.insert(segments)
-      .values({
-        id: segment.id,
-        draftId,
-        order: (maxOrder ?? -1) + 1,
-        label: String(counter.clipNumber),
-        originalFilename: segment.originalFilename,
-        durationMs: segment.durationMs,
-        thumbnail: segment.thumbnail ?? null,
-      })
+      .values(
+        newSegments.map((segment, i) => ({
+          id: segment.id,
+          draftId,
+          order: at.order + i,
+          label: String(firstLabel + i),
+          originalFilename: segment.originalFilename,
+          durationMs: segment.durationMs,
+          thumbnail: segment.thumbnail ?? null,
+        })),
+      )
       .run();
   });
+  const segmentIds = newSegments.map((s) => s.id);
+  noteClipsAdded({ draftId, segmentIds, anchor });
+  return segmentIds;
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * The slot new clips take for `anchor`, and whether the clips from that slot on must move up: the
+ * anchor clip's slot (before it) or the next (after it), else the end (max + 1, hole-tolerant
+ * after deletes).
+ */
+function insertSlot(
+  tx: Tx,
+  draftId: string,
+  anchor: ClipAnchor,
+): { order: number; shift: boolean } {
+  const id = 'before' in anchor ? anchor.before : 'after' in anchor ? anchor.after : null;
+  if (id != null) {
+    const row = tx
+      .select({ order: segments.order })
+      .from(segments)
+      .where(and(eq(segments.id, id), eq(segments.draftId, draftId)))
+      .get();
+    if (row) return { order: 'before' in anchor ? row.order : row.order + 1, shift: true };
+  }
+  const [{ maxOrder }] = tx
+    .select({ maxOrder: sql<number | null>`max(${segments.order})` })
+    .from(segments)
+    .where(eq(segments.draftId, draftId))
+    .all();
+  return { order: (maxOrder ?? -1) + 1, shift: false };
 }
 
 /**
@@ -660,28 +726,45 @@ export async function resetEdit(segmentId: string): Promise<void> {
   });
 }
 
-/** Persist a new clip ordering (ids in target order) for a single draft. */
+/**
+ * Persist a new clip ordering (ids in target order) for a single draft: the clips named take the
+ * slots they hold between them, in this order, and every other clip keeps its own. So an order
+ * worked out before clips were inserted (the editor's queued write, `draft-writes.ts`) still
+ * applies over them without colliding: the new clips stay where they went, and ids that have
+ * gone are skipped.
+ */
 export async function reorderSegments(orderedIds: string[]): Promise<void> {
   if (orderedIds.length === 0) return;
-  const [target] = await db.select().from(segments).where(eq(segments.id, orderedIds[0]));
-  if (target) await beginClipMutation(target.draftId);
+  const [target] = await db
+    .select({ draftId: segments.draftId })
+    .from(segments)
+    .where(inArray(segments.id, orderedIds))
+    .limit(1);
+  if (!target) return;
+  await beginClipMutation(target.draftId);
   db.transaction((tx) => {
-    // Two passes: SQLite checks UNIQUE per statement, so renumbering in place would collide
-    // with rows still holding their old slot. Park all rows on distinct negatives first,
-    // then assign final slots via one CASE update.
+    const rows = tx
+      .select({ id: segments.id, order: segments.order })
+      .from(segments)
+      .where(and(eq(segments.draftId, target.draftId), inArray(segments.id, orderedIds)))
+      .orderBy(asc(segments.order))
+      .all();
+    const present = new Set(rows.map((r) => r.id));
+    const ids = [...new Set(orderedIds)].filter((id) => present.has(id));
+    if (ids.length === 0) return;
+    // Two passes: SQLite checks UNIQUE per row, so renumbering in place would collide with rows
+    // still holding their old slot. Park these rows on distinct negatives first, then assign
+    // their final slots (the ones they held: no other row has them) via one CASE update.
     tx.update(segments)
       .set({ order: sql`-${segments.order} - 1` })
-      .where(inArray(segments.id, orderedIds))
+      .where(inArray(segments.id, ids))
       .run();
     const finalOrder = sql`case ${sql.join(
-      orderedIds.map((id, i) => sql`when ${segments.id} = ${id} then ${i}`),
+      ids.map((id, i) => sql`when ${segments.id} = ${id} then ${rows[i].order}`),
       sql` `,
     )} else ${segments.order} end`;
-    tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, orderedIds)).run();
-    const first = tx.select().from(segments).where(eq(segments.id, orderedIds[0])).get();
-    if (first) {
-      tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, first.draftId)).run();
-    }
+    tx.update(segments).set({ order: finalOrder }).where(inArray(segments.id, ids)).run();
+    tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, target.draftId)).run();
   });
 }
 

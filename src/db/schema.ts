@@ -121,7 +121,8 @@ export const segments = sqliteTable(
     captionEdit: text('caption_edit'),
   },
   // One slot per position: catches any regression of the order-assignment race at write time
-  // (addSegment computes order inside a transaction; reorder renumbers in two passes).
+  // (insertSegments computes order and shifts later clips inside a transaction; it and reorder
+  // move rows in two passes, via distinct negatives).
   (t) => [uniqueIndex('segments_draft_order_unique').on(t.draftId, t.order)],
 );
 

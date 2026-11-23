@@ -1,6 +1,7 @@
 import { router, useIsFocused, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useState } from 'react';
 
+import { anchorFromRouteParam } from '@/core/clip-anchor';
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { peekRecorderPlace, takeRecorderPlace } from '@/features/recorder/link-place';
 import { RecorderScreen } from '@/features/recorder/recorder-screen';
@@ -22,7 +23,7 @@ function editorBelow(state: StackState | undefined, draftId: string): boolean {
 /**
  * The recorder route: params in, the editor and Export pushed over it, ✕ back home. Opened from an
  * editor's Add clips (`returnTo=editor`), its Edit goes back to that editor rather than pushing
- * another one.
+ * another one. `anchor` (`anchorToRouteParam`) is where its clips go in the draft at first.
  */
 export default function RecorderRoute() {
   const focused = useIsFocused();
@@ -32,11 +33,13 @@ export default function RecorderRoute() {
   // route (see `link-place.ts`): `forLink` only says this recorder was opened for a link. A
   // recorder opened for a new draft takes a place still on offer too — the one a link paired
   // during the welcome screen left for the first recording.
-  const { draftId, forLink, returnTo } = useLocalSearchParams<{
+  const { draftId, forLink, returnTo, anchor } = useLocalSearchParams<{
     draftId?: string;
     forLink?: string;
     returnTo?: string;
+    anchor?: string;
   }>();
+  const [insertAnchor] = useState(() => anchorFromRouteParam(anchor));
   const [linkPlace] = useState(() => (forLink || !draftId ? peekRecorderPlace() : null));
   useEffect(() => {
     if (linkPlace) takeRecorderPlace(linkPlace);
@@ -65,6 +68,7 @@ export default function RecorderRoute() {
         onClose={closeToHome}
         // Screen recording is the Pulse app's: the embed's recorder has no Record screen.
         screenCapture={screenCapturePort}
+        insertAnchor={insertAnchor}
       />
     </ScreenFocusProvider>
   );

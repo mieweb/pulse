@@ -3,6 +3,7 @@
 // navigates.
 import type { ComponentType } from 'react';
 
+import type { ClipAnchor } from '@/core/clip-anchor';
 import type { DraftContext } from '@/db/drafts';
 import type { HostContext } from '@/db/host-context';
 
@@ -49,6 +50,11 @@ export type RecorderScreenProps = {
    * its "+" is the plain import.
    */
   screenCapture?: ScreenCapturePort;
+  /**
+   * Where the recorder's clips go in the draft at first (its insert cursor, #308): the editor's
+   * add position when the editor's "Record a clip here" opened it. Default: the end.
+   */
+  insertAnchor?: ClipAnchor;
 };
 
 /** `live`: a screen take of Pulse's own is capturing. `stopping`: Stop asked, file settling. */
@@ -76,8 +82,11 @@ export type ScreenCapturePort = {
   getState: () => ScreenCaptureState;
   /** Whether a take or its import is using this draft: the recorder mustn't drop it as empty. */
   holds: (draftId: string) => boolean;
-  /** Record screen, for the recorder's draft (`draft` makes it if needed); `enableMic`: its mic. */
-  start: (draft: () => Promise<string>, enableMic: boolean) => Promise<void>;
+  /**
+   * Record screen, for the recorder's draft (`draft` makes it if needed); `enableMic`: its mic;
+   * `anchor`: where the clip goes (the recorder's insert cursor at the tap).
+   */
+  start: (draft: () => Promise<string>, enableMic: boolean, anchor: ClipAnchor) => Promise<void>;
   stop: () => Promise<void>;
   /** The take's Stop, under the recorder's top bar. */
   StopPill: ComponentType<{

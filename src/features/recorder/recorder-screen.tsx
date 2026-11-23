@@ -14,6 +14,7 @@ import {
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedView } from '@/components/themed-view';
+import { END } from '@/core/clip-anchor';
 import { useScreenFocusEffect } from '@/core/navigation/focus';
 import { useStatusBarStyle } from '@/core/status-bar/status-bar';
 import { captionsOffQuery } from '@/db/captions';
@@ -140,6 +141,7 @@ export function RecorderScreen({
   onExport,
   onClose,
   screenCapture,
+  insertAnchor: initialInsertAnchor,
 }: RecorderScreenProps) {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
@@ -178,6 +180,7 @@ export function RecorderScreen({
     toggleRecording,
     finalizeRecording,
     ensureDraft,
+    getInsertAnchor,
     importClip,
     isImporting,
     importProgress,
@@ -189,7 +192,9 @@ export function RecorderScreen({
     cycleStabilization,
     deleteSegment,
     reorderSegments,
-  } = useRecorder(initialDraftId, newDraft, screenCapture);
+  } = useRecorder(initialDraftId, newDraft, screenCapture, {
+    insertAnchor: initialInsertAnchor,
+  });
 
   // A refused microphone (embedded, PLAN-final §5.3): the recorder records without sound instead
   // of blocking. Denied asks first ("Record without sound?", or Settings); restricted can't be
@@ -270,7 +275,7 @@ export function RecorderScreen({
   const ScreenStopPill = screenCapture?.StopPill;
   const recordScreen = () => {
     if (isRecording || isImporting || screenLive || screen.importing) return;
-    void screenCapture?.start(ensureDraft, !muted);
+    void screenCapture?.start(ensureDraft, !muted, getInsertAnchor());
   };
 
   // While the editor or Export is presented over this one, the recorder is unfocused — drop the
@@ -309,6 +314,7 @@ export function RecorderScreen({
       place: () => newDraft.context,
       draftId: () => draftId,
       ensureDraft,
+      insertAnchor: getInsertAnchor,
       focused: () => focused,
     };
   });
@@ -319,6 +325,7 @@ export function RecorderScreen({
         place: () => mounted.current?.place() ?? null,
         draftId: () => mounted.current?.draftId() ?? null,
         ensureDraft: () => mounted.current?.ensureDraft() ?? Promise.reject(new Error('unmounted')),
+        insertAnchor: () => mounted.current?.insertAnchor() ?? END,
         focused: () => mounted.current?.focused() ?? false,
       }),
     [],

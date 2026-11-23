@@ -14,6 +14,7 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 
+import { type ClipAnchor, END, isEnd, onClipsAdded, sameAnchor } from '@/core/clip-anchor';
 import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 import {
   addSegment,
@@ -64,12 +65,14 @@ const MIN_RECORD_MS = 350;
  * `newDraft`: what a draft this recorder creates starts with — a link's `name` as its name (if
  * it has one) and the link's place as its context; embedded, the host place and `createdVia`.
  * Read once, like `initialDraftId`. `screenCapture`: the Pulse app's screen recording, if any (a
- * take owns the mic; its draft isn't dropped as empty).
+ * take owns the mic; its draft isn't dropped as empty). `insertAnchor`: where the recorder's
+ * clips go in the draft at first (default the end; see `insertAnchor` below).
  */
 export function useRecorder(
   initialDraftId?: string,
   newDraft?: RecorderNewDraft,
   screenCapture?: ScreenCapturePort,
+  { insertAnchor: initialAnchor = END }: { insertAnchor?: ClipAnchor } = {},
 ) {
   const cameraRef = useRef<CameraRef>(null);
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
@@ -297,6 +300,29 @@ export function useRecorder(
     };
   }, []);
 
+  // The insert cursor (#308): where takes, imports and screen recordings go in the draft. Read
+  // through the ref when a clip is written; the state is for rendering. When clips land at it
+  // (from here or a screen take's import), it moves past them, so a run of takes stays in order.
+  // An anchor whose clip has gone means the end (`insertSegments`).
+  const [insertAnchor, setAnchorState] = useState<ClipAnchor>(initialAnchor);
+  const anchorRef = useRef(insertAnchor);
+  const setInsertAnchor = (next: ClipAnchor) => {
+    anchorRef.current = next;
+    setAnchorState(next);
+  };
+  useEffect(
+    () =>
+      onClipsAdded((added) => {
+        const anchor = anchorRef.current;
+        if (isEnd(anchor) || added.draftId !== draftIdRef.current) return;
+        if (!sameAnchor(anchor, added.anchor)) return;
+        const next = { after: added.segmentIds[added.segmentIds.length - 1] };
+        anchorRef.current = next;
+        setAnchorState(next);
+      }),
+    [],
+  );
+
   // Hydrate persisted camera prefs once on mount, then mark ready so the camera can render.
   useEffect(() => {
     let cancelled = false;
@@ -444,7 +470,11 @@ export function useRecorder(
       // cover is the longest step after a stop (150–400 ms: Media3 prepares a player for each new
       // file). Imports stay cover-first (addExternalClip): they can be cancelled while it renders.
       expectSegmentCover(originalFilename);
-      await addSegment(id, { id: segmentId, originalFilename, durationMs, thumbnail: null });
+      await addSegment(
+        id,
+        { id: segmentId, originalFilename, durationMs, thumbnail: null },
+        anchorRef.current,
+      );
       everHadSegments.current = true;
       segmentCount.current = Math.max(segmentCount.current, 1);
       void addSegmentCover(id, segmentId, originalFilename);
@@ -560,6 +590,7 @@ export function useRecorder(
         signal: abort.signal,
         onProgress: setImportProgress,
         onAdded: noteSegmentAdded,
+        anchor: () => anchorRef.current,
       });
       if (outcome.status === 'cancelled') {
         cancelled();
@@ -741,6 +772,9 @@ export function useRecorder(
     toggleRecording,
     finalizeRecording,
     ensureDraft,
+    insertAnchor,
+    setInsertAnchor,
+    getInsertAnchor: () => anchorRef.current,
     importClip: () => void importClip(),
     startHoldRecording,
     endHoldRecording,

@@ -1,0 +1,209 @@
+import { describe, expect, it, jest } from '@jest/globals';
+
+// Inserting clips at an anchor, on the real migrations (node:sqlite behind the drizzle expo
+// driver), so the unique (draft_id, sort_order) index is the real one.
+jest.mock(
+  'expo-sqlite',
+  () =>
+    jest.requireActual<typeof import('@/test-support/expo-sqlite-node')>(
+      '@/test-support/expo-sqlite-node',
+    ).mockModule,
+);
+jest.mock('@/db/client', () => {
+  const { readdirSync, readFileSync } = jest.requireActual<typeof import('node:fs')>('node:fs');
+  const { join } = jest.requireActual<typeof import('node:path')>('node:path');
+  const { SQLiteDatabase } = jest.requireActual<typeof import('@/test-support/expo-sqlite-node')>(
+    '@/test-support/expo-sqlite-node',
+  );
+  const { drizzle } =
+    jest.requireActual<typeof import('drizzle-orm/expo-sqlite')>('drizzle-orm/expo-sqlite');
+  const conn = new SQLiteDatabase(':memory:');
+  conn.execSync('PRAGMA foreign_keys = ON');
+  const dir = join(__dirname, '../../drizzle');
+  for (const file of readdirSync(dir)
+    .filter((f) => /^\d{4}_.*\.sql$/.test(f))
+    .sort()) {
+    for (const statement of readFileSync(join(dir, file), 'utf8').split(
+      '--> statement-breakpoint',
+    )) {
+      if (statement.trim()) conn.execSync(statement);
+    }
+  }
+  return { expoDb: conn, db: drizzle(conn as never) };
+});
+jest.mock('expo-file-system', () => jest.requireActual('@/test-support/expo-fs-node'));
+jest.mock('@/utils/video', () => ({}));
+jest.mock('./secure-token', () => ({ deleteSavedLink: async () => {} }));
+jest.mock('expo-crypto', () => {
+  let n = 0;
+  return { randomUUID: () => `draft${++n}` };
+});
+
+/* eslint-disable import/first -- the mocks above must be registered before these load */
+import { onClipsAdded, takeClipsAdded, type ClipAnchor, type ClipsAdded } from '@/core/clip-anchor';
+import { expoDb } from './client';
+import { addSegment, createDraft, deleteSegment, insertSegments, reorderSegments } from './drafts';
+/* eslint-enable import/first */
+
+const conn = expoDb as unknown as {
+  getAllSync: <T>(sql: string, ...params: unknown[]) => T[];
+  getFirstSync: <T>(sql: string, ...params: unknown[]) => T | null;
+};
+
+const clip = (id: string) => ({
+  id,
+  originalFilename: `drafts/x/segments/${id}.mp4`,
+  durationMs: 1,
+});
+
+/** The draft's clips in order, as `id:label`. */
+const clips = (draftId: string) =>
+  conn
+    .getAllSync<{ id: string; label: string }>(
+      'SELECT id, label FROM segments WHERE draft_id = ? ORDER BY sort_order',
+      draftId,
+    )
+    .map((r) => `${r.id}:${r.label}`);
+const ids = (draftId: string) => clips(draftId).map((c) => c.split(':')[0]);
+const lastClipNumber = (draftId: string) =>
+  conn.getFirstSync<{ n: number }>('SELECT last_clip_number AS n FROM drafts WHERE id = ?', draftId)
+    ?.n;
+
+/** A draft with clips a, b, c (labels 1–3). */
+async function abc(): Promise<string> {
+  const draftId = await createDraft();
+  for (const id of ['a', 'b', 'c']) await addSegment(draftId, clip(`${draftId}${id}`));
+  return draftId;
+}
+const s = (draftId: string, id: string) => `${draftId}${id}`;
+
+describe('insertSegments', () => {
+  const cases: [string, (d: string) => ClipAnchor, string[]][] = [
+    ['before the first clip', (d) => ({ before: s(d, 'a') }), ['x', 'a', 'b', 'c']],
+    ['before a middle clip', (d) => ({ before: s(d, 'b') }), ['a', 'x', 'b', 'c']],
+    ['after a middle clip', (d) => ({ after: s(d, 'b') }), ['a', 'b', 'x', 'c']],
+    ['after the last clip', (d) => ({ after: s(d, 'c') }), ['a', 'b', 'c', 'x']],
+    ['at the end', () => ({ at: 'end' }), ['a', 'b', 'c', 'x']],
+  ];
+  it.each(cases)('inserts %s', async (_name, anchor, expected) => {
+    const d = await abc();
+    expect(await insertSegments(d, anchor(d), [clip(s(d, 'x'))])).toEqual([s(d, 'x')]);
+    expect(ids(d)).toEqual(expected.map((id) => s(d, id)));
+    // The new clip takes the next badge number.
+    expect(clips(d)).toContain(`${s(d, 'x')}:4`);
+    expect(lastClipNumber(d)).toBe(4);
+  });
+
+  it('inserts several clips together, in order, with consecutive labels', async () => {
+    const d = await abc();
+    const added = await insertSegments(d, { after: s(d, 'a') }, [
+      clip(s(d, 'x')),
+      clip(s(d, 'y')),
+      clip(s(d, 'z')),
+    ]);
+    expect(added).toEqual([s(d, 'x'), s(d, 'y'), s(d, 'z')]);
+    expect(clips(d)).toEqual(['a:1', 'x:4', 'y:5', 'z:6', 'b:2', 'c:3'].map((c) => `${d}${c}`));
+    expect(lastClipNumber(d)).toBe(6);
+  });
+
+  it('a run of takes, each after the one before, stays in order', async () => {
+    const d = await abc();
+    let anchor: ClipAnchor = { before: s(d, 'b') };
+    for (const id of ['x', 'y', 'z']) {
+      const [added] = await insertSegments(d, anchor, [clip(s(d, id))]);
+      anchor = { after: added };
+    }
+    expect(ids(d)).toEqual(['a', 'x', 'y', 'z', 'b', 'c'].map((id) => s(d, id)));
+  });
+
+  it('goes to the end when the anchor clip was deleted meanwhile, or is in another draft', async () => {
+    const d = await abc();
+    await deleteSegment(s(d, 'b'));
+    await insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'x'))]);
+    expect(ids(d)).toEqual(['a', 'c', 'x'].map((id) => s(d, id)));
+
+    const other = await abc();
+    await insertSegments(d, { after: s(other, 'a') }, [clip(s(d, 'y'))]);
+    expect(ids(d)).toEqual(['a', 'c', 'x', 'y'].map((id) => s(d, id)));
+    expect(ids(other)).toEqual(['a', 'b', 'c'].map((id) => s(other, id)));
+  });
+
+  it('keeps slots unique around the holes deletes leave', async () => {
+    const d = await abc();
+    await addSegment(d, clip(s(d, 'd')));
+    await deleteSegment(s(d, 'b')); // orders 0, 2, 3
+    await insertSegments(d, { before: s(d, 'c') }, [clip(s(d, 'x')), clip(s(d, 'y'))]);
+    await insertSegments(d, { after: s(d, 'a') }, [clip(s(d, 'z'))]);
+    expect(ids(d)).toEqual(['a', 'z', 'x', 'y', 'c', 'd'].map((id) => s(d, id)));
+    const orders = conn
+      .getAllSync<{ o: number }>('SELECT sort_order AS o FROM segments WHERE draft_id = ?', d)
+      .map((r) => r.o);
+    expect(orders.every((o) => o >= 0)).toBe(true);
+    expect(new Set(orders).size).toBe(orders.length);
+  });
+
+  it('inserts into an empty draft, whatever the anchor', async () => {
+    const d = await createDraft();
+    await insertSegments(d, { before: 'gone' }, [clip(s(d, 'x'))]);
+    expect(clips(d)).toEqual([`${s(d, 'x')}:1`]);
+  });
+
+  it('writes nothing for a missing draft, and changes no other draft', async () => {
+    const other = await abc();
+    await expect(insertSegments('missing', { at: 'end' }, [clip('x')])).rejects.toThrow(
+      /not found/,
+    );
+    expect(ids(other)).toEqual(['a', 'b', 'c'].map((id) => s(other, id)));
+    expect(conn.getFirstSync('SELECT id FROM segments WHERE id = ?', 'x')).toBeNull();
+  });
+
+  it('tells clips-added listeners, and keeps the ids for the editor', async () => {
+    const d = await abc();
+    takeClipsAdded(d);
+    const heard: ClipsAdded[] = [];
+    const stop = onClipsAdded((a) => heard.push(a));
+    try {
+      await insertSegments(d, { before: s(d, 'a') }, [clip(s(d, 'x')), clip(s(d, 'y'))]);
+      await addSegment(d, clip(s(d, 'z')));
+    } finally {
+      stop();
+    }
+    expect(heard).toEqual([
+      { draftId: d, segmentIds: [s(d, 'x'), s(d, 'y')], anchor: { before: s(d, 'a') } },
+      { draftId: d, segmentIds: [s(d, 'z')], anchor: { at: 'end' } },
+    ]);
+    expect(takeClipsAdded(d)).toEqual([s(d, 'x'), s(d, 'y'), s(d, 'z')]);
+    expect(takeClipsAdded(d)).toEqual([]);
+  });
+});
+
+describe('reorderSegments with clips it was not given', () => {
+  it('an order worked out before an insert applies over it without a collision', async () => {
+    const d = await abc();
+    await insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'x'))]); // a x b c
+    // The editor's order from before the insert: c a b.
+    await reorderSegments([s(d, 'c'), s(d, 'a'), s(d, 'b')]);
+    expect(ids(d)).toEqual(['c', 'x', 'a', 'b'].map((id) => s(d, id)));
+  });
+
+  it('skips ids that have gone, and moves only the clips it names', async () => {
+    const d = await abc();
+    await addSegment(d, clip(s(d, 'd'))); // a b c d
+    await deleteSegment(s(d, 'b'));
+    await reorderSegments([s(d, 'd'), s(d, 'b'), s(d, 'a')]);
+    expect(ids(d)).toEqual(['d', 'c', 'a'].map((id) => s(d, id)));
+  });
+
+  it('a reorder and an insert running together never collide, in either order', async () => {
+    for (const reorderFirst of [true, false]) {
+      const d = await abc();
+      const reorder = () => reorderSegments([s(d, 'c'), s(d, 'b'), s(d, 'a')]);
+      const insert = () => insertSegments(d, { after: s(d, 'a') }, [clip(s(d, 'x'))]);
+      await Promise.all(reorderFirst ? [reorder(), insert()] : [insert(), reorder()]);
+      // Every clip is there once, and the reorder holds for the clips it named.
+      const order = ids(d);
+      expect([...order].sort()).toEqual(['a', 'b', 'c', 'x'].map((id) => s(d, id)).sort());
+      expect(order.filter((id) => id !== s(d, 'x'))).toEqual(['c', 'b', 'a'].map((id) => s(d, id)));
+    }
+  });
+});
