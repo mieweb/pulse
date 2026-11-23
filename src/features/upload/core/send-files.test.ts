@@ -104,6 +104,7 @@ function cues(vtt: string): [string, string][] {
       text
         .join(' ')
         .replace(/<[^>]*>/g, '')
+        .replace(/[<>]/g, '') // a stray bracket left by a tag the line break cut
         .trim(),
     ];
   });
