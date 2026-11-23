@@ -21,10 +21,10 @@ function editorBelow(state: StackState | undefined, draftId: string): boolean {
 }
 
 /**
- * The recorder route: params in, the editor and Export pushed over it, ✕ back home. Opened from an
- * editor's Add clips (`returnTo=editor`), its Edit and its ✕ go back to that editor rather than
- * pushing another one or going Home. `anchor` (`anchorToRouteParam`) is where its clips go in the
- * draft at first.
+ * The recorder route: params in, the editor and Export pushed over it, ✕ back to the screen
+ * under it. Opened from an editor's Add clips (`returnTo=editor`), its Edit goes back to that
+ * editor rather than pushing another one. `anchor` (`anchorToRouteParam`) is where its clips go in
+ * the draft at first.
  */
 export default function RecorderRoute() {
   const focused = useIsFocused();
@@ -66,16 +66,9 @@ export default function RecorderRoute() {
               })
         }
         onExport={(id) => router.push({ pathname: '/export', params: { draftId: id } })}
-        // Opened from an editor, ✕ goes back to it (the flow carries on there, with the new
-        // clips); opened on its own, or with no editor for its draft underneath, Home.
-        onClose={({ draftId: id }) => {
-          const draft = id ?? draftId;
-          if (returnTo === 'editor' && draft && editorBelow(navigation.getState(), draft)) {
-            router.back();
-          } else {
-            closeToHome();
-          }
-        }}
+        // Back to the screen underneath: the editor when it opened this recorder (the flow carries
+        // on there, with the new clips), else Home.
+        onClose={closeToHome}
         // Screen recording is the Pulse app's: the embed's recorder has no Record screen.
         screenCapture={screenCapturePort}
         insertAnchor={insertAnchor}

@@ -45,7 +45,12 @@ import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorMo
 import { addExternalClip } from './add-external-clip';
 import type { RecorderNewDraft, ScreenCapturePort } from './contract';
 import { importLog } from './import-log';
-import { cursorAfterAdd, cursorAfterRemoval, normalizeCursor } from './insert-point';
+import {
+  cursorAfterAdd,
+  cursorAfterRemoval,
+  cursorBeforeDelete,
+  normalizeCursor,
+} from './insert-point';
 import { learnRecorderFormat } from './recorder-format';
 import { useScreenTake } from './screen-take';
 import { useCallState } from './use-call-state';
@@ -739,14 +744,7 @@ export function useRecorder(
   async function removeSegment(id: string) {
     try {
       // The cursor leaves a clip that's going now, before a take can be written at it.
-      const ids = shownIds.current;
-      setInsertAnchor(
-        cursorAfterRemoval(
-          anchorRef.current,
-          ids,
-          ids.filter((other) => other !== id),
-        ),
-      );
+      setInsertAnchor(cursorBeforeDelete(anchorRef.current, shownIds.current, id));
       dropClipJobs({ segmentIds: [id] });
       await deleteSegment(id);
     } catch (e) {
