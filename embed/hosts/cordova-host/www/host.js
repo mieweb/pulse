@@ -56,7 +56,7 @@
       callId: callId(),
       method: method,
       args: args || {},
-      client: { contract: { major: 1, minor: 0 }, version: 'host-test' },
+      client: { contract: { major: 1, minor: 1 }, version: 'host-test' },
     });
     var t0 = Date.now();
     log('→ ' + request);
@@ -72,6 +72,17 @@
   }
 
   var context = { key: 'host:test', kind: 'host', id: 'test', label: 'Host test' };
+
+  /** Calls `then` with the newest draft listDrafts returns, if there is one. */
+  function withFirstDraft(then) {
+    var listed = send('listDrafts');
+    if (!listed) return;
+    listed.then(function (reply) {
+      var first = reply && reply.ok && reply.result && reply.result[0];
+      if (first) then(first);
+      else log('no draft to use: record one first');
+    });
+  }
   var actions = {
     info: function () {
       send('info');
@@ -107,7 +118,36 @@
       send('logFile');
     },
     unknown: function () {
+      send('noSuchMethod');
+    },
+    configurePulse: function () {
+      send('configure', { hostName: 'Host test', uploadMode: 'pulse' });
+    },
+    // The data API (contract minor 1). The writes run in Pulse JS: with nothing presented in a
+    // build whose `headless` flag is on, else under PulseKit's brief "Preparing…".
+    setAccount: function () {
+      send('setAccount', { serverOrigin: 'https://host.test', userId: 'host-test' });
+    },
+    listDrafts: function () {
       send('listDrafts');
+    },
+    renameFirst: function () {
+      withFirstDraft(function (d) {
+        send('renameDraft', { id: d.id, name: 'Renamed ' + new Date().toLocaleTimeString() });
+      });
+    },
+    sendFirst: function () {
+      withFirstDraft(function (d) {
+        send('upload', { id: d.id });
+      });
+    },
+    deleteFirst: function () {
+      withFirstDraft(function (d) {
+        send('deleteDraft', { id: d.id });
+      });
+    },
+    resumeOutbox: function () {
+      send('resumeOutbox');
     },
     reload: function () {
       location.reload();

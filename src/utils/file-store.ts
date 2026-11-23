@@ -109,9 +109,28 @@ export async function persistExportFile(draftId: string, mergeOutputPath: string
   return dest.uri;
 }
 
+/**
+ * Delete the draft's folder (`drafts/{draftId}`) and everything in it. Refuses an id that isn't one
+ * plain path segment: `..`, `.`, an empty id or one with a separator would name a folder above or
+ * beside the draft's (`drafts/..` is the whole documents folder), and so would a percent-encoded
+ * one (`%2e%2e`) wherever the path is decoded as a file URI.
+ */
 export function deleteDraftDir(draftId: string): void {
+  if (!isPathSegment(draftId))
+    throw new Error(`Refusing to delete the folder of draft "${draftId}"`);
   const dir = new Directory(documentDir(), 'drafts', draftId);
   if (dir.exists) dir.delete();
+}
+
+/** One file or folder name: not empty, not `.` or `..`, and no `/`, backslash, NUL or `%`. */
+function isPathSegment(name: string): boolean {
+  return (
+    typeof name === 'string' &&
+    name !== '' &&
+    name !== '.' &&
+    name !== '..' &&
+    !/[/\\\0%]/.test(name)
+  );
 }
 
 // Draft transfer (.pulse export/import) ----------------------------------------------------

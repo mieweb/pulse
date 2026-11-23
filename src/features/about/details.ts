@@ -1,4 +1,4 @@
-import { protocolRangeLabel } from '@/features/upload/client-identity';
+import { protocolRangeLabel } from '@/features/upload/core/client-identity';
 
 import { type BuildInfo, commitLabel, utcLabel, versionLabel } from './build-info';
 

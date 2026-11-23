@@ -1,7 +1,7 @@
 {
   "format": "pulsekit-envelope-vectors",
   "version": 1,
-  "contract": { "major": 1, "minor": 0 },
+  "contract": { "major": 1, "minor": 1 },
   "methods": {
     "native": [
       "info",
@@ -69,6 +69,28 @@
         "method": "isOpen",
         "args": {},
         "client": { "contract": { "major": 1, "minor": 1 } }
+      },
+      "expect": { "route": "native", "method": "isOpen", "args": {} }
+    },
+    {
+      "name": "the client's timeoutMs reaches the method (a forwarded call waits as long)",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000013",
+        "method": "isOpen",
+        "args": {},
+        "timeoutMs": 45000
+      },
+      "expect": { "route": "native", "method": "isOpen", "args": {}, "timeoutMs": 45000 }
+    },
+    {
+      "name": "a timeoutMs that isn't a positive whole number is ignored",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000014",
+        "method": "isOpen",
+        "args": {},
+        "timeoutMs": "soon"
       },
       "expect": { "route": "native", "method": "isOpen", "args": {} }
     },
@@ -289,6 +311,21 @@
       "name": "a theme that isn't an object",
       "args": { "entry": "edit", "draftId": "d-1", "theme": "dark" },
       "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId ending in .project, whose result would read as a project document",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": "take.project" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId that is only .project",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": ".project" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId with project elsewhere in it",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": "project.take.projects" },
+      "expect": { "ok": true, "entry": "edit", "requestId": "project.take.projects" }
     }
   ],
   "busy": [

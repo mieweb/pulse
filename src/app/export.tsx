@@ -5,6 +5,7 @@ import { useCallback } from 'react';
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import type { ExportCloseResult, ExportPrimaryAction } from '@/features/export/contract';
 import { ExportScreen } from '@/features/export/export-screen';
+import { UploadTargetsScope } from '@/features/upload/core/target-provider';
 import { closeToHome } from '@/shell/standalone/navigation';
 
 const POLICY = { allowShare: true, allowSaveToPhotos: true };
@@ -22,13 +23,16 @@ export default function ExportRoute() {
   }, []);
   return (
     <ScreenFocusProvider focused={focused}>
-      <ExportScreen
-        draftId={draftId ?? ''}
-        primaryAction={UPLOAD_POOL}
-        policy={POLICY}
-        onClose={onClose}
-        onBackToHost={(url) => void Linking.openURL(url).catch(() => {})}
-      />
+      {/* The pool's destinations for this draft, and its picker (the shell's upload provider). */}
+      <UploadTargetsScope draftId={draftId ?? ''}>
+        <ExportScreen
+          draftId={draftId ?? ''}
+          primaryAction={UPLOAD_POOL}
+          policy={POLICY}
+          onClose={onClose}
+          onBackToHost={(url) => void Linking.openURL(url).catch(() => {})}
+        />
+      </UploadTargetsScope>
     </ScreenFocusProvider>
   );
 }

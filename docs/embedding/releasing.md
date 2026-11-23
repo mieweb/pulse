@@ -44,14 +44,27 @@ signs and publishes everything a host needs:
 3. Watch the run: `gh run watch --repo mieweb/pulse` and pick the PulseKit Release run.
 4. When it's green, check a download: download the release's assets and run
    `shasum -a 256 -c SHA256SUMS` in that folder.
-5. Try it in a host (the Capacitor test host or your app) and check that `getInfo().gitSha` is the
-   tagged commit. Install this release's own packages: while `NPM_PUBLISH` isn't `true`, npm's `@rc`
+5. Try it in a host (the Capacitor test host or your app) and check that `isAvailable()` is true on an iPhone and
+   that `getInfo().gitSha` is the tagged commit. Install this release's own packages: while `NPM_PUBLISH` isn't `true`, npm's `@rc`
    is an older version or nothing, so install from the Release:
    `BASE=https://github.com/mieweb/pulse/releases/download/pulsekit-v<version>` then
    `npm install --save-exact $BASE/mieweb-pulse-embed-<version>.tgz $BASE/mieweb-capacitor-pulse-<version>.tgz`.
    Once npm publishing is on, `npm install --save-exact @mieweb/capacitor-pulse@rc` works too.
 
+A green run is not enough on its own: `pulsekit-v0.1.0-rc.4` built, packaged and published a
+release whose `PulseKit` binary had no `PulseKit` class, because the facade's Swift files were
+compiled into the wrong target. Hosts linking it answered `isAvailable()` false. Packaging now
+refuses a PulseKit slice without the class, but step 5 on a phone is the check that counts.
+
 For a final release, tag `pulsekit-v0.2.0` the same way.
+
+## Choose whether the release runs without a screen
+
+The `headless` capability (host writes and uploads with nothing on screen) is a build-time switch,
+on unless the prebuild runs with `PULSEKIT_HEADLESS=0` ([dev-loop.md](dev-loop.md#with-the-headless-capability)).
+`release-embed.yml` runs `npm run prebuild -- --platform ios` without the variable, so a release reports
+`headless`. To ship a release without it, set `PULSEKIT_HEADLESS: '0'` on that step. Hosts read the result from `getInfo().capabilities` and change how they resume uploads
+([uploads.md](uploads.md#paused-uploads)), so say in the release notes which way it went.
 
 ## After a final release: re-pin TimeHuddle
 

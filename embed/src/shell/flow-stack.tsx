@@ -12,13 +12,14 @@ import { ScreenStack, ScreenStackItem } from 'react-native-screens';
 
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { EditorScreen } from '@/features/editor/editor-screen';
-import type { ExportPolicy, ExportPrimaryAction } from '@/features/export/contract';
+import type { ExportedVideo, ExportPolicy, ExportPrimaryAction } from '@/features/export/contract';
 import { ExportScreen } from '@/features/export/export-screen';
 import type { RecorderCloseResult, RecorderNewDraft } from '@/features/recorder/contract';
 import { RecorderScreen } from '@/features/recorder/recorder-screen';
 import { OnDeviceAiSheet } from '@/features/transcription/on-device-ai-sheet';
 import { tallSheetFits } from '@/utils/sheet-fit';
 
+import { exitSheetCopy } from '../flow/reducer';
 import type { FlowController } from './flow-controller';
 import type { FlowStore, StackItem } from './flow-store';
 import type { UiSender } from './messaging';
@@ -38,10 +39,6 @@ const NEW_DRAFT: RecorderNewDraft = { name: null, context: null };
 /** Final copy is the P0.3 mock's (Q23); these are its working words. */
 const COPY = {
   useVideo: 'Use this video',
-  exitTitle: 'Keep this video?',
-  keep: 'Keep draft',
-  discard: 'Discard video',
-  cancel: 'Cancel',
 };
 
 export function FlowStack({
@@ -83,20 +80,22 @@ export function FlowStack({
   useEffect(() => ui({ hasTake }), [ui, hasTake]);
 
   // The keep/discard sheet: X with a take on a draft this flow made.
+  // A clock type's Keep says the person is still clocked in (or out): nothing ran on the host.
   useEffect(() => {
     if (state.sheet !== 'exit') return;
+    const copy = exitSheetCopy(store.state());
     Alert.alert(
-      COPY.exitTitle,
+      copy.title,
       undefined,
       [
-        { text: COPY.keep, onPress: () => store.dispatch({ type: 'keep' }) },
+        { text: copy.keep, onPress: () => store.dispatch({ type: 'keep' }) },
         {
-          text: COPY.discard,
+          text: copy.discard,
           style: 'destructive',
           onPress: () => store.dispatch({ type: 'discard' }),
         },
         {
-          text: COPY.cancel,
+          text: copy.cancel,
           style: 'cancel',
           onPress: () => store.dispatch({ type: 'dismissSheet' }),
         },
@@ -196,6 +195,14 @@ function FlowScreen({
   config: ConfigureOptions;
   onOpenModelSheet: () => void;
 }) {
+  // A draft the recorder makes is for the flow's place (stored with its upload type), and the
+  // recorder shows that place's banner. Read once, as the recorder reads it.
+  const [newDraft] = useState<RecorderNewDraft>(() => {
+    const context = store.state().context;
+    return context
+      ? { name: null, context: null, hostContext: { ...context }, createdVia: 'host' }
+      : NEW_DRAFT;
+  });
   // The recorder's exits come after its take is saved and its pending writes are stored, so the
   // library is current: read the draft it names, then move.
   const recorderEdit = useCallback(
@@ -228,11 +235,25 @@ function FlowScreen({
   }, [controller, store]);
   const editorAddClips = useCallback(() => store.dispatch({ type: 'addClips' }), [store]);
   const exportClose = useCallback(() => store.dispatch({ type: 'back' }), [store]);
-  const [primaryAction] = useState<ExportPrimaryAction>(() => ({
-    kind: 'use-video',
-    label: COPY.useVideo,
-    onUse: (video) => void controller.useVideo(video),
-  }));
+  const exportReady = useCallback(
+    (video: ExportedVideo) => controller.exportReady(video.draftId),
+    [controller],
+  );
+  // 'pulse' mode (the default) sends through Pulse's outbox; 'file' hands the video back.
+  const [primaryAction] = useState<ExportPrimaryAction>(() =>
+    config.uploadMode === 'file'
+      ? {
+          kind: 'use-video',
+          label: COPY.useVideo,
+          onUse: (video) => void controller.useVideo(video),
+        }
+      : {
+          kind: 'send',
+          onSent: (sent) => controller.sent(sent),
+          onKeepDraft: () => controller.keepDraft(),
+          onSending: (busy) => controller.sending(busy),
+        },
+  );
   const [policy] = useState<ExportPolicy>(() => ({
     allowShare: config.policy?.allowShare !== false,
     allowSaveToPhotos: config.policy?.allowSaveToPhotos !== false,
@@ -244,7 +265,7 @@ function FlowScreen({
         <RecorderScreen
           // Read once, as it mounts: a new recording has none until its first take.
           draftId={draftId ?? undefined}
-          newDraft={NEW_DRAFT}
+          newDraft={newDraft}
           onEdit={recorderEdit}
           onExport={recorderExport}
           onClose={recorderClose}
@@ -261,15 +282,22 @@ function FlowScreen({
           onOpenModelSheet={onOpenModelSheet}
         />
       ) : null;
-    case 'export':
+    case 'export': {
+      // Trim steps back to the editor, which a recorder's Export always has under it. A flow the
+      // host opened straight on Export (entry 'export') has none, so Export shows no Trim.
+      const stack = store.getSnapshot().items;
+      const editorUnder = stack.length > 1 && stack[stack.length - 2]?.screen === 'editor';
       return draftId ? (
         <ExportScreen
           draftId={draftId}
           primaryAction={primaryAction}
           policy={policy}
           onClose={exportClose}
+          onTrim={editorUnder ? exportClose : undefined}
+          onReady={exportReady}
         />
       ) : null;
+    }
   }
 }
 

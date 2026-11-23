@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 
 import { ButtonHeight, CardShadow, Radius, Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { useButtonRadius, useTheme } from '@/hooks/use-theme';
 
 import { Icon, type IconName } from './icon';
 import { ThemedText } from './themed-text';
@@ -46,6 +46,8 @@ export function PrimaryButton({
   ...rest
 }: Props) {
   const theme = useTheme();
+  // A host's `theme.buttonRadius` (points) replaces the default corner.
+  const radius = useButtonRadius();
   const filled = variant === 'filled';
   const color = filled ? theme.onAccent : theme.text;
 
@@ -57,6 +59,7 @@ export function PrimaryButton({
       disabled={disabled}
       style={({ pressed }) => [
         styles.button,
+        radius !== undefined && { borderRadius: radius },
         filled ? { backgroundColor: theme.accent } : { backgroundColor: theme.card, ...CardShadow },
         disabled && styles.disabled,
         pressed && styles.pressed,

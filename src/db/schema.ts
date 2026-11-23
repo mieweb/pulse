@@ -1,5 +1,13 @@
 import { sql } from 'drizzle-orm';
-import { integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
@@ -11,40 +19,63 @@ const now = sql`(unixepoch('subsec') * 1000)`;
 type UploadStatus = 'uploading' | 'uploaded';
 
 /** A draft — an ordered set of segments, plus its upload destination. */
-export const drafts = sqliteTable('drafts', {
-  id: text('id').primaryKey(),
-  name: text('name'),
-  // Per-draft upload destination (§4). A draft is "paired" when these are set (via
-  // `setUploadDestination`); there is no separate mode flag. `uploadArtifactId` is the video's
-  // artifact id from the pairing deep link — the TUS artifactId of the video, and the `relatedTo`
-  // of its captions / beat manifest / thumbnail.
-  uploadServer: text('upload_server'),
-  // The link's bearer token isn't stored with the draft at all: the upload carries it in memory.
-  uploadArtifactId: text('upload_artifact_id'),
-  uploadStatus: text('upload_status', { enum: ['uploading', 'uploaded'] }).$type<UploadStatus>(),
-  // The place the draft was recorded for, when a link that names one (`ref`) opened its recorder:
-  // that link's server and `ref`, which match the place's row in `upload_destinations` while it
-  // has one. Its export screen uploads there; a later link for the same place reopens the draft
-  // while it is unsent. Null otherwise.
-  contextServer: text('context_server'),
-  contextRef: text('context_ref'),
-  // The persisted merged export at `drafts/{id}/export.mp4` (see `exportRelPath`): the
-  // `mergedSignature` of the clip set it was merged from, and its true duration (feeds the beat
-  // manifest). Written only after the file is in place. Clip edits leave it alone: the export
-  // screen reuses it only while the signature matches the current clips (so undoing edits gets
-  // it back), and a mismatch or missing file means "merge again". Null = no export.
-  mergedSignature: text('merged_signature'),
-  mergedDurationMs: integer('merged_duration_ms'),
-  // Where the captions sit on the video: the caption's vertical centre, as a fraction of the
-  // picture's height (0 top, 1 bottom), dragged on the editor's preview. Null = the default place.
-  captionY: real('caption_y'),
-  // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
-  // every clip added, never decremented — so deleting (or renaming) a clip can never cause
-  // its number to be reused.
-  lastClipNumber: integer('last_clip_number').notNull().default(0),
-  createdAt: integer('created_at').notNull().default(now),
-  lastModified: integer('last_modified').notNull().default(now),
-});
+export const drafts = sqliteTable(
+  'drafts',
+  {
+    id: text('id').primaryKey(),
+    name: text('name'),
+    // Per-draft upload destination (§4). A draft is "paired" when these are set (via
+    // `setUploadDestination`); there is no separate mode flag. `uploadArtifactId` is the video's
+    // artifact id from the pairing deep link — the TUS artifactId of the video, and the `relatedTo`
+    // of its captions / beat manifest / thumbnail.
+    uploadServer: text('upload_server'),
+    // The link's bearer token isn't stored with the draft at all: the upload carries it in memory.
+    uploadArtifactId: text('upload_artifact_id'),
+    uploadStatus: text('upload_status', { enum: ['uploading', 'uploaded'] }).$type<UploadStatus>(),
+    // The place the draft was recorded for, when a link that names one (`ref`) opened its recorder:
+    // that link's server and `ref`, which match the place's row in `upload_destinations` while it
+    // has one. Its export screen uploads there; a later link for the same place reopens the draft
+    // while it is unsent. Null otherwise.
+    contextServer: text('context_server'),
+    contextRef: text('context_ref'),
+    // The persisted merged export at `drafts/{id}/export.mp4` (see `exportRelPath`): the
+    // `mergedSignature` of the clip set it was merged from, and its true duration (feeds the beat
+    // manifest). Written only after the file is in place. Clip edits leave it alone: the export
+    // screen reuses it only while the signature matches the current clips (so undoing edits gets
+    // it back), and a mismatch or missing file means "merge again". Null = no export.
+    mergedSignature: text('merged_signature'),
+    mergedDurationMs: integer('merged_duration_ms'),
+    // Where the captions sit on the video: the caption's vertical centre, as a fraction of the
+    // picture's height (0 top, 1 bottom), dragged on the editor's preview. Null = the default place.
+    captionY: real('caption_y'),
+    // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
+    // every clip added, never decremented — so deleting (or renaming) a clip can never cause
+    // its number to be reused.
+    lastClipNumber: integer('last_clip_number').notNull().default(0),
+    createdAt: integer('created_at').notNull().default(now),
+    lastModified: integer('last_modified').notNull().default(now),
+    // The host place this draft is for, when a host app embeds Pulse (its PulseContext). Null in
+    // the Pulse app, whose link places use `contextServer`/`contextRef`. `contextKey` is
+    // `${kind}:${id}`, what the host groups and counts drafts by; `contextJson` is the rest of the
+    // context and `uploadTypeJson` its upload type, each at most 8 KB (host-context.ts checks all
+    // four). Set at birth or by `setDraftContext` while the draft is unsent; frozen from Send on.
+    contextKey: text('context_key'),
+    contextLabel: text('context_label'),
+    contextJson: text('context_json'),
+    uploadTypeJson: text('upload_type_json'),
+    // Which shell made the draft: 'app' (the Pulse app; every row before migration 0020) or 'host'.
+    createdVia: text('created_via', { enum: ['app', 'host'] })
+      .notNull()
+      .default('app'),
+    // When the host confirmed the draft's Send (a clock action ran for it). Set, the draft is
+    // clock-bound: it keeps its place (`setDraftContext` refuses) and a later Send keeps `sentAt`.
+    hostConfirmedAt: integer('host_confirmed_at'),
+    // When the person first tapped Send for this draft (the time a clock action is recorded at).
+    sentAt: integer('sent_at'),
+  },
+  // Not unique: a place may have several drafts.
+  (t) => [index('drafts_context_key_idx').on(t.contextKey)],
+);
 
 /**
  * A clip on the timeline. The `originalFilename` recording/import is never mutated. An edit
@@ -186,8 +217,99 @@ export const uploadDestinations = sqliteTable(
   (t) => [uniqueIndex('upload_destinations_server_ref_unique').on(t.server, t.ref)],
 );
 
+/**
+ * The upload outbox of the embedded shell: one row per draft that was sent and hasn't retired yet.
+ * Its `state` is the only persisted upload state of an embedded draft (the Pulse app keeps using
+ * `drafts.upload*`). LOCAL: never in a backup or a `.pulse` file, and a restore leaves it alone
+ * (project.ts `LOCAL_TABLES`). Deleting the draft deletes its job.
+ */
+export const uploadJobs = sqliteTable(
+  'upload_jobs',
+  {
+    draftId: text('draft_id')
+      .primaryKey()
+      .references(() => drafts.id, { onDelete: 'cascade' }),
+    state: text('state', {
+      enum: ['preparing', 'queued', 'uploading', 'delivering', 'needs_credentials', 'failed'],
+    }).notNull(),
+    // `${installationId}:${draftId}:${sig16}`: changes with any edit (the merged signature).
+    clientKey: text('client_key').notNull(),
+    // `${installationId}:${draftId}`: the same for every Send of this draft.
+    draftKey: text('draft_key').notNull(),
+    // Frozen at Send: the export that is sent must match it.
+    mergedSignature: text('merged_signature').notNull(),
+    sentAt: integer('sent_at').notNull(),
+    // From the host's upload target: the server's upload id, the video's artifact id (changes
+    // when the artifact is renewed) and the PulseVault base URL.
+    uploadId: text('upload_id'),
+    artifactId: text('artifact_id'),
+    endpoint: text('endpoint'),
+    // JSON: the parts sent (captions, manifest, thumbnail, video), each with its artifact id,
+    // file, size, TUS URL and done flag, so a later launch resumes them.
+    partsJson: text('parts_json'),
+    bytesTotal: integer('bytes_total'),
+    // The video's last known offset: progress after a relaunch.
+    bytesSent: integer('bytes_sent'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: integer('next_attempt_at'),
+    // The token's expiry only: the token itself stays in memory.
+    tokenExp: integer('token_exp'),
+    lastErrorCode: text('last_error_code'),
+    lastErrorMessage: text('last_error_message'),
+    createdAt: integer('created_at').notNull().default(now),
+    updatedAt: integer('updated_at').notNull().default(now),
+  },
+  (t) => [uniqueIndex('upload_jobs_client_key_unique').on(t.clientKey)],
+);
+
+/**
+ * Drafts the embedded shell sent, kept 7 days after delivery without their media: what the host
+ * shows as sent. Written when the draft retires (its rows deleted in the same transaction).
+ * `mediaDeletedAt` records that the draft's folder is gone, so a kill between the rows and the
+ * files is finished at the next launch. LOCAL (see `uploadJobs`).
+ */
+export const uploadReceipts = sqliteTable(
+  'upload_receipts',
+  {
+    // The retired draft's id: no foreign key, its row is gone.
+    draftId: text('draft_id').primaryKey(),
+    name: text('name').notNull(),
+    contextKey: text('context_key'),
+    contextLabel: text('context_label'),
+    contextJson: text('context_json'),
+    uploadTypeJson: text('upload_type_json'),
+    outcome: text('outcome', { enum: ['done', 'kept'] }).notNull(),
+    // The server's note for 'done', its reason for 'kept'.
+    note: text('note'),
+    reason: text('reason'),
+    uploadId: text('upload_id').notNull(),
+    artifactId: text('artifact_id').notNull(),
+    clientKey: text('client_key').notNull(),
+    clipCount: integer('clip_count').notNull(),
+    durationMs: integer('duration_ms').notNull(),
+    sentAt: integer('sent_at').notNull(),
+    deliveredAt: integer('delivered_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    dismissedAt: integer('dismissed_at'),
+    mediaDeletedAt: integer('media_deleted_at'),
+  },
+  (t) => [index('upload_receipts_context_key_idx').on(t.contextKey)],
+);
+
+/**
+ * This install's own values (its installation id, the Wi-Fi-only choice). Unlike `settings`, which
+ * travels in library backups, these never leave the phone: a backup restored on another phone
+ * must not give two phones one installation id. LOCAL (see `uploadJobs`).
+ */
+export const localSettings = sqliteTable('local_settings', {
+  key: text('key').primaryKey(),
+  value: text('value'),
+});
+
 export type Draft = typeof drafts.$inferSelect;
 export type Segment = typeof segments.$inferSelect;
 export type DraftTranscript = typeof draftTranscripts.$inferSelect;
 export type ClipTranscript = typeof clipTranscripts.$inferSelect;
 export type UploadDestination = typeof uploadDestinations.$inferSelect;
+export type UploadJob = typeof uploadJobs.$inferSelect;
+export type UploadReceipt = typeof uploadReceipts.$inferSelect;

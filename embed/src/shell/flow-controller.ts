@@ -1,13 +1,14 @@
 import type { PulseErrorInfo } from '@mieweb/pulse-embed';
 
 import { flushDraftWrites } from '@/features/editor/draft-writes';
-import type { ExportedVideo } from '@/features/export/contract';
+import type { ExportedVideo, SentVideo } from '@/features/export/contract';
 import { finalizeRecorders, recorderOnScreen } from '@/features/recorder/recorder-presence';
 
 import type { DraftSeen } from './draft-sync';
 import { syncEvents } from './draft-sync';
 import type { FlowStore } from './flow-store';
 import { onDraftsChanged, projectDocument, readDraft } from './library';
+import type { UiFields } from './messaging';
 import { saveExportForHost } from './results';
 
 /**
@@ -35,7 +36,11 @@ function within(work: Promise<void>, ms: number): Promise<void> {
  * One per presentation, made outside the library gate so the host's `close` works even while the
  * gate shows its loading or recovery screen.
  */
-export function createFlowController(store: FlowStore, requestId: string) {
+export function createFlowController(
+  store: FlowStore,
+  requestId: string,
+  ui: (fields: UiFields) => void = () => {},
+) {
   let last: DraftSeen | null = null;
   // The library gate has passed: before that the library may not be readable.
   let attached = false;
@@ -81,8 +86,8 @@ export function createFlowController(store: FlowStore, requestId: string) {
 
   return {
     /**
-     * The library gate passed: read the draft the entry opens and watch the library from now on.
-     * Returns false when that draft doesn't exist.
+     * The library gate passed: read the draft the entry opens (its clips and the host place it is
+     * for) and watch the library from now on. Returns false when that draft doesn't exist.
      */
     attach(draftId: string | null): boolean {
       attached = true;
@@ -90,7 +95,8 @@ export function createFlowController(store: FlowStore, requestId: string) {
         const seen = readDraft(draftId);
         if (!seen) return false;
         last = seen;
-        store.open({ context: null, clipCount: seen.clipCount });
+        // The draft's own place (and host data): what the flow's result names as its context.
+        store.open({ context: seen.context, clipCount: seen.clipCount });
       }
       return true;
     },
@@ -146,6 +152,38 @@ export function createFlowController(store: FlowStore, requestId: string) {
       store.dispatch({ type: 'hostClose', discard });
     },
     fail,
+    /** Send ('pulse' mode): the job is queued; the flow ends `completed{mode:'pulse'}`. */
+    sent(sent: SentVideo): void {
+      store.dispatch({
+        type: 'send',
+        sentAt: sent.sentAt,
+        clientKey: sent.clientKey,
+        draftKey: sent.draftKey,
+        ...(sent.confirmedAt !== undefined ? { confirmedAt: sent.confirmedAt } : null),
+      });
+    },
+    /**
+     * Export's Send started (`true`: the merge, then the host's confirm) or stopped without going
+     * (`false`). Meanwhile the host's close waits, as it waits for a take: a clock action must
+     * not succeed behind a flow that already ended. The facade hears it too (`pulse.ui sending`),
+     * so its close watchdog gives the Send its own deadline instead of 5 s.
+     */
+    sending(busy: boolean): void {
+      store.dispatch({ type: busy ? 'sendStarted' : 'sendStopped' });
+      // What the reducer holds: a Send it didn't take (not on Export) holds nothing.
+      ui({ sending: store.state().sending });
+    },
+    /**
+     * Export's video is ready for the flow's draft (merged now, or the saved export still
+     * matching): the flow's stage is `exported` until a clip changes.
+     */
+    exportReady(draftId: string): void {
+      if (store.state().draftId === draftId) store.dispatch({ type: 'merged' });
+    },
+    /** [Keep draft] after a failed host confirm: the flow ends `closed`, the draft unsent. */
+    keepDraft(): void {
+      store.dispatch({ type: 'keepDraft' });
+    },
     /** "Use this video" ('file' mode): copy the export for the host, then end the flow. */
     async useVideo(video: ExportedVideo): Promise<void> {
       if (using) return; // one copy per tap

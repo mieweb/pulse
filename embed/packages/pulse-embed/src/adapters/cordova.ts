@@ -88,11 +88,11 @@ export function createCordovaAdapter(
   return {
     kind: 'cordova',
     present: ready,
-    async call(method, args, callId): Promise<BridgeReply> {
+    async call(method, args, callId, options): Promise<BridgeReply> {
       await whenDeviceReady();
       const run = exec();
       if (!run || !pluginPresent()) throw new Error('No Pulse plugin in this Cordova app.');
-      const json = JSON.stringify(buildRequest(method, args, callId));
+      const json = JSON.stringify(buildRequest(method, args, callId, options?.timeoutMs));
       const out = await new Promise<unknown>((resolve, reject) => {
         run(resolve, reject, SERVICE, 'call', [json]);
       });

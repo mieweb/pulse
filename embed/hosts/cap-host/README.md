@@ -32,9 +32,27 @@ open -a Xcode --env PULSEKIT_LOCAL="$PULSEKIT_LOCAL" ios/App/App.xcodeproj
   workflow writes their real URLs.
 
 What to look for: the page logs `ready (Capacitor)` and an `info` reply with `"supported":true` on an
-iPhone (iOS 16.4 or later). **Record** opens Pulse; when the flow ends, its reply and a `flowResult`
-event arrive. **Reload page** while a result is unacknowledged, then **Pending** lists it.
+iPhone (iOS 16.4 or later). Tap **Set account**, then **Record**: Pulse opens, and when the flow ends,
+its reply and a `flowResult` event arrive. Without an account, **Record** and **Pending** answer
+`no_account`. **Reload page** while a result is unacknowledged, then **Pending** lists it.
 **Unknown method** answers `method.unsupported`.
+
+The data API: tap **Set account** first (writes and `open` answer `no_account` without one), then
+**Record** a draft. **List drafts** reads the catalog without starting Pulse. **Rename first**, **Send
+first** and **Delete first** act on the newest draft, and **Resume outbox** runs the launch rule; each
+runs in Pulse's JavaScript. With nothing open and a cold runtime, a PulseKit with the
+`headless` capability (the default; `info` lists it) answers with nothing presented; a build made
+with `PULSEKIT_HEADLESS=0 npm run prebuild` shows "Preparing…" briefly and closes it. **Send first** needs **Configure (pulse
+mode)** first, on a cold or a warm runtime: in 'file' mode it answers `host_misconfigured`. A Send
+that answers `timeout` may still be queued: tap **Send first** again, and it answers with the same
+keys. This page has no host services, so a Send's `hostRequest` event shows in the log and the job
+pauses after 20 s unanswered.
+
+## The contract suite
+
+`src/contract/` is a second page that runs the host contract (`runPulseContract`) against the real
+plugin: build it with `node src/contract/build.mjs` before `npx cap sync ios`, then tap **Contract
+suite** on the host page. [src/contract/README.md](src/contract/README.md) has the details.
 
 ## Android (the stub)
 

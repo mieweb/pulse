@@ -1,0 +1,85 @@
+/**
+ * What the recorder offers when it can use the camera but not the microphone (PLAN-final §5.3):
+ * instead of the blocking "Camera access needed" screen, it records video only.
+ *
+ * - Microphone denied: "Record without sound?", with a link to Settings, where it can be turned
+ *   back on.
+ * - Microphone restricted (Screen Time, a device policy): the person can't allow it, so there's
+ *   no question to ask; the recorder records without sound and offers the Settings link only.
+ * - Microphone allowed, or not asked yet (the recorder's first-open request is still going):
+ *   nothing.
+ * - Camera not allowed: nothing here either; the blocking camera screen stays as it is.
+ *
+ * The host shows its own in-context explanation before the first request (PR3-W4). Pure: the
+ * statuses are VisionCamera's (`useCameraPermission().status` and the microphone's).
+ */
+
+/** VisionCamera's `PermissionStatus`. */
+export type PermissionStatus = 'not-determined' | 'authorized' | 'denied' | 'restricted';
+
+export type MicOffer =
+  /** Ask "Record without sound?", with Settings as the other way. */
+  | { kind: 'without-sound'; settings: true }
+  /** No question (it can't be allowed here): record without sound, with the Settings link. */
+  | { kind: 'settings-only'; settings: true }
+  | null;
+
+export function micOffer(camera: PermissionStatus, mic: PermissionStatus): MicOffer {
+  if (camera !== 'authorized') return null;
+  if (mic === 'denied') return { kind: 'without-sound', settings: true };
+  if (mic === 'restricted') return { kind: 'settings-only', settings: true };
+  return null;
+}
+
+/**
+ * Whether the recorder can run (the camera screen gives way to it). Without `micOptional` (the
+ * Pulse app), both permissions are needed, as before. With it (embedded), the camera is enough
+ * once the microphone has been asked: a denied or restricted microphone records without sound.
+ */
+export function recorderAllowed(
+  camera: PermissionStatus,
+  mic: PermissionStatus,
+  micOptional: boolean,
+): boolean {
+  if (camera !== 'authorized') return false;
+  if (mic === 'authorized') return true;
+  return micOptional && (mic === 'denied' || mic === 'restricted');
+}
+
+/**
+ * What the recorder does about its mute while the microphone is refused. It mutes itself (no
+ * audio track without access) and remembers that it did, in the library's settings
+ * (`MIC_FORCED_MUTE_KEY`), apart from the person's own mute preference: iOS ends the app when a
+ * permission changes in Settings, so the unmute after the microphone is allowed happens on a
+ * later launch, which reads the stored mute as on.
+ *
+ * - Refused, not muted: 'mute' (and remember it was for the microphone).
+ * - Refused, already muted by the person: 'none' (it's theirs; nothing to undo later).
+ * - Allowed, muted for the microphone: 'unmute' (and forget it).
+ * - Otherwise (the microphone not asked yet, the camera not allowed): 'none'.
+ */
+export type MicMuteStep = 'mute' | 'unmute' | 'none';
+
+export function micMuteStep(input: {
+  offer: MicOffer;
+  micGranted: boolean;
+  muted: boolean;
+  /** The recorder muted itself for the microphone (stored). */
+  mutedForMic: boolean;
+}): MicMuteStep {
+  const { offer, micGranted, muted, mutedForMic } = input;
+  if (offer !== null) return !muted && !mutedForMic ? 'mute' : 'none';
+  return micGranted && mutedForMic ? 'unmute' : 'none';
+}
+
+/** Settings key: the recorder is muted because the microphone was refused, not by the person. */
+export const MIC_FORCED_MUTE_KEY = 'recorder.mutedForMic';
+
+export const MIC_COPY = {
+  title: 'Record without sound?',
+  body: 'Pulse can’t use the microphone. Allow it in Settings, or record video only.',
+  withoutSound: 'Record without sound',
+  settings: 'Open Settings',
+  restricted: 'The microphone is turned off on this phone. Videos record without sound.',
+  noSound: 'Recording without sound',
+} as const;

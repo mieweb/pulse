@@ -1,7 +1,15 @@
 import { describe, expect, it } from '@jest/globals';
 import type { OpenRequest, PulseContext, PulseErrorInfo } from '@mieweb/pulse-embed';
 
-import { flowReducer, initFlow, topScreen, type FlowEvent, type FlowState } from './reducer';
+import {
+  exitSheetCopy,
+  flowReducer,
+  initFlow,
+  topScreen,
+  type FlowEvent,
+  type FlowState,
+} from './reducer';
+import { flowResult } from './result';
 
 const context: PulseContext = {
   key: 'ticket:t-42',
@@ -221,6 +229,64 @@ describe('X with clips: the keep/discard sheet', () => {
   });
 });
 
+describe('a clock type: the sheet and Keep draft', () => {
+  const wrapUp: PulseContext = {
+    key: 'clock:e1',
+    kind: 'clock',
+    id: 'E1',
+    label: 'Mon 9:02 session',
+    uploadType: {
+      id: 'clock.wrapup',
+      version: 1,
+      sendLabel: 'Clock out & send',
+      requireOnline: true,
+      confirmSend: true,
+    },
+  };
+  const clockRecorded = () =>
+    run(
+      initFlow('r1', { entry: 'record', context: wrapUp }),
+      { type: 'mounted' },
+      { type: 'record' },
+      { type: 'stop', draftId: 'd1', clipCount: 1 },
+    );
+
+  it('X before Send: the keep answer says the person is still clocked in', () => {
+    const s = run(clockRecorded(), { type: 'edit' }, { type: 'export' }, { type: 'close' });
+    expect(s.sheet).toBe('exit');
+    expect(exitSheetCopy(s)).toEqual({
+      title: 'Keep this video?',
+      keep: 'Keep draft (you’re still clocked in)',
+      discard: 'Discard video',
+      cancel: 'Cancel',
+    });
+    // Keep: the draft stays, nothing was sent (so nothing clocked).
+    const kept = run(s, { type: 'keep' });
+    expect(kept.end).toEqual({ status: 'closed', reason: 'user', draftId: 'd1' });
+    expect(kept).toMatchObject({ deleteDraft: null, stage: 'recorded' });
+  });
+
+  it('a clock-in type says still clocked out; a ticket says just Keep draft', () => {
+    const plan = { ...wrapUp, uploadType: { id: 'clock.plan', version: 1, confirmSend: true } };
+    expect(exitSheetCopy(initFlow('r1', { entry: 'record', context: plan })).keep).toBe(
+      'Keep draft (you’re still clocked out)',
+    );
+    expect(exitSheetCopy(recorded()).keep).toBe('Keep draft');
+  });
+
+  it('Keep draft on Export (after a failed confirm) ends closed with the draft, no sheet', () => {
+    const s = run(clockRecorded(), { type: 'edit' }, { type: 'export' }, { type: 'keepDraft' });
+    expect(s.end).toEqual({ status: 'closed', reason: 'user', draftId: 'd1' });
+    expect(s).toMatchObject({ sheet: null, deleteDraft: null });
+    expect(flowResult(s, 5)).toMatchObject({ status: 'closed', draftId: 'd1', endedOn: 'export' });
+  });
+
+  it('Keep draft counts only on Export', () => {
+    const s = run(clockRecorded(), { type: 'edit' });
+    expect(flowReducer(s, { type: 'keepDraft' })).toBe(s);
+  });
+});
+
 describe('X with zero clips', () => {
   it('ends canceled with no draft and nothing to delete', () => {
     const s = run(initFlow('r1', recordNew), { type: 'mounted' }, { type: 'close' });
@@ -322,6 +388,57 @@ describe('completion', () => {
       clientKey: 'i:d1:abcd',
       draftKey: 'i:d1',
     });
+  });
+
+  it('a confirmed Send is CompletedSent with confirmedAt, as the result file carries it', () => {
+    const s = run(
+      recorded(),
+      { type: 'edit' },
+      { type: 'export' },
+      { type: 'merged' },
+      {
+        type: 'send',
+        sentAt: 1_790_000_000_000,
+        clientKey: 'i:d1:0123456789abcdef',
+        draftKey: 'i:d1',
+        confirmedAt: 1_790_000_000_400,
+      },
+    );
+    expect(s.end).toEqual({
+      status: 'completed',
+      mode: 'pulse',
+      draftId: 'd1',
+      sentAt: 1_790_000_000_000,
+      clientKey: 'i:d1:0123456789abcdef',
+      draftKey: 'i:d1',
+      confirmedAt: 1_790_000_000_400,
+    });
+    expect(s.deleteDraft).toBeNull();
+    expect(flowResult(s, 1_790_000_000_900.4)).toEqual({
+      requestId: 'r1',
+      entry: 'record',
+      endedOn: 'export',
+      stage: 'exported',
+      context,
+      endedAt: 1_790_000_000_900,
+      status: 'completed',
+      mode: 'pulse',
+      draftId: 'd1',
+      sentAt: 1_790_000_000_000,
+      clientKey: 'i:d1:0123456789abcdef',
+      draftKey: 'i:d1',
+      confirmedAt: 1_790_000_000_400,
+    });
+  });
+
+  it('an unconfirmed Send has no confirmedAt key at all (plain JSON)', () => {
+    const s = run(
+      recorded(),
+      { type: 'edit' },
+      { type: 'export' },
+      { type: 'send', sentAt: 1000, clientKey: 'i:d1:abcd', draftKey: 'i:d1' },
+    );
+    expect(Object.keys(flowResult(s, 2000) ?? {})).not.toContain('confirmedAt');
   });
 
   it('completes only from Export', () => {
@@ -494,5 +611,47 @@ describe('after the end', () => {
       { type: 'discard' },
     ];
     for (const e of events) expect(flowReducer(ended, e)).toBe(ended);
+  });
+});
+
+describe('a Send in progress holds the host’s close', () => {
+  const onExport = () => run(recorded(), { type: 'edit' }, { type: 'export' }, { type: 'merged' });
+
+  it('a close during the merge or the confirm waits; a Send that goes completes', () => {
+    const held = run(onExport(), { type: 'sendStarted' }, { type: 'hostClose' });
+    expect(held).toMatchObject({ sending: true, end: null, pending: { type: 'hostClose' } });
+    const s = run(held, {
+      type: 'send',
+      sentAt: 1000,
+      clientKey: 'i:d1:abcd',
+      draftKey: 'i:d1',
+      confirmedAt: 1001,
+    });
+    expect(s.end).toMatchObject({ status: 'completed', mode: 'pulse', confirmedAt: 1001 });
+    expect(s).toMatchObject({ sending: false, pending: null });
+  });
+
+  it('a Send that stops lets the waiting close (or failure) through', () => {
+    const closed = run(
+      onExport(),
+      { type: 'sendStarted' },
+      { type: 'hostClose', discard: true },
+      { type: 'sendStopped' },
+    );
+    expect(closed.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(closed.deleteDraft).toBe('d1');
+    const failed = run(onExport(), { type: 'sendStarted' }, { type: 'error', error: failure });
+    expect(failed.end).toBeNull();
+    expect(run(failed, { type: 'sendStopped' }).end).toMatchObject({ status: 'failed' });
+  });
+
+  it('nothing else moves while it runs; with nothing waiting, it just stops', () => {
+    const sending = run(onExport(), { type: 'sendStarted' });
+    for (const e of [{ type: 'close' }, { type: 'back' }, { type: 'keepDraft' }] as const) {
+      expect(flowReducer(sending, e)).toBe(sending);
+    }
+    expect(run(sending, { type: 'sendStopped' })).toMatchObject({ sending: false, end: null });
+    // Only Export sends.
+    expect(run(recorded(), { type: 'sendStarted' }).sending).toBe(false);
   });
 });

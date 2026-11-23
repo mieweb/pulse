@@ -1,3 +1,5 @@
+import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
+import { Paths } from 'expo-file-system';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
@@ -14,6 +16,8 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { ThemedView } from '@/components/themed-view';
 import { useScreenFocusEffect } from '@/core/navigation/focus';
 import { useStatusBarStyle } from '@/core/status-bar/status-bar';
+import { captionsOffQuery } from '@/db/captions';
+import { getSetting, setSetting } from '@/db/settings';
 import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
@@ -22,6 +26,7 @@ import { CameraControls } from '@/features/recorder/camera-controls';
 import { holdsCamera, releaseCamera, takeCamera } from '@/features/recorder/camera-holder';
 import { ExportButton } from '@/components/export-button';
 import { CloseAction, CloseButton } from '@/features/recorder/close-button';
+import { ContextBanner, RecorderNotice } from '@/features/recorder/context-banner';
 import { EditButton } from '@/features/recorder/edit-button';
 import { ImportButton } from '@/features/recorder/import-button';
 import {
@@ -33,6 +38,8 @@ import { PermissionGate } from '@/features/recorder/permission-gate';
 import { CONTROLS_FADE, RecordButton } from '@/features/recorder/record-button';
 import { SegmentBar } from '@/features/recorder/segment-bar';
 import { RECORD_BUTTON_SIZE } from '@/features/recorder/track-metrics';
+import { checkDiskForRecording, NOT_ENOUGH_SPACE } from '@/features/recorder/low-disk';
+import { MIC_COPY, MIC_FORCED_MUTE_KEY, micMuteStep } from '@/features/recorder/mic-denied';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
 import { type MountedRecorder, registerRecorder } from '@/features/recorder/recorder-presence';
 import { useRecorder } from '@/features/recorder/use-recorder';
@@ -42,7 +49,13 @@ import { useRecorderPermissions } from '@/features/recorder/use-recorder-permiss
 import { RecordingTimer } from '@/features/recorder/recording-timer';
 import type { RecorderScreenProps } from '@/features/recorder/contract';
 import { setClipQueuePaused } from '@/features/transcription/clip-queue';
+import {
+  askText,
+  captionsModelPolicy,
+  useCaptionsModelState,
+} from '@/features/transcription/model-policy';
 import { useClipTranscription } from '@/features/transcription/use-clip-transcription';
+import { useToast } from '@/features/toast/toast-provider';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
@@ -131,7 +144,13 @@ export function RecorderScreen({
   const textSizeKey = useTextSizeKey();
   // What a draft made here starts with (a place's name and context), read once like the draft id.
   const [newDraft] = useState(() => newDraftProp);
-  const permissions = useRecorderPermissions();
+  // The host place this recording is for (embedded only): the banner, the low-disk preflight and
+  // a refused microphone recording without sound. Without one (the Pulse app) none of them apply.
+  const hostContext = newDraft.hostContext ?? null;
+  const embedded = hostContext !== null;
+  const permissions = useRecorderPermissions({ micOptional: embedded });
+  const { showToast } = useToast();
+  const modelState = useCaptionsModelState();
   const {
     cameraRef,
     videoOutput,
@@ -168,6 +187,69 @@ export function RecorderScreen({
     deleteSegment,
     reorderSegments,
   } = useRecorder(initialDraftId, newDraft);
+
+  // A refused microphone (embedded, PLAN-final §5.3): the recorder records without sound instead
+  // of blocking. Denied asks first ("Record without sound?", or Settings); restricted can't be
+  // allowed here, so it offers Settings only. The recorder mutes itself while the microphone is
+  // refused (no audio track without access), and unmutes once it's allowed again. That it muted
+  // itself is stored apart from the person's mute (`micMuteStep`): iOS ends the app when the
+  // permission changes in Settings, so the unmute comes on a later launch, which reads the stored
+  // mute as on. Read before acting (null until then); the Pulse app never reads it.
+  const micOffer = permissions.micOffer;
+  const [withoutSound, setWithoutSound] = useState(false);
+  const micQuestion = micOffer?.kind === 'without-sound' && !withoutSound;
+  const mutedForMic = useRef<boolean | null>(null);
+  const [micFlagRead, setMicFlagRead] = useState(false);
+  useEffect(() => {
+    if (!embedded) return;
+    let live = true;
+    getSetting(MIC_FORCED_MUTE_KEY)
+      .catch(() => null)
+      .then((value) => {
+        if (!live) return;
+        mutedForMic.current = value === 'true';
+        setMicFlagRead(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [embedded]);
+  useEffect(() => {
+    if (!prefsReady || !micFlagRead || mutedForMic.current === null) return;
+    const step = micMuteStep({
+      offer: micOffer,
+      micGranted: permissions.micGranted,
+      muted,
+      mutedForMic: mutedForMic.current,
+    });
+    if (step === 'none') return;
+    const forced = step === 'mute';
+    mutedForMic.current = forced;
+    void setSetting(MIC_FORCED_MUTE_KEY, String(forced)).catch((e: unknown) =>
+      console.warn(`[recorder] could not store the microphone mute: ${String(e)}`),
+    );
+    if (forced || muted) toggleMute();
+  }, [prefsReady, micFlagRead, micOffer, permissions.micGranted, muted, toggleMute]);
+  // Unmuting needs the microphone: ask again (or say why it can't be).
+  const onToggleMute = () => {
+    if (micOffer === null) toggleMute();
+    else if (micOffer.kind === 'without-sound') setWithoutSound(false);
+    else showToast({ kind: 'info', title: MIC_COPY.noSound, message: MIC_COPY.restricted });
+  };
+
+  // Low-disk preflight (C5, embedded): a take that starts with too little space fails partway,
+  // so it doesn't start; "Not enough space" says why. True when the take may start.
+  const diskAllowsTake = useCallback(() => {
+    if (!embedded) return true;
+    const check = checkDiskForRecording(() => Paths.availableDiskSpace);
+    if (!check.ok) {
+      console.warn(
+        `[recorder] not starting: ${check.freeBytes} bytes free, ${check.neededBytes} needed`,
+      );
+      showToast({ kind: 'warning', ...NOT_ENOUGH_SPACE });
+    }
+    return check.ok;
+  }, [embedded, showToast]);
 
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
@@ -237,7 +319,13 @@ export function RecorderScreen({
 
   // Captions: each clip is transcribed in the background between takes (never while recording:
   // the model would compete with the capture, so the queue pauses and resumes after the take).
-  useClipTranscription(segments, focused && !isRecording);
+  // In the embed the host can turn that off (`configure({captions: {autoGenerate: false}})`), and
+  // the person can for one video (Export's Captions switch, stored on the draft).
+  const { data: captionsOffRows } = useLiveQuery(captionsOffQuery(draftId ?? ''), [draftId]);
+  const takesGetCaptions = captionsModelPolicy.takeGetsCaptions(
+    captionsOffRows[0]?.value === 'true',
+  );
+  useClipTranscription(segments, focused && !isRecording && takesGetCaptions);
   useEffect(() => {
     setClipQueuePaused(isRecording);
   }, [isRecording]);
@@ -446,13 +534,26 @@ export function RecorderScreen({
   const recordingShown = useSharedValue(false);
 
   const onToggle = useCallback(async () => {
+    const starting = !recordingShownNow();
+    if (starting && !diskAllowsTake()) {
+      recordingShown.set(recordingShownNow());
+      return;
+    }
     // Only a tap that starts (or queues) a take waits: one that stops a take or takes back a
     // queued one must act at once, or the queued take could start during the wait and this tap
     // then stop it, leaving a short clip.
-    if (!recordingShownNow() && !muted && !callActive) await acquireFocus();
+    if (starting && !muted && !callActive) await acquireFocus();
     toggleRecording();
     recordingShown.set(recordingShownNow());
-  }, [toggleRecording, recordingShownNow, recordingShown, muted, callActive, acquireFocus]);
+  }, [
+    toggleRecording,
+    recordingShownNow,
+    recordingShown,
+    muted,
+    callActive,
+    acquireFocus,
+    diskAllowsTake,
+  ]);
 
   // Hold-to-record needs more than onToggle: acquire() is awaited, and the gesture's
   // release reaches JS straight away via scheduleOnRN — a quick press-release could run onHoldEnd
@@ -463,16 +564,31 @@ export function RecorderScreen({
   const holdSeqRef = useRef(0);
   const onHoldStart = useCallback(async () => {
     const seq = ++holdSeqRef.current;
+    if (!recordingShownNow() && !diskAllowsTake()) {
+      recordingShown.set(recordingShownNow());
+      return;
+    }
     if (!muted && !callActive) await acquireFocus();
     if (seq === holdSeqRef.current) startHoldRecording();
     recordingShown.set(recordingShownNow());
-  }, [muted, callActive, acquireFocus, startHoldRecording, recordingShownNow, recordingShown]);
+  }, [
+    muted,
+    callActive,
+    acquireFocus,
+    startHoldRecording,
+    recordingShownNow,
+    recordingShown,
+    diskAllowsTake,
+  ]);
   const onHoldEnd = useCallback(() => {
     holdSeqRef.current++;
     endHoldRecording();
     recordingShown.set(recordingShownNow());
   }, [endHoldRecording, recordingShownNow, recordingShown]);
 
+  // The record button's gestures, and a screen reader's activation of it: not while "Record
+  // without sound?" waits for an answer.
+  const recordEnabled = cameraReady && !dragging && !micQuestion;
   const {
     zoomSv,
     chipTarget,
@@ -488,7 +604,7 @@ export function RecorderScreen({
     onHoldStart,
     onHoldEnd,
     onFocus,
-    enabled: cameraReady && !dragging,
+    enabled: recordEnabled,
     neutralZoom,
     minZoom: device?.minZoom ?? 1,
     maxZoom: device ? Math.min(device.maxZoom, MAX_ZOOM_FACTOR) : 1,
@@ -659,40 +775,84 @@ export function RecorderScreen({
       <Animated.View pointerEvents="none" style={[styles.reticle, reticleStyle]} />
 
       <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="box-none">
-        <View
-          style={[
-            styles.topBar,
-            { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
-          ]}>
-          <View style={styles.topBarSide}>
-            <CloseButton
-              onClose={handleClose}
-              overVideo
-              label="Close recorder"
-              testID="recorder.close"
-            />
-          </View>
-          {/* The running total, on glass over the live camera. */}
-          <GlassPill style={styles.timerPill}>
-            <RecordingTimer
-              key={textSizeKey}
-              style={styles.timerText}
-              segments={segments}
-              startedAt={recordStartedAt}
-              stoppedAt={recordStoppedAt}
-            />
-          </GlassPill>
-          {/* On to the export screen once there's a clip; the sides share the width equally so
-              the timer stays centred either way. */}
-          <View style={[styles.topBarSide, styles.topBarEnd]}>
-            {draftId && segments.length > 0 && (
-              <ExportButton
-                onPress={() => open(() => onExport(draftId))}
-                disabled={isRecording}
-                testID="recorder.export"
+        <View pointerEvents="box-none">
+          <View
+            style={[
+              styles.topBar,
+              { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
+            ]}>
+            <View style={styles.topBarSide}>
+              <CloseButton
+                onClose={handleClose}
+                overVideo
+                label="Close recorder"
+                testID="recorder.close"
               />
-            )}
+            </View>
+            {/* The running total, on glass over the live camera. */}
+            <GlassPill style={styles.timerPill}>
+              <RecordingTimer
+                key={textSizeKey}
+                style={styles.timerText}
+                segments={segments}
+                startedAt={recordStartedAt}
+                stoppedAt={recordStoppedAt}
+              />
+            </GlassPill>
+            {/* On to the export screen once there's a clip; the sides share the width equally so
+              the timer stays centred either way. */}
+            <View style={[styles.topBarSide, styles.topBarEnd]}>
+              {draftId && segments.length > 0 && (
+                <ExportButton
+                  onPress={() => open(() => onExport(draftId))}
+                  disabled={isRecording}
+                  testID="recorder.export"
+                />
+              )}
+            </View>
           </View>
+          {/* Embedded: what the recording is for, then anything the person should know first. */}
+          {embedded && (
+            <View style={styles.notices} pointerEvents="box-none">
+              <ContextBanner context={hostContext} />
+              {micQuestion ? (
+                <RecorderNotice
+                  title={MIC_COPY.title}
+                  message={MIC_COPY.body}
+                  testID="recorder.micOffer"
+                  actions={[
+                    { label: MIC_COPY.withoutSound, onPress: () => setWithoutSound(true) },
+                    { label: MIC_COPY.settings, onPress: permissions.openSettings },
+                  ]}
+                />
+              ) : micOffer?.kind === 'settings-only' && !isRecording ? (
+                <RecorderNotice
+                  message={MIC_COPY.restricted}
+                  testID="recorder.micOffer"
+                  actions={[{ label: MIC_COPY.settings, onPress: permissions.openSettings }]}
+                />
+              ) : null}
+              {!isRecording && modelState.kind === 'asking' && (
+                <RecorderNotice
+                  message={askText(modelState.model)}
+                  testID="recorder.captionsModel"
+                  actions={[
+                    { label: 'Download', onPress: () => void captionsModelPolicy.accept() },
+                    { label: 'Not now', onPress: captionsModelPolicy.decline },
+                  ]}
+                />
+              )}
+              {!isRecording && modelState.kind === 'blocked' && (
+                <RecorderNotice
+                  message={modelState.message}
+                  testID="recorder.captionsModel"
+                  actions={[
+                    { label: 'Try again', onPress: () => void captionsModelPolicy.retry() },
+                  ]}
+                />
+              )}
+            </View>
+          )}
         </View>
 
         <CameraControls
@@ -705,7 +865,7 @@ export function RecorderScreen({
           onFlip={flipCamera}
           onToggleTorch={toggleTorch}
           onCycleStabilization={cycleStabilization}
-          onToggleMute={toggleMute}
+          onToggleMute={onToggleMute}
         />
 
         <View
@@ -736,6 +896,8 @@ export function RecorderScreen({
               isRecording={(isRecording && recordStoppedAt == null) || startQueued}
               cameraReady={cameraReady}
               dragging={dragging}
+              enabled={recordEnabled}
+              onToggle={onToggle}
               testID="recorder.record"
             />
             {recordTip.mounted && (
@@ -819,6 +981,13 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.9)',
   },
   overlay: { justifyContent: 'space-between' },
+  // Under the top bar, inset like it; the banner and notices stack there.
+  notices: {
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.two,
+    gap: Spacing.two,
+    alignItems: 'center',
+  },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',

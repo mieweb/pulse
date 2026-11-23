@@ -1,0 +1,749 @@
+{
+  "format": "pulse-catalog-vectors",
+  "version": 1,
+  "about": "Shared by catalog-filter.test.ts and PulseKit's Swift catalog reader (PR2-D). listDrafts expects [id, shown state] in order; countDrafts expects the groups with a count above 0. readCatalog: each file's list is what its successive reads return (the last repeats; null = no such file); expect is the writtenAt of the catalog found, or null for none.",
+  "catalog": {
+    "format": "pulse-catalog",
+    "version": 1,
+    "namespace": "com.example.host-0123456789abcdef",
+    "writtenAt": 1000,
+    "dbSchema": 1763300000000,
+    "readOnly": false,
+    "online": true,
+    "drafts": [
+      {
+        "id": "d-ready",
+        "draftKey": "inst-1:d-ready",
+        "name": "Fix login",
+        "context": {
+          "key": "ticket:t-1",
+          "kind": "ticket",
+          "id": "t-1",
+          "label": "Fix login"
+        },
+        "state": "ready",
+        "clipCount": 2,
+        "durationMs": 4000,
+        "hasCaptions": false,
+        "poster": {
+          "rel": "drafts/d-ready/segments/s1.thumb.jpg",
+          "path": "/var/mobile/Library/PulseKit/com.example.host-0123456789abcdef/drafts/d-ready/segments/s1.thumb.jpg",
+          "webUrl": ""
+        },
+        "createdVia": "host",
+        "createdAt": 100,
+        "updatedAt": 1000,
+        "bytes": 1234,
+        "export": {
+          "rel": "drafts/d-ready/export.mp4",
+          "path": "/var/mobile/Library/PulseKit/com.example.host-0123456789abcdef/drafts/d-ready/export.mp4",
+          "webUrl": "",
+          "bytes": 1234
+        }
+      },
+      {
+        "id": "d-queued",
+        "draftKey": "inst-1:d-queued",
+        "name": "Mon 9:02 session",
+        "context": {
+          "key": "clock:e1",
+          "kind": "clock",
+          "id": "e1",
+          "label": "Mon 9:02 session"
+        },
+        "state": "queued",
+        "clipCount": 2,
+        "durationMs": 4000,
+        "hasCaptions": false,
+        "poster": {
+          "rel": "drafts/d-queued/segments/s1.thumb.jpg",
+          "path": "/var/mobile/Library/PulseKit/com.example.host-0123456789abcdef/drafts/d-queued/segments/s1.thumb.jpg",
+          "webUrl": ""
+        },
+        "createdVia": "host",
+        "createdAt": 100,
+        "updatedAt": 990,
+        "upload": {
+          "clientKey": "inst-1:d-queued:0123456789abcdef",
+          "attempts": 1,
+          "sentAt": 500
+        }
+      },
+      {
+        "id": "d-failed",
+        "draftKey": "inst-1:d-failed",
+        "name": "Fix login",
+        "context": {
+          "key": "ticket:t-1",
+          "kind": "ticket",
+          "id": "t-1",
+          "label": "Fix login"
+        },
+        "state": "failed",
+        "clipCount": 2,
+        "durationMs": 4000,
+        "hasCaptions": false,
+        "poster": {
+          "rel": "drafts/d-failed/segments/s1.thumb.jpg",
+          "path": "/var/mobile/Library/PulseKit/com.example.host-0123456789abcdef/drafts/d-failed/segments/s1.thumb.jpg",
+          "webUrl": ""
+        },
+        "createdVia": "host",
+        "createdAt": 100,
+        "updatedAt": 980,
+        "upload": {
+          "clientKey": "inst-1:d-failed:0123456789abcdef",
+          "attempts": 1,
+          "sentAt": 500,
+          "error": {
+            "code": "destination.gone",
+            "message": "Ticket not found",
+            "recoverable": false,
+            "callId": ""
+          }
+        }
+      },
+      {
+        "id": "d-upl",
+        "draftKey": "inst-1:d-upl",
+        "name": "Mon 9:02 session",
+        "context": {
+          "key": "clock:e1",
+          "kind": "clock",
+          "id": "e1",
+          "label": "Mon 9:02 session"
+        },
+        "state": "uploading",
+        "clipCount": 2,
+        "durationMs": 4000,
+        "hasCaptions": false,
+        "poster": {
+          "rel": "drafts/d-upl/segments/s1.thumb.jpg",
+          "path": "/var/mobile/Library/PulseKit/com.example.host-0123456789abcdef/drafts/d-upl/segments/s1.thumb.jpg",
+          "webUrl": ""
+        },
+        "createdVia": "host",
+        "createdAt": 100,
+        "updatedAt": 970,
+        "upload": {
+          "clientKey": "inst-1:d-upl:0123456789abcdef",
+          "attempts": 1,
+          "sentAt": 500,
+          "uploadId": "u-d-upl",
+          "artifactId": "a-d-upl",
+          "progress": 0.5
+        }
+      },
+      {
+        "id": "d-none",
+        "draftKey": "inst-1:d-none",
+        "name": "Untitled",
+        "context": null,
+        "state": "draft",
+        "clipCount": 2,
+        "durationMs": 4000,
+        "hasCaptions": false,
+        "poster": {
+          "rel": "drafts/d-none/segments/s1.thumb.jpg",
+          "path": "/var/mobile/Library/PulseKit/com.example.host-0123456789abcdef/drafts/d-none/segments/s1.thumb.jpg",
+          "webUrl": ""
+        },
+        "createdVia": "host",
+        "createdAt": 100,
+        "updatedAt": 950
+      },
+      {
+        "id": "d-plan",
+        "draftKey": "inst-1:d-plan",
+        "name": "Tue plan",
+        "context": {
+          "key": "clock-plan:e9",
+          "kind": "clock-plan",
+          "id": "e9",
+          "label": "Tue plan"
+        },
+        "state": "draft",
+        "clipCount": 2,
+        "durationMs": 4000,
+        "hasCaptions": false,
+        "poster": {
+          "rel": "drafts/d-plan/segments/s1.thumb.jpg",
+          "path": "/var/mobile/Library/PulseKit/com.example.host-0123456789abcdef/drafts/d-plan/segments/s1.thumb.jpg",
+          "webUrl": ""
+        },
+        "createdVia": "host",
+        "createdAt": 100,
+        "updatedAt": 950
+      },
+      {
+        "id": "d-clock2",
+        "draftKey": "inst-1:d-clock2",
+        "name": "Tue 8:30 session",
+        "context": {
+          "key": "clock:e2",
+          "kind": "clock",
+          "id": "e2",
+          "label": "Tue 8:30 session"
+        },
+        "state": "needs_credentials",
+        "clipCount": 2,
+        "durationMs": 4000,
+        "hasCaptions": false,
+        "poster": {
+          "rel": "drafts/d-clock2/segments/s1.thumb.jpg",
+          "path": "/var/mobile/Library/PulseKit/com.example.host-0123456789abcdef/drafts/d-clock2/segments/s1.thumb.jpg",
+          "webUrl": ""
+        },
+        "createdVia": "host",
+        "createdAt": 100,
+        "updatedAt": 940,
+        "upload": {
+          "clientKey": "inst-1:d-clock2:0123456789abcdef",
+          "attempts": 1,
+          "sentAt": 500,
+          "error": {
+            "code": "host.unavailable",
+            "message": "The host didn't answer",
+            "recoverable": true,
+            "callId": ""
+          }
+        }
+      }
+    ],
+    "receipts": [
+      {
+        "id": "r-kept",
+        "draftKey": "inst-1:r-kept",
+        "name": "Tue 8:30 session",
+        "context": {
+          "key": "clock:e2",
+          "kind": "clock",
+          "id": "e2",
+          "label": "Tue 8:30 session"
+        },
+        "state": "sent",
+        "clipCount": 1,
+        "durationMs": 2000,
+        "hasCaptions": false,
+        "poster": null,
+        "sent": {
+          "outcome": "kept",
+          "uploadId": "u-r-kept",
+          "artifactId": "a-r-kept",
+          "sentAt": 600,
+          "at": 995,
+          "expiresAt": 604800995,
+          "dismissed": false,
+          "reason": "The ticket was closed"
+        },
+        "createdVia": "host",
+        "createdAt": 600,
+        "updatedAt": 995
+      },
+      {
+        "id": "r-done",
+        "draftKey": "inst-1:r-done",
+        "name": "Mon 9:02 session",
+        "context": {
+          "key": "clock:e1",
+          "kind": "clock",
+          "id": "e1",
+          "label": "Mon 9:02 session"
+        },
+        "state": "sent",
+        "clipCount": 1,
+        "durationMs": 2000,
+        "hasCaptions": false,
+        "poster": null,
+        "sent": {
+          "outcome": "done",
+          "uploadId": "u-r-done",
+          "artifactId": "a-r-done",
+          "sentAt": 600,
+          "at": 985,
+          "expiresAt": 604800985,
+          "dismissed": false,
+          "note": "Attached to the session"
+        },
+        "createdVia": "host",
+        "createdAt": 600,
+        "updatedAt": 985
+      },
+      {
+        "id": "r-kept-dismissed",
+        "draftKey": "inst-1:r-kept-dismissed",
+        "name": "Fix login",
+        "context": {
+          "key": "ticket:t-1",
+          "kind": "ticket",
+          "id": "t-1",
+          "label": "Fix login"
+        },
+        "state": "sent",
+        "clipCount": 1,
+        "durationMs": 2000,
+        "hasCaptions": false,
+        "poster": null,
+        "sent": {
+          "outcome": "kept",
+          "uploadId": "u-r-kept-dismissed",
+          "artifactId": "a-r-kept-dismissed",
+          "sentAt": 600,
+          "at": 900,
+          "expiresAt": 604800900,
+          "dismissed": true,
+          "reason": "The ticket was closed"
+        },
+        "createdVia": "host",
+        "createdAt": 600,
+        "updatedAt": 900
+      }
+    ]
+  },
+  "listDrafts": [
+    {
+      "name": "no filter: every unsent draft, newest change first, equal times by id",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "filter": {},
+      "expect": [
+        ["d-ready", "ready"],
+        ["d-queued", "queued"],
+        ["d-failed", "failed"],
+        ["d-upl", "uploading"],
+        ["d-none", "draft"],
+        ["d-plan", "draft"],
+        ["d-clock2", "needs_credentials"]
+      ]
+    },
+    {
+      "name": "contextKeyPrefix 'clock:' matches every clock session and not 'clock-plan:'",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "filter": {
+        "contextKeyPrefix": "clock:"
+      },
+      "expect": [
+        ["d-queued", "queued"],
+        ["d-upl", "uploading"],
+        ["d-clock2", "needs_credentials"]
+      ]
+    },
+    {
+      "name": "contextKeyPrefix 'clock:' with 'sent' interleaves receipts by updatedAt",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "filter": {
+        "contextKeyPrefix": "clock:",
+        "states": ["queued", "uploading", "needs_credentials", "sent"]
+      },
+      "expect": [
+        ["r-kept", "sent"],
+        ["d-queued", "queued"],
+        ["r-done", "sent"],
+        ["d-upl", "uploading"],
+        ["d-clock2", "needs_credentials"]
+      ]
+    },
+    {
+      "name": "contextKey matches one place exactly",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "filter": {
+        "contextKey": "ticket:t-1"
+      },
+      "expect": [
+        ["d-ready", "ready"],
+        ["d-failed", "failed"]
+      ]
+    },
+    {
+      "name": "contextKind matches the key's kind; a draft without a place matches no place filter",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "filter": {
+        "contextKind": "clock"
+      },
+      "expect": [
+        ["d-queued", "queued"],
+        ["d-upl", "uploading"],
+        ["d-clock2", "needs_credentials"]
+      ]
+    },
+    {
+      "name": "states ['sent'] lists only receipts, dismissed ones included",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "filter": {
+        "states": ["sent"]
+      },
+      "expect": [
+        ["r-kept", "sent"],
+        ["r-done", "sent"],
+        ["r-kept-dismissed", "sent"]
+      ]
+    },
+    {
+      "name": "offline: a queued draft is waiting_network, so ['queued'] finds nothing",
+      "net": {
+        "online": false,
+        "wifi": false,
+        "wifiOnlyUploads": false
+      },
+      "filter": {
+        "states": ["queued"]
+      },
+      "expect": []
+    },
+    {
+      "name": "offline: ['waiting_network'] finds the queued draft",
+      "net": {
+        "online": false,
+        "wifi": false,
+        "wifiOnlyUploads": false
+      },
+      "filter": {
+        "states": ["waiting_network"]
+      },
+      "expect": [["d-queued", "waiting_network"]]
+    },
+    {
+      "name": "Wi-Fi only on cellular: the default list shows the queued draft as waiting_network",
+      "net": {
+        "online": true,
+        "wifi": false,
+        "wifiOnlyUploads": true
+      },
+      "filter": {
+        "contextKind": "clock"
+      },
+      "expect": [
+        ["d-queued", "waiting_network"],
+        ["d-upl", "uploading"],
+        ["d-clock2", "needs_credentials"]
+      ]
+    },
+    {
+      "name": "an unknown context key matches nothing",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "filter": {
+        "contextKey": "ticket:none"
+      },
+      "expect": []
+    }
+  ],
+  "countDrafts": [
+    {
+      "name": "by contextKey: every unsent draft with a place",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "options": {
+        "by": "contextKey"
+      },
+      "expect": {
+        "ticket:t-1": 2,
+        "clock:e1": 2,
+        "clock-plan:e9": 1,
+        "clock:e2": 1
+      }
+    },
+    {
+      "name": "by contextKind: 'clock' and 'clock-plan' are separate kinds",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "options": {
+        "by": "contextKind"
+      },
+      "expect": {
+        "ticket": 2,
+        "clock": 3,
+        "clock-plan": 1
+      }
+    },
+    {
+      "name": "attentionOnly by contextKey: failed, and kept receipts not dismissed",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "options": {
+        "by": "contextKey",
+        "attentionOnly": true
+      },
+      "expect": {
+        "ticket:t-1": 1,
+        "clock:e2": 1
+      }
+    },
+    {
+      "name": "attentionOnly by contextKind",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "options": {
+        "by": "contextKind",
+        "attentionOnly": true
+      },
+      "expect": {
+        "ticket": 1,
+        "clock": 1
+      }
+    },
+    {
+      "name": "attentionOnly with states ['failed'] leaves the kept receipt out",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "options": {
+        "by": "contextKey",
+        "attentionOnly": true,
+        "states": ["failed"]
+      },
+      "expect": {
+        "ticket:t-1": 1
+      }
+    },
+    {
+      "name": "states ['sent'] counts receipts",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "options": {
+        "by": "contextKey",
+        "states": ["sent"]
+      },
+      "expect": {
+        "clock:e2": 1,
+        "clock:e1": 1,
+        "ticket:t-1": 1
+      }
+    },
+    {
+      "name": "offline: states ['waiting_network'] counts the queued draft",
+      "net": {
+        "online": false,
+        "wifi": false,
+        "wifiOnlyUploads": false
+      },
+      "options": {
+        "by": "contextKind",
+        "states": ["waiting_network"]
+      },
+      "expect": {
+        "clock": 1
+      }
+    },
+    {
+      "name": "online: states ['waiting_network'] counts nothing",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "options": {
+        "by": "contextKind",
+        "states": ["waiting_network"]
+      },
+      "expect": {}
+    }
+  ],
+  "shownState": [
+    {
+      "name": "queued while online on Wi-Fi",
+      "state": "queued",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": false
+      },
+      "expect": "queued"
+    },
+    {
+      "name": "queued while offline",
+      "state": "queued",
+      "net": {
+        "online": false,
+        "wifi": false,
+        "wifiOnlyUploads": false
+      },
+      "expect": "waiting_network"
+    },
+    {
+      "name": "queued on cellular, Wi-Fi only",
+      "state": "queued",
+      "net": {
+        "online": true,
+        "wifi": false,
+        "wifiOnlyUploads": true
+      },
+      "expect": "waiting_network"
+    },
+    {
+      "name": "queued on cellular, not Wi-Fi only",
+      "state": "queued",
+      "net": {
+        "online": true,
+        "wifi": false,
+        "wifiOnlyUploads": false
+      },
+      "expect": "queued"
+    },
+    {
+      "name": "queued on Wi-Fi, Wi-Fi only",
+      "state": "queued",
+      "net": {
+        "online": true,
+        "wifi": true,
+        "wifiOnlyUploads": true
+      },
+      "expect": "queued"
+    },
+    {
+      "name": "queued offline, Wi-Fi only, the path still says Wi-Fi",
+      "state": "queued",
+      "net": {
+        "online": false,
+        "wifi": true,
+        "wifiOnlyUploads": true
+      },
+      "expect": "waiting_network"
+    },
+    {
+      "name": "uploading stays uploading offline",
+      "state": "uploading",
+      "net": {
+        "online": false,
+        "wifi": false,
+        "wifiOnlyUploads": false
+      },
+      "expect": "uploading"
+    },
+    {
+      "name": "failed stays failed offline",
+      "state": "failed",
+      "net": {
+        "online": false,
+        "wifi": false,
+        "wifiOnlyUploads": false
+      },
+      "expect": "failed"
+    }
+  ],
+  "readCatalog": [
+    {
+      "name": "catalog.json whole, a write in progress beside it: catalog.json",
+      "reads": {
+        "catalog.json": [
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":1,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": ["{\"format\":\"pulse-catalog\",\"version\":1,\"n"]
+      },
+      "expect": 1
+    },
+    {
+      "name": "catalog.json whole, a finished .part not yet moved: catalog.json",
+      "reads": {
+        "catalog.json": [
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":1,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": [
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":2,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ]
+      },
+      "expect": 1
+    },
+    {
+      "name": "mid-swap (catalog.json deleted, .part not yet moved in): the .part",
+      "reads": {
+        "catalog.json": [null],
+        "catalog.json.part": [
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":2,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ]
+      },
+      "expect": 2
+    },
+    {
+      "name": "the move landed between the first two reads: catalog.json, read again",
+      "reads": {
+        "catalog.json": [
+          null,
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":2,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": [null]
+      },
+      "expect": 2
+    },
+    {
+      "name": "the move landed and the next write began its .part: catalog.json, read again",
+      "reads": {
+        "catalog.json": [
+          null,
+          "{\"format\":\"pulse-catalog\",\"version\":1,\"namespace\":\"ns\",\"writtenAt\":2,\"dbSchema\":null,\"readOnly\":false,\"online\":true,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": ["{\"format\":\"pulse-catalog\",\"version\":1,\"n"]
+      },
+      "expect": 2
+    },
+    {
+      "name": "a first write cut short: no catalog",
+      "reads": {
+        "catalog.json": [null],
+        "catalog.json.part": ["{\"format\":\"pulse-catalog\",\"version\":1,\"n"]
+      },
+      "expect": null
+    },
+    {
+      "name": "nothing written yet: no catalog",
+      "reads": {
+        "catalog.json": [null],
+        "catalog.json.part": [null]
+      },
+      "expect": null
+    },
+    {
+      "name": "a file that isn't a catalog: no catalog",
+      "reads": {
+        "catalog.json": [
+          "{\"format\":\"something-else\",\"version\":1,\"drafts\":[],\"receipts\":[]}"
+        ],
+        "catalog.json.part": [null]
+      },
+      "expect": null
+    }
+  ]
+}

@@ -109,7 +109,8 @@ final class PulseKitContainerViewController: UIViewController {
   // MARK: Messages from Pulse JS
 
   /// `pulse.ui` from Pulse JS: `{ type: 'pulse.ui', statusBar?: 'light'|'dark'|'auto',
-  /// statusBarHidden?: bool, hasTake?: bool }`. Each field is optional and sticks until the next
+  /// statusBarHidden?: bool, hasTake?: bool, sending?: bool }` (`sending` is PulseKit's: its
+  /// close watchdog). Each field is optional and sticks until the next
   /// message sets it; unknown fields and values are ignored ('auto' and anything else → the
   /// system default for the appearance).
   func apply(ui: JSONValue) {
@@ -152,9 +153,101 @@ final class PulseKitContainerViewController: UIViewController {
   }
 }
 
+/// The brief "Preparing…" screen (AD5, O2): what a host write shows when Pulse's runtime is cold
+/// and this build doesn't run it without a screen (no `headless`, PulseKitInfo.swift). It holds
+/// the command runtime's React root (`request: null, headless: false`), which draws the same words
+/// (embed/src/shell/preparing.tsx) once it boots; until then this controller shows them natively
+/// on black, so nothing flashes. PulseKit dismisses it as soon as the writes it was presented for
+/// are answered. Full screen, no swipe-to-dismiss, portrait on iPhone, light status bar.
+final class PulseKitPreparingViewController: UIViewController {
+  private let content: UIViewController
+  private let placeholder = UIStackView()
+  private var contentObserver: NSObjectProtocol?
+
+  init(content: UIViewController) {
+    self.content = content
+    super.init(nibName: nil, bundle: nil)
+    modalPresentationStyle = .fullScreen
+    modalPresentationCapturesStatusBarAppearance = true
+    isModalInPresentation = true
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  deinit {
+    if let contentObserver { NotificationCenter.default.removeObserver(contentObserver) }
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    view.backgroundColor = .black
+    view.accessibilityViewIsModal = true
+
+    let spinner = UIActivityIndicatorView(style: .medium)
+    spinner.color = UIColor(white: 0.92, alpha: 1)
+    spinner.startAnimating()
+    let label = UILabel()
+    label.text = "Preparing…"
+    label.textColor = UIColor(white: 0.92, alpha: 1)
+    label.font = .preferredFont(forTextStyle: .body)
+    label.adjustsFontForContentSizeCategory = true
+    placeholder.axis = .vertical
+    placeholder.alignment = .center
+    placeholder.spacing = 12
+    placeholder.addArrangedSubview(spinner)
+    placeholder.addArrangedSubview(label)
+    placeholder.isAccessibilityElement = true
+    placeholder.accessibilityLabel = "Preparing"
+    placeholder.accessibilityTraits = .updatesFrequently
+    placeholder.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(placeholder)
+    NSLayoutConstraint.activate([
+      placeholder.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      placeholder.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+    ])
+
+    addChild(content)
+    content.view.frame = view.bounds
+    content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    content.view.backgroundColor = .clear
+    view.addSubview(content.view)
+    content.didMove(toParent: self)
+
+    contentObserver = NotificationCenter.default.addObserver(
+      forName: Notification.Name("RCTContentDidAppearNotification"), object: nil, queue: .main
+    ) { [weak self] note in
+      guard let self, let root = note.object as? UIView, root.isDescendant(of: self.content.view)
+      else { return }
+      self.placeholder.removeFromSuperview()
+    }
+  }
+
+  override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
+  override var childForStatusBarStyle: UIViewController? { nil }
+  override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+    UIDevice.current.userInterfaceIdiom == .phone ? .portrait : .all
+  }
+}
+
 /// Presenting and dismissing: an instant cut (Pulse adds no decorative motion), or a crossfade
 /// when Reduce Motion is on, where a hard cut between very different screens is harsher.
 enum PulseKitPresenter {
+  /// Where a screen PulseKit shows on its own ("Preparing…") is presented from: the topmost
+  /// controller above `presenter` (or the key window's root), skipping one on its way out. Nil
+  /// when there's no window to present in.
+  static func topmost(_ presenter: UIViewController?) -> UIViewController? {
+    let start =
+      presenter
+      ?? UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap(\.windows)
+      .first(where: \.isKeyWindow)?.rootViewController
+    guard var top = start else { return nil }
+    while let next = top.presentedViewController, !next.isBeingDismissed { top = next }
+    return top.viewIfLoaded?.window == nil ? nil : top
+  }
+
   static func present(_ container: UIViewController, from presenter: UIViewController) {
     let fade = UIAccessibility.isReduceMotionEnabled
     container.modalTransitionStyle = fade ? .crossDissolve : .coverVertical

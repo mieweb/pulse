@@ -140,10 +140,12 @@ describe('checkOpenRequest', () => {
     }
   });
 
-  it("uploadMode 'pulse' (also the default) is unsupported in PR1", () => {
+  it("uploadMode 'pulse' (also the default) runs, like 'file'; anything else is invalid_options", () => {
     const raw = { entry: 'record', context };
-    expect(checkOpenRequest(raw, 'pulse')).toMatchObject({ ok: false, code: 'unsupported' });
-    expect(checkOpenRequest(raw)).toMatchObject({ ok: false, code: 'unsupported' });
+    for (const mode of ['pulse', undefined, null, 'file']) {
+      expect(checkOpenRequest(raw, mode)).toMatchObject({ ok: true, request: { entry: 'record' } });
+    }
+    expect(checkOpenRequest(raw)).toMatchObject({ ok: true });
     expect(checkOpenRequest(raw, 'ftp')).toMatchObject({ ok: false, code: 'invalid_options' });
   });
 

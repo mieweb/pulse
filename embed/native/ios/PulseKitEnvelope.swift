@@ -10,7 +10,8 @@ import Foundation
 /// The contract this facade speaks (pulse-embed.d.ts, AD18).
 public enum PulseContract {
   public static let major = 1
-  public static let minor = 0
+  /// Minor 1: PR2's data API (`minor1Methods`), what the JS client's CONTRACT says too.
+  public static let minor = 1
   /// The envelope version, always 1 in contract major 1.
   public static let envelopeVersion = 1
 
@@ -231,6 +232,9 @@ public struct PulseRequest: Codable, Equatable {
   public var method: String
   public var args: [String: JSONValue]
   public var client: Client?
+  /// How long the client waits for the reply, in ms (a positive whole number, else ignored): a
+  /// call forwarded to Pulse JS waits as long before it answers `timeout`.
+  public var timeoutMs: Int? = nil
 }
 
 /// A reply envelope (§2.2). Every call gets exactly one; a Pulse error is `ok: false`.
@@ -323,8 +327,11 @@ public enum PulseRoute: Equatable {
 
 public enum PulseRouter {
   /// Decide what happens to one request envelope. `supported` is `info().supported`: when it is
-  /// false every method except `info` is `unsupported`.
-  public static func route(_ text: String, supported: Bool = true) -> PulseRoute {
+  /// false every method except `info` is `unsupported`. `methods` are the ones the facade answers
+  /// (default: contract minor 0's); any other is `method.unsupported`.
+  public static func route(
+    _ text: String, supported: Bool = true, methods: [String] = PulseContract.nativeMethods
+  ) -> PulseRoute {
     guard let value = JSONValue.parse(text), let top = value.object else {
       return .reply(.failure("invalid_options", "The request isn't a JSON object.", callId: ""))
     }
@@ -368,15 +375,18 @@ public enum PulseRouter {
       default: return fail("invalid_options", "args must be an object.")
       }
     }
-    guard PulseContract.nativeMethods.contains(method) else {
+    guard methods.contains(method) else {
       return fail("method.unsupported", "This PulseKit doesn't answer \(method).")
     }
     if !supported && method != "info" {
       return fail("unsupported", "Pulse doesn't run on this device.")
     }
+    var timeoutMs: Int?
+    if let t = top["timeoutMs"]?.integer, t > 0, t <= Int64(Int32.max) { timeoutMs = Int(t) }
     return .native(
       PulseRequest(
-        v: Int(v), callId: callId, method: method, args: args, client: client))
+        v: Int(v), callId: callId, method: method, args: args, client: client,
+        timeoutMs: timeoutMs))
   }
 }
 
@@ -389,6 +399,13 @@ public func pulseIsPlainName(_ s: String) -> Bool {
     && s.unicodeScalars.allSatisfy {
       ($0.isASCII && CharacterSet.alphanumerics.contains($0)) || "._-".unicodeScalars.contains($0)
     }
+}
+
+/// A requestId: a plain name that doesn't end in `.project`. Its result is `<id>.json` in the
+/// inbox, and `<id>.project.json` is a project document there, never a result, so
+/// `take.project`'s result would never reach `pendingResults`.
+public func pulseIsRequestId(_ s: String) -> Bool {
+  pulseIsPlainName(s) && !s.hasSuffix(".project")
 }
 
 /// `open`'s arguments after the facade's checks. The rest of the request goes to Pulse JS whole.
@@ -409,8 +426,10 @@ public enum PulseArgs {
     }
     var requestId: String?
     if let r = args["requestId"], r != .null {
-      guard let s = r.string, pulseIsPlainName(s) else {
-        return bad("requestId must be 1–64 letters, digits, dots, dashes or underscores.")
+      guard let s = r.string, pulseIsRequestId(s) else {
+        return bad(
+          "requestId must be 1–64 letters, digits, dots, dashes or underscores, not ending in .project."
+        )
       }
       requestId = s
     }

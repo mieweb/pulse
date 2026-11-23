@@ -118,8 +118,8 @@ describe('envelope round trip', () => {
     const adapter: PulseAdapter = {
       kind: 'wire',
       present: async () => true,
-      call: async (method, args, callId) => {
-        const text = JSON.stringify(buildRequest(method, args, callId));
+      call: async (method, args, callId, options) => {
+        const text = JSON.stringify(buildRequest(method, args, callId, options?.timeoutMs));
         wire.push(text);
         const routed = routeRequest(text, { methods: [...MINOR0_METHODS] });
         if (routed.route === 'reply') return routed.reply;
@@ -131,7 +131,7 @@ describe('envelope round trip', () => {
       subscribe: () => () => {},
       toWebUrl: (p) => p,
     };
-    const client = createPulseClient({ adapter });
+    const client = createPulseClient({ adapter, timeoutMs: 45_000 });
     await expect(client.isOpen()).resolves.toBe(true);
     const sentEnvelope = JSON.parse(wire[1]);
     expect(sentEnvelope).toEqual({
@@ -139,7 +139,13 @@ describe('envelope round trip', () => {
       callId: expect.stringMatching(/^c-[0-9a-f]{12}$/),
       method: 'isOpen',
       args: {},
-      client: { contract: { major: 1, minor: 0 }, version: '0.0.0-dev' },
+      client: { contract: { major: 1, minor: 1 }, version: '0.0.0-dev' },
+      // The client's own deadline: a facade forwarding the call waits as long.
+      timeoutMs: 45_000,
+    });
+    expect(routeRequest(wire[1], { methods: [...MINOR0_METHODS] })).toMatchObject({
+      route: 'native',
+      timeoutMs: 45_000,
     });
   });
 
@@ -436,8 +442,16 @@ describe('argument checks', () => {
       'a requestId that could leave the results folder',
       (c: PulseClient) => c.edit('d-1', { requestId: '../x' }),
     ],
+    [
+      'a requestId whose result would read as a project document',
+      (c: PulseClient) => c.edit('d-1', { requestId: 'take.project' }),
+    ],
     ['configure with a bad hostId', (c: PulseClient) => c.configure({ hostId: 'Upper' })],
     ['acknowledge without a requestId', (c: PulseClient) => c.acknowledge('')],
+    [
+      'acknowledge a requestId ending in .project',
+      (c: PulseClient) => c.acknowledge('take.project'),
+    ],
     ['getDraft without an id', (c: PulseClient) => c.getDraft('')],
     [
       'countDrafts by something else',

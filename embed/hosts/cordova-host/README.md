@@ -29,7 +29,9 @@ open platforms/ios/App.xcworkspace
 - After rebuilding PulseKit, run `pod cache clean PulseKit --all` and `npx cordova prepare ios`, so
   CocoaPods takes the new zip instead of its cached copy.
 
-What to look for: the page logs `ready (Cordova)` and an `info` reply. **Record** opens Pulse; when the
-flow ends, its reply and a `flowResult` event arrive. **Reload page** while a result is
+What to look for: the page logs `ready (Cordova)` and an `info` reply. Tap **Set account**, then
+**Record**: Pulse opens, and when the flow ends, its reply and a `flowResult` event arrive. Without an
+account, **Record** and **Pending** answer `no_account`. The data API buttons work as in
+[cap-host](../cap-host/README.md#ios). **Reload page** while a result is
 unacknowledged, then **Pending** lists it. A `flowResult` sent while the page was reloading reaches
 the page once it subscribes again.

@@ -3,6 +3,9 @@
 node_modules/
 package-lock.json
 
+# The cap-host contract page's bundle (cap-host/src/contract/build.mjs)
+cap-host/www/contract/
+
 # Capacitor's native projects (npx cap add ios / android)
 cap-host/ios/
 cap-host/android/
