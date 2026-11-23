@@ -39,6 +39,7 @@ import {
   privacyManifestProblems,
 } from './lib/release-privacy.mjs';
 import { missingRpathDependencies, rpathFrameworks } from './lib/rpath.mjs';
+import { slicesMissingFacadeClass } from './lib/facade-class.mjs';
 import { createRunner } from './lib/runner.mjs';
 import { buildSizeReport, formatSizeReport, treeSize } from './lib/size-report.mjs';
 import { describeUnsafeSymlinks, findUnsafeSymlinks } from './lib/symlinks.mjs';
@@ -295,6 +296,17 @@ function main() {
     throw new Error(
       `@rpath frameworks nothing ships:\n  ${missing.map((m) => `${m.binary} loads ${m.framework}`).join('\n  ')}\n` +
         'Add the xcframework to the build output or pass it with --vendored.',
+    );
+  }
+
+  // Before anything is written or an earlier run's output is removed: a PulseKit without its facade
+  // class builds fine but no host can use it (pulsekit-v0.1.0-rc.4).
+  runner.step('Check the facade class');
+  const noFacade = slicesMissingFacadeClass(jobs, (cmd, args) => runner.inspect(cmd, args));
+  if (noFacade.length > 0) {
+    throw new Error(
+      `No PulseKit class in ${noFacade.join(', ')}: the facade's Swift files weren't compiled into ` +
+        'the PulseKit target (embed/plugins/with-pulsekit-facade.js).',
     );
   }
 
