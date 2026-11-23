@@ -1,4 +1,6 @@
+import type { ClipAnchor } from '@/core/clip-anchor';
 import type { EditorView } from '@/db/settings';
+import type { ScreenCapturePort } from '@/features/recorder/contract';
 
 /**
  * What the editor screen is given: the draft to open and where its exits go. The standalone route
@@ -15,8 +17,18 @@ export type EditorScreenProps = {
   onClose: () => void;
   /** Export, after the editor's pending writes are on disk. */
   onExport: (draftId: string) => void;
-  /** Add clips: the recorder for this draft. The editor shows the control only when given. */
-  onAddClips?: (draftId: string) => void;
+  /**
+   * "Record a clip here" in the editor's "+": the recorder for this draft, its insert cursor at
+   * `anchor` (the playhead's clip boundary). Without it the "+" offers only what the editor does
+   * itself (import, screen recording).
+   */
+  onAddClips?: (draftId: string, anchor: ClipAnchor) => void;
+  /**
+   * Screen recording, from the Pulse app (src/features/screen-capture), as the recorder gets it:
+   * with it the "+" offers Record screen, and the take's Stop shows over the preview. The embed
+   * has none (`npm run check:embed`).
+   */
+  screenCapture?: ScreenCapturePort;
   /** Captions with no model, the model control and the "pick a model" status open the model sheet. */
   onOpenModelSheet: () => void;
 };

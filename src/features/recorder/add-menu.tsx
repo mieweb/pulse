@@ -1,14 +1,10 @@
-import { useRef, useState } from 'react';
-import { View } from 'react-native';
-
-import { ActionMenu, type Anchor } from '@/components/action-menu';
-
 import { type AddMenuProps, addMenuActions } from './add-menu-actions';
 import { ImportButton } from './import-button';
+import { PlusMenu } from './plus-menu';
 
 /**
- * The recorder's "+": Import video or Record screen, in a popover anchored to it (Android; iOS
- * uses the system menu, add-menu.ios.tsx). Without screen recording it's the plain import.
+ * The recorder's "+": Import video or Record screen (the shared `PlusMenu`: the iOS system menu,
+ * an Android popover). Without screen recording a tap imports, as before.
  */
 export function AddMenu({
   onImport,
@@ -18,41 +14,23 @@ export function AddMenu({
   busy,
   progress,
 }: AddMenuProps) {
-  const ref = useRef<View>(null);
-  const [anchor, setAnchor] = useState<Anchor | null>(null);
-  const close = () => setAnchor(null);
-
   if (!screenAvailable) {
     return <ImportButton onPress={onImport} disabled={disabled} busy={busy} progress={progress} />;
   }
   return (
-    <>
-      <View ref={ref} collapsable={false}>
+    <PlusMenu
+      actions={addMenuActions({ onImport, onRecordScreen })}
+      enabled={!disabled && !busy}
+      label="Add a clip"
+      renderButton={(onPress) => (
         <ImportButton
-          onPress={() =>
-            ref.current?.measureInWindow((x, y, width, height) =>
-              setAnchor({ x, y, width, height }),
-            )
-          }
+          onPress={onPress}
           disabled={disabled}
           busy={busy}
           progress={progress}
           label="Add a clip"
         />
-      </View>
-      <ActionMenu
-        visible={anchor !== null}
-        anchor={anchor}
-        // Each action closes the menu first, as the system menu does.
-        actions={addMenuActions({ onImport, onRecordScreen }).map((a) => ({
-          ...a,
-          onPress: () => {
-            close();
-            a.onPress();
-          },
-        }))}
-        onClose={close}
-      />
-    </>
+      )}
+    />
   );
 }

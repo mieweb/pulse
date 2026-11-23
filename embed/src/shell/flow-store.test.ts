@@ -40,9 +40,13 @@ describe('stackItems', () => {
     ]);
   });
 
-  it('gives a clip only to a new editor', () => {
-    const items = stackItems([], ['editor', 'recorder'], key, 'c2');
+  it('gives a clip only to a new editor, and an anchor only to a new recorder', () => {
+    const items = stackItems([], ['editor', 'recorder'], key, {
+      clipId: 'c2',
+      anchor: { after: 'c1' },
+    });
     expect(items.map((i) => i.clipId)).toEqual(['c2', undefined]);
+    expect(items.map((i) => i.anchor)).toEqual([undefined, { after: 'c1' }]);
   });
 });
 
@@ -61,6 +65,33 @@ describe('createFlowStore', () => {
     expect(keys()[0]).toBe(recorder);
     expect(keys()[1]).not.toBe(editor);
     expect(s.getSnapshot().items[1].clipId).toBeUndefined();
+  });
+
+  it('opens a recorder over the editor at the editor’s anchor, and Edit comes back to it', () => {
+    const { s, keys, ended } = store();
+    s.dispatch({ type: 'mounted' });
+    s.dispatch({ type: 'record' });
+    s.dispatch({ type: 'stop', draftId: 'd1', clipCount: 1 });
+    s.dispatch({ type: 'edit' });
+    const [recorder, editor] = keys();
+    s.dispatch({ type: 'addClips', anchor: { before: 'c1' } });
+    const items = s.getSnapshot().items;
+    expect(items.map((i) => i.screen)).toEqual(['recorder', 'editor', 'recorder']);
+    expect(items[2]).toMatchObject({ screen: 'recorder', anchor: { before: 'c1' } });
+    expect(items[0].anchor).toBeUndefined();
+    // A take there, then Edit: back to the same editor (its undo and playhead carry on).
+    s.dispatch({ type: 'record' });
+    s.dispatch({ type: 'stop', draftId: 'd1', clipCount: 2 });
+    s.dispatch({ type: 'edit' }, { clipId: 'c2' });
+    expect(keys()).toEqual([recorder, editor]);
+    expect(ended).toEqual([]);
+  });
+
+  it('an edit flow’s recorder from the editor starts at the end when no anchor is given', () => {
+    const { s } = store({ entry: 'edit', draftId: 'd1' });
+    s.dispatch({ type: 'mounted' });
+    s.dispatch({ type: 'addClips' });
+    expect(s.getSnapshot().items[1]).toEqual({ key: 'recorder-1', screen: 'recorder' });
   });
 
   it('keeps the same snapshot when an event changes nothing', () => {

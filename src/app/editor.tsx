@@ -1,15 +1,20 @@
 import { router, useIsFocused, useLocalSearchParams } from 'expo-router';
 
+import { anchorToRouteParam, type ClipAnchor } from '@/core/clip-anchor';
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import type { EditorView } from '@/db/settings';
 import { EditorScreen } from '@/features/editor/editor-screen';
+import { screenCapturePort } from '@/features/screen-capture/screen-capture';
 
 /** Back to the recorder (or Home, when the editor was opened by a link). */
 const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
 const openExport = (draftId: string) => router.push({ pathname: '/export', params: { draftId } });
-/** Add clips: the recorder for this draft, whose Edit comes back to this editor. */
-const addClips = (draftId: string) =>
-  router.push({ pathname: '/recorder', params: { draftId, returnTo: 'editor' } });
+/** Record a clip here: the recorder for this draft, its cursor at `anchor`; its Edit comes back. */
+const addClips = (draftId: string, anchor: ClipAnchor) =>
+  router.push({
+    pathname: '/recorder',
+    params: { draftId, returnTo: 'editor', anchor: anchorToRouteParam(anchor) },
+  });
 const openModelSheet = () => router.push('/on-device-ai');
 
 const asView = (v: string | undefined): EditorView | undefined =>
@@ -35,6 +40,8 @@ export default function EditorRoute() {
         onClose={close}
         onExport={openExport}
         onAddClips={addClips}
+        // Screen recording is the Pulse app's: the embed's editor has no Record screen.
+        screenCapture={screenCapturePort}
         onOpenModelSheet={openModelSheet}
       />
     </ScreenFocusProvider>

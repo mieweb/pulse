@@ -1,5 +1,7 @@
 import type { FlowScreen, OpenRequest, PulseErrorInfo } from '@mieweb/pulse-embed';
 
+import type { ClipAnchor } from '@/core/clip-anchor';
+
 import {
   flowReducer,
   initFlow,
@@ -19,19 +21,24 @@ export type StackItem = {
   screen: FlowScreen;
   /** The editor opens on this clip (a clip tapped in the recorder, or the edit entry's clipId). */
   clipId?: string;
+  /** The recorder's insert cursor starts here (the editor's "Record a clip here"). */
+  anchor?: ClipAnchor;
 };
+
+/** What a screen pushed by an event opens with. */
+export type PushedWith = { clipId?: string; anchor?: ClipAnchor };
 
 export type FlowSnapshot = { readonly state: FlowState; readonly items: readonly StackItem[] };
 
 /**
  * The items for `stack`: the bottom items that are still the same screen keep their keys (and
- * stay mounted); the rest are new. A new editor takes `clipId`.
+ * stay mounted); the rest are new. A new editor takes `clipId`, a new recorder `anchor`.
  */
 export function stackItems(
   prev: readonly StackItem[],
   stack: readonly FlowScreen[],
   newKey: (screen: FlowScreen) => string,
-  clipId?: string,
+  { clipId, anchor }: PushedWith = {},
 ): StackItem[] {
   let kept = 0;
   while (kept < prev.length && kept < stack.length && prev[kept].screen === stack[kept]) kept++;
@@ -41,6 +48,7 @@ export function stackItems(
       key: newKey(screen),
       screen,
       ...(screen === 'editor' && clipId ? { clipId } : null),
+      ...(screen === 'recorder' && anchor ? { anchor } : null),
     })),
   ];
 }
@@ -58,7 +66,7 @@ export function createFlowStore(opts: {
   const first = initFlow(requestId, request);
   let snapshot: FlowSnapshot = {
     state: first,
-    items: stackItems([], first.stack, newKey, firstClip),
+    items: stackItems([], first.stack, newKey, { clipId: firstClip }),
   };
   const listeners = new Set<() => void>();
 
@@ -97,14 +105,18 @@ export function createFlowStore(opts: {
       if (state.mounted || state.end) return;
       set({ state: { ...state, end: { status: 'failed', error } }, items: snapshot.items });
     },
-    /** Feed `event` to the reducer; a new editor it shows opens on `clipId`. */
+    /**
+     * Feed `event` to the reducer; a new editor it shows opens on `clipId`, and the recorder
+     * `addClips` pushes starts its insert cursor at the event's anchor.
+     */
     dispatch(event: FlowEvent, extra?: { clipId?: string }): void {
       const state = flowReducer(snapshot.state, event);
       if (state === snapshot.state) return;
+      const anchor = event.type === 'addClips' ? event.anchor : undefined;
       const items =
         state.stack === snapshot.state.stack
           ? snapshot.items
-          : stackItems(snapshot.items, state.stack, newKey, extra?.clipId);
+          : stackItems(snapshot.items, state.stack, newKey, { clipId: extra?.clipId, anchor });
       set({ state, items });
     },
   };

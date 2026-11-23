@@ -10,6 +10,7 @@ import {
 import { Alert, BackHandler, StyleSheet, View } from 'react-native';
 import { ScreenStack, ScreenStackItem } from 'react-native-screens';
 
+import type { ClipAnchor } from '@/core/clip-anchor';
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { EditorScreen } from '@/features/editor/editor-screen';
 import type { ExportedVideo, ExportPolicy, ExportPrimaryAction } from '@/features/export/contract';
@@ -233,7 +234,11 @@ function FlowScreen({
     controller.observe();
     store.dispatch({ type: 'export' });
   }, [controller, store]);
-  const editorAddClips = useCallback(() => store.dispatch({ type: 'addClips' }), [store]);
+  // "Record a clip here": a recorder over the editor, its cursor at the editor's add position.
+  const editorAddClips = useCallback(
+    (_id: string, anchor: ClipAnchor) => store.dispatch({ type: 'addClips', anchor }),
+    [store],
+  );
   const exportClose = useCallback(() => store.dispatch({ type: 'back' }), [store]);
   const exportReady = useCallback(
     (video: ExportedVideo) => controller.exportReady(video.draftId),
@@ -269,6 +274,7 @@ function FlowScreen({
           onEdit={recorderEdit}
           onExport={recorderExport}
           onClose={recorderClose}
+          insertAnchor={item.anchor}
         />
       );
     case 'editor':

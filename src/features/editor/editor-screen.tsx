@@ -1,7 +1,15 @@
 import { PulsePreview } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { setAudioModeAsync } from 'expo-audio';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   BackHandler,
   Dimensions,
@@ -22,10 +30,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ExportButton } from '@/components/export-button';
 import { Icon } from '@/components/icon';
+import {
+  anchorForPlayhead,
+  expectClipsAdded,
+  onClipsAdded,
+  takeClipsAdded,
+} from '@/core/clip-anchor';
 import { useScreenFocused, useScreenFocusEffect } from '@/core/navigation/focus';
 import Sortable from 'react-native-sortables';
 
 import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
+import {
+  ADD_SIZE,
+  addPositionHint,
+  EditorAddMenu,
+  usePlayheadSlot,
+} from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
 import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
 import { useFrameRates } from '@/features/editor/use-frame-rates';
@@ -41,6 +61,7 @@ import { CropEditor } from '@/features/editor/crop-editor';
 import { SkiaCaption } from '@/features/transcription/skia-caption';
 import {
   resetTimelineZoom,
+  RULER_HEIGHT,
   STRIP_HEIGHT,
   TimelineStrip,
   type TrimInfo,
@@ -69,6 +90,9 @@ import { usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
 import { loadCustomSpeeds, speedMenu } from '@/features/editor/editor-speeds';
+import { importVideoAction, recordScreenAction } from '@/features/recorder/add-menu-actions';
+import { useScreenTake } from '@/features/recorder/screen-take';
+import { useImportVideo } from '@/features/recorder/use-import-video';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
 import { useTip } from '@/features/tips/use-tip';
@@ -95,6 +119,8 @@ import { useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import { useTheme } from '@/hooks/use-theme';
 import { claimAudioSession } from '@/utils/audio-session';
 import { haptics } from '@/utils/haptics';
+import { TILE_HEIGHT } from '@/features/editor/clip-tile';
+import type { MenuAction } from '@/components/action-menu';
 import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
 
 import type { EditorScreenProps } from './contract';
@@ -155,7 +181,11 @@ function usePlaybackSessionOnReturn() {
  * merged at the playhead. Captions show over the preview (drag one to move them all) and on a
  * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
  *
- * No router: where Close, Export, Add clips and the captions model go is the caller's
+ * A "+" at the right edge of the clips adds clips at the playhead's clip boundary (never splitting a
+ * clip): recorded in the recorder, imported, or a screen recording. The playhead then sits after
+ * them, and one undo takes the whole addition out.
+ *
+ * No router: where Close, Export, Record a clip here and the captions model go is the caller's
  * (`EditorScreenProps`), and whether the screen is the one on top comes through the focus port.
  */
 export function EditorScreen({
@@ -166,6 +196,7 @@ export function EditorScreen({
   onExport,
   onAddClips,
   onOpenModelSheet,
+  screenCapture,
 }: EditorScreenProps) {
   // Not compiled by the React Compiler (as before): its memoization here leaves the track's
   // animated opacity stale until a re-render. To be turned on as a change of its own, tested.
@@ -537,7 +568,99 @@ export function EditorScreen({
     void flushDraftWrites().then(go);
   };
   const openExport = () => openOver(() => onExport(draftId));
-  const addClips = () => openOver(() => onAddClips?.(draftId));
+
+  // --- Adding clips (the "+") ---------------------------------------------------------------
+  // Where the "+" adds: the playhead's clip boundary (`anchorForPlayhead`), worked out when an item
+  // is picked; selected clip or not, the playhead decides. The slot follows the playhead for the
+  // button's hint.
+  const anchorNow = () =>
+    anchorForPlayhead(
+      clips.map((c) => c.id),
+      layout.starts,
+      layout.totalMs,
+      values.timeMs.get(),
+    );
+  const addSlot = usePlayheadSlot(layout.starts, layout.totalMs, values.timeMs);
+  const importer = useImportVideo();
+  const screen = useScreenTake(screenCapture);
+  const screenLive = screen.phase !== 'idle';
+  const screenHere = screen.draftId === draftId && (screenLive || screen.starting);
+  const addBusy = importer.importing || (screen.importing && screen.draftId === draftId);
+  const addActions: MenuAction[] = [
+    // Into the recorder, its insert cursor here; back here with the new clips on Edit.
+    ...(onAddClips
+      ? [
+          {
+            key: 'record',
+            label: 'Record a clip here',
+            icon: 'video.badge.plus' as const,
+            onPress: () => {
+              const anchor = anchorNow();
+              openOver(() => onAddClips(draftId, anchor));
+            },
+          },
+        ]
+      : []),
+    importVideoAction(() => {
+      ctl.pause();
+      importer.importVideo(draftId, anchorNow);
+    }),
+    // Pulse app only, one take at a time: the clip lands here once the take is stopped.
+    ...(screenCapture && !screenLive && !screen.importing
+      ? [
+          recordScreenAction(() => {
+            ctl.pause();
+            void screenCapture.start(async () => draftId, true, anchorNow());
+          }),
+        ]
+      : []),
+    // Later ways to add (#308: an image or screenshot, clips from another Pulse) go here.
+  ];
+
+  // Clips added to this draft while the editor is open, from its "+" or a recorder over it: the
+  // playhead goes right after the last one, and the addition is one undo step. Taken when they
+  // land while the editor is on top, else all together once it is back on top.
+  useEffect(() => expectClipsAdded(draftId), [draftId]);
+  const placeAfter = useRef<{ id: string; until: number } | null>(null);
+  /** The playhead right after clip `id` (at the next clip's start, or the end). */
+  const placeAfterClip = (id: string, rebuilt: boolean) => {
+    const i = clips.findIndex((c) => c.id === id);
+    if (i < 0) return false;
+    const at = i + 1 < layout.starts.length ? layout.starts[i + 1] : layout.totalMs;
+    // Clips just changed: once the preview has the new clips (as a trim's end); else at once.
+    if (rebuilt) ctl.endTrim(at);
+    else ctl.seekTo(at);
+    return true;
+  };
+  const takeAdded = useEffectEvent(() => {
+    const ids = takeClipsAdded(draftId);
+    if (ids.length === 0) return;
+    history.recordAdded(ids);
+    const last = ids[ids.length - 1];
+    if (mode === 'edit') setMode('main');
+    if (placeAfterClip(last, false)) return;
+    placeAfter.current = { id: last, until: Date.now() + 5000 };
+  });
+  useEffect(() => {
+    const p = placeAfter.current;
+    if (!p) return;
+    if (Date.now() > p.until) placeAfter.current = null;
+    else if (placeAfterClip(p.id, true)) placeAfter.current = null;
+    // Only a change of the clips places it (the layout follows them).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clips]);
+  useEffect(() => {
+    if (!focused) return;
+    // Those added while a recorder covered the editor, just after it's back on top.
+    const back = setTimeout(takeAdded, 0);
+    const stop = onClipsAdded((added) => {
+      if (added.draftId === draftId) takeAdded();
+    });
+    return () => {
+      clearTimeout(back);
+      stop();
+    };
+  }, [focused, draftId]);
 
   const reset = () => {
     const t = target();
@@ -808,15 +931,6 @@ export function EditorScreen({
         <Pressable style={styles.header} onPress={deselect} accessible={false}>
           <HeaderButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
           <View style={styles.headerRight}>
-            {/* More clips for this draft: the recorder, back here with them on Edit. */}
-            {onAddClips && (
-              <HeaderButton
-                icon="plus"
-                label="Add clips"
-                onPress={addClips}
-                testID="editor.addClips"
-              />
-            )}
             <HeaderButton
               icon="arrow.uturn.backward"
               label="Undo"
@@ -882,6 +996,17 @@ export function EditorScreen({
           />
           {status?.error && (
             <Text style={[styles.error, { color: theme.textSecondary }]}>{status.error}</Text>
+          )}
+          {/* A screen take for this draft (from the "+"): its Stop, over the top of the preview. */}
+          {screenCapture && screenHere && (
+            <View style={styles.screenStop} pointerEvents="box-none">
+              <screenCapture.StopPill
+                began={screen.began}
+                starting={screen.starting && !screenLive}
+                stopping={screen.phase === 'stopping'}
+                onStop={() => void screenCapture.stop()}
+              />
+            </View>
           )}
         </Pressable>
 
@@ -964,6 +1089,17 @@ export function EditorScreen({
               onBlankTap={deselect}
             />
           )}
+          {/* The "+": over the clips at the right edge, outside their scroll and gestures, so it
+              stays put while they scroll under it (each view pads half its width at the end, so
+              the last clip scrolls clear of it) and while a clip is selected. */}
+          <View style={styles.add} pointerEvents="box-none">
+            <EditorAddMenu
+              actions={addActions}
+              busy={addBusy}
+              progress={importer.importing ? importer.progress : screen.progress}
+              hint={addPositionHint(addSlot, clips.length)}
+            />
+          </View>
         </Animated.View>
 
         <Pressable
@@ -1079,6 +1215,9 @@ const styles = StyleSheet.create({
   export: { marginLeft: 8 },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
   track: { height: STRIP_HEIGHT },
+  // Centred on the clip tiles, which both views draw under the ruler.
+  add: { position: 'absolute', right: 12, top: RULER_HEIGHT + (TILE_HEIGHT - ADD_SIZE) / 2 },
+  screenStop: { position: 'absolute', top: 8, left: 0, right: 0, alignItems: 'center' },
   dim: { opacity: 0.35 },
   preview: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   cover: { position: 'absolute' },
