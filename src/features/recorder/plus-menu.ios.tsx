@@ -16,6 +16,7 @@ import type { PlusMenuProps } from './add-menu-actions';
 export function PlusMenu({
   actions,
   enabled,
+  onOpen,
   renderButton,
   label,
   hint,
@@ -37,6 +38,8 @@ export function PlusMenu({
         <View
           style={StyleSheet.absoluteFill}
           onStartShouldSetResponder={() => true}
+          // The finger is down on the "+": the system menu opens on its own, with no callback.
+          onResponderGrant={onOpen}
           accessibilityRole="button"
           accessibilityLabel={label}
           accessibilityHint={hint}>

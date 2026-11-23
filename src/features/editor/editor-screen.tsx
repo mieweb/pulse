@@ -570,9 +570,10 @@ export function EditorScreen({
   const openExport = () => openOver(() => onExport(draftId));
 
   // --- Adding clips (the "+") ---------------------------------------------------------------
-  // Where the "+" adds: the playhead's clip boundary (`anchorForPlayhead`), worked out when an item
-  // is picked; selected clip or not, the playhead decides. The slot follows the playhead for the
-  // button's hint.
+  // Where the "+" adds: the playhead's clip boundary (`anchorForPlayhead`), worked out once, as an
+  // item is picked (the playhead paused as the "+" was pressed), and kept: an import's long
+  // conversion or a screen take lands there whatever is scrubbed, trimmed or reordered meanwhile.
+  // Selected clip or not, the playhead decides. The slot follows the playhead for the hint.
   const anchorNow = () =>
     anchorForPlayhead(
       clips.map((c) => c.id),
@@ -1098,6 +1099,8 @@ export function EditorScreen({
               busy={addBusy}
               progress={importer.importing ? importer.progress : screen.progress}
               hint={addPositionHint(addSlot, clips.length)}
+              // Paused as the "+" is pressed: the position picked is the one the hint just named.
+              onOpen={ctl.pause}
             />
           </View>
         </Animated.View>

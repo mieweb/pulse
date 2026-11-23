@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -580,24 +580,60 @@ export async function deleteSegment(segmentId: string): Promise<void> {
 }
 
 /**
- * The files a deleted segment row used: its clip (unless another row still plays it), its legacy
- * edited file and both covers. The row must be gone first.
+ * The files a deleted segment row used: its clip, its legacy edited file and both covers. The row
+ * must be gone first. A file another row still uses (rows can share a clip: a legacy duplicate, a
+ * project import) or one held for a redo (`takeOutSegments`) stays.
  */
 async function deleteRowFiles(seg: Segment): Promise<void> {
-  const [{ value: stillReferenced }] = await db
+  for (const rel of rowFiles(seg)) {
+    if (heldFiles.has(rel) || (await fileInUse(rel))) continue;
+    deleteSegmentFile(rel);
+  }
+}
+
+/** Every file a row points at or owns (the row's cover may not match either derived path, e.g. a
+ * prior revision's thumb kept as a fallback after a failed regeneration). */
+function rowFiles(seg: Segment): string[] {
+  const files = [seg.originalFilename, thumbRelPath(seg.draftId, seg.id)];
+  if (seg.editedFilename) files.push(seg.editedFilename, editedThumbRelPath(seg.editedFilename));
+  if (seg.thumbnail) files.push(seg.thumbnail);
+  return [...new Set(files)];
+}
+
+/** Whether any row (in any draft) still plays or shows `rel`. */
+async function fileInUse(rel: string): Promise<boolean> {
+  const [{ value }] = await db
     .select({ value: count() })
     .from(segments)
-    .where(eq(segments.originalFilename, seg.originalFilename));
-  if (stillReferenced === 0) deleteSegmentFile(seg.originalFilename);
-  // The edited file and both thumbnails are per-segment (never shared) — delete with the row.
-  if (seg.editedFilename) {
-    deleteSegmentFile(seg.editedFilename);
-    deleteSegmentFile(editedThumbRelPath(seg.editedFilename));
+    .where(
+      or(
+        eq(segments.originalFilename, rel),
+        eq(segments.editedFilename, rel),
+        eq(segments.thumbnail, rel),
+      ),
+    );
+  return value > 0;
+}
+
+/** Files of clips taken out and not yet put back or dropped, with how many take-outs hold each. */
+const heldFiles = new Map<string, number>();
+const holding = new Set<TakenOutClips>();
+function hold(taken: TakenOutClips): void {
+  if (holding.has(taken)) return;
+  holding.add(taken);
+  for (const row of taken.rows) {
+    for (const rel of rowFiles(row)) heldFiles.set(rel, (heldFiles.get(rel) ?? 0) + 1);
   }
-  deleteSegmentFile(thumbRelPath(seg.draftId, seg.id));
-  // The row's cover may not match either derived path (e.g. a prior revision's thumb kept as a
-  // fallback after a failed regeneration) — delete whatever the row actually references too.
-  if (seg.thumbnail) deleteSegmentFile(seg.thumbnail);
+}
+function release(taken: TakenOutClips): void {
+  if (!holding.delete(taken)) return;
+  for (const row of taken.rows) {
+    for (const rel of rowFiles(row)) {
+      const left = (heldFiles.get(rel) ?? 0) - 1;
+      if (left > 0) heldFiles.set(rel, left);
+      else heldFiles.delete(rel);
+    }
+  }
 }
 
 /**
@@ -650,6 +686,8 @@ export async function takeOutSegments(
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
     return { draftId, order: all.map((r) => r.id), rows, transcripts };
   });
+  // Its files are kept for the redo, whatever else is deleted meanwhile.
+  if (taken) hold(taken);
   return taken;
 }
 
@@ -663,9 +701,9 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
   const { draftId } = taken;
   if (taken.rows.length === 0) return;
   await beginClipMutation(draftId);
-  db.transaction((tx) => {
+  const restored = db.transaction((tx) => {
     const draft = tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, draftId)).get();
-    if (!draft) return;
+    if (!draft) return false;
     const byId = new Map(taken.rows.map((r) => [r.id, r]));
     const present = new Set(
       tx
@@ -695,7 +733,10 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
     const back = taken.transcripts.filter((t) => byId.has(t.segmentId));
     if (back.length) tx.insert(clipTranscripts).values(back).onConflictDoNothing().run();
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
+    return true;
   });
+  // Its rows point at its files again, which keeps them.
+  if (restored) release(taken);
 }
 
 /**
@@ -703,6 +744,7 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
  * `deleteSegment` would. A clip that is back in a draft keeps its files.
  */
 export async function dropTakenOut(taken: TakenOutClips): Promise<void> {
+  release(taken);
   for (const row of taken.rows) {
     if (await segmentExists(row.id)) continue;
     await afterCommit('drop undone clip', () => deleteRowFiles(row));

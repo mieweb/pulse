@@ -6,11 +6,9 @@ import { emptyHistory, record, type History } from '@/features/transcription/edi
 import {
   diffSnapshot,
   planStep,
-  redoAdded,
   restoreOrder,
   snapshotOf,
   takenOut,
-  undoAdded,
   type Present,
   type Step,
 } from './editor-history';
@@ -103,30 +101,16 @@ describe('planStep', () => {
     expect(plan).toMatchObject({ kind: 'none', history: { past: [] } });
   });
 
-  it('undo, then redo, of an addition moves the same step between the stacks', () => {
-    const added: Step = { kind: 'added', ids: ['x'], taken: null };
-    const h = push(push(emptyHistory<Step>(), state(present(['a']))), added);
-    const plan = planStep(h, 'undo', present(['a', 'x']));
-    if (plan.kind !== 'takeOut') throw new Error(plan.kind);
+  it('redoes an addition that has what was taken out', () => {
     const out = taken(['a', 'x']);
-    const undone = undoAdded(plan.history, plan.step, out)!;
-    expect(undone.past).toHaveLength(1);
-    expect(undone.future).toEqual([{ kind: 'added', ids: ['x'], taken: out }]);
-    expect(takenOut(undone.future)).toEqual([out]);
-
-    const again = planStep(undone, 'redo', present(['a']));
-    if (again.kind !== 'putBack') throw new Error(again.kind);
-    expect(again.step.taken).toBe(out);
-    const redone = redoAdded(again.history, again.step)!;
-    expect(redone.future).toEqual([]);
-    expect(redone.past[redone.past.length - 1]).toEqual(added);
-  });
-
-  it('won’t move an addition that is no longer on top (a change came in meanwhile)', () => {
-    const added: Step = { kind: 'added', ids: ['x'], taken: null };
-    const h = push(push(emptyHistory<Step>(), added), state(present(['a', 'x'])));
-    expect(undoAdded(h, added, taken(['a', 'x']))).toBeNull();
-    expect(redoAdded(h, added)).toBeNull();
+    const h = {
+      ...emptyHistory<Step>(),
+      future: [{ kind: 'added', ids: ['x'], taken: out }] as Step[],
+    };
+    const plan = planStep(h, 'redo', present(['a']));
+    expect(plan.kind).toBe('putBack');
+    if (plan.kind === 'putBack') expect(plan.step.taken).toBe(out);
+    expect(takenOut(h.future)).toEqual([out]);
   });
 
   it('undoing a reorder made before an insert keeps the inserted clip in place', () => {

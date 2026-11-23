@@ -13,6 +13,8 @@ export type PlusMenuProps = {
   actions: MenuAction[];
   /** The menu can open now (not while the button is disabled or busy). */
   enabled: boolean;
+  /** The "+" was pressed, before its menu opens (the editor pauses, so the playhead stays put). */
+  onOpen?: () => void;
   /** The round button the menu opens from, tapped with `onPress`. */
   renderButton: (onPress: () => void) => ReactNode;
   /** The menu's screen-reader label and hint (iOS: the button under it is hidden then). */

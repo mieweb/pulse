@@ -53,8 +53,11 @@ export function EditorAddMenu({
   busy,
   progress,
   hint,
+  onOpen,
 }: {
   actions: MenuAction[];
+  /** The "+" was pressed, before the menu opens. */
+  onOpen?: () => void;
   busy: boolean;
   progress: number | null;
   hint: string;
@@ -66,6 +69,7 @@ export function EditorAddMenu({
     <PlusMenu
       actions={actions}
       enabled={!busy}
+      onOpen={onOpen}
       label={label}
       hint={hint}
       size={ADD_SIZE}
