@@ -106,6 +106,10 @@ first version goes up by hand, once. This is how `@mieweb/pulsevault` started to
    shasum -a 256 -c --ignore-missing SHA256SUMS
    ```
 
+   `0.1.0-rc.4` came before this workflow: its `SHA256SUMS` doesn't list the tarballs. Check them
+   against `npm-packages.sha256` instead (`-p npm-packages.sha256`, then
+   `shasum -a 256 -c npm-packages.sha256`).
+
    Don't pack them yourself: a fresh checkout has no `node_modules` for `pulse-embed`'s `prepack`
    (run `npm ci` at the root first), and the version stamp only runs through the workflow's call,
    `node -e "import('./embed/scripts/lib/release-version.mjs').then((m) => m.cli(process.argv.slice(1)))" stamp "$V"`.
