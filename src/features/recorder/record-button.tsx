@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type AccessibilityActionEvent } from 'react-native';
 import { GestureDetector, type ComposedGesture } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedReaction,
@@ -46,10 +46,37 @@ export const CONTROLS_FADE = {
 } as const;
 
 /**
+ * The record button as a screen reader has it: one Start/Stop button whose activation (VoiceOver's
+ * or TalkBack's double tap, which never reaches the gesture recognizers) calls `onActivate`, only
+ * while the button's gestures are enabled (`enabled`), and is shown dimmed otherwise.
+ */
+export function recordButtonA11y({
+  isRecording,
+  enabled,
+  onActivate,
+}: {
+  isRecording: boolean;
+  enabled: boolean;
+  onActivate: () => void;
+}) {
+  return {
+    accessible: true,
+    accessibilityRole: 'button' as const,
+    accessibilityLabel: isRecording ? 'Stop recording' : 'Start recording',
+    accessibilityState: { disabled: !enabled },
+    accessibilityActions: [{ name: 'activate' as const }],
+    onAccessibilityAction: (event: AccessibilityActionEvent) => {
+      if (event.nativeEvent.actionName === 'activate' && enabled) onActivate();
+    },
+  };
+}
+
+/**
  * The record button — render and press / hold / recording feedback only. All touch handling
  * (tap-to-toggle, hold-to-record, drag-zoom) lives in the composed gesture from
  * useRecorderGestures. The animations are feedback: recording starts and stops on the gesture,
- * never waiting for them.
+ * never waiting for them. A screen reader's activation goes to `onToggle` instead, as the tap
+ * does (see `recordButtonA11y`).
  */
 export function RecordButton({
   gesture,
@@ -59,6 +86,9 @@ export function RecordButton({
   isRecording,
   cameraReady,
   dragging,
+  enabled,
+  onToggle,
+  testID,
 }: {
   gesture: ComposedGesture;
   holdActive: SharedValue<boolean>;
@@ -69,6 +99,12 @@ export function RecordButton({
   isRecording: boolean;
   cameraReady: boolean;
   dragging: boolean;
+  /** Whether the button's gestures are enabled; a screen reader's activation follows it. */
+  enabled: boolean;
+  /** The tap's toggle (start, or stop the take), for a screen reader's activation. */
+  onToggle: () => void;
+  /** For UI automation: start and stop are the same control. */
+  testID?: string;
 }) {
   // Each state animates its own 0→1 progress and the styles multiply them, so a press, a hold
   // and the recording morph can overlap without one transform cancelling another.
@@ -123,8 +159,16 @@ export function RecordButton({
   return (
     <GestureDetector gesture={gesture}>
       <Animated.View
-        accessibilityRole="button"
-        accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
+        {...recordButtonA11y({
+          isRecording,
+          enabled,
+          // As the tap does: the button flips at once, then the recorder acts and sets it.
+          onActivate: () => {
+            recordingShown.set(!recordingShown.get());
+            onToggle();
+          },
+        })}
+        testID={testID}
         style={[CONTROLS_FADE, { opacity: dragging ? 0 : cameraReady ? 1 : Opacity.disabled }]}>
         <Animated.View style={[styles.recordOuter, ringStyle]}>
           <Animated.View style={[styles.recordInner, innerStyle]} />

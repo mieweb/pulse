@@ -1,5 +1,5 @@
-import { pairingLinkParams } from '@/features/upload/deep-link';
-import { LINK_HOST } from '@/features/upload/link-host';
+import { pairingLinkParams } from '@/features/upload/pairing/deep-link';
+import { LINK_HOST } from '@/features/upload/pairing/link-host';
 
 /**
  * A pairing link, in either form (`pulsecam://?…` or the https link, #252), is data, not a

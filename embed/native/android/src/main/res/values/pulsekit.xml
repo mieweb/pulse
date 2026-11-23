@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  PulseKit's resources. Every name starts with "pulsekit" or "PulseKit" so it can't collide with
+  the host's (an AAR's resources merge into the host's namespace).
+-->
+<resources>
+  <color name="pulsekit_window_background">#000000</color>
+
+  <!--
+    PulseActivity's theme (PR4-D). Black behind Pulse's screens so no host colour shows while JS
+    starts; transparent system bars because Pulse draws edge to edge; no window animations, so
+    opening and closing Pulse is an instant cut.
+  -->
+  <style name="Theme.PulseKit" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <item name="android:windowBackground">@color/pulsekit_window_background</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:windowAnimationStyle">@null</item>
+  </style>
+
+  <!-- PulseActivity's "Preparing…" screen, while a host write waits for Pulse JS (PR4-D). -->
+  <string name="pulsekit_preparing">Preparing…</string>
+
+  <!-- PulseUploadService's notification channel (id "pulsekit.uploads") and notification (PR4-E). -->
+  <string name="pulsekit_upload_channel_name">Pulse uploads</string>
+  <string name="pulsekit_upload_channel_description">Shows while Pulse sends your videos.</string>
+  <plurals name="pulsekit_upload_title">
+    <item quantity="one">Sending 1 video</item>
+    <item quantity="other">Sending %d videos</item>
+  </plurals>
+  <string name="pulsekit_upload_paused">Videos will send when you open the app</string>
+</resources>

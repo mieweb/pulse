@@ -168,5 +168,46 @@ const OTHER_PLATFORM: Record<string, string> = {
   'small-q5_1': 'large-v3-turbo-q5_0',
 };
 
+/**
+ * Where the models download from instead of Hugging Face (C8: `configure({models: {baseUrl}})`),
+ * for networks that block it: every model's file sits directly under it, by its `filename`
+ * (`<baseUrl>/ggml-parakeet-tdt-0.6b-v3-q4_0.bin`). Null: the built-in sources.
+ */
+let modelsBaseUrl: string | null = null;
+
+/**
+ * A models base URL as stored: an absolute https URL with a host, without a query, fragment or
+ * trailing slash. Anything else is null. https only: a download is checked by its size alone, so
+ * a plain-http mirror would let the network swap the weights.
+ */
+export function normalizeModelsBaseUrl(url: unknown): string | null {
+  if (typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  const match = /^https:\/\/([^/?#\s]+)(\/[^?#\s]*)?$/i.exec(trimmed);
+  if (!match || !/^[^@:]+(:\d+)?$/.test(match[1])) return null;
+  return trimmed.replace(/\/+$/, '');
+}
+
+/**
+ * Download the models from `url` (null or undefined: the built-in sources). Returns false, and
+ * keeps the built-in sources, when `url` isn't an absolute https URL.
+ */
+export function setModelsBaseUrl(url: string | null | undefined): boolean {
+  if (url == null) {
+    modelsBaseUrl = null;
+    return true;
+  }
+  const normalized = normalizeModelsBaseUrl(url);
+  modelsBaseUrl = normalized;
+  return normalized !== null;
+}
+
+/** The configured models base URL, or null for the built-in sources. */
+export function getModelsBaseUrl(): string | null {
+  return modelsBaseUrl;
+}
+
 export const modelUrl = (m: WhisperModel): string =>
-  (m.engine === 'parakeet' ? PARAKEET_URL : WHISPER_URL) + m.filename;
+  modelsBaseUrl !== null
+    ? `${modelsBaseUrl}/${m.filename}`
+    : (m.engine === 'parakeet' ? PARAKEET_URL : WHISPER_URL) + m.filename;

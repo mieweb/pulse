@@ -1,0 +1,33 @@
+{
+  "name": "@mieweb/capacitor-pulse",
+  "version": "0.0.0-dev",
+  "description": "Capacitor plugin \"Pulse\": the native transport between @mieweb/pulse-embed and PulseKit, on iOS and Android.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mieweb/pulse.git",
+    "directory": "embed/packages/capacitor-pulse"
+  },
+  "keywords": [
+    "capacitor",
+    "capacitor-plugin",
+    "pulse",
+    "video"
+  ],
+  "files": [
+    "Package.swift",
+    "ios/Sources/",
+    "android/build.gradle",
+    "android/src/"
+  ],
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0 <9.0.0"
+  }
+}

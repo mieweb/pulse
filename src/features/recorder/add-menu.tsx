@@ -2,7 +2,6 @@ import { useRef, useState } from 'react';
 import { View } from 'react-native';
 
 import { ActionMenu, type Anchor } from '@/components/action-menu';
-import { canRecordScreen } from '@/features/screen-capture/screen-capture';
 
 import { type AddMenuProps, addMenuActions } from './add-menu-actions';
 import { ImportButton } from './import-button';
@@ -23,7 +22,7 @@ export function AddMenu({
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const close = () => setAnchor(null);
 
-  if (!canRecordScreen || !screenAvailable) {
+  if (!screenAvailable) {
     return <ImportButton onPress={onImport} disabled={disabled} busy={busy} progress={progress} />;
   }
   return (

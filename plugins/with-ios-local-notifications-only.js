@@ -2,7 +2,7 @@ const { withEntitlementsPlist } = require('@expo/config-plugins');
 
 /**
  * We use `expo-notifications` for LOCAL notifications only (the background upload-complete / failed
- * banners in `src/features/upload/notify.ts`) — we never register for remote push (no
+ * banners in `src/features/upload/core/notify.ts`) — we never register for remote push (no
  * `getDevicePushTokenAsync` / `getExpoPushTokenAsync`).
  *
  * expo-notifications' iOS plugin unconditionally stamps the `aps-environment` (Apple Push

@@ -14,13 +14,13 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 
+import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 import {
   addSegment,
   addSegmentCover,
   createDraft,
   deleteDraft,
   deleteSegment,
-  type DraftContext,
   expectSegmentCover,
   reorderSegments,
   segmentsForDraft,
@@ -32,10 +32,9 @@ import {
   getRecorderPrefs,
   setSetting,
 } from '@/db/settings';
-import { screenCaptureHolds, useScreenCapture } from '@/features/screen-capture/screen-capture';
 import { useToast } from '@/features/toast/toast-provider';
 import { dropClipJobs } from '@/features/transcription/clip-queue';
-import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
+import { describeError, formatBytes, formatSeconds } from '@/features/upload/core/upload-log';
 import { absolutize, deleteQuietly, persistRecording } from '@/utils/file-store';
 import { importFailureCopy, isOutOfSpace } from '@/utils/import-copy';
 import { userMessage } from '@/utils/user-message';
@@ -43,8 +42,10 @@ import { getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
 import { addExternalClip } from './add-external-clip';
+import type { RecorderNewDraft, ScreenCapturePort } from './contract';
 import { importLog } from './import-log';
 import { learnRecorderFormat } from './recorder-format';
+import { useScreenTake } from './screen-take';
 import { useCallState } from './use-call-state';
 
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
@@ -52,11 +53,8 @@ import { useCallState } from './use-call-state';
 // on both platforms so persisted iOS prefs and shared UI maps still typecheck.
 export const STABILIZATION_MODES: readonly StabilizationMode[] =
   Platform.OS === 'ios' ? ['off', 'standard', 'cinematic', 'auto'] : ['off', 'standard', 'auto'];
-export type StabilizationMode = 'off' | 'standard' | 'cinematic' | 'auto';
-
-/** Which camera the recorder is pointed at. Mirrors VisionCamera's `CameraPosition`,
- * declared locally so the rest of the app doesn't import the camera SDK for a string union. */
-export type CameraFacing = 'front' | 'back';
+// Defined in core (the settings table stores them); re-exported for the recorder's own modules.
+export type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 
 /** Stopping the native recorder before it has actually started hangs the capture —
  * earlier stop requests are deferred to this boundary. */
@@ -64,11 +62,14 @@ const MIN_RECORD_MS = 350;
 
 /**
  * `newDraft`: what a draft this recorder creates starts with — a link's `name` as its name (if
- * it has one) and the link's place as its context. Read once, like `initialDraftId`.
+ * it has one) and the link's place as its context; embedded, the host place and `createdVia`.
+ * Read once, like `initialDraftId`. `screenCapture`: the Pulse app's screen recording, if any (a
+ * take owns the mic; its draft isn't dropped as empty).
  */
 export function useRecorder(
   initialDraftId?: string,
-  newDraft?: { name: string | null; context: DraftContext | null },
+  newDraft?: RecorderNewDraft,
+  screenCapture?: ScreenCapturePort,
 ) {
   const cameraRef = useRef<CameraRef>(null);
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
@@ -113,7 +114,7 @@ export function useRecorder(
   // which the interruption latch cannot see (nothing of ours was active to be interrupted).
   // A screen take owns the mic (module state, so in every recorder): the camera's is off while it
   // runs, without touching the saved mute.
-  const screenLive = useScreenCapture().phase !== 'idle';
+  const screenLive = useScreenTake(screenCapture).phase !== 'idle';
   const micWanted = !muted && !callActive && !screenLive;
   // Freeze the mic config for the duration of a recording: an enableAudio change rebuilds the video
   // output, which tears down the in-flight recorder before it can finalize — dropping the clip. We
@@ -254,6 +255,8 @@ export function useRecorder(
   const draftIdRef = useRef<string | null>(initialDraftId ?? null);
   const segmentCount = useRef(0);
   const everHadSegments = useRef(false);
+  // The shell's screen recording, read once (like the draft id) for the unmount below.
+  const screenCaptureRef = useRef(screenCapture);
   useEffect(() => {
     draftIdRef.current = draftId;
   }, [draftId]);
@@ -267,7 +270,7 @@ export function useRecorder(
     const id = draftIdRef.current ?? sessionDraftId.current;
     const safeToDelete = sessionDraftId.current != null || everHadSegments.current;
     // A screen take (or its import) for this draft still brings it a clip.
-    if (id && segmentCount.current === 0 && safeToDelete && !screenCaptureHolds(id)) {
+    if (id && segmentCount.current === 0 && safeToDelete && !screenCaptureRef.current?.holds(id)) {
       // The count can lag a clip that just landed (a screen recording's import): the db decides.
       void (async () => {
         if ((await segmentsForDraft(id)).length > 0) return;
@@ -727,6 +730,9 @@ export function useRecorder(
     appActive,
     reportMicPriorityError,
     onCameraReady: () => setCameraReady(true),
+    // A new <Camera> (Android, see camera-holder.ts) starts gated, as a flip does there: zoom,
+    // torch and the record gestures wait for the new session's `onStarted`.
+    onCameraRemount: () => setCameraReady(false),
     // Wire to <Camera onConfigured>: fires whenever the session's connections are (re)formed —
     // cold open, enableAudio output rebuild, camera flip. Bumping the epoch re-arms the H.264
     // pin for the NEW video connection (the codec is applied per-connection natively, so it

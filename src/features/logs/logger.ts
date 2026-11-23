@@ -1,13 +1,19 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { AppState } from 'react-native';
 
 import { formatEntry, LogBuffer, type LogLevel, MAX_ENTRIES, splitEntries } from './log-buffer';
+import { logFile, readLogFile, rewriteLogFile, writeLogBatch } from './log-file';
+import { redactEntry } from './redact';
+import { cacheDir } from '@/utils/storage-root';
+
+export { logFile };
 
 /**
  * The debug log behind the About page's Share logs (#155). `installLogCapture` (called once at
  * startup) copies every console message and uncaught error into it, so existing `console.*`
- * calls need no changes. Entries are redacted as they're recorded, kept in memory, and appended
- * to a file so they survive a crash or relaunch.
+ * calls need no changes. Every entry goes through `redact()` (tokens, Authorization headers,
+ * capability-token-shaped strings) as it's recorded, is cut to 16 KB, is kept in memory, and is appended to the
+ * rolling `logs/pulse.log` (log-file.ts) so it survives a crash or relaunch.
  */
 
 const buffer = new LogBuffer(MAX_ENTRIES);
@@ -18,9 +24,6 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let entriesInFile = 0;
 let installed = false;
 
-const logDir = () => new Directory(Paths.document, 'logs');
-const logFile = () => new File(Paths.document, 'logs', 'pulse.log');
-
 /** Write pending entries now. Never throws — logging must not break the app. */
 export function flushLogs(): void {
   if (flushTimer) clearTimeout(flushTimer);
@@ -29,22 +32,14 @@ export function flushLogs(): void {
   const batch = pending;
   pending = [];
   try {
-    logDir().create({ intermediates: true, idempotent: true });
-    if (entriesInFile + batch.length > MAX_ENTRIES * 2) {
-      const all = buffer.all();
-      logFile().write(`${all.join('\n')}\n`);
-      entriesInFile = all.length;
-    } else {
-      logFile().write(`${batch.join('\n')}\n`, { append: true });
-      entriesInFile += batch.length;
-    }
+    entriesInFile = writeLogBatch(batch, () => buffer.all(), entriesInFile, MAX_ENTRIES);
   } catch {
     // Disk full or unavailable: the entries are still in memory for this session.
   }
 }
 
 export function log(level: LogLevel, ...args: unknown[]): void {
-  const entry = formatEntry(level, args, new Date());
+  const entry = redactEntry(formatEntry(level, args, new Date()));
   buffer.push(entry);
   pending.push(entry);
   if (!flushTimer) flushTimer = setTimeout(flushLogs, FLUSH_DELAY_MS);
@@ -63,12 +58,12 @@ export function installLogCapture(): void {
   installed = true;
 
   try {
-    const file = logFile();
-    if (file.exists) {
-      buffer.load(splitEntries(file.textSync()));
+    const text = readLogFile();
+    if (text !== null) {
+      // Redacted again: a file an older build wrote may hold what today's rules blank out.
+      buffer.load(splitEntries(text).map(redactEntry));
       // Start the file over with just the kept entries, so it can't grow across launches.
-      file.write(buffer.size > 0 ? `${buffer.all().join('\n')}\n` : '');
-      entriesInFile = buffer.size;
+      entriesInFile = rewriteLogFile(buffer.all());
     }
   } catch {
     // Unreadable file: start fresh.
@@ -108,7 +103,7 @@ export function installLogCapture(): void {
 
 /** A text file with `header` (the About details) followed by the log, ready to share. */
 export function writeLogExport(header: string): File {
-  const file = new File(Paths.cache, 'pulse-logs.txt');
+  const file = new File(cacheDir(), 'pulse-logs.txt');
   if (file.exists) file.delete();
   file.write(logExportText(header));
   return file;

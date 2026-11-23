@@ -1,8 +1,9 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 import { initWhisperVad, type WhisperVadContext } from 'whisper.rn';
 
 import { deleteDownload, downloadWhole, isWholeFile } from './verified-download';
 import { whisperJsiReady } from './whisper-jsi';
+import { documentDir } from '@/utils/storage-root';
 
 /**
  * Voice-activity-detection pre-gate for transcription.
@@ -25,11 +26,11 @@ const VAD_FILENAME = 'ggml-silero-v6.2.0.bin';
 const VAD_BYTES = 885_098;
 
 function vadDir(): Directory {
-  return new Directory(Paths.document, 'vad');
+  return new Directory(documentDir(), 'vad');
 }
 
 function vadFile(): File {
-  return new File(Paths.document, 'vad', VAD_FILENAME);
+  return new File(documentDir(), 'vad', VAD_FILENAME);
 }
 
 function isVadModelReady(): boolean {

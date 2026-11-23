@@ -1,23 +1,21 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { File } from 'expo-file-system';
 
 import { modelUrl, type WhisperModel } from './models';
 import { deleteDownload, downloadWhole, isWholeFile } from './verified-download';
+import { modelsDir } from '@/utils/storage-root';
 
-// On-device Whisper model files live under the document directory (so they survive launches) and
-// are downloaded on demand. Only the currently-selected model is kept on disk — switching deletes
-// the others — so the app never holds more than one set of weights at a time.
+// On-device Whisper model files live in the models folder (`modelsDir()`: `models/` under the
+// document directory in the app, so they survive launches; PulseKit's shared models folder when
+// embedded) and are downloaded on demand. Only the currently-selected model is kept on disk —
+// switching deletes the others — so the app never holds more than one set of weights at a time.
 //
-//   models/ggml-<id>.bin   (+ .ok: its verified size; .part while downloading)
+//   ggml-<id>.bin   (+ .ok: its verified size; .part while downloading)
 //
 // Downloads are whole or not at all (verified-download.ts): a partial or interrupted one is never
 // at the model's path, so it's never loaded.
 
-function modelsDir(): Directory {
-  return new Directory(Paths.document, 'models');
-}
-
 function modelFile(m: WhisperModel): File {
-  return new File(Paths.document, 'models', m.filename);
+  return new File(modelsDir(), m.filename);
 }
 
 /** Whether the given model is fully downloaded. */

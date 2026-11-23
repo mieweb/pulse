@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The plugin asks for nothing itself: no permissions, no components. The stub needs none (AD20);
+     with PulseKit on, PulseKit's AAR brings its own manifest (PulseActivity, the upload service,
+     CAMERA and RECORD_AUDIO). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

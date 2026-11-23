@@ -1,6 +1,6 @@
 import { probe } from '@mieweb/pulse-editor';
 import { Directory, File, Paths } from 'expo-file-system';
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect } from 'react';
 import { Alert, AppState, Platform } from 'react-native';
 import {
   addScreenRecordingListener,
@@ -17,13 +17,20 @@ import {
 import { createDraft, draftTakesClips, segmentExists } from '@/db/drafts';
 import { deleteSetting, getSetting, setSetting } from '@/db/settings';
 import { addExternalClip } from '@/features/recorder/add-external-clip';
+import type {
+  ScreenCaptureState,
+  ScreenCapturePort,
+  ScreenPhase,
+} from '@/features/recorder/contract';
 import { recorderOnScreen } from '@/features/recorder/recorder-presence';
 import { type ToastOptions, useToast } from '@/features/toast/toast-provider';
-import { uploadNotify } from '@/features/upload/notify';
-import { describeError, formatBytes, formatSeconds } from '@/features/upload/upload-log';
+import { uploadNotify } from '@/features/upload/core/notify';
+import { describeError, formatBytes, formatSeconds } from '@/features/upload/core/upload-log';
 import { deleteQuietly } from '@/utils/file-store';
 import { haptics } from '@/utils/haptics';
 import { importFailureCopy } from '@/utils/import-copy';
+
+import { ScreenStopPill } from './screen-stop-pill';
 
 /**
  * Screen recording (plan: .devrun/plans/screen-recorder-spike.md §5). A take is the library's
@@ -137,22 +144,8 @@ async function cleanUp(src: string | undefined, segmentId: string): Promise<void
 
 // --- Live state (memory only) --------------------------------------------------------------------
 
-/** `live`: a take of Pulse's own is capturing. `stopping`: Stop asked, file settling. */
-export type ScreenPhase = 'idle' | 'live' | 'stopping';
-
-export type ScreenCaptureState = {
-  phase: ScreenPhase;
-  /** When the capture began (wall clock), for the timer; null until it has. */
-  began: number | null;
-  /** The draft the take, or its import, is for. */
-  draftId: string | null;
-  /** A screen recording is being converted into a draft. */
-  importing: boolean;
-  /** That conversion's progress (0–1); null until it reports. */
-  progress: number | null;
-  /** Record screen was tapped and the capture hasn't begun yet (a hint for the UI only). */
-  starting: boolean;
-};
+// The state's shape is the recorder's (its contract), which reads it through `screenCapturePort`.
+export type { ScreenCaptureState, ScreenPhase };
 
 let state: ScreenCaptureState = {
   phase: 'idle',
@@ -214,14 +207,26 @@ function setState(patch: Partial<ScreenCaptureState>) {
   for (const notify of subscribers) notify();
 }
 
-export function useScreenCapture(): ScreenCaptureState {
-  return useSyncExternalStore(subscribe, () => state);
-}
-
 /** Whether a screen take or its import is using this draft: the recorder mustn't drop it as empty. */
 export function screenCaptureHolds(draftId: string): boolean {
   return state.draftId === draftId && (state.phase !== 'idle' || state.importing);
 }
+
+/**
+ * Screen recording as the recorder takes it (`RecorderScreenProps.screenCapture`): the Pulse app's
+ * recorder route passes it, so the recorder, which the embed shares, never imports this feature.
+ * Undefined where screen recording is off: the "+" is then the plain import.
+ */
+export const screenCapturePort: ScreenCapturePort | undefined = canRecordScreen
+  ? {
+      subscribe,
+      getState: () => state,
+      holds: screenCaptureHolds,
+      start: startScreenCapture,
+      stop: stopScreenCapture,
+      StopPill: ScreenStopPill,
+    }
+  : undefined;
 
 // --- Messages ------------------------------------------------------------------------------------
 

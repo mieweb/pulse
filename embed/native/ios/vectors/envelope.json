@@ -1,0 +1,504 @@
+{
+  "format": "pulsekit-envelope-vectors",
+  "version": 1,
+  "contract": { "major": 1, "minor": 1 },
+  "methods": {
+    "native": [
+      "info",
+      "configure",
+      "prewarm",
+      "open",
+      "close",
+      "isOpen",
+      "pendingResults",
+      "acknowledge",
+      "logFile"
+    ],
+    "minor1": [
+      "setAccount",
+      "listDrafts",
+      "getDraft",
+      "countDrafts",
+      "renameDraft",
+      "deleteDraft",
+      "setDraftContext",
+      "upload",
+      "cancelUpload",
+      "retireDraft",
+      "dismissReceipt",
+      "resumeOutbox",
+      "usage",
+      "listNamespaces",
+      "purge",
+      "respondHostRequest"
+    ]
+  },
+  "requests": [
+    {
+      "name": "a minor-0 method routes natively",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000001",
+        "method": "info",
+        "args": {},
+        "client": { "contract": { "major": 1, "minor": 0 }, "version": "2.8.0" }
+      },
+      "expect": { "route": "native", "method": "info", "args": {} }
+    },
+    {
+      "name": "unknown top-level, client and args fields are ignored, args kept for the method",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000002",
+        "method": "acknowledge",
+        "args": { "requestId": "r-1", "later": { "nested": true } },
+        "client": { "contract": { "major": 1, "minor": 9 }, "version": "9.0.0", "extra": 1 },
+        "trace": "abc"
+      },
+      "expect": {
+        "route": "native",
+        "method": "acknowledge",
+        "args": { "requestId": "r-1", "later": { "nested": true } }
+      }
+    },
+    {
+      "name": "a newer client minor is fine",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000003",
+        "method": "isOpen",
+        "args": {},
+        "client": { "contract": { "major": 1, "minor": 1 } }
+      },
+      "expect": { "route": "native", "method": "isOpen", "args": {} }
+    },
+    {
+      "name": "the client's timeoutMs reaches the method (a forwarded call waits as long)",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000013",
+        "method": "isOpen",
+        "args": {},
+        "timeoutMs": 45000
+      },
+      "expect": { "route": "native", "method": "isOpen", "args": {}, "timeoutMs": 45000 }
+    },
+    {
+      "name": "a timeoutMs that isn't a positive whole number is ignored",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000014",
+        "method": "isOpen",
+        "args": {},
+        "timeoutMs": "soon"
+      },
+      "expect": { "route": "native", "method": "isOpen", "args": {} }
+    },
+    {
+      "name": "no client block is accepted (native callers)",
+      "request": { "v": 1, "callId": "c-000000000004", "method": "isOpen", "args": {} },
+      "expect": { "route": "native", "method": "isOpen", "args": {} }
+    },
+    {
+      "name": "missing or null args become {}",
+      "request": { "v": 1, "callId": "c-000000000005", "method": "pendingResults", "args": null },
+      "expect": { "route": "native", "method": "pendingResults", "args": {} }
+    },
+    {
+      "name": "contract major mismatch",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000006",
+        "method": "info",
+        "args": {},
+        "client": { "contract": { "major": 2, "minor": 0 } }
+      },
+      "expect": {
+        "route": "reply",
+        "callId": "c-000000000006",
+        "error": { "code": "contract.unsupported", "recoverable": false }
+      }
+    },
+    {
+      "name": "envelope version mismatch",
+      "request": { "v": 2, "callId": "c-000000000007", "method": "info", "args": {} },
+      "expect": {
+        "route": "reply",
+        "callId": "c-000000000007",
+        "error": { "code": "contract.unsupported", "recoverable": false }
+      }
+    },
+    {
+      "name": "major mismatch wins over an unknown method",
+      "request": {
+        "v": 1,
+        "callId": "c-000000000008",
+        "method": "teleport",
+        "args": {},
+        "client": { "contract": { "major": 0 } }
+      },
+      "expect": {
+        "route": "reply",
+        "callId": "c-000000000008",
+        "error": { "code": "contract.unsupported", "recoverable": false }
+      }
+    },
+    {
+      "name": "a minor-1 method is method.unsupported in PR1",
+      "request": { "v": 1, "callId": "c-000000000009", "method": "listDrafts", "args": {} },
+      "expect": {
+        "route": "reply",
+        "callId": "c-000000000009",
+        "error": { "code": "method.unsupported", "recoverable": false }
+      }
+    },
+    {
+      "name": "an unknown method is method.unsupported",
+      "request": { "v": 1, "callId": "c-00000000000a", "method": "teleport", "args": {} },
+      "expect": {
+        "route": "reply",
+        "callId": "c-00000000000a",
+        "error": { "code": "method.unsupported", "recoverable": false }
+      }
+    },
+    {
+      "name": "info works on an unsupported device",
+      "supported": false,
+      "request": { "v": 1, "callId": "c-00000000000b", "method": "info", "args": {} },
+      "expect": { "route": "native", "method": "info", "args": {} }
+    },
+    {
+      "name": "everything else is unsupported on an unsupported device",
+      "supported": false,
+      "request": { "v": 1, "callId": "c-00000000000c", "method": "pendingResults", "args": {} },
+      "expect": {
+        "route": "reply",
+        "callId": "c-00000000000c",
+        "error": { "code": "unsupported", "recoverable": false }
+      }
+    },
+    {
+      "name": "args that aren't an object",
+      "request": { "v": 1, "callId": "c-00000000000d", "method": "open", "args": [1, 2] },
+      "expect": {
+        "route": "reply",
+        "callId": "c-00000000000d",
+        "error": { "code": "invalid_options", "recoverable": false }
+      }
+    },
+    {
+      "name": "no method",
+      "request": { "v": 1, "callId": "c-00000000000e", "args": {} },
+      "expect": {
+        "route": "reply",
+        "callId": "c-00000000000e",
+        "error": { "code": "invalid_options", "recoverable": false }
+      }
+    },
+    {
+      "name": "no callId still gets a reply, with an empty callId",
+      "request": { "v": 1, "method": "info", "args": {} },
+      "expect": {
+        "route": "reply",
+        "callId": "",
+        "error": { "code": "invalid_options", "recoverable": false }
+      }
+    },
+    {
+      "name": "text that isn't JSON still gets a reply",
+      "requestText": "{not json",
+      "expect": {
+        "route": "reply",
+        "callId": "",
+        "error": { "code": "invalid_options", "recoverable": false }
+      }
+    },
+    {
+      "name": "a JSON array isn't a request",
+      "requestText": "[1,2,3]",
+      "expect": {
+        "route": "reply",
+        "callId": "",
+        "error": { "code": "invalid_options", "recoverable": false }
+      }
+    }
+  ],
+  "replies": [
+    {
+      "name": "a void method's reply carries result null",
+      "build": { "ok": true, "callId": "c-000000000101", "result": null },
+      "expectText": "{\"callId\":\"c-000000000101\",\"ok\":true,\"result\":null,\"v\":1}"
+    },
+    {
+      "name": "integers stay integers",
+      "build": {
+        "ok": true,
+        "callId": "c-000000000102",
+        "result": { "endedAt": 1763400000000, "fraction": 0.5 }
+      },
+      "expectText": "{\"callId\":\"c-000000000102\",\"ok\":true,\"result\":{\"endedAt\":1763400000000,\"fraction\":0.5},\"v\":1}"
+    },
+    {
+      "name": "an error reply is ok:false with the callId inside the error too",
+      "build": {
+        "ok": false,
+        "callId": "c-000000000103",
+        "error": { "code": "busy", "message": "Pulse is already open.", "requestId": "r-9" }
+      },
+      "expectText": "{\"callId\":\"c-000000000103\",\"error\":{\"callId\":\"c-000000000103\",\"code\":\"busy\",\"message\":\"Pulse is already open.\",\"recoverable\":true,\"requestId\":\"r-9\"},\"ok\":false,\"v\":1}"
+    },
+    {
+      "name": "unknown fields in a result pass through untouched",
+      "parse": "{\"v\":1,\"callId\":\"c-000000000104\",\"ok\":true,\"result\":{\"status\":\"completed\",\"futureField\":{\"a\":[1,null,true]}},\"trace\":\"x\"}",
+      "expect": {
+        "ok": true,
+        "callId": "c-000000000104",
+        "result": { "status": "completed", "futureField": { "a": [1, null, true] } }
+      }
+    }
+  ],
+  "open": [
+    {
+      "name": "record with a context",
+      "args": {
+        "entry": "record",
+        "requestId": "r-1",
+        "context": { "key": "ticket:42", "kind": "ticket", "id": "42", "label": "Fix login" }
+      },
+      "expect": { "ok": true, "entry": "record", "requestId": "r-1" }
+    },
+    {
+      "name": "record continuing a draft, unknown fields ignored",
+      "args": {
+        "entry": "record",
+        "context": { "key": "ticket:42" },
+        "draft": { "continue": "d-1" },
+        "later": 1
+      },
+      "expect": { "ok": true, "entry": "record", "requestId": null }
+    },
+    {
+      "name": "record without a context",
+      "args": { "entry": "record" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "record with a bad draft value",
+      "args": { "entry": "record", "context": { "key": "ticket:42" }, "draft": "old" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "edit with a draftId",
+      "args": { "entry": "edit", "draftId": "d-1", "clipId": "c-1" },
+      "expect": { "ok": true, "entry": "edit", "requestId": null }
+    },
+    {
+      "name": "export without a draftId",
+      "args": { "entry": "export" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "an unknown entry",
+      "args": { "entry": "full" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId that could leave the results folder",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": "../escape" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a theme that isn't an object",
+      "args": { "entry": "edit", "draftId": "d-1", "theme": "dark" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId ending in .project, whose result would read as a project document",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": "take.project" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId that is only .project",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": ".project" },
+      "expect": { "ok": false, "code": "invalid_options" }
+    },
+    {
+      "name": "a requestId with project elsewhere in it",
+      "args": { "entry": "edit", "draftId": "d-1", "requestId": "project.take.projects" },
+      "expect": { "ok": true, "entry": "edit", "requestId": "project.take.projects" }
+    }
+  ],
+  "busy": [
+    {
+      "name": "nothing open, presenter idle: start",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "idle",
+      "expect": "start"
+    },
+    {
+      "name": "nothing open, no requestId: start",
+      "open": null,
+      "requestId": null,
+      "presenter": "idle",
+      "expect": "start"
+    },
+    {
+      "name": "same requestId while open: join the pending result",
+      "open": "r-1",
+      "requestId": "r-1",
+      "presenter": "presenting",
+      "expect": "join"
+    },
+    {
+      "name": "another requestId while open: busy",
+      "open": "r-1",
+      "requestId": "r-2",
+      "presenter": "presenting",
+      "expect": "busy"
+    },
+    {
+      "name": "no requestId while open: busy",
+      "open": "r-1",
+      "requestId": null,
+      "presenter": "presenting",
+      "expect": "busy"
+    },
+    {
+      "name": "nothing open but the host is presenting another screen: busy",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "presenting",
+      "expect": "busy"
+    },
+    {
+      "name": "nothing to present from",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "none",
+      "expect": "noPresenter"
+    },
+    {
+      "name": "nothing open but the presenter isn't in a window: busy",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "detached",
+      "expect": "busy"
+    },
+    {
+      "name": "the requestId's result is still in the inbox: delivered, nothing presented",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "idle",
+      "pending": true,
+      "expect": "delivered"
+    },
+    {
+      "name": "a result in the inbox answers even when the presenter is busy",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "presenting",
+      "pending": true,
+      "expect": "delivered"
+    },
+    {
+      "name": "a result in the inbox answers even with nothing to present from",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "none",
+      "pending": true,
+      "expect": "delivered"
+    },
+    {
+      "name": "no requestId never matches the inbox: start",
+      "open": null,
+      "requestId": null,
+      "presenter": "idle",
+      "pending": true,
+      "expect": "start"
+    },
+    {
+      "name": "same requestId while open: join, even if its result is already written",
+      "open": "r-1",
+      "requestId": "r-1",
+      "presenter": "presenting",
+      "pending": true,
+      "expect": "join"
+    },
+    {
+      "name": "another requestId with a result in the inbox while a flow is open: busy",
+      "open": "r-1",
+      "requestId": "r-2",
+      "presenter": "presenting",
+      "pending": true,
+      "expect": "busy"
+    },
+    {
+      "name": "no result in the inbox: start as before",
+      "open": null,
+      "requestId": "r-1",
+      "presenter": "idle",
+      "pending": false,
+      "expect": "start"
+    }
+  ],
+  "inbox": [
+    {
+      "name": "oldest first, project documents, videos and partial writes skipped",
+      "files": [
+        { "name": "r-3.json", "modified": 300 },
+        { "name": "r-1.json", "modified": 100 },
+        { "name": "r-1.project.json", "modified": 101 },
+        { "name": "r-1.mp4", "modified": 99 },
+        { "name": "r-2.json", "modified": 200 },
+        { "name": "r-4.json.part", "modified": 50 }
+      ],
+      "expect": ["r-1", "r-2", "r-3"]
+    },
+    {
+      "name": "equal times go by name",
+      "files": [
+        { "name": "b.json", "modified": 10 },
+        { "name": "a.json", "modified": 10 },
+        { "name": "c.json", "modified": 5 }
+      ],
+      "expect": ["c", "a", "b"]
+    },
+    {
+      "name": "a project document alone is not a result",
+      "files": [{ "name": "r-1.project.json", "modified": 1 }],
+      "expect": []
+    },
+    {
+      "name": "names that aren't plain ids are skipped",
+      "files": [
+        { "name": ".json", "modified": 1 },
+        { "name": "has space.json", "modified": 2 },
+        { "name": "ok.json", "modified": 3 }
+      ],
+      "expect": ["ok"]
+    }
+  ],
+  "acknowledge": [
+    { "requestId": "r-1", "expect": ["r-1.json", "r-1.mp4", "r-1.project.json"] }
+  ],
+  "namespace": [
+    { "bundleId": "com.mieweb.timehuddle", "expect": "com.mieweb.timehuddle-local" },
+    { "bundleId": "com.MIE.Web_App", "expect": "com.mie.web-app-local" },
+    { "bundleId": "-.com.x.-", "expect": "com.x-local" },
+    {
+      "bundleId": "org.example.a-very-long-bundle-identifier-past-forty-chars",
+      "expect": "org.example.a-very-long-bundle-identifie-local"
+    },
+    { "bundleId": "___", "expect": "host-local" }
+  ],
+  "configure": [
+    { "args": { "hostId": "com.mieweb.timehuddle", "uploadMode": "file" }, "expect": "ok" },
+    { "args": { "hostId": "Com.Upper" }, "expect": "invalid_options" },
+    { "args": { "hostId": "has_underscore" }, "expect": "invalid_options" },
+    { "args": { "hostId": "..." }, "expect": "invalid_options" },
+    { "args": { "uploadMode": "cloud" }, "expect": "invalid_options" },
+    { "args": { "policy": true }, "expect": "invalid_options" },
+    { "args": { "unknown": { "x": 1 } }, "expect": "ok" }
+  ]
+}

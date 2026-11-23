@@ -1,9 +1,12 @@
+import {
+  currentExportDuration,
+  exportSignature,
+  type ExportAudio,
+} from '@/core/media/merge-signature';
 import { getDraftUploadStatus, getMergedExport, setMergedExport } from '@/db/drafts';
 import type { Segment } from '@/db/schema';
-import type { MergedOutput } from '@/features/upload/types';
+import type { MergedOutput } from '@/features/upload/core/types';
 import { absolutize, exportFileExists, exportRelPath, persistExportFile } from '@/utils/file-store';
-
-import { currentExportDuration, exportSignature, type ExportAudio } from './merge-signature';
 
 /**
  * The draft's persisted export, if it is a valid export of exactly `segments` (file on disk AND

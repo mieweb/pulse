@@ -1,5 +1,5 @@
 import { addSegment } from '@/db/drafts';
-import { describeError, formatSeconds } from '@/features/upload/upload-log';
+import { describeError, formatSeconds } from '@/features/upload/core/upload-log';
 import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
 import {
   absolutize,

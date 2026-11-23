@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import { getCaptionY } from '@/db/captions';
+import { getCaptionY, isCaptionsOff } from '@/db/captions';
 import { getClipTranscripts } from '@/db/clip-transcripts';
 import { segmentsForDraft } from '@/db/drafts';
 import { adoptMergedCaptionEdit } from '@/db/transcripts';
@@ -14,6 +14,7 @@ import { resolveSelectedModel } from './models';
  * A draft's captions as they're uploaded: composed from its clips as they are now (compose.ts),
  * and where they sit. Empty while a clip that speaks is still to be transcribed with the selected
  * model (a half-captioned video reads as broken); with no model, the edited captions there are.
+ * None when the person turned the draft's captions off (the embed's per-video switch, O6).
  */
 export async function getDraftCaptions(
   draftId: string,
@@ -23,6 +24,7 @@ export async function getDraftCaptions(
   await adoptMergedCaptionEdit(draftId).catch((e: unknown) =>
     console.warn('[captions] could not carry over the edited captions', e),
   );
+  if (await isCaptionsOff(draftId)) return { lines: [], y: await getCaptionY(draftId) };
   const [row] = await selectedModelQuery;
   const model = resolveSelectedModel(row?.value ?? null, Platform.OS);
   const segments = (await segmentsForDraft(draftId)).filter((s) => effMs(s) > 0);

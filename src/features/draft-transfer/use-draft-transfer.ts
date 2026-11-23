@@ -1,13 +1,41 @@
+import { reloadAppAsync } from 'expo';
+import * as Crypto from 'expo-crypto';
 import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
 import { isAvailableAsync, shareAsync } from 'expo-sharing';
 import { useState } from 'react';
+import { Alert } from 'react-native';
 
+import { expoDb } from '@/db/client';
 import { useToast } from '@/features/toast/toast-provider';
 import { formatCount } from '@/utils/format';
 import { userMessage } from '@/utils/user-message';
 
+import { restoreLibraryBackup } from './library-backup';
 import { exportDrafts } from './pack';
 import { importPulseFile, skippedSummary } from './unpack';
+import { importProjectFile, pulseFileKind } from './unpack-project';
+
+/** Delete a file if it's there; never throws (a clean-up must not fail its caller). */
+function deleteQuietly(uri: string): void {
+  try {
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch {}
+}
+
+/** Ask before a library backup replaces the library. */
+const confirmRestore = () =>
+  new Promise<boolean>((resolve) =>
+    Alert.alert(
+      'Replace your library?',
+      'Your drafts become the ones in this backup, and Pulse reopens to finish.',
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Replace', style: 'destructive', onPress: () => resolve(true) },
+      ],
+    ),
+  );
 
 type TransferState = 'idle' | 'exporting' | 'importing';
 
@@ -28,7 +56,7 @@ export function useDraftTransfer() {
       if (!(await isAvailableAsync())) {
         throw new Error('Sharing isn’t available on this device.');
       }
-      const uri = await exportDrafts(draftIds, Date.now());
+      const uri = await exportDrafts(expoDb, draftIds, Date.now());
       await shareAsync(uri, {
         mimeType: 'application/zip',
         UTI: 'public.data',
@@ -58,6 +86,27 @@ export function useDraftTransfer() {
 
     setState('importing');
     try {
+      const kind = await pulseFileKind(asset.uri);
+      if (kind === 'library-backup') {
+        if (!(await confirmRestore())) return [];
+        await restoreLibraryBackup(expoDb, asset.uri, Date.now());
+        deleteQuietly(asset.uri); // the picker's copy; it can be as large as the library
+        try {
+          await reloadAppAsync('Restoring a library backup'); // the next launch swaps it in
+        } catch {
+          showToast({
+            kind: 'warning',
+            title: 'Backup ready to restore',
+            message: 'Close Pulse and open it again to finish.',
+          });
+        }
+        return [];
+      }
+      if (kind === 'project') {
+        const ids = await importProjectFile(expoDb, asset.uri, Crypto.randomUUID);
+        showToast(`${formatCount(ids.length, 'draft', 'drafts')} imported`);
+        return ids;
+      }
       const { draftIds, skipped } = await importPulseFile(asset.uri);
       const imported = `${formatCount(draftIds.length, 'draft', 'drafts')} imported`;
       // Clips the phone couldn't take are left out, not fatal: say so, without a dialog.
@@ -75,6 +124,7 @@ export function useDraftTransfer() {
       });
       return [];
     } finally {
+      deleteQuietly(asset.uri); // the picker's copy in the cache
       setState('idle');
     }
   }

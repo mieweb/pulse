@@ -2,8 +2,6 @@ import { Button, type ButtonProps, Host, Image, Menu } from '@expo/ui/swift-ui';
 import { contentShape, frame, shapes } from '@expo/ui/swift-ui/modifiers';
 import { StyleSheet, View } from 'react-native';
 
-import { canRecordScreen } from '@/features/screen-capture/screen-capture';
-
 import { type AddMenuProps, addMenuActions } from './add-menu-actions';
 import { ImportButton } from './import-button';
 
@@ -24,7 +22,7 @@ export function AddMenu({
   busy,
   progress,
 }: AddMenuProps) {
-  const menu = canRecordScreen && screenAvailable && !disabled && !busy;
+  const menu = screenAvailable && !disabled && !busy;
   return (
     <View style={styles.trigger}>
       {/* Hidden from VoiceOver while the menu above it is the control. */}
@@ -36,7 +34,7 @@ export function AddMenu({
           disabled={disabled}
           busy={busy}
           progress={progress}
-          label={canRecordScreen && screenAvailable ? 'Add a clip' : undefined}
+          label={screenAvailable ? 'Add a clip' : undefined}
         />
       </View>
       {menu && (

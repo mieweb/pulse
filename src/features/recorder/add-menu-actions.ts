@@ -3,7 +3,10 @@ import type { MenuAction } from '@/components/action-menu';
 export type AddMenuProps = {
   onImport: () => void;
   onRecordScreen: () => void;
-  /** False while a screen take runs: "+" is then the plain import, no one-item menu. */
+  /**
+   * False without screen recording (the embed) or while a screen take runs: "+" is then the plain
+   * import, no one-item menu.
+   */
   screenAvailable: boolean;
   disabled: boolean;
   busy: boolean;

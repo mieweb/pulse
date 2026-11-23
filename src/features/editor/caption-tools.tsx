@@ -1,4 +1,3 @@
-import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
 
@@ -77,7 +76,16 @@ export function CaptionTools({
  * error) always; while the captions tools are open, also clips being transcribed, ones that
  * failed, and a model to pick or download. Tappable when there's something to do.
  */
-export function CaptionStatus({ captions, open }: { captions: DraftCaptions; open: boolean }) {
+export function CaptionStatus({
+  captions,
+  open,
+  onOpenModelSheet,
+}: {
+  captions: DraftCaptions;
+  open: boolean;
+  /** Opens the captions model sheet (no model picked yet). */
+  onOpenModelSheet: () => void;
+}) {
   const theme = useTheme();
   const st = captions.state;
   let text: string | null = null;
@@ -91,7 +99,7 @@ export function CaptionStatus({ captions, open }: { captions: DraftCaptions; ope
     text = null;
   } else if (st.status === 'no-model') {
     text = 'Tap to pick a captions model.';
-    onPress = () => router.push('/on-device-ai');
+    onPress = onOpenModelSheet;
   } else if (st.status === 'needs-download') {
     text = 'Tap to download the captions model.';
     onPress = captions.download;

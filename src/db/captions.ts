@@ -1,8 +1,8 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
-import type { TranscriptWord } from '@/features/transcription/whisper';
+import type { TranscriptWord } from '@/core/types/transcription';
 import { db } from './client';
-import { drafts, segments } from './schema';
+import { drafts, segments, settings } from './schema';
 
 const now = sql`(unixepoch('subsec') * 1000)`;
 
@@ -55,4 +55,35 @@ export async function getCaptionY(draftId: string): Promise<number | null> {
 /** Move the draft's captions (`y`: the caption's centre, 0 top … 1 bottom of the picture). */
 export async function setCaptionY(draftId: string, y: number | null): Promise<void> {
   await db.update(drafts).set({ captionY: y, lastModified: now }).where(eq(drafts.id, draftId));
+}
+
+/** Captions turned off for one draft (the embed's per-video switch, O6): `captions.off:<id>`. */
+export const CAPTIONS_OFF_KEY_PREFIX = 'captions.off:';
+
+/** Live-queryable: the draft's captions-off row (none while its captions are on). */
+export function captionsOffQuery(draftId: string) {
+  return db
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, CAPTIONS_OFF_KEY_PREFIX + draftId));
+}
+
+/** Whether the draft's captions are turned off (they're on unless turned off). */
+export async function isCaptionsOff(draftId: string): Promise<boolean> {
+  const [row] = await captionsOffQuery(draftId);
+  return row?.value === 'true';
+}
+
+/**
+ * Turn the draft's captions off, or back on (which removes the row). The switch goes through
+ * `setDraftCaptionsOff` (drafts.ts), which takes a queued Send out first.
+ */
+export async function setCaptionsOff(draftId: string, off: boolean): Promise<void> {
+  const key = CAPTIONS_OFF_KEY_PREFIX + draftId;
+  if (off) {
+    await db
+      .insert(settings)
+      .values({ key, value: 'true' })
+      .onConflictDoUpdate({ target: settings.key, set: { value: 'true' } });
+  } else await db.delete(settings).where(eq(settings.key, key));
 }
