@@ -68,6 +68,12 @@ public final class PulseKit: NSObject {
   }
   /// A host request's time to be answered (§5, PLAN §6.4).
   static let hostRequestTimeout: TimeInterval = 20
+  /// How long the host's `close` waits for Pulse JS to end the flow before the facade does.
+  static let closeTimeout: TimeInterval = 5
+  /// The same while a Send runs (`pulse.ui` sending): its host confirm's own deadline, plus 10 s
+  /// for the merge before it and the result after. A runtime that never says the Send stopped is
+  /// still dismissed then.
+  static let sendingCloseTimeout: TimeInterval = hostRequestTimeout + 10
   /// A memory warning's time to be answered: Pulse JS answers within its 3 s engine budget plus
   /// the library's close (lifetime.ts); without an answer by then the runtime is dropped.
   static let memoryCheckTimeout: TimeInterval = 10
@@ -162,6 +168,8 @@ public final class PulseKit: NSObject {
     /// Every `open` waiting for this request: the first, and any with the same requestId.
     var waiters: [(callId: String, reply: (PulseReply) -> Void)]
     var forceClose: DispatchWorkItem?
+    /// The last `pulse.ui` `sending`: a Send (merge, then the host's confirm) is running.
+    var sending = false
     /// The `pulse.cmd` callIds sent while this flow was open; `finish` drops the ones still
     /// waiting, since a runtime that died or wasn't listening yet will never reply.
     var commandIds: [String] = []
@@ -727,22 +735,30 @@ public final class PulseKit: NSObject {
   }
 
   /// `close`: ask Pulse JS to end the flow (it writes the result, as for X), and dismiss anyway
-  /// after 5 s if it doesn't.
+  /// if it doesn't in time (`armForceClose`).
   private func close(_ req: PulseRequest, respond: (PulseReply) -> Void) {
     guard let flow else { return respond(.success(req.callId)) }
     var args = req.args
     if args["reason"] == nil { args["reason"] = .string("host") }
     sendCommand("close", args: .object(args))
-    if flow.forceClose == nil {
-      let work = DispatchWorkItem { [weak self, weak flow] in
-        guard let self, let flow, self.flow === flow else { return }
-        self.log("close: Pulse didn't end \(flow.requestId) in 5 s; dismissing it")
-        self.finish(flow.roots.inbox.read(flow.requestId) ?? self.interrupted(flow, reason: "host"))
-      }
-      flow.forceClose = work
-      DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
-    }
+    if flow.forceClose == nil { armForceClose(flow) }
     respond(.success(req.callId))
+  }
+
+  /// The host's close watchdog, from now: 5 s, or while a Send runs its own deadline (Pulse JS
+  /// finishes the Send before it ends the flow, and a clock action must not run behind a flow
+  /// already dismissed). Armed by `close`, and again each time `pulse.ui` changes `sending`
+  /// while it is armed, so a Send that stops leaves Pulse JS 5 s to end the flow.
+  private func armForceClose(_ flow: Flow) {
+    flow.forceClose?.cancel()
+    let seconds = flow.sending ? Self.sendingCloseTimeout : Self.closeTimeout
+    let work = DispatchWorkItem { [weak self, weak flow] in
+      guard let self, let flow, self.flow === flow else { return }
+      self.log("close: Pulse didn't end \(flow.requestId) in \(Int(seconds)) s; dismissing it")
+      self.finish(flow.roots.inbox.read(flow.requestId) ?? self.interrupted(flow, reason: "host"))
+    }
+    flow.forceClose = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
   }
 
   /// End the open flow with `result`: make sure the inbox has it, dismiss, give the audio session
@@ -944,7 +960,12 @@ public final class PulseKit: NSObject {
       emit(name, payload)
     case "pulse.ui":
       // Not in native-bridge.md §8.1 yet: a PR1 contract addition (vectors/README.md).
-      flow?.container.apply(ui: message)
+      guard let flow else { return }
+      flow.container.apply(ui: message)
+      if let sending = message["sending"]?.bool, sending != flow.sending {
+        flow.sending = sending
+        if flow.forceClose != nil { armForceClose(flow) }
+      }
     default:
       break
     }

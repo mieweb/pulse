@@ -21,6 +21,7 @@ import { flowResult } from '../flow/result';
 import { createFlowController, FAIL_SETTLE_MS } from './flow-controller';
 import { createFlowStore } from './flow-store';
 import type { DraftRead } from './library';
+import { createUiSender, type UiFields } from './messaging';
 
 // The library, the recorders on screen and the results folder, as the controller sees them. A
 // test that needs the real library (on node:sqlite) sets `mockLibrary`.
@@ -166,6 +167,27 @@ describe("the host's close", () => {
     expect(store.state().end).toBeNull();
     controller.sent({ draftId: 'd1', sentAt: 5, clientKey: 'i:d1:ab', draftKey: 'i:d1' });
     expect(store.state().end).toMatchObject({ status: 'completed', mode: 'pulse' });
+  });
+
+  it('tells the facade a Send is running, and when it stops (pulse.ui sending)', () => {
+    const store = createFlowStore({ requestId: 'r1', request: record, onEnd: () => {} });
+    const sent: UiFields[] = [];
+    const controller = createFlowController(
+      store,
+      'r1',
+      createUiSender((fields) => sent.push(fields)),
+    );
+    controller.attach(null);
+    store.dispatch({ type: 'mounted' });
+    mockDrafts.set('d1', draft('d1', 1));
+    controller.observe('d1');
+    controller.sending(true); // not on Export: the reducer holds no Send, and says so
+    expect(sent).toEqual([{ sending: false }]);
+    store.dispatch({ type: 'edit' });
+    store.dispatch({ type: 'export' });
+    controller.sending(true);
+    controller.sending(false);
+    expect(sent).toEqual([{ sending: false }, { sending: true }, { sending: false }]);
   });
 
   it('a Send that stops lets the waiting close end the flow', async () => {

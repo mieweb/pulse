@@ -64,8 +64,8 @@ function EmbedFlow({ plan, namespace }: { plan: OpenPlan; namespace: string | un
   const [store] = useState(() =>
     createFlowStore({ requestId, request, onEnd: (state) => void finish(state) }),
   );
-  const [controller] = useState(() => createFlowController(store, requestId));
   const [ui] = useState(() => createUiSender(embedChannel().ui));
+  const [controller] = useState(() => createFlowController(store, requestId, ui));
   const [theme] = useState(() => themeOverrides(themeOf(request, config)));
   // The host's captions settings (models.baseUrl, captions), before any screen reads them.
   useState(() => configureCaptions(config));

@@ -8,6 +8,7 @@ import type { DraftSeen } from './draft-sync';
 import { syncEvents } from './draft-sync';
 import type { FlowStore } from './flow-store';
 import { onDraftsChanged, projectDocument, readDraft } from './library';
+import type { UiFields } from './messaging';
 import { saveExportForHost } from './results';
 
 /**
@@ -35,7 +36,11 @@ function within(work: Promise<void>, ms: number): Promise<void> {
  * One per presentation, made outside the library gate so the host's `close` works even while the
  * gate shows its loading or recovery screen.
  */
-export function createFlowController(store: FlowStore, requestId: string) {
+export function createFlowController(
+  store: FlowStore,
+  requestId: string,
+  ui: (fields: UiFields) => void = () => {},
+) {
   let last: DraftSeen | null = null;
   // The library gate has passed: before that the library may not be readable.
   let attached = false;
@@ -160,10 +165,13 @@ export function createFlowController(store: FlowStore, requestId: string) {
     /**
      * Export's Send started (`true`: the merge, then the host's confirm) or stopped without going
      * (`false`). Meanwhile the host's close waits, as it waits for a take: a clock action must
-     * not succeed behind a flow that already ended.
+     * not succeed behind a flow that already ended. The facade hears it too (`pulse.ui sending`),
+     * so its close watchdog gives the Send its own deadline instead of 5 s.
      */
     sending(busy: boolean): void {
       store.dispatch({ type: busy ? 'sendStarted' : 'sendStopped' });
+      // What the reducer holds: a Send it didn't take (not on Export) holds nothing.
+      ui({ sending: store.state().sending });
     },
     /**
      * Export's video is ready for the flow's draft (merged now, or the saved export still

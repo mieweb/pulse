@@ -34,6 +34,11 @@ export type UiFields = {
   statusBar?: 'light' | 'dark' | 'auto';
   statusBarHidden?: boolean;
   hasTake?: boolean;
+  /**
+   * A Send is running (Export's merge and the host's confirm): the facade's watchdog for the
+   * host's `close` waits for it (PulseKit.swift `armForceClose`).
+   */
+  sending?: boolean;
 };
 
 export interface Channel {
