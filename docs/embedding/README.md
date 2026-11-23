@@ -49,8 +49,9 @@ of using `@mieweb/pulse-embed`, so copy their project setup, not their page code
 - **One library per signed-in person.** Drafts, uploads and results belong to the account you set
   with `setAccount()`. Before it, only `getInfo()`, `configure()`, `prewarm()` and
   `listNamespaces()` work: see [accounts.md](accounts.md).
-- **Phones only.** iPhone with iOS 16.4 or later, and Android phones with Android 7.0 or later
-  through the Capacitor plugin ([android.md](android.md)). iPad, Mac (Designed for iPad) and
+- **Phones only.** iPhone with iOS 16.4 or later, and Android phones with Android 10 or later
+  through the Capacitor plugin ([android.md](android.md)). Your Android app can target Android 7.0;
+  below Android 10, Pulse reports `supported: false` with `unsupportedReason: 'os'`. iPad, Mac (Designed for iPad) and
   Android tablets report `supported: false`. The Cordova plugin's Android side is still a stub:
   `isAvailable()` is false there and every other call rejects with `unsupported`.
 

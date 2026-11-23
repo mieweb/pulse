@@ -20,11 +20,12 @@ import com.mieweb.pulse.kit.core.PulseNamespace
  */
 internal object PulseKitInfo {
   /**
-   * Android 7.0 (API 24) is Pulse's floor (S1-b: every module is at 24 or below after #303 and
-   * pulse-editor #20). The AAR's manifest says the same, so a host below it needs
-   * `tools:overrideLibrary`, and then `info()` says `os`.
+   * Pulse opens from Android 10 (API 29). The AAR's manifest stays at 24 (S1-b: every module is at
+   * 24 or below after #303 and pulse-editor #20), so a host targeting Android 7+ can include it;
+   * on 7 to 9 `info()` says `os` and the host shows its fallback. Recording on 7 to 9 hasn't run
+   * on a phone yet (the emulators can't encode video): lower this to 24 once it has.
    */
-  const val MIN_API = 24
+  const val MIN_API = 29
 
   /**
    * Whether host writes run Pulse JS with no screen (the `headless` capability, AD5). iOS builds it

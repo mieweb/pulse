@@ -10,7 +10,9 @@ the page code. Cordova apps on Android still get a stub ([cordova.md](cordova.md
 
 **Before you start:**
 
-- Capacitor 8, with your Android project's `minSdkVersion` at 24 (Android 7.0) or higher.
+- Capacitor 8, with your Android project's `minSdkVersion` at 24 (Android 7.0) or higher. Pulse
+  itself opens on Android 10 (API 29) or later; below that, `getInfo()` answers `supported: false`
+  with `unsupportedReason: 'os'`, so show your fallback.
 - **Phones only.** On a tablet, `getInfo()` answers `supported: false` with
   `unsupportedReason: 'device'`. Android counts a screen whose smallest width is 600 dp or more as a
   tablet, so a foldable opened flat also answers `device` while it is open. A phone without a
@@ -18,8 +20,8 @@ the page code. Cordova apps on Android still get a stub ([cordova.md](cordova.md
 - **Release builds of PulseKit carry ARM code only** (`arm64-v8a` and `armeabi-v7a`), no x86_64.
   Test on a phone. On an x86_64 emulator, a release PulseKit is UNTESTED; a PulseKit you build in
   debug carries x86_64 too ([dev-loop.md](dev-loop.md#a-debug-pulsekit-for-android)).
-- Only Android 16 on a Galaxy S24 has run Pulse in a host app. Android 7 to 15 are UNTESTED; see
-  the [support matrix](support-matrix.md).
+- Pulse has run in a host app on Android 16 (Galaxy S24) and Android 17 beta (Pixel 6a). Android
+  10 to 15 are UNTESTED; see the [support matrix](support-matrix.md).
 
 ## Add PulseKit's repository
 
