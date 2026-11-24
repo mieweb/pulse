@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-nitro-screen-recorder/android/src/main/java/com/margelo/nitro/nitroscreenrecorder/NitroScreenRecorder.kt b/node_modules/react-native-nitro-screen-recorder/android/src/main/java/com/margelo/nitro/nitroscreenrecorder/NitroScreenRecorder.kt
+index f15b5a3..9707524 100644
+--- a/node_modules/react-native-nitro-screen-recorder/android/src/main/java/com/margelo/nitro/nitroscreenrecorder/NitroScreenRecorder.kt
++++ b/node_modules/react-native-nitro-screen-recorder/android/src/main/java/com/margelo/nitro/nitroscreenrecorder/NitroScreenRecorder.kt
+@@ -547,7 +547,7 @@ class NitroScreenRecorder : HybridNitroScreenRecorderSpec() {
+   override fun clearRecordingCache() {
+     val ctx = NitroModules.applicationContext ?: return
+     // Note: In-app recordings used internal storage. We only clear global now.
+-    val globalDir = File(ctx.filesDir, "recordings")
++    val globalDir = File(ctx.externalCacheDir ?: ctx.filesDir, "recordings")
+     RecorderUtils.clearDirectory(globalDir)
+     lastGlobalRecording = null
+   }

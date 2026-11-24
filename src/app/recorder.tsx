@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { peekRecorderPlace, takeRecorderPlace } from '@/features/recorder/link-place';
 import { RecorderScreen } from '@/features/recorder/recorder-screen';
+import { screenCapturePort } from '@/features/screen-capture/screen-capture';
 import { closeToHome } from '@/shell/standalone/navigation';
 
 /** The stack as this route sees it: enough to tell which screen is under this one. */
@@ -62,6 +63,8 @@ export default function RecorderRoute() {
         }
         onExport={(id) => router.push({ pathname: '/export', params: { draftId: id } })}
         onClose={closeToHome}
+        // Screen recording is the Pulse app's: the embed's recorder has no Record screen.
+        screenCapture={screenCapturePort}
       />
     </ScreenFocusProvider>
   );

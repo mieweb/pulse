@@ -1,5 +1,4 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { File } from 'expo-file-system';
 import {
   launchImageLibraryAsync,
   UIImagePickerPreferredAssetRepresentationMode,
@@ -36,22 +35,17 @@ import {
 import { useToast } from '@/features/toast/toast-provider';
 import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/core/upload-log';
-import {
-  absolutize,
-  copyIntoSegments,
-  deleteSegmentFile,
-  persistRecording,
-  thumbRelPath,
-} from '@/utils/file-store';
-import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
-import { importFailureCopy } from '@/utils/import-copy';
+import { absolutize, deleteQuietly, persistRecording } from '@/utils/file-store';
+import { importFailureCopy, isOutOfSpace } from '@/utils/import-copy';
 import { userMessage } from '@/utils/user-message';
-import { generateThumbnailFile, getDurationMs } from '@/utils/video';
+import { getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
-import type { RecorderNewDraft } from './contract';
+import { addExternalClip } from './add-external-clip';
+import type { RecorderNewDraft, ScreenCapturePort } from './contract';
 import { importLog } from './import-log';
-import { getRecorderFormat, learnRecorderFormat } from './recorder-format';
+import { learnRecorderFormat } from './recorder-format';
+import { useScreenTake } from './screen-take';
 import { useCallState } from './use-call-state';
 
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
@@ -66,19 +60,17 @@ export type { CameraFacing, StabilizationMode } from '@/core/types/recorder-pref
  * earlier stop requests are deferred to this boundary. */
 const MIN_RECORD_MS = 350;
 
-/** Delete a conform output; best-effort (it's in the purgeable cache dir anyway). */
-function discard(uri: string) {
-  try {
-    new File(uri).delete();
-  } catch {}
-}
-
 /**
  * `newDraft`: what a draft this recorder creates starts with — a link's `name` as its name (if
  * it has one) and the link's place as its context; embedded, the host place and `createdVia`.
- * Read once, like `initialDraftId`.
+ * Read once, like `initialDraftId`. `screenCapture`: the Pulse app's screen recording, if any (a
+ * take owns the mic; its draft isn't dropped as empty).
  */
-export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft) {
+export function useRecorder(
+  initialDraftId?: string,
+  newDraft?: RecorderNewDraft,
+  screenCapture?: ScreenCapturePort,
+) {
   const cameraRef = useRef<CameraRef>(null);
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
   const [isRecording, setIsRecording] = useState(false);
@@ -120,7 +112,10 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
   // open (and two extra rebuilds on every camera flip). The '!pri' -11800 recovery path
   // (reportMicPriorityError) remains the backstop for a cold open into an in-progress call,
   // which the interruption latch cannot see (nothing of ours was active to be interrupted).
-  const micWanted = !muted && !callActive;
+  // A screen take owns the mic (module state, so in every recorder): the camera's is off while it
+  // runs, without touching the saved mute.
+  const screenLive = useScreenTake(screenCapture).phase !== 'idle';
+  const micWanted = !muted && !callActive && !screenLive;
   // Freeze the mic config for the duration of a recording: an enableAudio change rebuilds the video
   // output, which tears down the in-flight recorder before it can finalize — dropping the clip. We
   // hold the value captured while idle and only let it change once recording stops, so a call
@@ -260,6 +255,8 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
   const draftIdRef = useRef<string | null>(initialDraftId ?? null);
   const segmentCount = useRef(0);
   const everHadSegments = useRef(false);
+  // The shell's screen recording, read once (like the draft id) for the unmount below.
+  const screenCaptureRef = useRef(screenCapture);
   useEffect(() => {
     draftIdRef.current = draftId;
   }, [draftId]);
@@ -272,9 +269,14 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
   const dropEmptyDraft = () => {
     const id = draftIdRef.current ?? sessionDraftId.current;
     const safeToDelete = sessionDraftId.current != null || everHadSegments.current;
-    if (id && segmentCount.current === 0 && safeToDelete) {
-      dropClipJobs({ draftId: id });
-      void deleteDraft(id);
+    // A screen take (or its import) for this draft still brings it a clip.
+    if (id && segmentCount.current === 0 && safeToDelete && !screenCaptureRef.current?.holds(id)) {
+      // The count can lag a clip that just landed (a screen recording's import): the db decides.
+      void (async () => {
+        if ((await segmentsForDraft(id)).length > 0) return;
+        dropClipJobs({ draftId: id });
+        await deleteDraft(id);
+      })();
     }
   };
   useEffect(() => {
@@ -367,32 +369,11 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
     return id;
   }
 
-  // Generates the thumbnail and writes the db row for a segment whose file is already copied
-  // into the draft, then reflects it synchronously in the unmount-cleanup refs (see the effect
-  // above) so a racing close/unmount can't see an "empty" draft and delete the clip just added.
-  async function persistSegment(
-    forDraftId: string,
-    segmentId: string,
-    originalFilename: string,
-    durationMs: number,
-    signal?: AbortSignal,
-  ): Promise<boolean> {
-    const thumbRel = thumbRelPath(forDraftId, segmentId);
-    const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
-    // An import cancelled while its cover rendered: nothing is added (the caller drops the file).
-    if (signal?.aborted) {
-      if (ok) deleteSegmentFile(thumbRel);
-      return false;
-    }
-    await addSegment(forDraftId, {
-      id: segmentId,
-      originalFilename,
-      durationMs,
-      thumbnail: ok ? thumbRel : null,
-    });
+  // A clip an import just wrote, reflected synchronously in the unmount-cleanup refs (see the
+  // effect above) so a racing close/unmount can't see an "empty" draft and delete it.
+  function noteSegmentAdded() {
     everHadSegments.current = true;
     segmentCount.current = Math.max(segmentCount.current, 1);
-    return true;
   }
 
   async function startRecording() {
@@ -461,7 +442,7 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
       const durationMs = await getDurationMs(absolutize(originalFilename));
       // The row first, the cover after: the clip shows as soon as it's saved. On Android the
       // cover is the longest step after a stop (150–400 ms: Media3 prepares a player for each new
-      // file). Imports stay cover-first (persistSegment): they can be cancelled while it renders.
+      // file). Imports stay cover-first (addExternalClip): they can be cancelled while it renders.
       expectSegmentCover(originalFilename);
       await addSegment(id, { id: segmentId, originalFilename, durationMs, thumbnail: null });
       everHadSegments.current = true;
@@ -504,12 +485,7 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
   }, [isRecording, startQueued]);
 
   // Pick an existing device video (system picker — no permission prompt) and add it as a
-  // segment, following the same persist path as a recording. Imports already in the recorder's
-  // exact format keep their original bytes; everything else is conformed ONCE, here, to the
-  // reels contract AND the recorder's own signature (coded orientation, fps, AAC layout), so a
-  // draft mixing recordings and imports merges with no re-encode. The policy lives in
-  // decideImport (§ imports), the conversion (pulse-editor `conform`) and its verification in
-  // conformToContract.
+  // segment: conformed to the recorder's own format unless it's already in it (addExternalClip).
   async function importClip() {
     if (isRecordingRef.current || isImporting) return;
     if (Platform.OS === 'ios' && !libraryPermission?.granted) {
@@ -577,79 +553,32 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
         );
       };
 
-      // Conform before the clip enters the draft — and fail CLOSED: every stored clip must meet
-      // the reels contract, so a clip that can't be probed or conformed (or whose output fails
-      // verification) is rejected rather than persisted off-contract.
-      const target = await getRecorderFormat();
-      // Native reports often (iOS every 0.5 %, Android every 100 ms); whole percents are plenty
-      // for the ring. A report that lands after a cancel is dropped.
-      let shown = -1;
-      const onProgress = (fraction: number) => {
-        if (abort.signal.aborted || (fraction < 1 && fraction - shown < 0.01)) return;
-        shown = fraction;
-        setImportProgress(fraction);
-      };
-      let conformed: ConformOutcome | null;
-      try {
-        conformed = await conformToContract(picked.uri, target, abort.signal, onProgress);
-      } catch (e) {
-        if (abort.signal.aborted) {
-          cancelled();
-          return;
-        }
-        const why = describeError(e);
-        importLog.warn(`failed after ${formatSeconds(Date.now() - started)}: ${why}`);
+      // Conform before the clip enters the draft, then save it: each step checks for a cancel (the
+      // recorder closed, Pulse left) and undoes what's been done. An empty draft left behind is
+      // dropped in `finally` once the recorder has closed.
+      const outcome = await addExternalClip(picked.uri, ensureDraft, null, {
+        signal: abort.signal,
+        onProgress: setImportProgress,
+        onAdded: noteSegmentAdded,
+      });
+      if (outcome.status === 'cancelled') {
+        cancelled();
+      } else if (outcome.status === 'rejected') {
         showToast({
           kind: 'error',
           title: 'Couldn’t import the video',
-          message: importFailureCopy(why),
+          message: importFailureCopy(outcome.why),
         });
-        return;
-      }
-      // Finished just as Pulse left: still cancelled, as promised.
-      if (abort.signal.aborted) {
-        if (conformed) discard(conformed.path);
-        cancelled();
-        return;
-      }
-      if (conformed) {
-        importLog.info(
-          `converted with ${conformed.engine} in ${formatSeconds(Date.now() - started)}` +
-            (conformed.mergeMatch ? ', matches the recorder' : '') +
-            ` — ${conformed.notes.join('; ')}`,
-        );
-      } else {
-        importLog.info('already in the recorder format — kept as is');
-      }
-
-      // Saving: each step checks for a cancel (the recorder closed, Pulse left) and undoes what's
-      // been done, so the clip lands whole in its draft or not at all. An empty draft left behind
-      // is dropped in `finally` once the recorder has closed.
-      const id = await ensureDraft();
-      if (abort.signal.aborted) {
-        if (conformed) discard(conformed.path);
-        cancelled();
-        return;
-      }
-      const segmentId = `${id}-${Date.now()}`;
-      const originalFilename = await copyIntoSegments(conformed?.path ?? picked.uri, id, segmentId);
-      // The conform output lives in the OS-purgeable cache dir; drop it once copied.
-      if (conformed) discard(conformed.path);
-      const durationMs = await getDurationMs(absolutize(originalFilename));
-      const saved =
-        !abort.signal.aborted &&
-        (await persistSegment(id, segmentId, originalFilename, durationMs, abort.signal));
-      if (!saved) {
-        deleteSegmentFile(originalFilename);
-        cancelled();
-        return;
       }
     } catch (e) {
-      importLog.warn(`failed: ${describeError(e)}`);
+      const why = describeError(e);
+      importLog.warn(`failed: ${why}`);
       showToast({
         kind: 'error',
         title: 'Couldn’t import the video',
-        message: userMessage(e, 'Try again.', 'import'),
+        message: isOutOfSpace(why)
+          ? importFailureCopy(why)
+          : userMessage(e, 'Try again.', 'import'),
       });
     } finally {
       appStateSub?.remove();
@@ -658,11 +587,7 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
       if (unmountedRef.current) dropEmptyDraft();
       // The picker hands over a full-size COPY of the original in the cache dir (hundreds of MB
       // for 4K): the clip now lives in the draft (or was rejected), so drop it.
-      if (pickedUri) {
-        try {
-          new File(pickedUri).delete();
-        } catch {}
-      }
+      if (pickedUri) deleteQuietly(pickedUri);
       setImportProgress(null);
       setIsImporting(false);
     }
@@ -815,6 +740,7 @@ export function useRecorder(initialDraftId?: string, newDraft?: RecorderNewDraft
     onSessionConfigured: () => setConnectionEpoch((prev) => prev + 1),
     toggleRecording,
     finalizeRecording,
+    ensureDraft,
     importClip: () => void importClip(),
     startHoldRecording,
     endHoldRecording,

@@ -9,6 +9,8 @@ export type MountedRecorder = {
   place(): DraftContext | null;
   /** The draft it is on; `null` while it hasn't made one yet. */
   draftId(): string | null;
+  /** The draft it is on, made now if it hasn't made one yet. */
+  ensureDraft(): Promise<string>;
   /** Whether it is the screen on top, with nothing presented over it. */
   focused(): boolean;
 };
@@ -43,9 +45,19 @@ export function recordersGone(timeoutMs: number): Promise<void> {
 }
 
 /** The recorder on top of the stack, if one is: its place and the draft it is on. */
-export function recorderOnScreen(): { place: DraftContext | null; draftId: string | null } | null {
+export function recorderOnScreen(): {
+  place: DraftContext | null;
+  draftId: string | null;
+  ensureDraft: () => Promise<string>;
+} | null {
   for (const recorder of recorders) {
-    if (recorder.focused()) return { place: recorder.place(), draftId: recorder.draftId() };
+    if (recorder.focused()) {
+      return {
+        place: recorder.place(),
+        draftId: recorder.draftId(),
+        ensureDraft: () => recorder.ensureDraft(),
+      };
+    }
   }
   return null;
 }

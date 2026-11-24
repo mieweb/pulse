@@ -36,8 +36,9 @@ const ROUTER_UNTIL_ONBOARDING = [
 ];
 /**
  * Rule 2: the features the embed runs never import a standalone-only one (the plan's B6 list:
- * onboarding, About, and .pulse transfer and library backup). Home (drafts) and the screen
- * recorder are standalone screens too, but as screens: nothing imports them.
+ * onboarding, About, and .pulse transfer and library backup; and screen recording, which the
+ * recorder takes as a port). Home (drafts) and the screen recorder are standalone screens too, but
+ * as screens: nothing imports them.
  */
 const CORE_FEATURES = [
   'recorder',
@@ -50,7 +51,7 @@ const CORE_FEATURES = [
   'logs',
   'embed',
 ].map((f) => `./src/features/${f}`);
-const STANDALONE_FEATURES = ['onboarding', 'about', 'draft-transfer'];
+const STANDALONE_FEATURES = ['onboarding', 'about', 'draft-transfer', 'screen-capture'];
 
 /**
  * Pairing (links, the paired pool and its sheets): standalone-only, and out of the embed's bundle

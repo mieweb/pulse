@@ -15,6 +15,7 @@ import {
   restoreLibraryBackup,
 } from '@/features/draft-transfer/library-backup';
 import { installLogCapture } from '@/features/logs/logger';
+import { ScreenCaptureLifecycle } from '@/features/screen-capture/screen-capture';
 import { ToastProvider, useToast } from '@/features/toast/toast-provider';
 import { setClientIdentity } from '@/features/upload/core/client-identity';
 import { startUploads } from '@/features/upload/core/start-uploads';
@@ -79,6 +80,7 @@ function ThemedNavigation() {
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
       {/* First, so the upload manager has its toast before any link or screen starts an upload. */}
       <UploadsStarter />
+      <ScreenCaptureLifecycle />
       <UploadDeepLinkProvider>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="recorder" options={fullScreen} />

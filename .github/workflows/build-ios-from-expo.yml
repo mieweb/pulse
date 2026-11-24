@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # iOS Expo Build & Upload
 #
-# Composes mieweb/actions building blocks (pinned to v2.3.1):
+# Composes mieweb/actions building blocks (pinned to v2.5.0):
 #   prepare-expo-env → stamp build number → expo prebuild
 #   → sign-archive-upload-ios (match) → upload to TestFlight
 #
@@ -42,7 +42,7 @@ jobs:
     steps:
       # ── Checkout, Xcode, Node, JS deps ────────────────────────────────────
       - name: Setup Expo environment
-        uses: mieweb/actions/prepare-expo-env@61db81e727847e112ae5af71a8c9b8bf62b1f4cb # v2.3.1
+        uses: mieweb/actions/prepare-expo-env@df2ee7b96f5631bfedf22b0b6ecc43ab02fe6757 # v2.5.0
         with:
           package_manager: npm
           node_version: "24"
@@ -82,10 +82,13 @@ jobs:
 
       # ── pod install + sign + archive + upload ─────────────────────────────
       - name: Build & upload iOS to TestFlight
-        uses: mieweb/actions/sign-archive-upload-ios@61db81e727847e112ae5af71a8c9b8bf62b1f4cb # v2.3.1
+        # v2.5.0: per-target signing for the broadcast extension (`extension_identifiers`).
+        uses: mieweb/actions/sign-archive-upload-ios@df2ee7b96f5631bfedf22b0b6ecc43ab02fe6757 # v2.5.0
         with:
           signing_mode:                  match
           app_identifier:                com.mieweb.pulse
+          # The screen recorder's broadcast upload extension: its own App ID and profile.
+          extension_identifiers:         com.mieweb.pulse.BroadcastExtension
           apple_team_id:                 ${{ secrets.APPLE_TEAM_ID }}
           match_git_basic_authorization: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
           match_password:                ${{ secrets.MATCH_PASSWORD }}

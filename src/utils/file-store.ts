@@ -25,6 +25,14 @@ export {
  */
 export const toFileUri = (path: string): string => (path.startsWith('/') ? `file://${path}` : path);
 
+/** Delete a file if it's there; never throws (a clean-up must not fail its caller). */
+export function deleteQuietly(uri: string): void {
+  try {
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch {}
+}
+
 export function absolutize(relPath: string): string {
   return new File(documentDir(), ...relPath.split('/')).uri;
 }

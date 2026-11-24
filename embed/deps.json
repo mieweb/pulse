@@ -50,6 +50,7 @@
     "expo-splash-screen": "The host app owns launch; the container shows its own skeleton.",
     "expo-status-bar": "The status-bar port talks to the container view controller instead (AD22).",
     "expo-web-browser": "A config plugin of the Pulse app (app.json); no code imports it.",
-    "react-native-background-actions": "Its Android service assumes a React Native host app and crashes in others."
+    "react-native-background-actions": "Its Android service assumes a React Native host app and crashes in others.",
+    "react-native-nitro-screen-recorder": "Screen recording is standalone-only: it needs the Pulse app's broadcast extension (iOS) and screen-capture service (Android)."
   }
 }

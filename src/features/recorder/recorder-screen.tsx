@@ -25,10 +25,10 @@ import { flushDraftWrites } from '@/features/editor/draft-writes';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { holdsCamera, releaseCamera, takeCamera } from '@/features/recorder/camera-holder';
 import { ExportButton } from '@/components/export-button';
+import { AddMenu } from '@/features/recorder/add-menu';
 import { CloseAction, CloseButton } from '@/features/recorder/close-button';
 import { ContextBanner, RecorderNotice } from '@/features/recorder/context-banner';
 import { EditButton } from '@/features/recorder/edit-button';
-import { ImportButton } from '@/features/recorder/import-button';
 import {
   DEFAULT_LENS_LABEL,
   type LensPreset,
@@ -42,6 +42,7 @@ import { checkDiskForRecording, NOT_ENOUGH_SPACE } from '@/features/recorder/low
 import { MIC_COPY, MIC_FORCED_MUTE_KEY, micMuteStep } from '@/features/recorder/mic-denied';
 import { useAudioFocus } from '@/features/recorder/use-audio-focus';
 import { type MountedRecorder, registerRecorder } from '@/features/recorder/recorder-presence';
+import { useScreenTake } from '@/features/recorder/screen-take';
 import { useRecorder } from '@/features/recorder/use-recorder';
 import { RETICLE_SIZE, useFocusReticle } from '@/features/recorder/use-focus-reticle';
 import { useRecorderGestures } from '@/features/recorder/use-recorder-gestures';
@@ -138,6 +139,7 @@ export function RecorderScreen({
   onEdit,
   onExport,
   onClose,
+  screenCapture,
 }: RecorderScreenProps) {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
@@ -175,6 +177,7 @@ export function RecorderScreen({
     onSessionConfigured,
     toggleRecording,
     finalizeRecording,
+    ensureDraft,
     importClip,
     isImporting,
     importProgress,
@@ -186,7 +189,7 @@ export function RecorderScreen({
     cycleStabilization,
     deleteSegment,
     reorderSegments,
-  } = useRecorder(initialDraftId, newDraft);
+  } = useRecorder(initialDraftId, newDraft, screenCapture);
 
   // A refused microphone (embedded, PLAN-final §5.3): the recorder records without sound instead
   // of blocking. Denied asks first ("Record without sound?", or Settings); restricted can't be
@@ -255,6 +258,21 @@ export function RecorderScreen({
   // the floating trash above the bar has clear space.
   const [dragging, setDragging] = useState(false);
 
+  // A screen take (module state, so in any recorder) owns the mic: the camera records silent and
+  // audio focus isn't taken while it runs. The camera, and the rest of Pulse, stay usable; its Stop
+  // shows in the recorder of the draft it goes to.
+  const screen = useScreenTake(screenCapture);
+  const screenLive = screen.phase !== 'idle';
+  const screenHere = screenLive && screen.draftId != null && screen.draftId === draftId;
+  const screenStartingHere = screen.starting && !screenLive && screen.draftId === draftId;
+  const micOff = muted || screenLive;
+  const takeBusy = isRecording || screenLive;
+  const ScreenStopPill = screenCapture?.StopPill;
+  const recordScreen = () => {
+    if (isRecording || isImporting || screenLive || screen.importing) return;
+    void screenCapture?.start(ensureDraft, !muted);
+  };
+
   // While the editor or Export is presented over this one, the recorder is unfocused — drop the
   // camera session so it isn't capturing (and burning power) behind the modal. Restored on return.
   const [focused, setFocused] = useState(true);
@@ -290,6 +308,7 @@ export function RecorderScreen({
       finalize: finalizeRecording,
       place: () => newDraft.context,
       draftId: () => draftId,
+      ensureDraft,
       focused: () => focused,
     };
   });
@@ -299,6 +318,7 @@ export function RecorderScreen({
         finalize: () => mounted.current?.finalize() ?? Promise.resolve(),
         place: () => mounted.current?.place() ?? null,
         draftId: () => mounted.current?.draftId() ?? null,
+        ensureDraft: () => mounted.current?.ensureDraft() ?? Promise.reject(new Error('unmounted')),
         focused: () => mounted.current?.focused() ?? false,
       }),
     [],
@@ -325,10 +345,10 @@ export function RecorderScreen({
   const takesGetCaptions = captionsModelPolicy.takeGetsCaptions(
     captionsOffRows[0]?.value === 'true',
   );
-  useClipTranscription(segments, focused && !isRecording && takesGetCaptions);
+  useClipTranscription(segments, focused && !takeBusy && takesGetCaptions);
   useEffect(() => {
-    setClipQueuePaused(isRecording);
-  }, [isRecording]);
+    setClipQueuePaused(takeBusy);
+  }, [takeBusy]);
   useEffect(() => () => setClipQueuePaused(false), []);
 
   // Audio focus: while the recorder is on screen capturing with a live mic, pause other apps'
@@ -341,23 +361,32 @@ export function RecorderScreen({
   // (and re-applying the session config) on every render.
   const { acquire: acquireFocus, release: releaseFocus } = useAudioFocus();
   useEffect(() => {
-    const shouldHold = focused && appActive && !muted && !callActive && prefsReady;
+    const shouldHold = focused && appActive && !micOff && !callActive && prefsReady;
     if (shouldHold) void acquireFocus();
     else void releaseFocus();
-  }, [focused, appActive, muted, callActive, prefsReady, acquireFocus, releaseFocus]);
+  }, [focused, appActive, micOff, callActive, prefsReady, acquireFocus, releaseFocus]);
   useEffect(() => () => void releaseFocus(), [releaseFocus]);
 
-  // Audio handoff: back from a screen that played video (the editor sets a playback session),
-  // the shared audio session returns to the recorder, and the camera restart re-attaches the mic
-  // input (enableAudio keeps it on the main capture session). If the restart wins the race
-  // against the session-config restore — the player's post-unload writes and the acquire above
-  // are both async — the mic I/O unit starts under a playback-only category and AVFoundation
-  // kills the session with -11800 (underlying -10868, kAudioUnitErr_FormatNotSupported).
+  // Audio handoff: back from a screen that played video (the editor sets a playback session), or
+  // from a screen take (focus was released for it), the shared audio session returns to the
+  // recorder, and the camera restart re-attaches the mic input (enableAudio keeps it on the main
+  // capture session). If the restart wins the race against the session-config restore — the
+  // player's post-unload writes and the acquire above are both async — the mic I/O unit starts
+  // under a playback-only category and AVFoundation kills the session with -11800 (underlying
+  // -10868, kAudioUnitErr_FormatNotSupported).
   // Sequence instead of race: hold the camera off (cameraActive below) for one settle beat + an
   // acquire, then restart. Detected as a render-phase transition so the same commit that
   // regains focus already holds the camera off. Muted / in-call returns skip the hold — they
   // restart video-only, and a category can't break a session with no mic input.
   const [audioHandoff, setAudioHandoff] = useState(false);
+  // Back on screen, or the mic back from a screen take.
+  const cameraWanted = focused && !screenLive;
+  const [wasWanted, setWasWanted] = useState(cameraWanted);
+  if (wasWanted !== cameraWanted) {
+    setWasWanted(cameraWanted);
+    // Not mid-take: holding the camera off would cut a camera take a screen take ended under.
+    if (cameraWanted && !micOff && !callActive && !isRecording) setAudioHandoff(true);
+  }
   // Android: another recorder opened over this one (Add clips) unbound this one's camera, so back
   // on top it mounts a new <Camera> (`cameraKey`) that binds again; restarting the old session
   // would open nothing (see camera-holder.ts). Same commit as the focus, like the handoff.
@@ -368,7 +397,6 @@ export function RecorderScreen({
   const [wasFocused, setWasFocused] = useState(focused);
   if (wasFocused !== focused) {
     setWasFocused(focused);
-    if (focused && !muted && !callActive) setAudioHandoff(true);
     if (focused && Platform.OS === 'android' && !holdsCamera(cameraHolder)) {
       setCameraKey((key) => key + 1);
       onCameraRemount();
@@ -435,7 +463,7 @@ export function RecorderScreen({
       lastSessionErrorRef.current = now;
       if (micPriority || repeated) {
         reportMicPriorityError();
-      } else if (!muted && !callActive) {
+      } else if (!micOff && !callActive) {
         // Restore `.playAndRecord` before the bounce restarts the session, so the retry can't
         // trip over the same stale playback-only category that killed it.
         void acquireFocus();
@@ -448,7 +476,7 @@ export function RecorderScreen({
         setRecovering(false);
       }, 150);
     },
-    [reportMicPriorityError, muted, callActive, acquireFocus],
+    [reportMicPriorityError, micOff, callActive, acquireFocus],
   );
 
   const devices = useCameraDevices();
@@ -542,14 +570,14 @@ export function RecorderScreen({
     // Only a tap that starts (or queues) a take waits: one that stops a take or takes back a
     // queued one must act at once, or the queued take could start during the wait and this tap
     // then stop it, leaving a short clip.
-    if (starting && !muted && !callActive) await acquireFocus();
+    if (starting && !micOff && !callActive) await acquireFocus();
     toggleRecording();
     recordingShown.set(recordingShownNow());
   }, [
     toggleRecording,
     recordingShownNow,
     recordingShown,
-    muted,
+    micOff,
     callActive,
     acquireFocus,
     diskAllowsTake,
@@ -568,11 +596,11 @@ export function RecorderScreen({
       recordingShown.set(recordingShownNow());
       return;
     }
-    if (!muted && !callActive) await acquireFocus();
+    if (!micOff && !callActive) await acquireFocus();
     if (seq === holdSeqRef.current) startHoldRecording();
     recordingShown.set(recordingShownNow());
   }, [
-    muted,
+    micOff,
     callActive,
     acquireFocus,
     startHoldRecording,
@@ -613,9 +641,9 @@ export function RecorderScreen({
   // The camera allows haptics (see <Camera>), so mute them while a clip records: the mic would
   // pick one up. Start's haptic fires before capture begins, so it still lands.
   useEffect(() => {
-    muteHaptics(isRecording);
+    muteHaptics(takeBusy);
     return () => muteHaptics(false);
-  }, [isRecording]);
+  }, [takeBusy]);
 
   // Zoom factors aren't portable across a flip, so reset to neutral 1x. (A lens chip sets its
   // own factor; flipping mid-recording already stops the recording natively.)
@@ -658,7 +686,7 @@ export function RecorderScreen({
       if (touched !== prev) scheduleOnRN(setShutterTouched, touched);
     },
   );
-  const shutterIdle = focused && appActive && cameraReady && !isRecording && !shutterTouched;
+  const shutterIdle = focused && appActive && cameraReady && !takeBusy && !shutterTouched;
   const recordTip = useTip('record', shutterIdle && segments.length === 0, {
     delayMs: 1000,
     learned: isRecording,
@@ -758,7 +786,7 @@ export function RecorderScreen({
             // focus effect's acquire, which drops the "allow haptics" setting (iOS honours it only
             // on activation): the recorder was silent until the first recording re-acquired.
             // Re-acquiring here, the same call every record tap makes, applies it from the start.
-            if (!muted && !callActive) void acquireFocus();
+            if (!micOff && !callActive) void acquireFocus();
           }}
           onError={onCameraError}
         />
@@ -811,6 +839,18 @@ export function RecorderScreen({
               )}
             </View>
           </View>
+          {/* The screen take's Stop, under the top bar: clear of the rail, the lens pill and the
+              shutter, which stays the camera's. */}
+          {ScreenStopPill && (screenHere || screenStartingHere) && (
+            <View style={styles.screenStop} pointerEvents="box-none">
+              <ScreenStopPill
+                began={screen.began}
+                starting={screenStartingHere}
+                stopping={screen.phase === 'stopping'}
+                onStop={() => void screenCapture?.stop()}
+              />
+            </View>
+          )}
           {/* Embedded: what the recording is for, then anything the person should know first. */}
           {embedded && (
             <View style={styles.notices} pointerEvents="box-none">
@@ -861,6 +901,7 @@ export function RecorderScreen({
           stabilization={stabilization}
           muted={muted}
           callActive={callActive}
+          screenTake={screenLive}
           recording={isRecording}
           onFlip={flipCamera}
           onToggleTorch={toggleTorch}
@@ -929,11 +970,15 @@ export function RecorderScreen({
             {/* Faded out with the record button during a drag so the trash has clear space. */}
             <Animated.View
               style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
-              <ImportButton
-                onPress={importClip}
+              <AddMenu
+                onImport={importClip}
+                onRecordScreen={recordScreen}
+                // Importing works during a screen take; only a second screen take can't start.
+                screenAvailable={screenCapture != null && !screenLive}
                 disabled={isRecording || dragging}
-                busy={isImporting}
-                progress={importProgress}
+                // A screen recording converting into a draft shows here too, as a Photos import.
+                busy={isImporting || screen.importing}
+                progress={isImporting ? importProgress : screen.progress}
               />
             </Animated.View>
           </View>
@@ -1007,6 +1052,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   topBarSide: { flex: 1, flexDirection: 'row' },
+  screenStop: { alignItems: 'center', marginTop: Spacing.two },
   topBarEnd: { justifyContent: 'flex-end' },
   bottom: { alignItems: 'center', gap: Spacing.three },
   // Full-width row; the record button is centered by the row itself, so its position can't

@@ -1,6 +1,8 @@
 // What a shell gives the recorder and what it hears back. The standalone app maps these to router
 // pushes (src/app/recorder.tsx); the embed shell maps them to its own flow. The screen itself never
 // navigates.
+import type { ComponentType } from 'react';
+
 import type { DraftContext } from '@/db/drafts';
 import type { HostContext } from '@/db/host-context';
 
@@ -41,4 +43,47 @@ export type RecorderScreenProps = {
   onExport: (draftId: string) => void;
   /** Leave the recorder (its ✕, after the take in flight is saved). */
   onClose: (result: RecorderCloseResult) => void;
+  /**
+   * Screen recording, from the Pulse app (src/features/screen-capture): with it the "+" offers
+   * Record screen and a take's Stop shows here. The embed has none (`npm run check:embed`), and
+   * its "+" is the plain import.
+   */
+  screenCapture?: ScreenCapturePort;
+};
+
+/** `live`: a screen take of Pulse's own is capturing. `stopping`: Stop asked, file settling. */
+export type ScreenPhase = 'idle' | 'live' | 'stopping';
+
+/** A screen take as the recorder sees it (module state, so the same in every recorder). */
+export type ScreenCaptureState = {
+  phase: ScreenPhase;
+  /** When the capture began (wall clock), for the timer; null until it has. */
+  began: number | null;
+  /** The draft the take, or its import, is for. */
+  draftId: string | null;
+  /** A screen recording is being converted into a draft. */
+  importing: boolean;
+  /** That conversion's progress (0–1); null until it reports. */
+  progress: number | null;
+  /** Record screen was tapped and the capture hasn't begun yet (a hint for the UI only). */
+  starting: boolean;
+};
+
+/** What the Pulse app's screen recording gives the recorder (`RecorderScreenProps.screenCapture`). */
+export type ScreenCapturePort = {
+  /** The live state, for `useSyncExternalStore` (see `useScreenTake`). */
+  subscribe: (notify: () => void) => () => void;
+  getState: () => ScreenCaptureState;
+  /** Whether a take or its import is using this draft: the recorder mustn't drop it as empty. */
+  holds: (draftId: string) => boolean;
+  /** Record screen, for the recorder's draft (`draft` makes it if needed); `enableMic`: its mic. */
+  start: (draft: () => Promise<string>, enableMic: boolean) => Promise<void>;
+  stop: () => Promise<void>;
+  /** The take's Stop, under the recorder's top bar. */
+  StopPill: ComponentType<{
+    began: number | null;
+    starting: boolean;
+    stopping: boolean;
+    onStop: () => void;
+  }>;
 };

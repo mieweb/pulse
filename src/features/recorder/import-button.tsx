@@ -7,18 +7,22 @@ import { Opacity } from '@/constants/theme';
 import { CONTROLS_FADE } from './record-button';
 
 /** The "+" import control next to the record button — opens the system video picker to add
- *  an existing device clip as a segment. While a picked clip is being normalized/copied into
- *  the draft it shows a spinner, or a ring once the conversion reports progress (0–1). */
+ *  an existing device clip as a segment (or, with screen recording, the menu that offers it). While
+ *  a clip is being normalized/copied into the draft it shows a spinner, or a ring once the
+ *  conversion reports progress (0–1). */
 export function ImportButton({
   onPress,
   disabled,
   busy = false,
   progress = null,
+  label = 'Import video',
 }: {
   onPress: () => void;
   disabled: boolean;
   busy?: boolean;
   progress?: number | null;
+  /** Screen-reader label. */
+  label?: string;
 }) {
   const ring = busy ? progress : null;
   // Busy isn't disabled: it can't be pressed again, but the spinner (or the ring) stays at full
@@ -31,7 +35,7 @@ export function ImportButton({
         disabled={disabled || busy}
         hitSlop={6}
         accessibilityRole="button"
-        accessibilityLabel="Import video"
+        accessibilityLabel={label}
         accessibilityState={{ busy, disabled: disabled || busy }}
         accessibilityValue={
           ring != null ? { min: 0, max: 100, now: Math.round(ring * 100) } : undefined
