@@ -136,6 +136,21 @@ describe('geometry', () => {
     expect(scrollToShow(100, 200, 600, -20, 40)).toBe(0);
   });
 
+  it('shows the end of a range wider than the view, where the cursor is', () => {
+    // Ten clips copied in at the start, scrolled to 400 of a 300-wide view: the range (-3 … 581)
+    // ends in view, and its end stays in view rather than its start (the cursor at 569).
+    const target = scrollToShow(400, 300, 1200, -3, 581);
+    expect(target).toBe(281);
+    expect(569).toBeGreaterThanOrEqual(target!);
+    expect(569).toBeLessThanOrEqual(target! + 300);
+    // From before it, or past it, the same.
+    expect(scrollToShow(0, 300, 1200, -3, 581)).toBe(281);
+    expect(scrollToShow(900, 300, 1200, -3, 581)).toBe(281);
+    // Already there: no scroll. Held to the content.
+    expect(scrollToShow(281, 300, 1200, -3, 581)).toBeNull();
+    expect(scrollToShow(0, 300, 1200, 400, 1300)).toBe(900);
+  });
+
   it('scrolls the strip only while the dragged cursor is near an edge, faster deeper in', () => {
     const vw = 300;
     const pad = 14;

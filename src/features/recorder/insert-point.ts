@@ -185,7 +185,7 @@ export function onClip(x: number, y: number, count: number, g: StripGeometry): b
 /**
  * The scroll offset that brings [x0, x1] (content x) into a `viewport`-wide view of `content`, or
  * null when it's in view already. Moves as little as it can; a range wider than the view shows its
- * end (the cursor's side).
+ * end (the cursor's side) at the view's right edge, so the cursor after it stays in view.
  */
 export function scrollToShow(
   offset: number,
@@ -196,7 +196,8 @@ export function scrollToShow(
 ): number | null {
   const max = Math.max(0, content - viewport);
   let target = offset;
-  if (x1 > offset + viewport) target = x1 - viewport;
+  // Wider than the view: its end, even when the end is in view already and its start is not.
+  if (x1 - x0 > viewport || x1 > offset + viewport) target = x1 - viewport;
   else if (x0 < offset) target = x0;
   target = Math.min(max, Math.max(0, target));
   return Math.abs(target - offset) < 0.5 ? null : target;
