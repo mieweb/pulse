@@ -176,6 +176,30 @@ describe('createEditorHistory: additions', () => {
     expect(h.getState().past.map((s) => s.kind)).toEqual(['state', 'added']);
   });
 
+  it('a failed undo with a change made meanwhile goes back under that change', async () => {
+    const taking = gate<TakenOutClips | null>();
+    const takeOut = jest.fn<HistoryDeps['takeOut']>(() => taking.promise);
+    const { log, deps } = fakes({ takeOut });
+    const h = createEditorHistory(deps);
+    h.record(present(['a'], { a: 'e1' }), null);
+    h.recordAdded(['x']);
+    h.undo(present(['a', 'x'], { a: 'e2' }), apply);
+    h.record(present(['a', 'x'], { a: 'e2' }), null); // an edit while the clips are coming out
+    taking.reject(new Error('draft.locked'));
+    await h.settled();
+    expect(log).toContain('failed:undo');
+    // The clips never came out: the addition is still undoable, once the edit is.
+    expect(h.getState().past.map((s) => s.kind)).toEqual(['state', 'added', 'state']);
+    const applied = jest.fn();
+    h.undo(present(['a', 'x'], { a: 'e3' }), applied);
+    expect(applied).toHaveBeenCalledTimes(1);
+    takeOut.mockImplementation(async (ids) => takenOf(ids));
+    h.undo(present(['a', 'x'], { a: 'e2' }), apply);
+    await h.settled();
+    expect(takeOut).toHaveBeenLastCalledWith(['x']);
+    expect(h.getState().past.map((s) => s.kind)).toEqual(['state']);
+  });
+
   it('a failed redo keeps the addition redoable', async () => {
     const { log, deps } = fakes({
       restore: async () => {

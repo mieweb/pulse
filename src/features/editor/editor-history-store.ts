@@ -41,7 +41,8 @@ export type HistoryDeps = {
  *   goes onto the redo stack with what a redo needs.
  * - Redo: the same wait, then the clips go back and the step onto the undo stack.
  * - A change recorded meanwhile clears the redo stack as any change does: an undo finishing then
- *   drops what it took out (its files go); a redo finishing puts its step under that change.
+ *   drops what it took out (its files go); a redo finishing, or an undo failing (its clips still
+ *   in), puts its step back under that change.
  * - Closed (`dispose`): the redo stack's files go, and those of an undo still running once it
  *   has finished.
  */
@@ -60,6 +61,16 @@ export function createEditorHistory(deps: HistoryDeps) {
   const dropAll = (steps: readonly Step[]) => {
     for (const taken of takenOut(steps)) void deps.drop(taken);
   };
+  /**
+   * The undo stack with `step` back under the changes recorded since `below` was its top. Changes
+   * only go on top (`record` drops the oldest past 100), so they're the steps above `below`, or
+   * all of them once it has been dropped too.
+   */
+  const putUnderChanges = (step: Step, below: Step | undefined) => {
+    const past = [...history.past];
+    past.splice(below ? past.lastIndexOf(below) + 1 : 0, 0, step);
+    set({ ...history, past });
+  };
 
   const push = (step: Step, opKey: string | null) => {
     if (disposed) return;
@@ -71,6 +82,7 @@ export function createEditorHistory(deps: HistoryDeps) {
   const takeOut = (h: History<Step>, step: AddedStep, ids: string[]) => {
     // Off the undo stack while it runs.
     set({ ...h, past: h.past.slice(0, -1), lastOp: null });
+    const below = h.past[h.past.length - 2];
     const at = changes;
     return (async () => {
       let taken: TakenOutClips | null = null;
@@ -78,8 +90,8 @@ export function createEditorHistory(deps: HistoryDeps) {
         await deps.flush();
         taken = await deps.takeOut(ids);
       } catch (e) {
-        // Nothing came out: the step goes back where it was, unless a change came in.
-        if (!disposed && changes === at) set({ ...history, past: [...history.past, step] });
+        // Nothing came out: the step goes back where it was, under any change recorded meanwhile.
+        if (!disposed) putUnderChanges(step, below);
         deps.failed('undo', e);
         return;
       }
@@ -96,7 +108,7 @@ export function createEditorHistory(deps: HistoryDeps) {
   const putBack = (h: History<Step>, step: AddedStep & { taken: TakenOutClips }) => {
     // Off the redo stack while it runs, so no change or close drops its files meanwhile.
     set({ ...h, future: h.future.slice(0, -1), lastOp: null });
-    const pastAt = h.past.length;
+    const below = h.past[h.past.length - 1];
     const at = changes;
     return (async () => {
       try {
@@ -114,10 +126,7 @@ export function createEditorHistory(deps: HistoryDeps) {
       }
       if (disposed) return;
       // Back in the draft: its undo step, under any change recorded meanwhile.
-      const back: Step = { kind: 'added', ids: step.ids, taken: null };
-      const past = [...history.past];
-      past.splice(Math.min(pastAt, past.length), 0, back);
-      set({ ...history, past });
+      putUnderChanges({ kind: 'added', ids: step.ids, taken: null }, below);
     })();
   };
 
