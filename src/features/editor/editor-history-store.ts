@@ -20,7 +20,7 @@ import {
 export type HistoryDeps = {
   /** Every edit asked for is stored (draft-writes.ts): an addition's rows are read after them. */
   flush: () => Promise<void>;
-  /** Take an addition's clips out (`takeOutSegments`, its transcription jobs dropped first). */
+  /** Take an addition's clips out (`takeOutSegments`, then their transcription jobs dropped). */
   takeOut: (ids: string[]) => Promise<TakenOutClips | null>;
   /** Put them back (`restoreSegments`). */
   restore: (taken: TakenOutClips) => Promise<void>;
