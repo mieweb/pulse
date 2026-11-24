@@ -48,19 +48,19 @@ export type AddMenuProps = {
  */
 export const importVideoAction = (onPress: () => void): MenuAction => ({
   key: 'import',
-  label: 'Import video',
-  icon: 'photo.on.rectangle',
+  label: 'Video',
+  icon: 'video.fill',
   onPress,
 });
 export const importImagesAction = (onPress: () => void): MenuAction => ({
   key: 'images',
-  label: 'Import image or screenshot',
-  icon: 'photo',
+  label: 'Photo',
+  icon: 'photo.on.rectangle',
   onPress,
 });
 export const recordScreenAction = (onPress: () => void): MenuAction => ({
   key: 'screen',
-  label: 'Record screen',
+  label: 'Screen',
   icon: 'record.circle',
   onPress,
 });
@@ -68,7 +68,7 @@ export const recordScreenAction = (onPress: () => void): MenuAction => ({
 /** "From another Pulse": copy clips of another draft here, with their edits and captions. */
 export const fromAnotherPulseAction = (onPress: () => void): MenuAction => ({
   key: 'another',
-  label: 'From another Pulse',
+  label: 'Other Pulse',
   icon: 'rectangle.stack',
   onPress,
 });

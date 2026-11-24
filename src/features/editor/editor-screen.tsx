@@ -609,7 +609,7 @@ export function EditorScreen({
       ? [
           {
             key: 'record',
-            label: 'Record a clip here',
+            label: 'Record',
             icon: 'video.badge.plus' as const,
             onPress: () => {
               const anchor = anchorNow();
