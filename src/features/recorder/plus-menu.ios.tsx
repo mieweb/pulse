@@ -1,5 +1,11 @@
 import { Button, type ButtonProps, Host, Image, Menu } from '@expo/ui/swift-ui';
-import { contentShape, frame, shapes } from '@expo/ui/swift-ui/modifiers';
+import {
+  accessibilityHint,
+  accessibilityLabel,
+  contentShape,
+  frame,
+  shapes,
+} from '@expo/ui/swift-ui/modifiers';
 import { StyleSheet, View } from 'react-native';
 
 import type { PlusMenuProps } from './add-menu-actions';
@@ -31,18 +37,18 @@ export function PlusMenu({
       </View>
       {enabled && (
         // Claims the touch so it doesn't reach the gestures under it (the camera's, the clips');
-        // the SwiftUI menu still gets the native touch. Labelled here: the glyph inside has no
-        // name of its own.
+        // the SwiftUI menu still gets the native touch. Not an accessibility element itself: a
+        // labelled RN View here was skipped by VoiceOver (it wasn't `accessible`) and, if made
+        // one, its activation wouldn't open the SwiftUI menu. The menu below carries the name.
         <View
           style={StyleSheet.absoluteFill}
           onStartShouldSetResponder={() => true}
           // The finger is down on the "+": the system menu opens on its own, with no callback.
-          onResponderGrant={onOpen}
-          accessibilityRole="button"
-          accessibilityLabel={label}
-          accessibilityHint={hint}>
+          onResponderGrant={onOpen}>
           <Host style={styles.fill}>
             <Menu
+              // VoiceOver reads the menu as the "+" and a double tap opens it natively.
+              modifiers={[accessibilityLabel(label), ...(hint ? [accessibilityHint(hint)] : [])]}
               label={
                 // Invisible but hit-testable (a fully transparent SwiftUI view isn't): the circle
                 // is the tap area, and the plain "+" under it is what shows.
