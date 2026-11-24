@@ -969,15 +969,16 @@ export function RecorderScreen({
                 <TipAnchor id="record" shown={recordTip.shown} onDismiss={recordTip.dismiss} />
               </View>
             )}
-            {/* The draft in the editor, from its start; there once there's a clip. Faded out with the
-                record button during a drag, like the "+". */}
+            {/* The draft in the editor, at the insert cursor; there once there's a clip. Faded out
+                with the record button during a drag, like the "+". */}
             {draftId && segments.length > 0 && (
               <View style={styles.editSlot} pointerEvents="box-none">
                 <Animated.View style={[CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
                   <EditButton
                     onPress={() => {
                       editTip.retire();
-                      open(() => onEdit(draftId));
+                      // The cursor as it is once pending writes are stored (a take landing at it).
+                      open(() => onEdit(draftId, { anchor: getInsertAnchor() }));
                     }}
                     disabled={isRecording || dragging}
                     testID="recorder.edit"
@@ -1030,7 +1031,7 @@ export function RecorderScreen({
             // A tapped clip opens the editor on it (in the view last used there).
             onSelect={(id) => {
               if (!isRecording && draftId) {
-                open(() => onEdit(draftId, id));
+                open(() => onEdit(draftId, { clipId: id }));
               }
             }}
           />

@@ -10,6 +10,7 @@ import type {
 
 import type { ClipAnchor } from '@/core/clip-anchor';
 import { confirmCopy } from '@/features/export/send-flow';
+import type { RecorderEditAt } from '@/features/recorder/contract';
 
 /**
  * The embed's flow as a pure reducer (B2): one presentation, one stack of screens
@@ -119,8 +120,12 @@ export type FlowEvent =
   | { type: 'edited'; clipCount: number }
   /** Export's merge is current. */
   | { type: 'merged' }
-  /** Recorder → editor (its Done/Edit). */
-  | { type: 'edit' }
+  /**
+   * Recorder → editor (its Done/Edit), `at` the clip tapped in its bar or its insert cursor: a new
+   * editor opens there, and one it goes back to puts its playhead there (the store passes it on;
+   * the flow doesn't read it). Without it (Export from the recorder), as the editor last was.
+   */
+  | { type: 'edit'; at?: RecorderEditAt }
   /**
    * Editor → recorder, to add clips to this draft (M3): the editor's "Record a clip here", its
    * insert cursor at `anchor` (the store gives it to the new recorder; the flow doesn't read it).

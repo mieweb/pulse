@@ -1,6 +1,7 @@
 import { router, useIsFocused, useLocalSearchParams } from 'expo-router';
+import { useState } from 'react';
 
-import { anchorToRouteParam, type ClipAnchor } from '@/core/clip-anchor';
+import { anchorFromRouteParam, anchorToRouteParam, type ClipAnchor } from '@/core/clip-anchor';
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import type { EditorView } from '@/db/settings';
 import { EditorScreen } from '@/features/editor/editor-screen';
@@ -22,15 +23,19 @@ const asView = (v: string | undefined): EditorView | undefined =>
   v === 'clips' || v === 'timeline' ? v : undefined;
 
 /**
- * The editor route: reads the params, maps the screen's exits to router pushes (stable, so a
+ * The editor route: reads the params (`anchor`, `anchorToRouteParam`'s, is where the recorder's
+ * insert cursor was on its Edit; `clipId` a clip tapped there), maps the screen's exits to router pushes (stable, so a
  * re-render never hands the screen new callbacks) and tells it whether it is the one on top.
  */
 export default function EditorRoute() {
-  const { draftId, clipId, view } = useLocalSearchParams<{
+  const { draftId, clipId, view, anchor } = useLocalSearchParams<{
     draftId: string;
     clipId?: string;
     view?: string;
+    anchor?: string;
   }>();
+  // Read once, as the editor places its playhead once.
+  const [openAnchor] = useState(() => (anchor ? anchorFromRouteParam(anchor) : undefined));
   const focused = useIsFocused();
   const placeLabels = usePlaceLabels();
   return (
@@ -38,6 +43,7 @@ export default function EditorRoute() {
       <EditorScreen
         draftId={draftId}
         clipId={clipId}
+        anchor={openAnchor}
         view={asView(view)}
         onClose={close}
         onExport={openExport}

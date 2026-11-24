@@ -1,6 +1,8 @@
 import { anchorAtSlot, anchorSlot, type ClipAnchor, isEnd } from '@/core/clip-anchor';
 import { formatDuration } from '@/utils/format';
 
+import type { RecorderEditAt } from './contract';
+
 // The recorder's insert cursor (#308), as pure logic: where it sits on the clip strip, which
 // touches move it, its copy, and how it follows clips being added and removed. The strip and the
 // cursor (segment-bar.tsx, insert-cursor.tsx) call the geometry from their gestures' worklets, so
@@ -26,6 +28,14 @@ export const anchorAtBoundary = anchorAtSlot;
 /** One boundary along (an accessibility increment or decrement), held to the strip. */
 export function stepBoundary(k: number, delta: number, count: number): number {
   return Math.min(count, Math.max(0, k + delta));
+}
+
+/**
+ * Where an editor the recorder goes back to on its Edit puts its playhead (`returnEditorTo`): at the
+ * clip tapped in the bar, else at the insert cursor.
+ */
+export function editAnchor(at: RecorderEditAt): ClipAnchor {
+  return 'clipId' in at ? { before: at.clipId } : at.anchor;
 }
 
 // --- Following the draft --------------------------------------------------------------------------

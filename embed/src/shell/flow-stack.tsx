@@ -15,7 +15,11 @@ import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { EditorScreen } from '@/features/editor/editor-screen';
 import type { ExportedVideo, ExportPolicy, ExportPrimaryAction } from '@/features/export/contract';
 import { ExportScreen } from '@/features/export/export-screen';
-import type { RecorderCloseResult, RecorderNewDraft } from '@/features/recorder/contract';
+import type {
+  RecorderCloseResult,
+  RecorderEditAt,
+  RecorderNewDraft,
+} from '@/features/recorder/contract';
 import { RecorderScreen } from '@/features/recorder/recorder-screen';
 import { OnDeviceAiSheet } from '@/features/transcription/on-device-ai-sheet';
 import { tallSheetFits } from '@/utils/sheet-fit';
@@ -207,9 +211,9 @@ function FlowScreen({
   // The recorder's exits come after its take is saved and its pending writes are stored, so the
   // library is current: read the draft it names, then move.
   const recorderEdit = useCallback(
-    (id: string, clipId?: string) => {
+    (id: string, at: RecorderEditAt) => {
       controller.observe(id);
-      store.dispatch({ type: 'edit' }, { clipId });
+      store.dispatch({ type: 'edit', at });
     },
     [controller, store],
   );
@@ -282,6 +286,7 @@ function FlowScreen({
         <EditorScreen
           draftId={draftId}
           clipId={item.clipId}
+          anchor={item.anchor}
           onClose={editorClose}
           onExport={editorExport}
           onAddClips={editorAddClips}

@@ -31,15 +31,23 @@ export type RecorderCloseResult = {
   draftId: string | null;
 };
 
+/**
+ * Where the recorder's Edit opens the editor: on the clip tapped in the bar (`clipId`), else at the
+ * insert cursor (`anchor`), so the editor is where the person was in the recorder (#308).
+ */
+export type RecorderEditAt = { clipId: string } | { anchor: ClipAnchor };
+
 export type RecorderScreenProps = {
   /** An existing draft to add clips to; without it the first take creates one from `newDraft`. */
   draftId?: string;
   newDraft: RecorderNewDraft;
   /**
-   * Open the editor on the draft, on `clipId` when a clip in the bar was tapped. Called after
-   * pending edits are stored, and once per tap until the recorder is focused again.
+   * Open the editor on the draft, `at` the clip tapped in the bar or the insert cursor (Edit). A new
+   * editor opens there; an editor the recorder goes back to puts its playhead there
+   * (`returnEditorTo` with `editAnchor(at)`). Called after pending edits are stored, and once per
+   * tap until the recorder is focused again.
    */
-  onEdit: (draftId: string, clipId?: string) => void;
+  onEdit: (draftId: string, at: RecorderEditAt) => void;
   /** Open Export for the draft; same timing as `onEdit`. */
   onExport: (draftId: string) => void;
   /** Leave the recorder (its ✕, after the take in flight is saved). */

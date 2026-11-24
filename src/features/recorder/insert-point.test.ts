@@ -1,6 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { END } from '@/core/clip-anchor';
+import {
+  anchorForPlayhead,
+  anchorFromRouteParam,
+  anchorToRouteParam,
+  END,
+  timeAtAnchor,
+} from '@/core/clip-anchor';
 import {
   anchorAtBoundary,
   boundaryOf,
@@ -9,6 +15,7 @@ import {
   cursorAfterRemoval,
   cursorAfterReorder,
   cursorBeforeDelete,
+  editAnchor,
   edgeScrollSpeed,
   EDGE_ZONE,
   insertChipText,
@@ -72,6 +79,26 @@ describe('boundaries and anchors', () => {
     expect(stepBoundary(1, -1, 3)).toBe(0);
     expect(stepBoundary(0, -1, 3)).toBe(0);
     expect(stepBoundary(3, 1, 3)).toBe(3);
+  });
+});
+
+describe('Edit, to the editor', () => {
+  it('goes back to an editor at the clip tapped, else at the cursor', () => {
+    expect(editAnchor({ clipId: 'b' })).toEqual({ before: 'b' });
+    expect(editAnchor({ anchor: { before: 'b', next: 'c' } })).toEqual({ before: 'b', next: 'c' });
+    expect(editAnchor({ anchor: END })).toEqual(END);
+  });
+
+  it('puts the editor’s playhead where its "+" adds what the cursor would', () => {
+    // a 0–1000, b 1000–3000, c 3000–4000 in the editor; through the route param, as a new
+    // editor reads it.
+    const starts = [0, 1000, 3000];
+    for (const k of [0, 1, 2, 3]) {
+      const cursor = anchorFromRouteParam(anchorToRouteParam(anchorAtBoundary(k, ids)));
+      // The editor clamps the end to its last frame, as a seek there lands.
+      const ms = Math.min(timeAtAnchor(cursor, ids, starts, 4000), 3999);
+      expect(boundaryOf(anchorForPlayhead(ids, starts, 4000, ms), ids)).toBe(k);
+    }
   });
 });
 

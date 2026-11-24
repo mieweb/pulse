@@ -187,6 +187,21 @@ describe('navigation', () => {
     expect(s).toMatchObject({ clipCount: 2, changed: true, end: null });
   });
 
+  it('Edit carries where the recorder was without changing where it goes', () => {
+    // The place rides along for the store (a new editor opens there, one gone back to is told).
+    const at = { anchor: { before: 'c1', next: 'c2' } };
+    let s = run(recorded(), { type: 'edit', at });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    s = run(s, { type: 'addClips', anchor: { before: 'c1' } });
+    s = run(s, { type: 'edit', at: { clipId: 'c2' } });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    expect(s.end).toBeNull();
+    // Still needs a clip, and still only from a recorder.
+    const fresh = run(initFlow('r1', recordNew), { type: 'mounted' });
+    expect(flowReducer(fresh, { type: 'edit', at })).toBe(fresh);
+    expect(flowReducer(s, { type: 'edit', at })).toBe(s);
+  });
+
   it('back from an added recorder returns to the editor without ending', () => {
     let s = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 1 });
     s = run(s, { type: 'addClips' }, { type: 'back' });

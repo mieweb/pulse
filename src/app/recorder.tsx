@@ -1,13 +1,14 @@
 import { router, useIsFocused, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useState } from 'react';
 
-import { anchorFromRouteParam } from '@/core/clip-anchor';
+import { anchorFromRouteParam, returnEditorTo } from '@/core/clip-anchor';
 import { ScreenFocusProvider } from '@/core/navigation/focus';
+import { editAnchor } from '@/features/recorder/insert-point';
 import { peekRecorderPlace, takeRecorderPlace } from '@/features/recorder/link-place';
 import { RecorderScreen } from '@/features/recorder/recorder-screen';
 import { screenCapturePort } from '@/features/screen-capture/screen-capture';
 import { usePlaceLabels } from '@/features/upload/pairing/use-destinations';
-import { closeToHome } from '@/shell/standalone/navigation';
+import { closeToHome, editorParams } from '@/shell/standalone/navigation';
 
 /** The stack as this route sees it: enough to tell which screen is under this one. */
 type StackState = { index: number; routes: readonly { name: string; params?: object }[] };
@@ -25,7 +26,8 @@ function editorBelow(state: StackState | undefined, draftId: string): boolean {
  * The recorder route: params in, the editor and Export pushed over it, ✕ back to the screen
  * under it. Opened from an editor's Add clips (`returnTo=editor`), its Edit goes back to that
  * editor rather than pushing another one. `anchor` (`anchorToRouteParam`) is where its clips go in
- * the draft at first.
+ * the draft at first. Edit opens the editor where the person was here: the clip tapped, else the
+ * insert cursor.
  */
 export default function RecorderRoute() {
   const focused = useIsFocused();
@@ -56,17 +58,17 @@ export default function RecorderRoute() {
       <RecorderScreen
         draftId={draftId}
         newDraft={newDraft}
-        onEdit={(id, clipId) =>
-          // Back to the editor underneath, as it was (it shows the new clips; a tapped clip isn't
-          // passed back). Without that editor right under it (a restored stack, or a link that
-          // says returnTo=editor over Home), a new editor.
-          returnTo === 'editor' && editorBelow(navigation.getState(), id)
-            ? router.back()
-            : router.push({
-                pathname: '/editor',
-                params: clipId ? { draftId: id, clipId } : { draftId: id },
-              })
-        }
+        onEdit={(id, at) => {
+          // Back to the editor underneath (it shows the new clips, with its undo), its playhead at
+          // the clip tapped or the cursor. Without that editor right under it (a restored stack,
+          // or a link that says returnTo=editor over Home), a new editor, opened there.
+          if (returnTo === 'editor' && editorBelow(navigation.getState(), id)) {
+            returnEditorTo(id, editAnchor(at));
+            router.back();
+          } else {
+            router.push({ pathname: '/editor', params: editorParams(id, at) });
+          }
+        }}
         onExport={(id) => router.push({ pathname: '/export', params: { draftId: id } })}
         // Back to the screen underneath: the editor when it opened this recorder (the flow carries
         // on there, with the new clips), else Home.
