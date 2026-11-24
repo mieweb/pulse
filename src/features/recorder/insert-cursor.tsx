@@ -65,7 +65,6 @@ const A11Y_MARGIN = 40;
 export function InsertCursor({
   at,
   count,
-  atEnd,
   enabled,
   onMove,
   onDraggingChange,
@@ -78,7 +77,6 @@ export function InsertCursor({
   /** The boundary it's at (0 … count). */
   at: number;
   count: number;
-  atEnd: boolean;
   enabled: boolean;
   /** A drag or an accessibility adjust moved it to boundary `k`; `tick` for the drag's haptic. */
   onMove: (k: number, tick: boolean) => void;
@@ -217,9 +215,10 @@ export function InsertCursor({
           accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
           onAccessibilityAction={onAccessibilityAction}
           testID="recorder.insertCursor">
-          {!atEnd && <Tag />}
-          <View style={[styles.line, atEnd && styles.lineAtEnd]} />
-          {!atEnd && <Tag />}
+          {/* Always the old playhead's look: both grip tags, full line — at the end too. */}
+          <Tag />
+          <View style={styles.line} />
+          <Tag />
         </View>
       </GestureDetector>
     </Animated.View>
@@ -301,7 +300,6 @@ const styles = StyleSheet.create({
   grabZone: { flex: 1, alignItems: 'center', paddingVertical: 2 },
   line: { flex: 1, width: 2, backgroundColor: '#fff' },
   // At the end (the default, appending): there, but quiet.
-  lineAtEnd: { backgroundColor: 'rgba(255,255,255,0.45)' },
   tag: {
     width: CURSOR_TAG_WIDTH,
     height: CURSOR_TAG_HEIGHT,

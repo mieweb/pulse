@@ -175,7 +175,6 @@ function Bar({
   const [dropped, setDropped] = useState<{ base: Segment[]; ids: string[] } | null>(null);
   const shownIds = orderShown(segments, ids, dropped);
   const cursorAt = boundaryOf(insertAnchor, shownIds);
-  const atEnd = cursorAt >= shownIds.length;
   const byId = new Map(segments.map((s) => [s.id, s]));
   const clipInfo = shownIds.flatMap((id) => {
     const s = byId.get(id);
@@ -453,7 +452,6 @@ function Bar({
               <InsertCursor
                 at={cursorAt}
                 count={shownIds.length}
-                atEnd={atEnd}
                 enabled={cursorLive}
                 onMove={moveCursor}
                 onDraggingChange={setCursorDragging}
