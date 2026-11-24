@@ -12,7 +12,7 @@ import {
   relFileExists,
   thumbRelPath,
 } from '@/utils/file-store';
-import { type ClipAnchor, END, noteClipsAdded } from '@/core/clip-anchor';
+import { type ClipAnchor, END, isEnd, noteClipsAdded } from '@/core/clip-anchor';
 import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
 import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
 import { isCaptionsOff, parseCaptionEdit, setCaptionsOff } from './captions';
@@ -329,13 +329,13 @@ export async function addSegment(
 }
 
 /**
- * Add clips to a draft, contiguously and in the order given, at `anchor`: before or after a clip
- * of this draft, or at the end. An anchor whose clip has gone (deleted, or in another draft)
- * means the end, so a stale cursor never loses a take. `anchor` may be a function: it is then read
- * once the draft's earlier clip writes are done, just before the transaction, so a cursor that
- * moved meanwhile (another clip landing at it) is followed. Returns the new clips' ids in order,
- * and tells `onClipsAdded` listeners once they're committed, with the clips either side of them.
- * `transcripts` (copied clips' `clip_transcripts` rows, keyed by the new ids) go in with them.
+ * Add clips to a draft, contiguously and in the order given, at `anchor`: before a clip of this
+ * draft, or at the end. An anchor whose clip has gone (deleted, or in another draft) means its
+ * `next` clip, else the end, so a wait never loses a take or moves it elsewhere (`ClipAnchor`).
+ * `anchor` may be a function: it is then read once the draft's earlier clip writes are done, just
+ * before the transaction, so a cursor that moved meanwhile is followed. Returns the new clips' ids
+ * in order, and tells `onClipsAdded` listeners once they're committed. `transcripts` (copied
+ * clips' `clip_transcripts` rows, keyed by the new ids) go in with them.
  *
  * Everything is read-then-write, so it all runs inside one transaction: each badge number comes
  * from the draft's monotonic `lastClipNumber` counter (bumped by `k` and read back atomically;
@@ -356,7 +356,7 @@ export async function insertSegments(
   await beginClipMutation(draftId);
   const anchor = typeof anchorOrGet === 'function' ? anchorOrGet() : anchorOrGet;
   const k = newSegments.length;
-  const neighbours = db.transaction((tx) => {
+  db.transaction((tx) => {
     const [counter] = tx
       .update(drafts)
       .set({ lastClipNumber: sql`${drafts.lastClipNumber} + ${k}`, lastModified: now })
@@ -390,22 +390,9 @@ export async function insertSegments(
       tx.insert(clipTranscripts)
         .values([...transcripts])
         .run();
-
-    const neighbour = (where: ReturnType<typeof sql>, order: typeof asc) =>
-      tx
-        .select({ id: segments.id })
-        .from(segments)
-        .where(and(eq(segments.draftId, draftId), where))
-        .orderBy(order(segments.order))
-        .limit(1)
-        .get()?.id ?? null;
-    return {
-      prevId: neighbour(sql`${segments.order} < ${at.order}`, desc),
-      nextId: neighbour(sql`${segments.order} >= ${at.order + k}`, asc),
-    };
   });
   const segmentIds = newSegments.map((s) => s.id);
-  noteClipsAdded({ draftId, segmentIds, anchor, ...neighbours });
+  noteClipsAdded({ draftId, segmentIds });
   return segmentIds;
 }
 
@@ -426,9 +413,18 @@ function shiftFrom(tx: Tx, draftId: string, from: number, k: number): void {
     .run();
 }
 
+/** The slot of clip `id` in the draft, if it is there. */
+function orderOf(tx: Tx, draftId: string, id: string): number | undefined {
+  return tx
+    .select({ order: segments.order })
+    .from(segments)
+    .where(and(eq(segments.id, id), eq(segments.draftId, draftId)))
+    .get()?.order;
+}
+
 /**
  * The slot new clips take for `anchor`, and whether the clips from that slot on must move up: the
- * anchor clip's slot (before it) or the next (after it), else the end (max + 1, hole-tolerant
+ * anchor clip's slot, else (it has gone) its `next` clip's, else the end (max + 1, hole-tolerant
  * after deletes).
  */
 function insertSlot(
@@ -436,14 +432,11 @@ function insertSlot(
   draftId: string,
   anchor: ClipAnchor,
 ): { order: number; shift: boolean } {
-  const id = 'before' in anchor ? anchor.before : 'after' in anchor ? anchor.after : null;
-  if (id != null) {
-    const row = tx
-      .select({ order: segments.order })
-      .from(segments)
-      .where(and(eq(segments.id, id), eq(segments.draftId, draftId)))
-      .get();
-    if (row) return { order: 'before' in anchor ? row.order : row.order + 1, shift: true };
+  if (!isEnd(anchor)) {
+    for (const id of [anchor.before, anchor.next]) {
+      const order = id == null ? undefined : orderOf(tx, draftId, id);
+      if (order !== undefined) return { order, shift: true };
+    }
   }
   const [{ maxOrder }] = tx
     .select({ maxOrder: sql<number | null>`max(${segments.order})` })
@@ -788,8 +781,11 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
         .reverse()
         .find((x) => present.has(x));
       const after = taken.order.slice(i + 1).find((x) => present.has(x));
-      const anchor: ClipAnchor = before ? { after: before } : after ? { before: after } : END;
-      const at = insertSlot(tx, draftId, anchor);
+      const prevOrder = before === undefined ? undefined : orderOf(tx, draftId, before);
+      const at =
+        prevOrder !== undefined
+          ? { order: prevOrder + 1, shift: true }
+          : insertSlot(tx, draftId, after ? { before: after } : END);
       if (at.shift) shiftFrom(tx, draftId, at.order, 1);
       tx.insert(segments)
         .values({ ...row, draftId, order: at.order })

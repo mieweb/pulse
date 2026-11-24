@@ -61,13 +61,12 @@ jest.mock('expo-crypto', () => {
 });
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
-import { type ClipAnchor, onClipsAdded } from '@/core/clip-anchor';
+import { anchorAtSlot, type ClipAnchor, onClipsAdded } from '@/core/clip-anchor';
 import { expoDb } from '@/db/client';
 import { addSegment, createDraft } from '@/db/drafts';
 import { env } from '@/test-support/expo-fs-node';
 import { imageBatchNotice } from '@/utils/import-copy';
 import { addImageClips } from './add-image-clips';
-import { cursorAfterAdd } from './insert-point';
 /* eslint-enable import/first */
 
 const ROOT = mkdtempSync(join(tmpdir(), 'pulse-image-clips-'));
@@ -151,30 +150,37 @@ describe('addImageClips', () => {
     expect(outputs.filter(existsSync)).toEqual([]);
   });
 
-  it('keeps the picked order after a clip (each one goes after the one before)', async () => {
-    const d = await abc();
-    const result = await addImageClips(images('one', 'two', 'three'), d, {
-      signal: signal(),
-      anchor: () => ({ after: s(d, 'a') }),
-    });
-    expect(ids(d)).toEqual([s(d, 'a'), ...result.added, s(d, 'b'), s(d, 'c')]);
-  });
-
-  it('keeps its place when its latest clip is deleted mid-batch', async () => {
+  it('keeps its place when one of its clips, or its anchor’s clip, is deleted mid-batch', async () => {
     const d = await abc();
     const added: string[] = [];
     mockImageClip.mockImplementation(async (uri) => {
-      // The first image's clip is deleted (the editor's trash) while the second is being made.
+      // The first image's clip is deleted (the editor's trash) while the second is being made,
+      // and b (the clip the batch goes before) while the third is.
       if (uri.includes('two')) conn.runSync('DELETE FROM segments WHERE id = ?', added[0]);
+      if (uri.includes('three')) conn.runSync('DELETE FROM segments WHERE id = ?', s(d, 'b'));
       return makeClip(uri);
     });
     const result = await addImageClips(images('one', 'two', 'three'), d, {
       signal: signal(),
-      anchor: () => ({ after: s(d, 'a') }),
+      anchor: () => anchorAtSlot(1, ids(d)),
       onAdded: (id) => added.push(id),
     });
-    // Two and three still between a and b, not at the end.
-    expect(ids(d)).toEqual([s(d, 'a'), ...result.added.slice(1), s(d, 'b'), s(d, 'c')]);
+    // Two and three still between a and c, in order, not at the end.
+    expect(ids(d)).toEqual([s(d, 'a'), ...result.added.slice(1), s(d, 'c')]);
+  });
+
+  it('reads its anchor once, as the first clip is written (a cursor moved later isn’t followed)', async () => {
+    const d = await abc();
+    let cursor: ClipAnchor = anchorAtSlot(1, ids(d));
+    const read = jest.fn(() => cursor);
+    mockImageClip.mockImplementation(async (uri) => {
+      // Moved while the second image is made.
+      if (uri.includes('two')) cursor = anchorAtSlot(3, ids(d));
+      return makeClip(uri);
+    });
+    const result = await addImageClips(images('one', 'two'), d, { signal: signal(), anchor: read });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(ids(d)).toEqual([s(d, 'a'), ...result.added, s(d, 'b'), s(d, 'c')]);
   });
 
   it('tells each clip’s id before its row is written, then once it is', async () => {
@@ -209,24 +215,6 @@ describe('addImageClips', () => {
     expect(steps.length).toBeLessThanOrEqual(2 * 52);
     expect(steps.filter((p) => p.fraction === 0).map((p) => p.index)).toEqual([0, 1]);
     expect(steps.filter((p) => p.fraction === 1).map((p) => p.index)).toEqual([0, 1]);
-  });
-
-  it('moves the recorder’s cursor past the batch, one insert per image', async () => {
-    const d = await abc();
-    let cursor: ClipAnchor = { after: s(d, 'a') };
-    let inserts = 0;
-    const stop = onClipsAdded((added) => {
-      if (added.draftId !== d) return;
-      inserts++;
-      cursor = cursorAfterAdd(cursor, added);
-    });
-    try {
-      await addImageClips(images('one', 'two'), d, { signal: signal(), anchor: () => cursor });
-    } finally {
-      stop();
-    }
-    expect(inserts).toBe(2);
-    expect(cursor).toEqual({ before: s(d, 'b') });
   });
 
   it('skips an image it can’t read and adds the rest', async () => {

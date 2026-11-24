@@ -173,7 +173,7 @@ describe('copyClipsInto', () => {
     const dst = await target();
     // Picked out of order: they still go in as a, c.
     const { segmentIds, skipped } = await copyClipsInto(dst.draftId, src.draftId, [src.c, src.a], {
-      after: dst.x,
+      before: dst.y,
     });
     expect(skipped).toBe(0);
     expect(segmentIds).toHaveLength(2);
@@ -245,9 +245,7 @@ describe('copyClipsInto', () => {
       before: dst.y,
     });
     stop();
-    expect(heard).toEqual([
-      expect.objectContaining({ draftId: dst.draftId, segmentIds, prevId: dst.x, nextId: dst.y }),
-    ]);
+    expect(heard).toEqual([{ draftId: dst.draftId, segmentIds }]);
   });
 
   it('skips a clip whose video is missing, leaving none of its files behind', async () => {

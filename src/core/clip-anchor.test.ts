@@ -16,7 +16,7 @@ import {
 } from './clip-anchor';
 
 describe('route params', () => {
-  it.each<ClipAnchor>([{ before: 'd1-170' }, { after: 'abc_DEF-9' }, { at: 'end' }])(
+  it.each<ClipAnchor>([{ before: 'd1-170' }, { before: 'abc_DEF-9', next: 'x' }, { at: 'end' }])(
     'round-trips %j',
     (anchor) => {
       expect(anchorFromRouteParam(anchorToRouteParam(anchor))).toEqual(anchor);
@@ -26,12 +26,15 @@ describe('route params', () => {
   it.each<[string, unknown]>([
     ['undefined', undefined],
     ['an empty string', ''],
-    ['an array (a repeated param)', ['before:a', 'after:b']],
+    ['an array (a repeated param)', ['before:a', 'before:b']],
     ['an unknown side', 'inside:a'],
+    ['an after anchor (no longer made)', 'after:a'],
     ['no id', 'before:'],
-    ['an id with a path in it', 'after:../x'],
+    ['an id with a path in it', 'before:../x'],
     ['an id with a colon', 'before:a:b'],
-    ['an id too long', `after:${'a'.repeat(129)}`],
+    ['an empty next', 'before:a,'],
+    ['a third id', 'before:a,b,c'],
+    ['an id too long', `before:${'a'.repeat(129)}`],
     ['plain "end"', 'end'],
   ])('reads %s as the end', (_name, param) => {
     expect(anchorFromRouteParam(param)).toEqual(END);
@@ -44,20 +47,21 @@ describe('anchorForPlayhead', () => {
   const starts = [0, 1000, 3000];
   const at = (t: number) => anchorForPlayhead(ids, starts, 4000, t);
 
+  // Each anchor names the clip after it as `next`, where there is one.
   it.each<[number, ClipAnchor]>([
-    [0, { before: 'a' }],
-    [499, { before: 'a' }],
-    [500, { after: 'a' }], // the midpoint is the second half
-    [999, { after: 'a' }],
-    [1000, { before: 'b' }], // on a boundary: before the next clip
-    [1999, { before: 'b' }],
-    [2000, { after: 'b' }],
+    [0, { before: 'a', next: 'b' }],
+    [499, { before: 'a', next: 'b' }],
+    [500, { before: 'b', next: 'c' }], // the midpoint is the second half: before the next clip
+    [999, { before: 'b', next: 'c' }],
+    [1000, { before: 'b', next: 'c' }], // on a boundary: before the next clip
+    [1999, { before: 'b', next: 'c' }],
+    [2000, { before: 'c' }],
     [3000, { before: 'c' }],
     [3400, { before: 'c' }],
     [3500, END], // after the last clip is the end
     [4000, END],
     [9000, END],
-    [-5, { before: 'a' }],
+    [-5, { before: 'a', next: 'b' }],
   ])('at %d ms → %j', (t, expected) => {
     expect(at(t)).toEqual(expected);
   });
@@ -82,12 +86,13 @@ describe('anchorForPlayhead', () => {
 });
 
 describe('sameAnchor / isEnd', () => {
-  it('compares by side and id', () => {
+  it('compares by clip and next clip', () => {
     expect(sameAnchor({ before: 'a' }, { before: 'a' })).toBe(true);
-    expect(sameAnchor({ before: 'a' }, { after: 'a' })).toBe(false);
-    expect(sameAnchor({ after: 'a' }, { after: 'b' })).toBe(false);
+    expect(sameAnchor({ before: 'a', next: 'b' }, { before: 'a', next: 'b' })).toBe(true);
+    expect(sameAnchor({ before: 'a' }, { before: 'a', next: 'b' })).toBe(false);
+    expect(sameAnchor({ before: 'a' }, { before: 'b' })).toBe(false);
     expect(sameAnchor(END, { at: 'end' })).toBe(true);
-    expect(sameAnchor(END, { after: 'a' })).toBe(false);
+    expect(sameAnchor(END, { before: 'a' })).toBe(false);
     expect(isEnd(END)).toBe(true);
     expect(isEnd({ before: 'a' })).toBe(false);
   });
@@ -99,18 +104,14 @@ describe('clips added', () => {
     const stop = onClipsAdded(listener);
     const disarm1 = expectClipsAdded('d1');
     const disarm2 = expectClipsAdded('d2');
-    noteClipsAdded({ draftId: 'd1', segmentIds: ['x'], anchor: { before: 'a' } });
-    noteClipsAdded({ draftId: 'd2', segmentIds: ['y'], anchor: END });
-    noteClipsAdded({ draftId: 'd1', segmentIds: ['z', 'w'], anchor: { after: 'x' } });
+    noteClipsAdded({ draftId: 'd1', segmentIds: ['x'] });
+    noteClipsAdded({ draftId: 'd2', segmentIds: ['y'] });
+    noteClipsAdded({ draftId: 'd1', segmentIds: ['z', 'w'] });
     stop();
-    noteClipsAdded({ draftId: 'd1', segmentIds: ['v'], anchor: END });
+    noteClipsAdded({ draftId: 'd1', segmentIds: ['v'] });
 
     expect(listener).toHaveBeenCalledTimes(3);
-    expect(listener).toHaveBeenNthCalledWith(1, {
-      draftId: 'd1',
-      segmentIds: ['x'],
-      anchor: { before: 'a' },
-    });
+    expect(listener).toHaveBeenNthCalledWith(1, { draftId: 'd1', segmentIds: ['x'] });
     expect(takeClipsAdded('d1')).toEqual(['x', 'z', 'w', 'v']);
     expect(takeClipsAdded('d1')).toEqual([]);
     expect(takeClipsAdded('d2')).toEqual(['y']);
@@ -119,13 +120,13 @@ describe('clips added', () => {
   });
 
   it('keeps nothing for a draft no editor armed, or from before it was armed', () => {
-    noteClipsAdded({ draftId: 'd4', segmentIds: ['early'], anchor: END });
+    noteClipsAdded({ draftId: 'd4', segmentIds: ['early'] });
     expect(takeClipsAdded('d4')).toEqual([]);
     const disarm = expectClipsAdded('d4');
     expect(takeClipsAdded('d4')).toEqual([]);
-    noteClipsAdded({ draftId: 'd4', segmentIds: ['x'], anchor: END });
+    noteClipsAdded({ draftId: 'd4', segmentIds: ['x'] });
     disarm();
-    noteClipsAdded({ draftId: 'd4', segmentIds: ['late'], anchor: END });
+    noteClipsAdded({ draftId: 'd4', segmentIds: ['late'] });
     expect(takeClipsAdded('d4')).toEqual([]);
   });
 
@@ -134,17 +135,17 @@ describe('clips added', () => {
     const b = expectClipsAdded('d5');
     a();
     a();
-    noteClipsAdded({ draftId: 'd5', segmentIds: ['x'], anchor: END });
+    noteClipsAdded({ draftId: 'd5', segmentIds: ['x'] });
     expect(takeClipsAdded('d5')).toEqual(['x']);
     b();
-    noteClipsAdded({ draftId: 'd5', segmentIds: ['y'], anchor: END });
+    noteClipsAdded({ draftId: 'd5', segmentIds: ['y'] });
     expect(takeClipsAdded('d5')).toEqual([]);
   });
 
   it('keeps at most the newest 500 ids per draft', () => {
     const disarm = expectClipsAdded('d6');
     const many = Array.from({ length: 600 }, (_, i) => `c${i}`);
-    noteClipsAdded({ draftId: 'd6', segmentIds: many, anchor: END });
+    noteClipsAdded({ draftId: 'd6', segmentIds: many });
     expect(takeClipsAdded('d6')).toEqual(many.slice(100));
     disarm();
   });
@@ -156,7 +157,7 @@ describe('clips added', () => {
       throw new Error('boom');
     });
     const stopB = onClipsAdded(second);
-    noteClipsAdded({ draftId: 'd3', segmentIds: ['x'], anchor: END });
+    noteClipsAdded({ draftId: 'd3', segmentIds: ['x'] });
     stopA();
     stopB();
     expect(second).toHaveBeenCalledTimes(1);

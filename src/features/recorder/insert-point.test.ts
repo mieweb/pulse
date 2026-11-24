@@ -1,12 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { END, type ClipsAdded } from '@/core/clip-anchor';
+import { END } from '@/core/clip-anchor';
 import {
   anchorAtBoundary,
   boundaryOf,
   boundaryX,
   cursorA11yValue,
-  cursorAfterAdd,
   cursorAfterRemoval,
   cursorAfterReorder,
   cursorBeforeDelete,
@@ -16,10 +15,8 @@ import {
   insertPlace,
   MAX_SCROLL_SPEED,
   nearestBoundary,
-  normalizeCursor,
   onClip,
   orderShown,
-  resolvePinned,
   scrollToShow,
   stepBoundary,
   timeAtBoundary,
@@ -29,28 +26,20 @@ import {
 const ids = ['a', 'b', 'c'];
 // 48 pt tiles 8 pt apart after a 13 pt inset: boundaries at 9, 65, 121, 177.
 const g: StripGeometry = { pad: 13, tileWidth: 48, gap: 8, tileTop: 22, tileHeight: 64 };
-const added = (over: Partial<ClipsAdded>): ClipsAdded => ({
-  draftId: 'd',
-  segmentIds: ['x'],
-  anchor: END,
-  ...over,
-});
 
 describe('boundaries and anchors', () => {
   it('reads an anchor as a boundary, a missing clip as the end', () => {
     expect(boundaryOf({ before: 'a' }, ids)).toBe(0);
     expect(boundaryOf({ before: 'c' }, ids)).toBe(2);
-    expect(boundaryOf({ after: 'a' }, ids)).toBe(1);
-    expect(boundaryOf({ after: 'c' }, ids)).toBe(3);
+    expect(boundaryOf({ before: 'b', next: 'c' }, ids)).toBe(1);
     expect(boundaryOf(END, ids)).toBe(3);
     expect(boundaryOf({ before: 'gone' }, ids)).toBe(3);
-    expect(boundaryOf({ after: 'gone' }, ids)).toBe(3);
   });
 
-  it('writes a boundary in the before form, the end after the last clip', () => {
+  it('writes a boundary before its clip (with the clip after it), the end after the last', () => {
     expect([0, 1, 2, 3].map((k) => anchorAtBoundary(k, ids))).toEqual([
-      { before: 'a' },
-      { before: 'b' },
+      { before: 'a', next: 'b' },
+      { before: 'b', next: 'c' },
       { before: 'c' },
       END,
     ]);
@@ -144,61 +133,30 @@ describe('copy', () => {
 });
 
 describe('following the draft', () => {
-  it('a before cursor stays put as clips land at it', () => {
-    const cursor = { before: 'b' };
-    expect(cursorAfterAdd(cursor, added({ anchor: cursor, prevId: 'a', nextId: 'b' }))).toBe(
-      cursor,
-    );
-    expect(cursorAfterAdd(END, added({ prevId: 'c', nextId: null }))).toBe(END);
-  });
-
-  it('an after cursor moves past clips that land right after its clip, by either anchor', () => {
-    const cursor = { after: 'a' };
-    // Added as after:a, or as before:b (the same slot).
-    expect(cursorAfterAdd(cursor, added({ anchor: cursor, prevId: 'a', nextId: 'b' }))).toEqual({
-      before: 'b',
-    });
-    expect(
-      cursorAfterAdd(cursor, added({ anchor: { before: 'b' }, prevId: 'a', nextId: 'b' })),
-    ).toEqual({ before: 'b' });
-    // After the last clip: the end.
-    expect(cursorAfterAdd({ after: 'c' }, added({ prevId: 'c', nextId: null }))).toEqual(END);
-    // Somewhere else: stays.
-    expect(cursorAfterAdd(cursor, added({ prevId: 'b', nextId: 'c' }))).toBe(cursor);
-  });
-
-  it('without neighbours, an after cursor follows only the same anchor', () => {
-    const cursor = { after: 'a' };
-    expect(cursorAfterAdd(cursor, added({ anchor: cursor, segmentIds: ['x', 'y'] }))).toEqual({
-      after: 'y',
-    });
-    expect(cursorAfterAdd(cursor, added({ anchor: { before: 'b' } }))).toBe(cursor);
-  });
-
   it('keeps its place when its clip is deleted (a retake, or a delete in the editor)', () => {
     expect(cursorAfterRemoval({ before: 'b' }, ids, ['a', 'c'])).toEqual({ before: 'c' });
     expect(cursorAfterRemoval({ before: 'c' }, ids, ['a', 'b'])).toEqual(END);
-    expect(cursorAfterRemoval({ after: 'a' }, ids, ['b', 'c'])).toEqual({ before: 'b' });
     expect(cursorAfterRemoval({ before: 'a' }, ids, ['c'])).toEqual({ before: 'c' });
   });
 
-  it('a delete of another clip, or a clip it never saw, leaves it alone', () => {
+  it('a delete of another clip keeps its clip, its next clip brought up to date', () => {
+    const cursor = { before: 'a', next: 'b' };
+    expect(cursorAfterRemoval(cursor, ids, ['a', 'b'])).toEqual(cursor);
+    expect(cursorAfterRemoval(cursor, ids, ['a', 'c'])).toEqual({ before: 'a', next: 'c' });
+    expect(cursorAfterRemoval(cursor, ids, ['a'])).toEqual({ before: 'a' });
+  });
+
+  it('a clip it never saw (the list not loaded yet) leaves it alone', () => {
     const cursor = { before: 'b' };
-    expect(cursorAfterRemoval(cursor, ids, ['b', 'c'])).toBe(cursor);
-    // The list not loaded yet: nothing to go on.
     expect(cursorAfterRemoval(cursor, [], [])).toBe(cursor);
     expect(cursorAfterRemoval(END, ids, [])).toBe(END);
   });
 
-  it('turns an after cursor into the before form once its clip is known', () => {
-    expect(normalizeCursor({ after: 'a' }, ids)).toEqual({ before: 'b' });
-    expect(normalizeCursor({ after: 'c' }, ids)).toEqual(END);
-    expect(normalizeCursor({ after: 'unknown' }, ids)).toEqual({ after: 'unknown' });
-    expect(normalizeCursor({ before: 'b' }, ids)).toEqual({ before: 'b' });
-  });
-
   it('keeps its boundary across a reorder', () => {
-    expect(cursorAfterReorder({ before: 'b' }, ids, ['c', 'a', 'b'])).toEqual({ before: 'a' });
+    expect(cursorAfterReorder({ before: 'b' }, ids, ['c', 'a', 'b'])).toEqual({
+      before: 'a',
+      next: 'b',
+    });
     expect(cursorAfterReorder(END, ids, ['c', 'a', 'b'])).toEqual(END);
   });
 
@@ -206,6 +164,10 @@ describe('following the draft', () => {
     // a b c, cursor before c; b (the take before it) trashed: it stays before c.
     expect(cursorBeforeDelete({ before: 'c' }, ids, 'b')).toEqual({ before: 'c' });
     // Its own clip trashed: before the next.
+    expect(cursorBeforeDelete({ before: 'a', next: 'b' }, ids, 'a')).toEqual({
+      before: 'b',
+      next: 'c',
+    });
     expect(cursorBeforeDelete({ before: 'b' }, ids, 'b')).toEqual({ before: 'c' });
     expect(cursorBeforeDelete({ before: 'c' }, ids, 'c')).toEqual(END);
     expect(cursorBeforeDelete(END, ids, 'c')).toBe(END);
@@ -240,25 +202,5 @@ describe('the order on screen after a drop', () => {
     expect(boundaryOf(anchor, stored)).toBe(0);
     // A tap maps against the order on screen too.
     expect(anchorAtBoundary(2, shown)).toEqual({ before: 'b' });
-  });
-});
-
-describe('a screen take’s pinned spot', () => {
-  const live = new Set(['a', 'c']); // b deleted while it converted
-  const there = (id: string) => live.has(id);
-  const first = () => 'a';
-
-  it('keeps its anchor while its clip is there, and for older rows', () => {
-    expect(resolvePinned({ before: 'a' }, null, there, first)).toEqual({ before: 'a' });
-    expect(resolvePinned({ before: 'b' }, undefined, there, first)).toEqual({ before: 'b' });
-    expect(resolvePinned(END, 'x', there, first)).toBe(END);
-    expect(resolvePinned({ after: 'b' }, 'a', there, first)).toEqual({ after: 'b' });
-  });
-
-  it('goes after the clip before it when its clip has gone, or at the start', () => {
-    expect(resolvePinned({ before: 'b' }, 'a', there, first)).toEqual({ after: 'a' });
-    expect(resolvePinned({ before: 'b' }, null, there, first)).toEqual({ before: 'a' });
-    expect(resolvePinned({ before: 'b' }, null, there, () => null)).toEqual(END);
-    expect(resolvePinned({ before: 'b' }, 'gone', there, first)).toEqual(END);
   });
 });

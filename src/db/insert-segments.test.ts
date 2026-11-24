@@ -97,8 +97,11 @@ describe('insertSegments', () => {
   const cases: [string, (d: string) => ClipAnchor, string[]][] = [
     ['before the first clip', (d) => ({ before: s(d, 'a') }), ['x', 'a', 'b', 'c']],
     ['before a middle clip', (d) => ({ before: s(d, 'b') }), ['a', 'x', 'b', 'c']],
-    ['after a middle clip', (d) => ({ after: s(d, 'b') }), ['a', 'b', 'x', 'c']],
-    ['after the last clip', (d) => ({ after: s(d, 'c') }), ['a', 'b', 'c', 'x']],
+    [
+      'before a clip, with its next clip',
+      (d) => ({ before: s(d, 'b'), next: s(d, 'c') }),
+      ['a', 'x', 'b', 'c'],
+    ],
     ['at the end', () => ({ at: 'end' }), ['a', 'b', 'c', 'x']],
   ];
   it.each(cases)('inserts %s', async (_name, anchor, expected) => {
@@ -112,7 +115,7 @@ describe('insertSegments', () => {
 
   it('inserts several clips together, in order, with consecutive labels', async () => {
     const d = await abc();
-    const added = await insertSegments(d, { after: s(d, 'a') }, [
+    const added = await insertSegments(d, { before: s(d, 'b') }, [
       clip(s(d, 'x')),
       clip(s(d, 'y')),
       clip(s(d, 'z')),
@@ -122,24 +125,21 @@ describe('insertSegments', () => {
     expect(lastClipNumber(d)).toBe(6);
   });
 
-  it('a run of takes, each after the one before, stays in order', async () => {
+  it('a run of takes at one anchor stays in order', async () => {
     const d = await abc();
-    let anchor: ClipAnchor = { before: s(d, 'b') };
-    for (const id of ['x', 'y', 'z']) {
-      const [added] = await insertSegments(d, anchor, [clip(s(d, id))]);
-      anchor = { after: added };
-    }
+    const anchor: ClipAnchor = { before: s(d, 'b'), next: s(d, 'c') };
+    for (const id of ['x', 'y', 'z']) await insertSegments(d, anchor, [clip(s(d, id))]);
     expect(ids(d)).toEqual(['a', 'x', 'y', 'z', 'b', 'c'].map((id) => s(d, id)));
   });
 
-  it('goes to the end when the anchor clip was deleted meanwhile, or is in another draft', async () => {
+  it('goes to the end when the anchor clip (and its next) are gone, or in another draft', async () => {
     const d = await abc();
     await deleteSegment(s(d, 'b'));
     await insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'x'))]);
     expect(ids(d)).toEqual(['a', 'c', 'x'].map((id) => s(d, id)));
 
     const other = await abc();
-    await insertSegments(d, { after: s(other, 'a') }, [clip(s(d, 'y'))]);
+    await insertSegments(d, { before: s(other, 'a'), next: s(other, 'b') }, [clip(s(d, 'y'))]);
     expect(ids(d)).toEqual(['a', 'c', 'x', 'y'].map((id) => s(d, id)));
     expect(ids(other)).toEqual(['a', 'b', 'c'].map((id) => s(other, id)));
   });
@@ -149,7 +149,7 @@ describe('insertSegments', () => {
     await addSegment(d, clip(s(d, 'd')));
     await deleteSegment(s(d, 'b')); // orders 0, 2, 3
     await insertSegments(d, { before: s(d, 'c') }, [clip(s(d, 'x')), clip(s(d, 'y'))]);
-    await insertSegments(d, { after: s(d, 'a') }, [clip(s(d, 'z'))]);
+    await insertSegments(d, { before: s(d, 'x') }, [clip(s(d, 'z'))]);
     expect(ids(d)).toEqual(['a', 'z', 'x', 'y', 'c', 'd'].map((id) => s(d, id)));
     const orders = conn
       .getAllSync<{ o: number }>('SELECT sort_order AS o FROM segments WHERE draft_id = ?', d)
@@ -185,20 +185,8 @@ describe('insertSegments', () => {
       stop();
     }
     expect(heard).toEqual([
-      {
-        draftId: d,
-        segmentIds: [s(d, 'x'), s(d, 'y')],
-        anchor: { before: s(d, 'a') },
-        prevId: null,
-        nextId: s(d, 'a'),
-      },
-      {
-        draftId: d,
-        segmentIds: [s(d, 'z')],
-        anchor: { at: 'end' },
-        prevId: s(d, 'c'),
-        nextId: null,
-      },
+      { draftId: d, segmentIds: [s(d, 'x'), s(d, 'y')] },
+      { draftId: d, segmentIds: [s(d, 'z')] },
     ]);
     expect(takeClipsAdded(d)).toEqual([s(d, 'x'), s(d, 'y'), s(d, 'z')]);
     expect(takeClipsAdded(d)).toEqual([]);
@@ -206,25 +194,35 @@ describe('insertSegments', () => {
   });
 });
 
-describe('where clips land, for the recorder’s cursor', () => {
-  it('reports the clips either side, whichever anchor named the slot', async () => {
-    const d = await abc();
-    const heard: ClipsAdded[] = [];
-    const stop = onClipsAdded((a) => heard.push(a));
-    try {
-      await insertSegments(d, { after: s(d, 'a') }, [clip(s(d, 'x'))]);
-      await insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'y'))]);
-      await insertSegments(d, { after: 'gone' }, [clip(s(d, 'z'))]);
-    } finally {
-      stop();
-    }
-    expect(heard.map((a) => [a.prevId, a.nextId])).toEqual([
-      [s(d, 'a'), s(d, 'b')],
-      [s(d, 'x'), s(d, 'b')],
-      [s(d, 'c'), null],
-    ]);
-  });
+describe('an anchor whose clip goes while the add waits (an import converting, a screen take)', () => {
+  // The anchor is fixed as the add starts; the clip it names is deleted before the row is written.
+  it.each<[string, (d: string) => ClipAnchor, string, string[]]>([
+    ['a middle clip', (d) => ({ before: s(d, 'b'), next: s(d, 'c') }), 'b', ['a', 'x', 'c']],
+    ['the first clip', (d) => ({ before: s(d, 'a'), next: s(d, 'b') }), 'a', ['x', 'b', 'c']],
+    ['the last clip', (d) => ({ before: s(d, 'c') }), 'c', ['a', 'b', 'x']],
+  ])(
+    'before %s: lands at the same boundary, not the end',
+    async (_name, anchor, gone, expected) => {
+      const d = await abc();
+      const at = anchor(d);
+      await deleteSegment(s(d, gone));
+      await insertSegments(d, at, [clip(s(d, 'x'))]);
+      expect(ids(d)).toEqual(expected.map((id) => s(d, id)));
+    },
+  );
 
+  it('a batch keeps its order when its anchor clip goes mid-batch', async () => {
+    const d = await abc();
+    const at: ClipAnchor = { before: s(d, 'b'), next: s(d, 'c') };
+    await insertSegments(d, at, [clip(s(d, 'x'))]);
+    await insertSegments(d, at, [clip(s(d, 'y'))]);
+    await deleteSegment(s(d, 'b'));
+    await insertSegments(d, at, [clip(s(d, 'z'))]);
+    expect(ids(d)).toEqual(['a', 'x', 'y', 'z', 'c'].map((id) => s(d, id)));
+  });
+});
+
+describe('an anchor given as a function', () => {
   it('reads an anchor given as a function once the draft’s earlier writes are done', async () => {
     const d = await abc();
     let anchor: ClipAnchor = { before: s(d, 'a') };
@@ -257,7 +255,7 @@ describe('reorderSegments with clips it was not given', () => {
     for (const reorderFirst of [true, false]) {
       const d = await abc();
       const reorder = () => reorderSegments([s(d, 'c'), s(d, 'b'), s(d, 'a')]);
-      const insert = () => insertSegments(d, { after: s(d, 'a') }, [clip(s(d, 'x'))]);
+      const insert = () => insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'x'))]);
       await Promise.all(reorderFirst ? [reorder(), insert()] : [insert(), reorder()]);
       // Every clip is there once, and the reorder holds for the clips it named.
       const order = ids(d);

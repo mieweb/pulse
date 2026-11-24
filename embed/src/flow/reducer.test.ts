@@ -159,7 +159,7 @@ describe('navigation', () => {
   it('the round trip sends no result, whichever way the recorder is left', () => {
     let s = run(recorded(), { type: 'edit' });
     for (const leave of [{ type: 'edit' }, { type: 'back' }] as const) {
-      s = run(s, { type: 'addClips', anchor: { after: 'c1' } });
+      s = run(s, { type: 'addClips', anchor: { before: 'c2' } });
       s = run(s, { type: 'record' }, { type: 'stop', draftId: 'd1' }, leave);
       expect(topScreen(s)).toBe('editor');
       expect(s.end).toBeNull();

@@ -1,16 +1,21 @@
 /**
- * Where new clips go in a draft (issue #308): before or after a clip, by its segment id, or at the
- * end. The editor's + works it out from the playhead (`anchorForPlayhead`), the recorder holds one
- * as its insert cursor, and `insertSegments` (src/db/drafts.ts) resolves it to a slot when the
- * clips are written. An anchor whose clip is gone by then resolves to the end, never an error.
+ * Where new clips go in a draft (issue #308): before a clip, by its segment id, or at the end. The
+ * editor's + works it out from the playhead (`anchorForPlayhead`), the recorder holds one as its
+ * insert cursor, and `insertSegments` (src/db/drafts.ts) resolves it to a slot when the clips are
+ * written.
  *
- * `onClipsAdded` hears every insert `insertSegments` commits: the recorder moves its cursor past a
- * clip that landed at it. An open editor arms its draft (`expectClipsAdded`) and takes the clips
- * added to it (`takeClipsAdded`), from its own + or a recorder over it, to place its playhead after
- * them and make the addition one undo step.
+ * `next` is the clip that followed `before` when the anchor was made: an add that waits (an
+ * import converting, a screen take) still lands in the same place if `before` is deleted
+ * meanwhile, before `next`. With both gone, or no `next` (`before` was the last clip), the end.
+ * The `before` form stays put as clips land at it, so a run of takes or a batch of images lands in
+ * order with no move.
+ *
+ * `onClipsAdded` hears every insert `insertSegments` commits. An open editor arms its draft
+ * (`expectClipsAdded`) and takes the clips added to it (`takeClipsAdded`), from its own + or a
+ * recorder over it, to place its playhead after them and make the addition one undo step.
  */
 
-export type ClipAnchor = { before: string } | { after: string } | { at: 'end' };
+export type ClipAnchor = { before: string; next?: string } | { at: 'end' };
 
 export const END: ClipAnchor = { at: 'end' };
 
@@ -19,39 +24,39 @@ export function isEnd(anchor: ClipAnchor): anchor is { at: 'end' } {
 }
 
 export function sameAnchor(a: ClipAnchor, b: ClipAnchor): boolean {
-  if ('before' in a) return 'before' in b && a.before === b.before;
-  if ('after' in a) return 'after' in b && a.after === b.after;
-  return isEnd(b);
+  if (isEnd(a) || isEnd(b)) return isEnd(a) && isEnd(b);
+  return a.before === b.before && a.next === b.next;
+}
+
+/** The anchor for slot `slot` of the clips `ids` (0 before the first, `ids.length` the end). */
+export function anchorAtSlot(slot: number, ids: readonly string[]): ClipAnchor {
+  if (!(slot >= 0 && slot < ids.length)) return END;
+  return slot + 1 < ids.length ? { before: ids[slot], next: ids[slot + 1] } : { before: ids[slot] };
 }
 
 // The library's own id rule (media-refs.ts `SAFE_ID`): anything else never names a clip.
 const SEGMENT_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
-/** `before:<id>`, `after:<id>` or `end`: plain text, safe as an expo-router param. */
+/** `before:<id>`, `before:<id>,<next>` or `end`: plain text, safe as an expo-router param. */
 export function anchorToRouteParam(anchor: ClipAnchor): string {
-  if ('before' in anchor) return `before:${anchor.before}`;
-  if ('after' in anchor) return `after:${anchor.after}`;
-  return 'end';
+  if (isEnd(anchor)) return 'end';
+  return anchor.next ? `before:${anchor.before},${anchor.next}` : `before:${anchor.before}`;
 }
 
 /** The anchor `anchorToRouteParam` wrote; anything else (missing, malformed, an array) is the end. */
 export function anchorFromRouteParam(param: unknown): ClipAnchor {
-  if (typeof param !== 'string') return END;
-  const sep = param.indexOf(':');
-  if (sep < 0) return END;
-  const side = param.slice(0, sep);
-  const id = param.slice(sep + 1);
-  if (!SEGMENT_ID.test(id)) return END;
-  if (side === 'before') return { before: id };
-  if (side === 'after') return { after: id };
-  return END;
+  if (typeof param !== 'string' || !param.startsWith('before:')) return END;
+  const [before, next, ...rest] = param.slice('before:'.length).split(',');
+  if (rest.length > 0 || !SEGMENT_ID.test(before)) return END;
+  if (next === undefined) return { before };
+  return SEGMENT_ID.test(next) ? { before, next } : END;
 }
 
 /**
  * The anchor for the playhead at `timeMs`, never splitting a clip: in the first half of clip i,
- * before it; in its second half (the midpoint included), after it; exactly on the boundary
- * between two clips, before the second. At or past the end, or in an empty draft, the end; after
- * the last clip is the end too (the same slot, so a cursor there reads as "at the end").
+ * before it; in its second half (the midpoint included), before the clip after it; exactly on the
+ * boundary between two clips, before the second. At or past the end, after the last clip's
+ * midpoint, or in an empty draft, the end.
  *
  * `starts[i]` is clip i's start on the timeline and `totalMs` the timeline's length, as in the
  * editor's `TimelineLayout`; `ids[i]` is clip i's segment id.
@@ -63,9 +68,7 @@ export function anchorForPlayhead(
   timeMs: number,
 ): ClipAnchor {
   const n = Math.min(ids.length, starts.length);
-  const { clip, slot } = playheadSlot(starts.slice(0, n), totalMs, timeMs);
-  if (slot >= n) return END;
-  return slot === clip ? { before: ids[clip] } : { after: ids[clip] };
+  return anchorAtSlot(playheadSlot(starts.slice(0, n), totalMs, timeMs).slot, ids.slice(0, n));
 }
 
 /**
@@ -95,16 +98,6 @@ export type ClipsAdded = {
   draftId: string;
   /** The new clips' ids, in their order in the draft. */
   segmentIds: string[];
-  /** The anchor they were added at (as asked, before it was resolved). */
-  anchor: ClipAnchor;
-  /**
-   * Where they landed, by their neighbours once written: the clip right before them (null at the
-   * start) and right after them (null at the end). Two anchors can name the same slot (`after:X`
-   * and `before:Y` when Y follows X), so a listener asking "did they land at my slot?" compares
-   * these rather than the anchor. Absent when not known.
-   */
-  prevId?: string | null;
-  nextId?: string | null;
 };
 
 const listeners = new Set<(added: ClipsAdded) => void>();

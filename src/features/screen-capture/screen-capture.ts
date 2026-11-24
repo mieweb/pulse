@@ -1,6 +1,5 @@
 import { probe } from '@mieweb/pulse-editor';
 import { Directory, File, Paths } from 'expo-file-system';
-import { and, asc, desc, eq, lt } from 'drizzle-orm';
 import { useEffect } from 'react';
 import { Alert, AppState, Platform } from 'react-native';
 import {
@@ -16,12 +15,9 @@ import {
 } from 'react-native-nitro-screen-recorder';
 
 import { anchorFromRouteParam, anchorToRouteParam, type ClipAnchor, END } from '@/core/clip-anchor';
-import { db } from '@/db/client';
 import { createDraft, draftTakesClips, segmentExists } from '@/db/drafts';
-import { segments } from '@/db/schema';
 import { deleteSetting, getSetting, setSetting } from '@/db/settings';
 import { addExternalClip } from '@/features/recorder/add-external-clip';
-import { resolvePinned } from '@/features/recorder/insert-point';
 import type {
   ScreenCaptureState,
   ScreenCapturePort,
@@ -72,16 +68,10 @@ type Row = {
   mic: boolean;
   /**
    * Where the clip goes in the draft (`anchorToRouteParam`'s text): the recorder's insert cursor
-   * at the tap. Missing (an older row), unreadable or stale (its clip gone, or a new draft): the
-   * end.
+   * at the tap, kept if its clip is deleted while the take converts (`ClipAnchor.next`). Missing
+   * (an older row), unreadable or stale (its clips gone, or a new draft): the end.
    */
   anchor?: string;
-  /**
-   * With a `before` anchor, the clip that was before it at the tap (null: the draft's start), so
-   * the take keeps its spot if the anchor's clip is deleted while it converts (`resolvePinned`).
-   * Missing on older rows.
-   */
-  prevId?: string | null;
   /** The file to import, once known. */
   sourcePath?: string;
   /** iOS: the broadcast's Microphone was off. */
@@ -89,45 +79,6 @@ type Row = {
   /** The take is finished with (added, discarded or too short) and only its clean-up is left. */
   cleanup?: boolean;
 };
-
-// The clips a pinned spot is resolved against. Synchronous (expo-sqlite's driver is), so the
-// anchor can be resolved inside the insert's own turn, after the draft's earlier writes.
-
-/** With a `before` anchor, the clip before it in the draft (null: none), else undefined. */
-function clipBefore(draftId: string, anchor: ClipAnchor): string | null | undefined {
-  if (!('before' in anchor)) return undefined;
-  const at = db
-    .select({ order: segments.order })
-    .from(segments)
-    .where(and(eq(segments.id, anchor.before), eq(segments.draftId, draftId)))
-    .get();
-  if (!at) return undefined;
-  return (
-    db
-      .select({ id: segments.id })
-      .from(segments)
-      .where(and(eq(segments.draftId, draftId), lt(segments.order, at.order)))
-      .orderBy(desc(segments.order))
-      .limit(1)
-      .get()?.id ?? null
-  );
-}
-
-function clipThere(id: string): boolean {
-  return !!db.select({ id: segments.id }).from(segments).where(eq(segments.id, id)).get();
-}
-
-function firstClip(draftId: string): string | null {
-  return (
-    db
-      .select({ id: segments.id })
-      .from(segments)
-      .where(eq(segments.draftId, draftId))
-      .orderBy(asc(segments.order))
-      .limit(1)
-      .get()?.id ?? null
-  );
-}
 
 async function readRow(): Promise<Row | null> {
   const raw = await getSetting(ROW_KEY);
@@ -232,7 +183,6 @@ let requested: {
   draftId: string;
   mic: boolean;
   anchor: ClipAnchor;
-  prevId: string | null | undefined;
 } | null = null;
 const REQUEST_TTL_MS = 60_000;
 
@@ -441,11 +391,7 @@ async function importTake(row: Row, src: string, noVoice: boolean): Promise<void
     const result = await addExternalClip(src, () => draftFor(row), row.segmentId, {
       signal: abort.signal,
       onProgress: (progress) => setState({ progress }),
-      // Read just before the clip is written, in the insert's own turn (`insertSegments`).
-      anchor: () =>
-        resolvePinned(anchorFromRouteParam(row.anchor), row.prevId, clipThere, () =>
-          row.draftId ? firstClip(row.draftId) : null,
-        ),
+      anchor: anchorFromRouteParam(row.anchor),
     });
     if (result.status === 'cancelled') {
       log.warn(`cancelled after ${formatSeconds(Date.now() - started)}: Pulse left`);
@@ -540,7 +486,6 @@ async function addOffered(src: string, micOff: boolean) {
       createdAt: Date.now(),
       mic: true,
       anchor: anchorToRouteParam(anchor),
-      prevId: draftId ? clipBefore(draftId, anchor) : undefined,
       sourcePath: src,
       micOff,
     });
@@ -584,13 +529,7 @@ export async function startScreenCapture(
   }
   try {
     const draftId = await draft();
-    requested = {
-      at: Date.now(),
-      draftId,
-      mic: enableMic,
-      anchor,
-      prevId: clipBefore(draftId, anchor),
-    };
+    requested = { at: Date.now(), draftId, mic: enableMic, anchor };
     showStarting(draftId, STARTING_MAX_MS);
     // Android: the recording's notification (and its Stop) needs it; a denial still records.
     if (Platform.OS === 'android') await uploadNotify.ensurePermission();
@@ -670,7 +609,6 @@ function onRecordingEvent(event: ScreenRecordingEvent) {
       createdAt: now,
       mic: req.mic,
       anchor: anchorToRouteParam(req.anchor),
-      prevId: req.prevId,
     }).catch((e: unknown) => log.warn(`couldn't save the take: ${describeError(e)}`));
   } else if (state.phase === 'live' || state.phase === 'stopping') {
     log.info('capture ended');

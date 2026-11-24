@@ -1,4 +1,4 @@
-import { type ClipAnchor, type ClipsAdded, END } from '@/core/clip-anchor';
+import { anchorAtSlot, type ClipAnchor, isEnd } from '@/core/clip-anchor';
 import { formatDuration } from '@/utils/format';
 
 // The recorder's insert cursor (#308), as pure logic: where it sits on the clip strip, which
@@ -13,25 +13,16 @@ import { formatDuration } from '@/utils/format';
  * An anchor whose clip isn't in `ids` reads as the end, as `insertSegments` resolves it.
  */
 export function boundaryOf(anchor: ClipAnchor, ids: readonly string[]): number {
-  if ('before' in anchor) {
-    const i = ids.indexOf(anchor.before);
-    return i < 0 ? ids.length : i;
-  }
-  if ('after' in anchor) {
-    const i = ids.indexOf(anchor.after);
-    return i < 0 ? ids.length : i + 1;
-  }
-  return ids.length;
+  const i = isEnd(anchor) ? -1 : ids.indexOf(anchor.before);
+  return i < 0 ? ids.length : i;
 }
 
 /**
- * The anchor for boundary `k`: before the clip there, or the end after the last. Always the
- * `before` form, which keeps its place when clips are added at it (a run of takes stays in order
- * with no move) and when the clip before it is retaken.
+ * The anchor for boundary `k` (`anchorAtSlot`): before the clip there, or the end after the last.
+ * It keeps its place when clips are added at it (a run of takes stays in order with no move) and
+ * when the clip before it is retaken.
  */
-export function anchorAtBoundary(k: number, ids: readonly string[]): ClipAnchor {
-  return k >= 0 && k < ids.length ? { before: ids[k] } : END;
-}
+export const anchorAtBoundary = anchorAtSlot;
 
 /** One boundary along (an accessibility increment or decrement), held to the strip. */
 export function stepBoundary(k: number, delta: number, count: number): number {
@@ -41,51 +32,23 @@ export function stepBoundary(k: number, delta: number, count: number): number {
 // --- Following the draft --------------------------------------------------------------------------
 
 /**
- * The cursor after clips were added to its draft. One in the `before` form, or at the end, stays as
- * it is: the new clips are on its left and it is still where it was. One `after` a clip moves past
- * clips that landed right after that clip (whichever anchor they were added at), to before the
- * clip that follows them, or the end.
- */
-export function cursorAfterAdd(cursor: ClipAnchor, added: ClipsAdded): ClipAnchor {
-  if (!('after' in cursor)) return cursor;
-  if (added.prevId === undefined) {
-    // Neighbours not reported: only the same anchor is known to be the same slot.
-    if (!('after' in added.anchor) || added.anchor.after !== cursor.after) return cursor;
-    return { after: added.segmentIds[added.segmentIds.length - 1] };
-  }
-  if (added.prevId !== cursor.after) return cursor;
-  return added.nextId ? { before: added.nextId } : END;
-}
-
-/**
- * The cursor once clips have gone from the draft (`before` → `after` are its clip ids in order, as
- * last shown and now). If its clip went, it stays in the same place: before the next clip still
- * there, or the end. A clip it never saw (the list not loaded yet) leaves it alone.
+ * The cursor once the draft's clips changed (`before` → `after` are its clip ids in order, as last
+ * shown and now). If its clip went, it stays in the same place: before the next clip still there,
+ * or the end; else it stays before its clip, its `next` brought up to date. A clip it never saw
+ * (the list not loaded yet) leaves it alone.
  */
 export function cursorAfterRemoval(
   cursor: ClipAnchor,
   before: readonly string[],
   after: readonly string[],
 ): ClipAnchor {
-  const id = 'before' in cursor ? cursor.before : 'after' in cursor ? cursor.after : null;
-  if (id == null || after.includes(id)) return cursor;
-  const i = before.indexOf(id);
+  if (isEnd(cursor)) return cursor;
+  const k = after.indexOf(cursor.before);
+  if (k >= 0) return anchorAtBoundary(k, after);
+  const i = before.indexOf(cursor.before);
   if (i < 0) return cursor;
-  for (let j = i + 1; j < before.length; j++) {
-    if (after.includes(before[j])) return { before: before[j] };
-  }
-  return END;
-}
-
-/**
- * The same place in the `before` form, once its clip is in `ids`: after a clip is before the next
- * one, or the end after the last. Anything else is returned as it is.
- */
-export function normalizeCursor(cursor: ClipAnchor, ids: readonly string[]): ClipAnchor {
-  if (!('after' in cursor)) return cursor;
-  const i = ids.indexOf(cursor.after);
-  if (i < 0) return cursor;
-  return anchorAtBoundary(i + 1, ids);
+  const next = before.slice(i + 1).find((id) => after.includes(id));
+  return anchorAtBoundary(next === undefined ? after.length : after.indexOf(next), after);
 }
 
 /** The cursor as a clip is about to be deleted from `ids` (the recorder's trash): as if gone. */
@@ -113,27 +76,6 @@ export function orderShown<T>(
   pending: { base: T; ids: readonly string[] } | null,
 ): readonly string[] {
   return pending && pending.base === clips ? pending.ids : ids;
-}
-
-/**
- * Where a screen take goes, resolved as it's added: it was pinned at Record screen's tap as
- * `pinned` (the cursor then) with `prevId`, the clip before that spot (null: the draft's start).
- * Long takes convert for a while, and the clip after the spot may be deleted meanwhile: then it
- * goes after the clip before it, or at the start if it was there; with both gone, the end.
- * `prevId` undefined (a row saved before it was kept) keeps `pinned` as it is.
- */
-export function resolvePinned(
-  pinned: ClipAnchor,
-  prevId: string | null | undefined,
-  stillThere: (id: string) => boolean,
-  firstId: () => string | null,
-): ClipAnchor {
-  if (!('before' in pinned) || prevId === undefined || stillThere(pinned.before)) return pinned;
-  if (prevId === null) {
-    const first = firstId();
-    return first ? { before: first } : END;
-  }
-  return stillThere(prevId) ? { after: prevId } : END;
 }
 
 /** The cursor's boundary kept where it was across a reorder (`before` → `after` orders). */

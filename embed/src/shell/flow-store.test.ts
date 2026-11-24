@@ -43,10 +43,10 @@ describe('stackItems', () => {
   it('gives a clip only to a new editor, and an anchor only to a new recorder', () => {
     const items = stackItems([], ['editor', 'recorder'], key, {
       clipId: 'c2',
-      anchor: { after: 'c1' },
+      anchor: { before: 'c2' },
     });
     expect(items.map((i) => i.clipId)).toEqual(['c2', undefined]);
-    expect(items.map((i) => i.anchor)).toEqual([undefined, { after: 'c1' }]);
+    expect(items.map((i) => i.anchor)).toEqual([undefined, { before: 'c2' }]);
   });
 });
 

@@ -14,7 +14,7 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 
-import { type ClipAnchor, END, onClipsAdded, sameAnchor } from '@/core/clip-anchor';
+import { type ClipAnchor, END, sameAnchor } from '@/core/clip-anchor';
 import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 import {
   addSegment,
@@ -45,12 +45,7 @@ import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorMo
 import { addExternalClip } from './add-external-clip';
 import type { RecorderNewDraft, ScreenCapturePort } from './contract';
 import { importLog } from './import-log';
-import {
-  cursorAfterAdd,
-  cursorAfterRemoval,
-  cursorBeforeDelete,
-  normalizeCursor,
-} from './insert-point';
+import { cursorAfterRemoval, cursorBeforeDelete } from './insert-point';
 import { learnRecorderFormat } from './recorder-format';
 import { useScreenTake } from './screen-take';
 import { useImportImages } from './use-import-images';
@@ -313,10 +308,9 @@ export function useRecorder(
 
   // The insert cursor (#308): where takes, imports and screen recordings go in the draft. Read
   // through the ref as late as possible (`insertSegments` calls the getter just before it writes);
-  // the state is for rendering. It's kept in the `before` form (insert-point.ts), which stays put
-  // as clips land at it, so a run of takes stays in order, and survives a retake (the take before
-  // it deleted). One `after` a clip moves past clips that land right after that clip. When its own
-  // clip goes (deleted here or in the editor), it stays in the same place, before the next clip.
+  // the state is for rendering. A `ClipAnchor` stays put as clips land at it, so a run of takes
+  // stays in order, and survives a retake (the take before it deleted). When its own clip goes
+  // (deleted here or in the editor), it stays in the same place, before the next clip.
   const [insertAnchor, setAnchorState] = useState<ClipAnchor>(initialAnchor);
   const anchorRef = useRef(insertAnchor);
   const setInsertAnchor = (next: ClipAnchor) => {
@@ -324,30 +318,12 @@ export function useRecorder(
     anchorRef.current = next;
     setAnchorState(next);
   };
-  useEffect(
-    () =>
-      onClipsAdded((added) => {
-        if (added.draftId !== draftIdRef.current) return;
-        const next = cursorAfterAdd(anchorRef.current, added);
-        if (sameAnchor(next, anchorRef.current)) return;
-        anchorRef.current = next;
-        setAnchorState(next);
-      }),
-    [],
-  );
-  // The clips as last seen, to tell which went; and an `after` cursor in its `before` form.
+  // The clips as last seen, to tell which went.
   const shownIds = useRef<string[]>([]);
   useEffect(() => {
     const ids = segments.map((s) => s.id);
-    const moved = normalizeCursor(
-      cursorAfterRemoval(anchorRef.current, shownIds.current, ids),
-      ids,
-    );
+    setInsertAnchor(cursorAfterRemoval(anchorRef.current, shownIds.current, ids));
     shownIds.current = ids;
-    if (!sameAnchor(moved, anchorRef.current)) {
-      anchorRef.current = moved;
-      setAnchorState(moved);
-    }
   }, [segments]);
 
   // Hydrate persisted camera prefs once on mount, then mark ready so the camera can render.

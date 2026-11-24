@@ -36,10 +36,10 @@ export type ExternalClipResult =
  * in its draft or not at all. `onProgress` gets the conversion's progress in whole percents (and
  * never after a cancel). `onAdded` runs once the segment row is written, before this resolves: a
  * beat after the insert is announced (`onClipsAdded` listeners have run by then), not with it.
- * `anchor` says where in the draft the clip goes (default the end); it is called just before the
- * row is written (`insertSegments`), so a caller that passes its live cursor (the recorder's
- * import) follows a cursor moved during the conversion, and one that passes a fixed place (a screen
- * take, pinned where the cursor was when Record screen was tapped) gets that place.
+ * `anchor` says where in the draft the clip goes (default the end); as a function it is called just
+ * before the row is written (`insertSegments`), so a caller that passes its live cursor (the
+ * recorder's import) follows a cursor moved during the conversion, and one that passes a fixed
+ * place (a screen take, pinned where the cursor was when Record screen was tapped) gets that place.
  *
  * Throws on anything other than a cancel or a conversion refusal (a copy or a db write failing).
  */
@@ -56,7 +56,7 @@ export async function addExternalClip(
     signal: AbortSignal;
     onProgress?: (fraction: number) => void;
     onAdded?: () => void;
-    anchor?: () => ClipAnchor;
+    anchor?: ClipAnchor | (() => ClipAnchor);
   },
 ): Promise<ExternalClipResult> {
   const started = Date.now();
