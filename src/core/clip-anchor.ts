@@ -152,14 +152,14 @@ const listeners = new Set<(added: ClipsAdded) => void>();
  * opened. `arms` counts the editors on the draft (an editor can sit under another one's recorder).
  */
 const expected = new Map<string, { arms: number; ids: string[]; returnTo: ClipAnchor | null }>();
-/** Ids kept per draft at most: an editor takes them on every focus, so this is a backstop. */
-const MAX_UNREAD = 500;
 
 /** Told by `insertSegments` once new clips are in a draft. */
 export function noteClipsAdded(added: ClipsAdded): void {
   if (added.segmentIds.length === 0) return;
   const entry = expected.get(added.draftId);
-  if (entry) entry.ids = [...entry.ids, ...added.segmentIds].slice(-MAX_UNREAD);
+  // Every id, uncapped: the editor makes what it takes one undo step, and a step missing some of
+  // its clips would leave them behind on Undo. The editor takes them on every focus.
+  if (entry) entry.ids = [...entry.ids, ...added.segmentIds];
   for (const listener of listeners) {
     try {
       listener(added);

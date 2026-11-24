@@ -206,11 +206,12 @@ describe('clips added', () => {
     expect(takeClipsAdded('d5')).toEqual([]);
   });
 
-  it('keeps at most the newest 500 ids per draft', () => {
+  it('keeps every id of a large addition, so its undo step is whole', () => {
     const disarm = expectClipsAdded('d6');
-    const many = Array.from({ length: 600 }, (_, i) => `c${i}`);
+    const many = Array.from({ length: 501 }, (_, i) => `c${i}`);
     noteClipsAdded({ draftId: 'd6', segmentIds: many });
-    expect(takeClipsAdded('d6')).toEqual(many.slice(100));
+    noteClipsAdded({ draftId: 'd6', segmentIds: ['more'] });
+    expect(takeClipsAdded('d6')).toEqual([...many, 'more']);
     disarm();
   });
 
