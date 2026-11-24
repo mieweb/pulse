@@ -43,7 +43,12 @@ jest.mock('expo-crypto', () => {
 import { anchorFromRouteParam, anchorToRouteParam, type ClipAnchor } from '@/core/clip-anchor';
 import { expoDb } from '@/db/client';
 import { addSegment, createDraft, deleteSegment } from '@/db/drafts';
-import { anchorAtBoundary, cursorAfterRemoval, cursorBeforeDelete } from './insert-point';
+import {
+  anchorAtBoundary,
+  boundaryOf,
+  cursorAfterRemoval,
+  cursorBeforeDelete,
+} from './insert-point';
 /* eslint-enable import/first */
 
 const conn = expoDb as unknown as {
@@ -137,6 +142,34 @@ describe('the recorder’s insert cursor over real inserts', () => {
       s(d, 'c'),
     ]);
     expect(cursor.get()).toEqual({ before: s(d, 'b'), next: s(d, 'c') });
+  });
+
+  it('a cursor whose clip went before the recorder loaded shows where the take lands', async () => {
+    const d = await abc();
+    // From the editor, between a and b; b is deleted before the recorder's first clips load.
+    const cursor = recorderCursor(d, anchorAtBoundary(1, ids(d)));
+    await deleteSegment(s(d, 'b'));
+    const loaded = ids(d);
+    expect(cursorAfterRemoval(cursor.get(), [], loaded)).toEqual(cursor.get()); // never saw b
+    const shown = boundaryOf(cursor.get(), loaded);
+    expect(shown).toBe(1); // before c, not at the end
+    await addSegment(d, clip(s(d, 'x')), cursor.get);
+    expect(ids(d).indexOf(s(d, 'x'))).toBe(shown);
+  });
+
+  it.each<[string, (d: string) => ClipAnchor, string[]]>([
+    ['its clip there', (d) => ({ before: s(d, 'b'), next: s(d, 'c') }), []],
+    ['its clip gone, next there', (d) => ({ before: s(d, 'b'), next: s(d, 'c') }), ['b']],
+    ['both gone', (d) => ({ before: s(d, 'b'), next: s(d, 'c') }), ['b', 'c']],
+    ['the last clip, gone', (d) => ({ before: s(d, 'c') }), ['c']],
+    ['the end', () => ({ at: 'end' }), ['a']],
+  ])('the cursor and the write agree: %s', async (_name, anchorOf, deleted) => {
+    const d = await abc();
+    const anchor = anchorOf(d);
+    for (const id of deleted) await deleteSegment(s(d, id));
+    const shown = boundaryOf(anchor, ids(d));
+    await addSegment(d, clip(s(d, 'x')), anchor);
+    expect(ids(d).indexOf(s(d, 'x'))).toBe(shown);
   });
 
   it('a screen take keeps its spot when the clip after it goes while it converts', async () => {

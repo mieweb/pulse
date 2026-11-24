@@ -2,7 +2,7 @@
  * Where new clips go in a draft (issue #308): before a clip, by its segment id, or at the end. The
  * editor's + works it out from the playhead (`anchorForPlayhead`), the recorder holds one as its
  * insert cursor, and `insertSegments` (src/db/drafts.ts) resolves it to a slot when the clips are
- * written.
+ * written, by the rule the cursor shows (`resolveAnchor`).
  *
  * `next` is the clip that followed `before` when the anchor was made: an add that waits (an
  * import converting, a screen take) still lands in the same place if `before` is deleted
@@ -26,6 +26,32 @@ export function isEnd(anchor: ClipAnchor): anchor is { at: 'end' } {
 export function sameAnchor(a: ClipAnchor, b: ClipAnchor): boolean {
   if (isEnd(a) || isEnd(b)) return isEnd(a) && isEnd(b);
   return a.before === b.before && a.next === b.next;
+}
+
+/**
+ * Where `anchor` puts new clips: before `before` while it's in the draft, else before `next`, else
+ * the end. The one rule for every reader of an anchor, so they can't disagree: `insertSegments`
+ * writes with it and the recorder's cursor shows it. `slotOf` is a clip's slot, or undefined when
+ * the clip isn't in the draft; undefined back means the end.
+ */
+export function resolveAnchor<T>(
+  anchor: ClipAnchor,
+  slotOf: (id: string) => T | undefined,
+): T | undefined {
+  if (isEnd(anchor)) return undefined;
+  const at = slotOf(anchor.before);
+  if (at !== undefined || anchor.next === undefined) return at;
+  return slotOf(anchor.next);
+}
+
+/** `resolveAnchor` over the clip ids in order: the slot, 0 … `ids.length` (the end). */
+export function anchorSlot(anchor: ClipAnchor, ids: readonly string[]): number {
+  return (
+    resolveAnchor(anchor, (id) => {
+      const i = ids.indexOf(id);
+      return i < 0 ? undefined : i;
+    }) ?? ids.length
+  );
 }
 
 /** The anchor for slot `slot` of the clips `ids` (0 before the first, `ids.length` the end). */

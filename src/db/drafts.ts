@@ -12,7 +12,7 @@ import {
   relFileExists,
   thumbRelPath,
 } from '@/utils/file-store';
-import { type ClipAnchor, END, isEnd, noteClipsAdded } from '@/core/clip-anchor';
+import { type ClipAnchor, END, noteClipsAdded, resolveAnchor } from '@/core/clip-anchor';
 import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
 import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
 import { isCaptionsOff, parseCaptionEdit, setCaptionsOff } from './captions';
@@ -424,21 +424,17 @@ function orderOf(tx: Tx, draftId: string, id: string): number | undefined {
 }
 
 /**
- * The slot new clips take for `anchor`, and whether the clips from that slot on must move up: the
- * anchor clip's slot, else (it has gone) its `next` clip's, else the end (max + 1, hole-tolerant
- * after deletes).
+ * The slot new clips take for `anchor` (`resolveAnchor`, the rule the recorder's cursor shows), and
+ * whether the clips from that slot on must move up: the anchor clip's slot, else (it has gone) its
+ * `next` clip's, else the end (max + 1, hole-tolerant after deletes).
  */
 function insertSlot(
   tx: Tx,
   draftId: string,
   anchor: ClipAnchor,
 ): { order: number; shift: boolean } {
-  if (!isEnd(anchor)) {
-    for (const id of [anchor.before, anchor.next]) {
-      const order = id == null ? undefined : orderOf(tx, draftId, id);
-      if (order !== undefined) return { order, shift: true };
-    }
-  }
+  const order = resolveAnchor(anchor, (id) => orderOf(tx, draftId, id));
+  if (order !== undefined) return { order, shift: true };
   const [{ maxOrder }] = tx
     .select({ maxOrder: sql<number | null>`max(${segments.order})` })
     .from(segments)

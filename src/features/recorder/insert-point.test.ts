@@ -36,6 +36,27 @@ describe('boundaries and anchors', () => {
     expect(boundaryOf({ before: 'gone' }, ids)).toBe(3);
   });
 
+  it('reads an anchor whose clip went as its next clip’s boundary, as a take lands', () => {
+    // `before` deleted before the recorder first saw the clips: `cursorAfterRemoval` keeps the
+    // anchor, and the cursor shows the place `insertSegments` puts the take, before `next`.
+    expect(boundaryOf({ before: 'gone', next: 'b' }, ids)).toBe(1);
+    expect(boundaryOf({ before: 'gone', next: 'c' }, ['a', 'c'])).toBe(1);
+    expect(boundaryOf({ before: 'gone', next: 'also-gone' }, ids)).toBe(3);
+    // Its own clip, while there, wins over `next`.
+    expect(boundaryOf({ before: 'c', next: 'a' }, ids)).toBe(2);
+    // Its chip and VoiceOver say so too, not "at the end".
+    const kept = cursorAfterRemoval({ before: 'gone', next: 'b' }, [], ids);
+    const clips = [
+      { label: '1', durationMs: 1000 },
+      { label: '2', durationMs: 2000 },
+      { label: '3', durationMs: 500 },
+    ];
+    expect(cursorA11yValue(boundaryOf(kept, ids), clips)).toBe('between clips 1 and 2, at 0:01');
+    expect(insertChipText(boundaryOf(kept, ids), clips)).toBe(
+      'Adding at 0:01 · between clips 1 and 2',
+    );
+  });
+
   it('writes a boundary before its clip (with the clip after it), the end after the last', () => {
     expect([0, 1, 2, 3].map((k) => anchorAtBoundary(k, ids))).toEqual([
       { before: 'a', next: 'b' },

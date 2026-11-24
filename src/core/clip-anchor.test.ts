@@ -3,6 +3,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import {
   anchorForPlayhead,
   anchorFromRouteParam,
+  anchorSlot,
   anchorToRouteParam,
   END,
   expectClipsAdded,
@@ -10,6 +11,7 @@ import {
   noteClipsAdded,
   onClipsAdded,
   playheadSlot,
+  resolveAnchor,
   sameAnchor,
   takeClipsAdded,
   type ClipAnchor,
@@ -38,6 +40,35 @@ describe('route params', () => {
     ['plain "end"', 'end'],
   ])('reads %s as the end', (_name, param) => {
     expect(anchorFromRouteParam(param)).toEqual(END);
+  });
+});
+
+describe('resolveAnchor / anchorSlot', () => {
+  const ids = ['a', 'b', 'c'];
+
+  it.each<[ClipAnchor, number]>([
+    [{ before: 'a', next: 'b' }, 0],
+    [{ before: 'b' }, 1],
+    [{ before: 'c', next: 'a' }, 2], // its own clip, while there, wins
+    [{ before: 'gone', next: 'b' }, 1], // its clip went: before the clip that followed it
+    [{ before: 'gone', next: 'also-gone' }, 3], // both went: the end
+    [{ before: 'gone' }, 3], // it was the last clip: the end
+    [END, 3],
+  ])('%j → slot %d', (anchor, slot) => {
+    expect(anchorSlot(anchor, ids)).toBe(slot);
+  });
+
+  it('asks for `before`, then `next`, and nothing for the end', () => {
+    const asked: string[] = [];
+    const slotOf = (id: string) => {
+      asked.push(id);
+      return id === 'b' ? 7 : undefined;
+    };
+    expect(resolveAnchor({ before: 'x', next: 'b' }, slotOf)).toBe(7);
+    expect(resolveAnchor({ before: 'b', next: 'x' }, slotOf)).toBe(7);
+    expect(resolveAnchor({ before: 'x' }, slotOf)).toBeUndefined();
+    expect(resolveAnchor(END, slotOf)).toBeUndefined();
+    expect(asked).toEqual(['x', 'b', 'b', 'x']);
   });
 });
 

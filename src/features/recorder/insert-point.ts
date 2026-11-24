@@ -1,4 +1,4 @@
-import { anchorAtSlot, type ClipAnchor, isEnd } from '@/core/clip-anchor';
+import { anchorAtSlot, anchorSlot, type ClipAnchor, isEnd } from '@/core/clip-anchor';
 import { formatDuration } from '@/utils/format';
 
 // The recorder's insert cursor (#308), as pure logic: where it sits on the clip strip, which
@@ -10,12 +10,11 @@ import { formatDuration } from '@/utils/format';
 
 /**
  * The cursor as a boundary index: 0 before the first clip … `ids.length` after the last (the end).
- * An anchor whose clip isn't in `ids` reads as the end, as `insertSegments` resolves it.
+ * By the rule `insertSegments` writes with (`anchorSlot`): an anchor whose clip isn't in `ids`
+ * reads as its `next` clip's boundary, else the end, so the cursor shows where a take lands even
+ * when its clip went before the recorder first saw the clips.
  */
-export function boundaryOf(anchor: ClipAnchor, ids: readonly string[]): number {
-  const i = isEnd(anchor) ? -1 : ids.indexOf(anchor.before);
-  return i < 0 ? ids.length : i;
-}
+export const boundaryOf = anchorSlot;
 
 /**
  * The anchor for boundary `k` (`anchorAtSlot`): before the clip there, or the end after the last.
