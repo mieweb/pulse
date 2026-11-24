@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -48,9 +48,10 @@ jest.mock(
   () => ({ imageClip: (...args: Parameters<ImageClip>) => mockImageClip(...args) }),
   { virtual: true },
 );
+const mockThumbnail = jest.fn(async (_video: string, _out: string) => false);
 jest.mock('@/utils/video', () => ({
   getDurationMs: async () => 3000,
-  generateThumbnailFile: async () => false,
+  generateThumbnailFile: (video: string, out: string) => mockThumbnail(video, out),
   coverFailed: () => {},
   markCoverInFlight: () => {},
 }));
@@ -63,9 +64,10 @@ jest.mock('expo-crypto', () => {
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { anchorAtSlot, type ClipAnchor, onClipsAdded } from '@/core/clip-anchor';
 import { expoDb } from '@/db/client';
-import { addSegment, createDraft } from '@/db/drafts';
+import { addSegment, createDraft, deleteDraft } from '@/db/drafts';
 import { env } from '@/test-support/expo-fs-node';
 import { imageBatchNotice } from '@/utils/import-copy';
+import { storeClip } from './add-external-clip';
 import { addImageClips } from './add-image-clips';
 /* eslint-enable import/first */
 
@@ -89,6 +91,8 @@ function makeClip(uri: string): ReturnType<ImageClip> {
 }
 beforeEach(() => {
   outputs = [];
+  mockThumbnail.mockReset();
+  mockThumbnail.mockImplementation(async () => false);
   mockImageClip.mockReset();
   mockImageClip.mockImplementation((uri) => makeClip(uri));
 });
@@ -293,5 +297,50 @@ describe('addImageClips', () => {
     });
     expect(result).toMatchObject({ cancelled: false, skipped: [] });
     expect(result.added).toHaveLength(1);
+  });
+});
+
+describe('a draft deleted before the row is written', () => {
+  /** The files left in the draft's segments folder (none if it's gone). */
+  const leftIn = (draftId: string) => {
+    const dir = join(env.docDir, `drafts/${draftId}/segments`);
+    return existsSync(dir) ? readdirSync(dir) : [];
+  };
+
+  it('storeClip deletes the copy and its cover, and throws', async () => {
+    const d = await abc();
+    // Deleted (from Home, say) while the import converted: the copy makes its folder again.
+    await deleteDraft(d);
+    mockThumbnail.mockImplementation(async (_video, out) => {
+      writeFileSync(out.replace(/^file:\/\//, ''), 'cover');
+      return true;
+    });
+    const src = join(env.cacheDir, 'picked.mp4');
+    writeFileSync(src, 'video');
+    await expect(
+      storeClip(`file://${src}`, {
+        draftId: d,
+        segmentId: `${d}-1`,
+        owned: false,
+        signal: signal(),
+        anchor: { at: 'end' },
+      }),
+    ).rejects.toThrow(/not found/);
+    expect(leftIn(d)).toEqual([]);
+    expect(existsSync(src)).toBe(true); // not owned: only read
+  });
+
+  it('addImageClips leaves no clip behind and throws', async () => {
+    const d = await abc();
+    mockImageClip.mockImplementation(async (uri) => {
+      const made = await makeClip(uri);
+      await deleteDraft(d);
+      return made;
+    });
+    await expect(addImageClips(images('one'), d, { signal: signal() })).rejects.toThrow(
+      /not found/,
+    );
+    expect(leftIn(d)).toEqual([]);
+    expect(outputs.filter(existsSync)).toEqual([]);
   });
 });

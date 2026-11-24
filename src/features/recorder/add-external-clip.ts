@@ -119,7 +119,7 @@ export async function addExternalClip(
  * OS-purgeable cache dir: it's deleted once copied (or the copy failed); otherwise it's only read.
  *
  * Resolves true once the row is written, false when `signal` aborted on the way (nothing is left
- * behind). Throws when the copy, the length or the db write fails.
+ * behind). Throws when the copy, the length or the db write fails, its files deleted.
  */
 export async function storeClip(
   file: string,
@@ -143,25 +143,34 @@ export async function storeClip(
   } finally {
     if (owned) deleteQuietly(file);
   }
-  const durationMs = await getDurationMs(absolutize(originalFilename));
-  if (signal.aborted) {
-    deleteSegmentFile(originalFilename);
-    return false;
-  }
-
-  // The cover first, then the row: an import can be cancelled while its cover renders, and then
-  // nothing is added.
+  // Until the row is in, nothing points at the copy or its cover: a cancel or a throw (the draft
+  // deleted meanwhile, a full disk) takes them back out.
   const thumbRel = thumbRelPath(draftId, segmentId);
-  const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
-  if (signal.aborted) {
-    if (ok) deleteSegmentFile(thumbRel);
+  const discard = () => {
+    deleteSegmentFile(thumbRel);
     deleteSegmentFile(originalFilename);
-    return false;
+  };
+  try {
+    const durationMs = await getDurationMs(absolutize(originalFilename));
+    if (signal.aborted) {
+      discard();
+      return false;
+    }
+    // The cover first, then the row: an import can be cancelled while its cover renders, and then
+    // nothing is added.
+    const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
+    if (signal.aborted) {
+      discard();
+      return false;
+    }
+    await addSegment(
+      draftId,
+      { id: segmentId, originalFilename, durationMs, thumbnail: ok ? thumbRel : null },
+      anchor,
+    );
+    return true;
+  } catch (e) {
+    discard();
+    throw e;
   }
-  await addSegment(
-    draftId,
-    { id: segmentId, originalFilename, durationMs, thumbnail: ok ? thumbRel : null },
-    anchor,
-  );
-  return true;
 }
