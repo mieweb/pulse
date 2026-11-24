@@ -3,9 +3,8 @@ import {
   launchImageLibraryAsync,
   UIImagePickerPreferredAssetRepresentationMode,
 } from 'expo-image-picker';
-import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Linking, Platform } from 'react-native';
+import { Alert, AppState, Platform } from 'react-native';
 import { probe } from '@mieweb/pulse-editor';
 import {
   type CameraRef,
@@ -46,6 +45,7 @@ import { addExternalClip } from './add-external-clip';
 import type { RecorderNewDraft, ScreenCapturePort } from './contract';
 import { importLog } from './import-log';
 import { cursorAfterRemoval, cursorBeforeDelete } from './insert-point';
+import { usePhotosAccess } from './photos-access';
 import { learnRecorderFormat } from './recorder-format';
 import { useScreenTake } from './screen-take';
 import { useImportImages } from './use-import-images';
@@ -213,16 +213,8 @@ export function useRecorder(
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
   const { showToast } = useToast();
 
-  // Library access for the + import — granular (photo+video) like the camera/mic gate,
-  // but requested just-in-time on tap (§2.3). Granting up front also lets the picker's
-  // passthrough fast path stream originals instead of prompting mid-import. iOS only: Android
-  // imports through the system photo picker, which needs no permission, and Play's photo/video
-  // policy rejects READ_MEDIA_* for that. With those out of the manifest, even checking the
-  // photo/video permission throws on Android 13+, so the hook doesn't check there.
-  const [libraryPermission, requestLibraryPermission] = usePermissions({
-    granularPermissions: ['photo', 'video'],
-    get: Platform.OS === 'ios',
-  });
+  // Photos access for the + import, asked for on the tap.
+  const ensurePhotosAccess = usePhotosAccess();
 
   // Start/stop decisions run from memoized gesture callbacks where `isRecording` state can
   // lag a render behind — they go through refs that flip synchronously instead.
@@ -534,21 +526,7 @@ export function useRecorder(
   // segment: conformed to the recorder's own format unless it's already in it (addExternalClip).
   async function importClip() {
     if (isRecordingRef.current || isImporting || imagesRunningRef.current) return;
-    if (Platform.OS === 'ios' && !libraryPermission?.granted) {
-      if (libraryPermission && !libraryPermission.canAskAgain) {
-        Alert.alert(
-          'Photos access needed',
-          'Allow Pulse to access your photo library in Settings to import videos.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => void Linking.openSettings() },
-          ],
-        );
-        return;
-      }
-      const next = await requestLibraryPermission();
-      if (!next.granted) return;
-    }
+    if (!(await ensurePhotosAccess('videos'))) return;
     let pickedUri: string | null = null;
     let appStateSub: ReturnType<typeof AppState.addEventListener> | null = null;
     try {

@@ -2,9 +2,8 @@ import {
   launchImageLibraryAsync,
   UIImagePickerPreferredAssetRepresentationMode,
 } from 'expo-image-picker';
-import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Linking, Platform } from 'react-native';
+import { Alert, AppState } from 'react-native';
 
 import type { ClipAnchor } from '@/core/clip-anchor';
 import { useToast } from '@/features/toast/toast-provider';
@@ -15,23 +14,20 @@ import { userMessage } from '@/utils/user-message';
 
 import { addExternalClip } from './add-external-clip';
 import { importLog } from './import-log';
+import { usePhotosAccess } from './photos-access';
 
 /**
  * Import video into an existing draft, at an anchor: the system picker (Photos access asked for
- * on iOS, as the recorder does), then `addExternalClip`, with its busy state and progress for the
+ * on iOS, `usePhotosAccess`), then `addExternalClip`, with its busy state and progress for the
  * "+" that started it. The editor's "+" uses it; the recorder's own import (use-recorder.ts) does
  * the same steps around its take state and its draft made on demand.
  *
  * Leaving Pulse mid-import cancels it (nothing is added; an alert says so on return), and so does
- * the screen closing.
+ * the screen closing (no toast then: the person has left it).
  */
 export function useImportVideo() {
   const { showToast } = useToast();
-  // iOS only, as in the recorder: Android's system photo picker needs no permission.
-  const [libraryPermission, requestLibraryPermission] = usePermissions({
-    granularPermissions: ['photo', 'video'],
-    get: Platform.OS === 'ios',
-  });
+  const ensurePhotosAccess = usePhotosAccess();
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -49,21 +45,8 @@ export function useImportVideo() {
     // Where it goes is decided now, as Import video is picked, like every "+" item: scrubbing,
     // trimming or reordering during a long conversion doesn't move it.
     const anchor = anchorAtPick();
-    if (Platform.OS === 'ios' && !libraryPermission?.granted) {
-      if (libraryPermission && !libraryPermission.canAskAgain) {
-        Alert.alert(
-          'Photos access needed',
-          'Allow Pulse to access your photo library in Settings to import videos.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => void Linking.openSettings() },
-          ],
-        );
-        return;
-      }
-      const next = await requestLibraryPermission();
-      if (!next.granted) return;
-    }
+    // The screen may have closed while the system asked.
+    if (!(await ensurePhotosAccess('videos')) || unmounted.current) return;
     const abort = new AbortController();
     abortRef.current = abort;
     let pickedUri: string | null = null;
@@ -108,7 +91,7 @@ export function useImportVideo() {
           'Import cancelled',
           'Pulse left the screen before the video finished converting. Try again and keep Pulse open until it’s done.',
         );
-      } else if (outcome.status === 'rejected') {
+      } else if (outcome.status === 'rejected' && !unmounted.current) {
         showToast({
           kind: 'error',
           title: 'Couldn’t import the video',
@@ -118,13 +101,15 @@ export function useImportVideo() {
     } catch (e) {
       const why = describeError(e);
       importLog.warn(`failed: ${why}`);
-      showToast({
-        kind: 'error',
-        title: 'Couldn’t import the video',
-        message: isOutOfSpace(why)
-          ? importFailureCopy(why)
-          : userMessage(e, 'Try again.', 'import'),
-      });
+      if (!unmounted.current) {
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t import the video',
+          message: isOutOfSpace(why)
+            ? importFailureCopy(why)
+            : userMessage(e, 'Try again.', 'import'),
+        });
+      }
     } finally {
       appStateSub?.remove();
       abortRef.current = null;

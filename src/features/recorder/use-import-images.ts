@@ -2,9 +2,8 @@ import {
   launchImageLibraryAsync,
   UIImagePickerPreferredAssetRepresentationMode,
 } from 'expo-image-picker';
-import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Linking, Platform } from 'react-native';
+import { Alert, AppState } from 'react-native';
 
 import type { ClipAnchor } from '@/core/clip-anchor';
 import { useToast } from '@/features/toast/toast-provider';
@@ -23,6 +22,7 @@ import { userMessage } from '@/utils/user-message';
 
 import { addImageClips, type ImageBatchStep } from './add-image-clips';
 import { importLog } from './import-log';
+import { usePhotosAccess } from './photos-access';
 
 /** The most images one pick adds: a run of screenshots, not a whole album. */
 export const IMAGE_SELECTION_LIMIT = 20;
@@ -40,11 +40,7 @@ export const IMAGE_SELECTION_LIMIT = 20;
  */
 export function useImportImages() {
   const { showToast } = useToast();
-  // iOS only, as for videos: Android's system photo picker needs no permission.
-  const [libraryPermission, requestLibraryPermission] = usePermissions({
-    granularPermissions: ['photo', 'video'],
-    get: Platform.OS === 'ios',
-  });
+  const ensurePhotosAccess = usePhotosAccess();
   const [importing, setImporting] = useState(false);
   const [step, setStep] = useState<ImageBatchStep | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -71,22 +67,8 @@ export function useImportImages() {
     } = {},
   ): Promise<void> {
     if (abortRef.current) return;
-    if (Platform.OS === 'ios' && !libraryPermission?.granted) {
-      if (libraryPermission && !libraryPermission.canAskAgain) {
-        Alert.alert(
-          'Photos access needed',
-          'Allow Pulse to access your photo library in Settings to import images.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => void Linking.openSettings() },
-          ],
-        );
-        return;
-      }
-      const next = await requestLibraryPermission();
-      // The screen may have closed while the system asked.
-      if (!next.granted || unmounted.current) return;
-    }
+    // The screen may have closed while the system asked.
+    if (!(await ensurePhotosAccess('images')) || unmounted.current) return;
     const abort = new AbortController();
     abortRef.current = abort;
     let picked: string[] = [];
