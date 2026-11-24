@@ -156,6 +156,18 @@ describe('navigation', () => {
     expect(s.end).toBeNull();
   });
 
+  it('Export from the added recorder goes over the editor, and Trim comes back to it', () => {
+    let s = run(recorded(), { type: 'edit' }, { type: 'addClips', anchor: { before: 'c1' } });
+    s = run(s, { type: 'record' }, { type: 'stop', draftId: 'd1', clipCount: 2 });
+    // The recorder's Export, as the shell sends it: edit, then export.
+    s = run(s, { type: 'edit' }, { type: 'export' });
+    expect(s.stack).toEqual(['recorder', 'editor', 'export']);
+    // Trim (the shell's back from Export, offered with the editor under it).
+    s = run(s, { type: 'back' });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    expect(s.end).toBeNull();
+  });
+
   it('the round trip sends no result, whichever way the recorder is left', () => {
     let s = run(recorded(), { type: 'edit' });
     for (const leave of [{ type: 'edit' }, { type: 'back' }] as const) {
