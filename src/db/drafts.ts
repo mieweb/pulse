@@ -28,6 +28,7 @@ import {
 } from './host-context';
 import type { ClipTranscript, Draft, Segment } from './schema';
 import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
+import { noteHeldFiles } from './held-files';
 import { deleteSavedLink } from './secure-token';
 import {
   cancelJobForChange,
@@ -743,6 +744,8 @@ export async function takeOutSegments(
       .all();
     tx.delete(segments).where(inArray(segments.id, ids)).run();
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
+    // Noted on disk too: if Pulse dies with the redo pending, the next launch deletes them.
+    noteHeldFiles(tx, rows.flatMap(rowFiles));
     return { draftId, order: all.map((r) => r.id), rows, transcripts };
   });
   // Its files are kept for the redo, whatever else is deleted meanwhile.
@@ -754,15 +757,16 @@ export async function takeOutSegments(
  * Put clips `takeOutSegments` took out back (the redo of adding them), with their labels, edits,
  * captions and transcripts: each where it was, after the clip it followed then (or before the one
  * it preceded) if that clip is still here, else at the end. Tells no clips-added listener: this
- * is the same addition again, not a new one. A draft that has gone takes nothing back.
+ * is the same addition again, not a new one. A draft that has gone takes nothing back, and its
+ * files are no longer held (its folder went with it).
  */
 export async function restoreSegments(taken: TakenOutClips): Promise<void> {
   const { draftId } = taken;
   if (taken.rows.length === 0) return;
   await beginClipMutation(draftId);
-  const restored = db.transaction((tx) => {
+  db.transaction((tx) => {
     const draft = tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, draftId)).get();
-    if (!draft) return false;
+    if (!draft) return;
     const byId = new Map(taken.rows.map((r) => [r.id, r]));
     const present = new Set(
       tx
@@ -795,10 +799,9 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
     const back = taken.transcripts.filter((t) => byId.has(t.segmentId));
     if (back.length) tx.insert(clipTranscripts).values(back).onConflictDoNothing().run();
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
-    return true;
   });
-  // Its rows point at its files again, which keeps them.
-  if (restored) release(taken);
+  // Its rows point at its files again, which keeps them; or nothing can put them back.
+  release(taken);
 }
 
 /**

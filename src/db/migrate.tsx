@@ -11,6 +11,7 @@ import type { LibraryProblem, PulseMode } from '@/core/recovery/types';
 import { formatDateTime } from '@/utils/relative-date';
 import migrations from '../../drizzle/migrations';
 import { db, expoDb, library, guardNewerSchema } from './client';
+import { dropHeldFiles } from './held-files';
 import { referencedMediaPaths } from './media-refs';
 import { runDataMigrations, type DataMigration } from './data-migrations';
 import { dropBakedEdits } from './baked-edits-migration';
@@ -128,6 +129,16 @@ export function runMigrations(mode: PulseMode, afterMigrations?: () => void): Pr
       } catch (e) {
         console.warn('[cleanup] after-migrations housekeeping failed', e);
       }
+      // Clips undone out of a draft when Pulse last closed, their redo gone with it. A library
+      // recovered or restored this launch only forgets the list: its rows may not be the ones
+      // the list was written against.
+      try {
+        const fresh = library.recoveredFrom == null && !library.restored;
+        const held = dropHeldFiles(fresh ? referencedMediaPaths(expoDb) : null);
+        if (held > 0) console.log(`[cleanup] removed ${held} undone clip file(s)`);
+      } catch (e) {
+        console.warn('[cleanup] undone clips sweep failed', e); // costs space, not data
+      }
       // react-native-video-trim leftovers: nothing of this version is writing them. Only the
       // Pulse app ever ran RNVT, so the embed has none to sweep (B6).
       if (mode === 'standalone') {
@@ -165,9 +176,9 @@ type MigrationGateProps = {
 export function MigrationGate({ mode, recovery, afterMigrations, children }: MigrationGateProps) {
   // Schema migrations (drizzle's expo-sqlite migrator), then the one-shot data migrations (file
   // moves, transforms — e.g. the legacy Pulse ≤1.2.x draft import), then the shell's housekeeping
-  // and the RNVT leftover sweep, all before the library renders. Nothing runs on a library that
-  // failed its check and couldn't be recovered: the recovery screen shows instead. No media is
-  // ever deleted for lacking a row.
+  // and the leftover sweeps (undone clips, RNVT), all before the library renders. Nothing runs on
+  // a library that failed its check and couldn't be recovered: the recovery screen shows instead.
+  // No media is ever deleted for lacking a row.
   const [ready, setReady] = useState(migrated);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState(() => (noticeSeen ? null : launchNotice()));

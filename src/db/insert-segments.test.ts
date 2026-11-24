@@ -52,6 +52,7 @@ import * as fileStore from '@/utils/file-store';
 import {
   addSegment,
   createDraft,
+  deleteDraft,
   deleteSegment,
   dropTakenOut,
   insertSegments,
@@ -59,6 +60,8 @@ import {
   restoreSegments,
   takeOutSegments,
 } from './drafts';
+import { dropHeldFiles } from './held-files';
+import { referencedMediaPaths } from './media-refs';
 /* eslint-enable import/first */
 
 const conn = expoDb as unknown as {
@@ -92,6 +95,12 @@ async function abc(): Promise<string> {
   return draftId;
 }
 const s = (draftId: string, id: string) => `${draftId}${id}`;
+/** a x y b c: x and y added before b. */
+async function added(): Promise<string> {
+  const d = await abc();
+  await insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'x')), clip(s(d, 'y'))]);
+  return d;
+}
 
 describe('insertSegments', () => {
   const cases: [string, (d: string) => ClipAnchor, string[]][] = [
@@ -266,13 +275,6 @@ describe('reorderSegments with clips it was not given', () => {
 });
 
 describe('taking added clips out and putting them back (the editor’s undo/redo of an addition)', () => {
-  /** a x y b c: x and y added before b. */
-  async function added(): Promise<string> {
-    const d = await abc();
-    await insertSegments(d, { before: s(d, 'b') }, [clip(s(d, 'x')), clip(s(d, 'y'))]);
-    return d;
-  }
-
   it('takes the clips out keeping their files, and puts them back where they were', async () => {
     const d = await added();
     const before = clips(d);
@@ -406,5 +408,79 @@ describe('taking added clips out and putting them back (the editor’s undo/redo
       stop();
     }
     expect(heard).toEqual([]);
+  });
+
+  it('a redo into a deleted draft releases its files; dropping them after doesn’t throw', async () => {
+    // q shares its file with p in another draft (a legacy duplicate), so the file outlives q's.
+    const keep = await createDraft();
+    const d = await createDraft();
+    const shared = { originalFilename: 'drafts/x/segments/kept.mp4', durationMs: 1 };
+    await addSegment(keep, { id: s(keep, 'p'), ...shared });
+    await addSegment(d, clip(s(d, 'a')));
+    await addSegment(d, { id: s(d, 'q'), ...shared });
+    const del = jest.spyOn(fileStore, 'deleteSegmentFile').mockImplementation(() => {});
+    try {
+      const taken = await takeOutSegments([s(d, 'q')]);
+      await deleteDraft(d);
+      await expect(restoreSegments(taken!)).resolves.toBeUndefined();
+      expect(ids(d)).toEqual([]);
+      // Not held any more: once p goes, nothing uses the file.
+      await deleteSegment(s(keep, 'p'));
+      expect(del).toHaveBeenCalledWith(shared.originalFilename);
+      // The editor closing later drops it again: nothing left to do, and no throw.
+      await expect(dropTakenOut(taken!)).resolves.toBeUndefined();
+    } finally {
+      del.mockRestore();
+    }
+  });
+});
+
+describe('the launch sweep of clips undone when Pulse closed', () => {
+  it('deletes the files undo held that no row uses, once, and keeps those in use', async () => {
+    const d = await added(); // a x y b c
+    // y shares its file with z, which stays in the draft.
+    await addSegment(d, {
+      id: s(d, 'z'),
+      originalFilename: `drafts/x/segments/${s(d, 'y')}.mp4`,
+      durationMs: 1,
+    });
+    // x and y undone out; x's redo never came (Pulse was killed). y was put back.
+    await takeOutSegments([s(d, 'x')]);
+    const y = await takeOutSegments([s(d, 'y')]);
+    await restoreSegments(y!);
+    // A file no row uses that undo never held (a library recovered from an older copy).
+    const unheld = `drafts/${d}/segments/lost.mp4`;
+    const del = jest.spyOn(fileStore, 'deleteSegmentFile').mockImplementation(() => {});
+    try {
+      expect(dropHeldFiles(referencedMediaPaths(expoDb))).toBeGreaterThan(0);
+      const deleted = del.mock.calls.map(([rel]) => rel);
+      expect(deleted).toContain(`drafts/x/segments/${s(d, 'x')}.mp4`);
+      expect(deleted).toContain(`drafts/${d}/segments/${s(d, 'x')}.thumb.jpg`);
+      // Every file a row uses stays: y is back, and z shares its file.
+      for (const id of ['a', 'y', 'b', 'c', 'z']) {
+        expect(deleted).not.toContain(`drafts/x/segments/${s(d, id)}.mp4`);
+        expect(deleted).not.toContain(`drafts/${d}/segments/${s(d, id)}.thumb.jpg`);
+      }
+      expect(deleted).not.toContain(unheld);
+      // The list is gone with it: a second launch deletes nothing.
+      del.mockClear();
+      expect(dropHeldFiles(referencedMediaPaths(expoDb))).toBe(0);
+      expect(del).not.toHaveBeenCalled();
+    } finally {
+      del.mockRestore();
+    }
+  });
+
+  it('only forgets the list on a library recovered or restored this launch', async () => {
+    const d = await added();
+    await takeOutSegments([s(d, 'x')]);
+    const del = jest.spyOn(fileStore, 'deleteSegmentFile').mockImplementation(() => {});
+    try {
+      expect(dropHeldFiles(null)).toBe(0);
+      expect(dropHeldFiles(referencedMediaPaths(expoDb))).toBe(0);
+      expect(del).not.toHaveBeenCalled();
+    } finally {
+      del.mockRestore();
+    }
   });
 });
