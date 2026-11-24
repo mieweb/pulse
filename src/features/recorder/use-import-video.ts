@@ -40,11 +40,8 @@ export function useImportVideo() {
     [],
   );
 
-  async function importVideo(draftId: string, anchorAtPick: () => ClipAnchor) {
+  async function importVideo(draftId: string, anchor: ClipAnchor) {
     if (abortRef.current) return;
-    // Where it goes is decided now, as Import video is picked, like every "+" item: scrubbing,
-    // trimming or reordering during a long conversion doesn't move it.
-    const anchor = anchorAtPick();
     // The screen may have closed while the system asked.
     if (!(await ensurePhotosAccess('videos')) || unmounted.current) return;
     const abort = new AbortController();
@@ -77,7 +74,7 @@ export function useImportVideo() {
       const outcome = await addExternalClip(picked.uri, draftId, null, {
         signal: abort.signal,
         onProgress: setProgress,
-        anchor: () => anchor,
+        anchor,
       });
       if (outcome.status === 'cancelled') {
         const after = formatSeconds(Date.now() - started);
@@ -123,8 +120,11 @@ export function useImportVideo() {
   }
 
   return {
-    /** Pick a video and add it to `draftId` at `anchor`, read once, as this is called. */
-    importVideo: (draftId: string, anchor: () => ClipAnchor) => void importVideo(draftId, anchor),
+    /**
+     * Pick a video and add it to `draftId` at `anchor`, decided as Import video is picked:
+     * scrubbing, trimming or reordering during a long conversion doesn't move it.
+     */
+    importVideo: (draftId: string, anchor: ClipAnchor) => void importVideo(draftId, anchor),
     importing,
     /** The conversion's progress (0–1); null until it reports. */
     progress,
