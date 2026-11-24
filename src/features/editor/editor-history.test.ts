@@ -101,6 +101,22 @@ describe('planStep', () => {
     expect(plan).toMatchObject({ kind: 'none', history: { past: [] } });
   });
 
+  it('undoes nothing older in place of an addition that is the whole draft', () => {
+    // The captions moved (a draft-wide step), x added, then a deleted: x is all that's left.
+    const moved: Present = { ...present(['a']), captionY: 0.2 };
+    let h = push(emptyHistory<Step>(), state(moved));
+    h = push(h, { kind: 'added', ids: ['x'], taken: null });
+    const now: Present = { ...present(['x']), captionY: 0.8 };
+    const plan = planStep(h, 'undo', now);
+    expect(plan.kind).toBe('none');
+    // The addition is dropped; the captions step is still there for the next undo.
+    expect(plan.history.past).toEqual([state(moved)]);
+    expect(planStep(plan.history, 'undo', now)).toMatchObject({
+      kind: 'state',
+      diff: { captionY: 0.2 },
+    });
+  });
+
   it('redoes an addition that has what was taken out', () => {
     const out = taken(['a', 'x']);
     const h = {

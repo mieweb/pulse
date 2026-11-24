@@ -98,10 +98,11 @@ const isEmpty = (d: SnapshotDiff) =>
 /**
  * The next undo or redo to carry out, skipping (and dropping) steps that would change nothing: a
  * state step that only touched deleted clips, or an addition whose clips have all gone. An
- * addition that would leave the draft with no clips is dropped too (the editor closes on an empty
- * draft). `history` is the history once the step is done, except for an addition, which takes
- * its clips out or puts them back first: `history` is the one it starts from, the step still on
- * top (editor-history-store.ts moves it).
+ * addition that would leave the draft with no clips (the editor closes on an empty draft) can't be
+ * undone: that undo does nothing and drops the step, and undoes nothing older in its place.
+ * `history` is the history once the step is done, except for an addition, which takes its clips
+ * out or puts them back first: `history` is the one it starts from, the step still on top
+ * (editor-history-store.ts moves it).
  */
 export type Plan =
   | { kind: 'none'; history: History<Step> }
@@ -122,6 +123,7 @@ export function planStep(h: History<Step>, direction: 'undo' | 'redo', now: Pres
         if (live.length > 0 && live.length < ids.length) {
           return { kind: 'takeOut', history: h, step: top, ids: live };
         }
+        if (live.length > 0) return { kind: 'none', history: { ...h, past: h.past.slice(0, -1) } };
       } else if (top.taken) {
         return { kind: 'putBack', history: h, step: top as AddedStep & { taken: TakenOutClips } };
       }
