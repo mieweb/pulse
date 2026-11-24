@@ -12,7 +12,9 @@
  *
  * `onClipsAdded` hears every insert `insertSegments` commits. An open editor arms its draft
  * (`expectClipsAdded`) and takes the clips added to it (`takeClipsAdded`), from its own + or a
- * recorder over it, to place its playhead after them and make the addition one undo step.
+ * recorder over it, to place its playhead after them and make the addition one undo step. A
+ * recorder over it that goes back to it on its Edit leaves the editor a place instead
+ * (`returnEditorTo`): its insert cursor, where the editor's playhead goes (`timeAtAnchor`).
  */
 
 export type ClipAnchor = { before: string; next?: string } | { at: 'end' };
@@ -98,6 +100,21 @@ export function anchorForPlayhead(
 }
 
 /**
+ * Where the playhead goes for `anchor` (the way back from `anchorForPlayhead`): the start of the
+ * clip new clips go before (`anchorSlot`), or `totalMs` at the end. `ids`, `starts` and `totalMs`
+ * as there.
+ */
+export function timeAtAnchor(
+  anchor: ClipAnchor,
+  ids: readonly string[],
+  starts: readonly number[],
+  totalMs: number,
+): number {
+  const slot = anchorSlot(anchor, ids);
+  return slot < ids.length ? (starts[slot] ?? totalMs) : totalMs;
+}
+
+/**
  * The rule behind `anchorForPlayhead`, on positions only (a worklet, so the editor can follow it
  * on the UI thread): the clip under the playhead (-1 at the end or with no clips) and the slot new
  * clips take, 0 (before the first clip) to `starts.length` (the end).
@@ -134,7 +151,7 @@ const listeners = new Set<(added: ClipsAdded) => void>();
  * takes in a recorder opened from Home), and an editor never hears of clips added before it
  * opened. `arms` counts the editors on the draft (an editor can sit under another one's recorder).
  */
-const expected = new Map<string, { arms: number; ids: string[] }>();
+const expected = new Map<string, { arms: number; ids: string[]; returnTo: ClipAnchor | null }>();
 /** Ids kept per draft at most: an editor takes them on every focus, so this is a backstop. */
 const MAX_UNREAD = 500;
 
@@ -168,7 +185,7 @@ export function onClipsAdded(listener: (added: ClipsAdded) => void): () => void 
 export function expectClipsAdded(draftId: string): () => void {
   const entry = expected.get(draftId);
   if (entry) entry.arms++;
-  else expected.set(draftId, { arms: 1, ids: [] });
+  else expected.set(draftId, { arms: 1, ids: [], returnTo: null });
   let armed = true;
   return () => {
     if (!armed) return;
@@ -189,4 +206,24 @@ export function takeClipsAdded(draftId: string): string[] {
   const { ids } = entry;
   entry.ids = [];
   return ids;
+}
+
+/**
+ * A recorder over an editor on `draftId` is going back to it on its Edit: the editor's playhead
+ * goes to `anchor` (the recorder's insert cursor, or the clip tapped there) as it's back on top,
+ * instead of after the clips added meanwhile. Kept only while an editor is armed on the draft; a
+ * later call replaces it.
+ */
+export function returnEditorTo(draftId: string, anchor: ClipAnchor): void {
+  const entry = expected.get(draftId);
+  if (entry) entry.returnTo = anchor;
+}
+
+/** The place `returnEditorTo` left for the draft's editor (null if none), and forget it. */
+export function takeEditorReturn(draftId: string): ClipAnchor | null {
+  const entry = expected.get(draftId);
+  if (!entry) return null;
+  const { returnTo } = entry;
+  entry.returnTo = null;
+  return returnTo;
 }

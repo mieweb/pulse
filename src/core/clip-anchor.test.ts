@@ -12,8 +12,11 @@ import {
   onClipsAdded,
   playheadSlot,
   resolveAnchor,
+  returnEditorTo,
   sameAnchor,
   takeClipsAdded,
+  takeEditorReturn,
+  timeAtAnchor,
   type ClipAnchor,
 } from './clip-anchor';
 
@@ -116,6 +119,36 @@ describe('anchorForPlayhead', () => {
   });
 });
 
+describe('timeAtAnchor', () => {
+  // Three clips: a 0–1000, b 1000–3000, c 3000–4000.
+  const ids = ['a', 'b', 'c'];
+  const starts = [0, 1000, 3000];
+
+  it.each<[ClipAnchor, number]>([
+    [{ before: 'a', next: 'b' }, 0],
+    [{ before: 'b', next: 'c' }, 1000],
+    [{ before: 'c' }, 3000],
+    [END, 4000],
+    [{ before: 'gone', next: 'c' }, 3000], // as the anchor resolves: before `next`
+    [{ before: 'gone' }, 4000],
+  ])('%j → %d ms', (anchor, ms) => {
+    expect(timeAtAnchor(anchor, ids, starts, 4000)).toBe(ms);
+  });
+
+  it('is the way back from anchorForPlayhead, at every boundary', () => {
+    for (const ms of [0, 1000, 3000, 3999]) {
+      const anchor = anchorForPlayhead(ids, starts, 4000, ms);
+      expect(anchorForPlayhead(ids, starts, 4000, timeAtAnchor(anchor, ids, starts, 4000))).toEqual(
+        anchor,
+      );
+    }
+  });
+
+  it('is 0 in an empty draft', () => {
+    expect(timeAtAnchor(END, [], [], 0)).toBe(0);
+  });
+});
+
 describe('sameAnchor / isEnd', () => {
   it('compares by clip and next clip', () => {
     expect(sameAnchor({ before: 'a' }, { before: 'a' })).toBe(true);
@@ -194,5 +227,23 @@ describe('clips added', () => {
     expect(second).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it('leaves an armed editor one place to return to, taken once, the latest winning', () => {
+    returnEditorTo('d7', { before: 'early' }); // no editor yet: dropped
+    const disarm = expectClipsAdded('d7');
+    expect(takeEditorReturn('d7')).toBeNull();
+    returnEditorTo('d7', { before: 'a' });
+    returnEditorTo('d7', END);
+    noteClipsAdded({ draftId: 'd7', segmentIds: ['x'] });
+    expect(takeEditorReturn('d7')).toEqual(END);
+    expect(takeEditorReturn('d7')).toBeNull();
+    expect(takeClipsAdded('d7')).toEqual(['x']); // the clips are kept apart
+    returnEditorTo('d7', { before: 'b' });
+    disarm();
+    expect(takeEditorReturn('d7')).toBeNull(); // gone with the last editor
+    const again = expectClipsAdded('d7');
+    expect(takeEditorReturn('d7')).toBeNull();
+    again();
   });
 });

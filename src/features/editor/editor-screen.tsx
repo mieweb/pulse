@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ExportButton } from '@/components/export-button';
 import { Icon } from '@/components/icon';
+import { END, timeAtAnchor } from '@/core/clip-anchor';
 import { useScreenFocused, useScreenFocusEffect } from '@/core/navigation/focus';
 import Sortable from 'react-native-sortables';
 
@@ -169,6 +170,7 @@ function usePlaybackSessionOnReturn() {
 export function EditorScreen({
   draftId,
   clipId,
+  anchor: openAnchor,
   view: openView,
   onClose,
   onExport,
@@ -310,18 +312,27 @@ export function EditorScreen({
     onClose();
   }, [focused, draft.loaded, clips.length, onClose]);
 
-  // Opened on a clip: the playhead starts on it. Placed once the clips are known, before the strip
-  // or row is shown (they stay hidden until then, on the UI thread, so no frame shows 0 first).
-  const placed = useSharedValue(clipId ? 0 : 1);
-  const placedOnce = useRef(!clipId);
+  // Opened on a clip or at a boundary: the playhead starts there. Placed once the clips are known,
+  // before the strip or row is shown (they stay hidden until then, on the UI thread, so no frame
+  // shows 0 first).
+  const opensPlaced = clipId != null || openAnchor != null;
+  const placed = useSharedValue(opensPlaced ? 0 : 1);
+  const placedOnce = useRef(!opensPlaced);
   useLayoutEffect(() => {
     if (placedOnce.current || clips.length === 0) return;
     placedOnce.current = true;
-    const i = clips.findIndex((c) => c.id === clipId);
-    // Opened from a clip in the recorder: paused at that clip's start.
-    ctl.place(i > 0 ? (layout.starts[i] ?? 0) : 0);
+    const ids = clips.map((c) => c.id);
+    const i = clipId ? ids.indexOf(clipId) : -1;
+    // Opened from a clip in the recorder: paused at that clip's start. From its Edit: at its
+    // insert cursor, the end on the last frame (as a seek there lands).
+    const at = clipId
+      ? i > 0
+        ? (layout.starts[i] ?? 0)
+        : 0
+      : timeAtAnchor(openAnchor ?? END, ids, layout.starts, layout.totalMs);
+    ctl.place(Math.min(at, Math.max(0, layout.totalMs - 1)));
     placed.set(1);
-  }, [clips, clipId, ctl, layout.starts, placed]);
+  }, [clips, clipId, openAnchor, ctl, layout.starts, layout.totalMs, placed]);
   // The scale the timeline opens at, once the clips are known: the clip it was opened on fitted
   // (`clipZoom`, ready to trim), or the whole draft when it's short (`draftZoom`).
   const openedZoom = useRef(false);

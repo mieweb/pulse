@@ -11,6 +11,11 @@ export type EditorScreenProps = {
   draftId: string;
   /** Opens paused at this clip's start, the timeline fitted to it (a clip tapped in the recorder). */
   clipId?: string;
+  /**
+   * Opens paused at this clip boundary (`timeAtAnchor`: the start of the clip it names, or the end):
+   * the recorder's insert cursor, on its Edit. `clipId` wins when both are given.
+   */
+  anchor?: ClipAnchor;
   /** The view to open in when none was remembered from an earlier session (default Clips). */
   view?: EditorView;
   /** Close, and the draft running out of clips. */

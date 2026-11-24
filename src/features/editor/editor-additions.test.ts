@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { anchorForPlayhead, type ClipAnchor } from '@/core/clip-anchor';
+import { anchorForPlayhead, type ClipAnchor, END } from '@/core/clip-anchor';
 import { fromAnotherPulseAction } from '@/features/recorder/add-menu-actions';
 
 import {
@@ -8,6 +8,8 @@ import {
   editorAddActions,
   groupAdditions,
   type ImageBatch,
+  playheadGoal,
+  playheadGoalMs,
 } from './editor-additions';
 
 describe('groupAdditions', () => {
@@ -94,5 +96,35 @@ describe('editorAddActions', () => {
     playhead = 0;
     all[0].onPress();
     expect(record).toHaveBeenCalledWith({ before: 'a', next: 'b' });
+  });
+});
+
+describe('playheadGoal', () => {
+  // Clips a 0–1000, b 1000–3000, c 3000–4000.
+  const ids = ['a', 'b', 'c'];
+  const starts = [0, 1000, 3000];
+  const ms = (goal: ReturnType<typeof playheadGoal>) =>
+    goal && playheadGoalMs(goal, ids, starts, 4000);
+
+  it('after the clips added, as before, when the recorder came back by ✕ or back', () => {
+    expect(playheadGoal(null, 'b')).toEqual({ after: 'b' });
+    expect(ms(playheadGoal(null, 'a'))).toBe(1000);
+    expect(ms(playheadGoal(null, 'c'))).toBe(4000);
+    expect(playheadGoal(null, null)).toBeNull();
+  });
+
+  it('at the recorder’s cursor when it came back on its Edit, over the clips added', () => {
+    // Clip b recorded before c, then the cursor moved to the start before Edit.
+    expect(playheadGoal({ before: 'a', next: 'b' }, 'b')).toEqual({
+      at: { before: 'a', next: 'b' },
+    });
+    expect(ms(playheadGoal({ before: 'a', next: 'b' }, 'b'))).toBe(0);
+    expect(ms(playheadGoal({ before: 'c' }, null))).toBe(3000);
+    expect(ms(playheadGoal(END, 'a'))).toBe(4000);
+  });
+
+  it('waits for a clip added that the list doesn’t have yet; a place never waits', () => {
+    expect(playheadGoalMs({ after: 'new' }, ids, starts, 4000)).toBeNull();
+    expect(playheadGoalMs({ at: { before: 'gone', next: 'b' } }, ids, starts, 4000)).toBe(1000);
   });
 });

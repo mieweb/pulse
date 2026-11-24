@@ -1,5 +1,5 @@
 import type { MenuAction } from '@/components/action-menu';
-import type { ClipAnchor } from '@/core/clip-anchor';
+import { type ClipAnchor, timeAtAnchor } from '@/core/clip-anchor';
 import {
   importImagesAction,
   importVideoAction,
@@ -85,4 +85,36 @@ export function groupAdditions(
   else if (landed.length > 0) steps.push(landed);
   const last = steps[steps.length - 1];
   return { steps, batch: next, placeAfter: last ? last[last.length - 1] : null };
+}
+
+/**
+ * Where the playhead goes as the editor takes the clips added (`groupAdditions`): right after the
+ * last one (`after`), unless a recorder over the editor came back to it on its Edit (`returnTo`, see
+ * `returnEditorTo`): then where that recorder's insert cursor was, or the clip tapped there.
+ */
+export type PlayheadGoal = { after: string } | { at: ClipAnchor };
+
+export function playheadGoal(
+  returnTo: ClipAnchor | null,
+  placeAfter: string | null,
+): PlayheadGoal | null {
+  if (returnTo) return { at: returnTo };
+  return placeAfter ? { after: placeAfter } : null;
+}
+
+/**
+ * The goal's time on the timeline (`ids`, `starts`, `totalMs` as the editor lays the clips out):
+ * the start of the clip after `after` (or the end), or the anchor's boundary (`timeAtAnchor`).
+ * Null while `after` isn't among the clips yet (the list a beat behind the insert).
+ */
+export function playheadGoalMs(
+  goal: PlayheadGoal,
+  ids: readonly string[],
+  starts: readonly number[],
+  totalMs: number,
+): number | null {
+  if ('at' in goal) return timeAtAnchor(goal.at, ids, starts, totalMs);
+  const i = ids.indexOf(goal.after);
+  if (i < 0) return null;
+  return i + 1 < starts.length ? starts[i + 1] : totalMs;
 }

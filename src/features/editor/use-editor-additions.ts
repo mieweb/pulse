@@ -6,6 +6,7 @@ import {
   expectClipsAdded,
   onClipsAdded,
   takeClipsAdded,
+  takeEditorReturn,
 } from '@/core/clip-anchor';
 import { useFromAnotherPulse } from '@/features/recorder/from-another-pulse';
 import { useScreenTake } from '@/features/recorder/screen-take';
@@ -19,6 +20,9 @@ import {
   editorAddActions,
   groupAdditions,
   type ImageBatch,
+  playheadGoal,
+  type PlayheadGoal,
+  playheadGoalMs,
 } from './editor-additions';
 
 /**
@@ -26,7 +30,8 @@ import {
  * and the clips they add. Clips added to this draft while the editor is open, from its "+" or a
  * recorder over it, become undo steps (`groupAdditions`), and the playhead goes right after the
  * last one. They're taken when they land while the editor is on top, else all together once it is
- * back on top.
+ * back on top. A recorder that came back here on its Edit sets the playhead instead: at its insert
+ * cursor, or the clip tapped there (`returnEditorTo`).
  */
 export function useEditorAdditions({
   draftId,
@@ -101,32 +106,39 @@ export function useEditorAdditions({
   });
 
   useEffect(() => expectClipsAdded(draftId), [draftId]);
-  const placeAfter = useRef<{ id: string; until: number } | null>(null);
-  /** The playhead right after clip `id` (at the next clip's start, or the end). */
-  const placeAfterClip = (id: string, rebuilt: boolean) => {
-    const i = clipIds.indexOf(id);
-    if (i < 0) return false;
-    const at = i + 1 < layout.starts.length ? layout.starts[i + 1] : layout.totalMs;
+  // A goal not reached yet: its clip not in the list, or placed by a list a beat behind the clips
+  // just added. Tried again as the clips change, until `until`.
+  const pendingGoal = useRef<{ goal: PlayheadGoal; until: number } | null>(null);
+  /** The playhead to `goal` (`playheadGoalMs`); false while its clip isn't in the list yet. */
+  const placeGoal = (goal: PlayheadGoal, rebuilt: boolean) => {
+    const at = playheadGoalMs(goal, clipIds, layout.starts, layout.totalMs);
+    if (at == null) return false;
     // Clips just changed: once the preview has the new clips (as a trim's end); else at once.
     if (rebuilt) endTrim(at);
     else seekTo(at);
     return true;
   };
   const takeAdded = useEffectEvent(() => {
-    const grouped = groupAdditions(imageBatch.current, takeClipsAdded(draftId), images.importing);
+    const added = takeClipsAdded(draftId);
+    const grouped = groupAdditions(imageBatch.current, added, images.importing);
     imageBatch.current = grouped.batch;
     for (const ids of grouped.steps) recordAdded(ids);
-    if (!grouped.placeAfter) return;
+    const goal = playheadGoal(takeEditorReturn(draftId), grouped.placeAfter);
+    if (!goal) return;
     leaveEditMode();
-    if (!placeAfterClip(grouped.placeAfter, false)) {
-      placeAfter.current = { id: grouped.placeAfter, until: Date.now() + 5000 };
-    }
+    const placed = placeGoal(goal, false);
+    // A place from the recorder resolves with any list, but one behind the clips just added puts
+    // it short of them: once more as the list catches up, briefly (an id can also be one the
+    // recorder deleted again, a retake, which never shows up).
+    const behind = 'at' in goal && added.some((id) => !clipIds.includes(id));
+    pendingGoal.current =
+      !placed || behind ? { goal, until: Date.now() + (behind ? 1500 : 5000) } : null;
   });
   useEffect(() => {
-    const p = placeAfter.current;
+    const p = pendingGoal.current;
     if (!p) return;
-    if (Date.now() > p.until) placeAfter.current = null;
-    else if (placeAfterClip(p.id, true)) placeAfter.current = null;
+    if (Date.now() > p.until) pendingGoal.current = null;
+    else if (placeGoal(p.goal, true)) pendingGoal.current = null;
     // Only a change of the clips places it (the layout follows them).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clips]);
