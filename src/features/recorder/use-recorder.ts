@@ -43,6 +43,7 @@ import { getDurationMs } from '@/utils/video';
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
 import { addExternalClip } from './add-external-clip';
 import type { RecorderNewDraft, ScreenCapturePort } from './contract';
+import { draftOnDemand } from './draft-on-demand';
 import { importLog } from './import-log';
 import { cursorAfterRemoval, cursorBeforeDelete } from './insert-point';
 import { usePhotosAccess } from './photos-access';
@@ -385,23 +386,18 @@ export function useRecorder(
   // from refs, not the `draftId` state: an import or a batch of images holds the function from the
   // render it started in, and a take (or another import) may make the draft meanwhile; a call while
   // one is creating it waits for that one. Either way the session gets one draft.
-  const creatingDraft = useRef<Promise<string> | null>(null);
-  function ensureDraft(): Promise<string> {
-    const current = draftIdRef.current;
-    if (current) return Promise.resolve(current);
-    creatingDraft.current ??= (async () => {
-      try {
+  const [ensureDraft] = useState(() =>
+    draftOnDemand(
+      () => draftIdRef.current,
+      async () => {
         const id = await createDraft(newDraft);
         sessionDraftId.current = id;
         draftIdRef.current = id;
         setDraftId(id);
         return id;
-      } finally {
-        creatingDraft.current = null;
-      }
-    })();
-    return creatingDraft.current;
-  }
+      },
+    ),
+  );
 
   // A clip an import just wrote, reflected synchronously in the unmount-cleanup refs (see the
   // effect above) so a racing close/unmount can't see an "empty" draft and delete it.
