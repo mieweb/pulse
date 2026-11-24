@@ -29,9 +29,10 @@ export type ImageClipsResult = {
 
 /**
  * Add images (photos, screenshots) to a draft as clips, one each, in the order given: each is made
- * into a 3 s clip in the recorder's exact format (pulse-editor `imageClip`: canvas, rotation tag,
- * fps, bitrate, a silent AAC track in the recorder's layout), so it joins recordings without
- * re-encoding, then stored as an import is (`storeClip`: copied into the draft, cover, row).
+ * into a 3 s clip in the recorder's format (pulse-editor `imageClip`: canvas, rotation tag, fps,
+ * bitrate, a silent AAC track in the recorder's layout, stereo for a multichannel one:
+ * `recorderEncodeFormat`), so its video joins recordings without re-encoding, then stored as an
+ * import is (`storeClip`: copied into the draft, cover, row).
  *
  Every clip goes at `anchor`, read once, just before the first clip's row is written (as
  * `addExternalClip` does), and kept: a `ClipAnchor` stays put as clips land at it, so the batch

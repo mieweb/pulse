@@ -211,11 +211,19 @@ function encodeFormat(rotation: number, audio: MergeAudio): EncodeFormat {
 }
 
 /**
- * The recorder's exact format, for a clip made from scratch (an image, pulse-editor `imageClip`):
- * what a conform to `target` writes, so the clip joins recordings without re-encoding.
+ * The recorder's format, for a clip made from scratch (an image, pulse-editor `imageClip`): what a
+ * conform to `target` writes, so the clip's video joins recordings without re-encoding. Its silent
+ * track is in a layout `imageClip` writes, mono or stereo at a whole AAC rate: a multichannel
+ * recorder's (an iPhone 17 Pro records 5.1) becomes stereo. Clips joined with it still merge: the
+ * merge re-encodes the sound of a join into the draft's layout on both platforms, mixing each
+ * clip's channels into it.
  */
 export function recorderEncodeFormat(target: RecorderFormat): EncodeFormat {
-  return encodeFormat(target.rotation, conformAudio(undefined, target));
+  const { sampleRate, channels } = conformAudio(undefined, target);
+  return encodeFormat(target.rotation, {
+    sampleRate: AAC_RATES.find((r) => r <= sampleRate + 1) ?? AAC_RATES[AAC_RATES.length - 1],
+    channels: channels === 1 ? 1 : 2,
+  });
 }
 
 /** Which phone decides (the module stays free of react-native so it tests as pure code). */
