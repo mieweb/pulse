@@ -635,7 +635,8 @@ export function EditorScreen({
     // told apart as they're written, to be one undo step together.
     importImagesAction(() => {
       ctl.pause();
-      void images.importImages(draftId, anchorNow, {
+      const at = anchorNow();
+      void images.importImages(draftId, () => at, {
         onWriting: (id) => {
           imageBatch.current ??= { ids: new Set(), landed: [] };
           imageBatch.current.ids.add(id);
