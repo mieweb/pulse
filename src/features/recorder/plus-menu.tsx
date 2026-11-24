@@ -7,8 +7,8 @@ import type { PlusMenuProps } from './add-menu-actions';
 
 /**
  * A "+" that opens a list of ways to add clips, in a popover anchored to it (Android; iOS uses the
- * system menu, plus-menu.ios.tsx). With one item the "+" is that item, no one-item menu. The
- * recorder's and the editor's "+" are both this, each with its own items and button.
+ * system menu, plus-menu.ios.tsx). The recorder's and the editor's "+" are both this, each with its
+ * own items (always several: Video and Photo at least) and button.
  */
 export function PlusMenu({ actions, enabled, onOpen, renderButton }: PlusMenuProps) {
   const ref = useRef<View>(null);
@@ -21,7 +21,6 @@ export function PlusMenu({ actions, enabled, onOpen, renderButton }: PlusMenuPro
     ref.current?.measureInWindow((x, y, width, height) => setAnchor({ x, y, width, height }));
   }, [asked]);
 
-  if (actions.length <= 1) return renderButton(() => actions[0]?.onPress());
   return (
     <>
       <View ref={ref} collapsable={false}>

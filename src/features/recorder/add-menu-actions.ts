@@ -10,7 +10,7 @@ import type { MenuAction } from '@/components/action-menu';
  * list.
  */
 export type PlusMenuProps = {
-  /** The items, in order. One: the "+" is that item, no menu. */
+  /** The items, in order. */
   actions: MenuAction[];
   /** The menu can open now (not while the button is disabled or busy). */
   enabled: boolean;

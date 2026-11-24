@@ -5,8 +5,7 @@ import { StyleSheet, View } from 'react-native';
 import type { PlusMenuProps } from './add-menu-actions';
 
 /**
- * A "+" that opens a list of ways to add clips, in the iOS system menu. With one item the "+" is
- * that item, no one-item menu.
+ * A "+" that opens a list of ways to add clips, in the iOS system menu.
  *
  * The "+" you see is always the plain button, so it never changes or disappears: iOS hides a
  * menu's own label while the menu is open (the menu grows out of it), and swapping between the
@@ -22,7 +21,6 @@ export function PlusMenu({
   hint,
   size = 44,
 }: PlusMenuProps) {
-  if (actions.length <= 1) return renderButton(() => actions[0]?.onPress());
   return (
     <View style={{ width: size, height: size }}>
       {/* Hidden from VoiceOver while the menu above it is the control. */}
