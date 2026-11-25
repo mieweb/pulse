@@ -134,9 +134,9 @@ describe('anchorForExactPlayhead', () => {
       before: 'a',
       split: { sourceMs: 2500, offsetMs: 750 },
     });
-    expect(anchorForExactPlayhead(clips, starts, 4000, 3999, () => 'c-right')).toMatchObject({
+    expect(anchorForExactPlayhead(clips, starts, 4000, 3998, () => 'c-right')).toMatchObject({
       before: 'c',
-      split: { sourceMs: 999, sourceKey: 'c-key', rightId: 'c-right' },
+      split: { sourceMs: 998, sourceKey: 'c-key', rightId: 'c-right' },
     });
   });
 
@@ -158,6 +158,15 @@ describe('anchorForExactPlayhead', () => {
     expect(anchorForExactPlayhead(clips, starts, 4000, Number.NaN, fresh)).toEqual(END);
     expect(anchorForExactPlayhead([], [], 0, 0, fresh)).toEqual(END);
     expect(fresh).not.toHaveBeenCalled();
+  });
+
+  it('appends at the preview’s clamped end without making a tiny trailing half', () => {
+    const fresh = jest.fn(() => 'new');
+    expect(anchorForExactPlayhead(clips, starts, 4000, 3999, fresh)).toBe(END);
+    expect(anchorForExactPlayhead(clips, starts, 4000, 3999.5, fresh)).toBe(END);
+    expect(fresh).not.toHaveBeenCalled();
+    // A very short draft still has a start boundary, even inside the end tolerance.
+    expect(anchorForExactPlayhead(clips.slice(0, 1), [0], 1, 0, fresh)).toEqual({ before: 'a' });
   });
 });
 

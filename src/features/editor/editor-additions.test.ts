@@ -1,15 +1,49 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { anchorForExactPlayhead, type ClipAnchor, END } from '@/core/clip-anchor';
+import { type ClipAnchor, END } from '@/core/clip-anchor';
 
 import {
   batchWriting,
+  editorAddAnchor,
   editorAddActions,
   groupAdditions,
   type ImageBatch,
   playheadGoal,
   playheadGoalMs,
 } from './editor-additions';
+
+describe('editorAddAnchor', () => {
+  const clips = [
+    { id: 'a', sourceKey: 'a-key', edit: { startMs: 1000, endMs: 3000, speed: 2 } },
+    { id: 'b', sourceKey: 'b-key', edit: { startMs: 0, endMs: 2000, speed: 1 } },
+    { id: 'c', sourceKey: 'c-key', edit: { startMs: 0, endMs: 1000, speed: 1 } },
+  ];
+  const layout = { starts: [0, 1000, 3000], totalMs: 4000 };
+
+  it.each<[number, ClipAnchor]>([
+    [250, { before: 'a', next: 'b' }],
+    [499.999, { before: 'a', next: 'b' }],
+    [500, { before: 'b', next: 'c' }],
+    [750, { before: 'b', next: 'c' }],
+    [1000, { before: 'b', next: 'c' }],
+    [1999, { before: 'b', next: 'c' }],
+    [2000, { before: 'c' }],
+    [3500, END],
+    [4000, END],
+  ])('keeps beats whole in Clips view at %s ms, putting midpoint ties after', (ms, expected) => {
+    const fresh = jest.fn(() => 'right');
+    expect(editorAddAnchor('clips', clips, layout, ms, fresh)).toEqual(expected);
+    expect(fresh).not.toHaveBeenCalled();
+  });
+
+  it('splits at the exact source point in Timeline view at the same midpoint', () => {
+    expect(editorAddAnchor('timeline', clips, layout, 500, () => 'right')).toEqual({
+      before: 'a',
+      next: 'b',
+      split: { sourceMs: 2000, sourceKey: 'a-key', rightId: 'right', offsetMs: 500 },
+    });
+  });
+});
 
 describe('groupAdditions', () => {
   it('makes each addition one step, the playhead after its last clip', () => {
@@ -65,7 +99,13 @@ describe('editorAddActions', () => {
     sourceKey: `${id}.mp4`,
   }));
   const anchorNow = () =>
-    anchorForExactPlayhead(clips, [0, 1000, 3000], 4000, playhead, () => 'right');
+    editorAddAnchor(
+      'timeline',
+      clips,
+      { starts: [0, 1000, 3000], totalMs: 4000 },
+      playhead,
+      () => 'right',
+    );
 
   it('Photo freezes the exact source cut as tapped, wherever the playhead moves meanwhile', () => {
     let readLater: (() => ClipAnchor) | null = null;
@@ -107,10 +147,10 @@ describe('editorAddActions', () => {
     expect(record).toHaveBeenCalledWith({ before: 'a', next: 'b' });
   });
 
-  it('the append menu always passes END to every media action regardless of the playhead', () => {
+  it('appends every media type when the playhead is at the end', () => {
     const add = jest.fn();
     const actions = editorAddActions({
-      anchorNow: () => END,
+      anchorNow,
       pause: () => {},
       record: add,
       recordScreen: add,
@@ -118,7 +158,7 @@ describe('editorAddActions', () => {
       importImages: add,
       fromAnotherPulse: add,
     });
-    playhead = 1200;
+    playhead = 4000;
     for (const action of actions) action.onPress();
     expect(add).toHaveBeenCalledTimes(5);
     expect(add.mock.calls.every(([anchor]) => anchor === END)).toBe(true);

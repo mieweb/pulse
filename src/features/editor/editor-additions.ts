@@ -1,5 +1,11 @@
 import type { MenuAction } from '@/components/action-menu';
-import { type ClipAnchor, timeAtAnchor } from '@/core/clip-anchor';
+import {
+  anchorForExactPlayhead,
+  anchorForPlayhead,
+  type ClipAnchor,
+  timeAtAnchor,
+} from '@/core/clip-anchor';
+import type { EditorView } from '@/db/settings';
 import {
   importImagesAction,
   importVideoAction,
@@ -9,6 +15,24 @@ import {
 
 // The editor's "+" (#308) as pure logic: its items, and how the clips that land become undo
 // steps. use-editor-additions.ts runs them.
+
+/** Beat view keeps each beat whole; the timeline permits an exact metadata split. */
+export function editorAddAnchor(
+  view: EditorView,
+  clips: Parameters<typeof anchorForExactPlayhead>[0],
+  layout: { starts: readonly number[]; totalMs: number },
+  timeMs: number,
+  freshId: () => string,
+): ClipAnchor {
+  return view === 'clips'
+    ? anchorForPlayhead(
+        clips.map((clip) => clip.id),
+        layout.starts,
+        layout.totalMs,
+        timeMs,
+      )
+    : anchorForExactPlayhead(clips, layout.starts, layout.totalMs, timeMs, freshId);
+}
 
 /**
  * The "+" items. Each adds at its anchor, read once, as the item is picked (the
