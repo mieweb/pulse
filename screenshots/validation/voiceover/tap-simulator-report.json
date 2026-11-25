@@ -1,0 +1,148 @@
+{
+  "platform": "iOS Simulator 26.0, iPhone 17 Pro",
+  "simulatorUdid": "4B78B036-6293-4390-B8FC-BE59D2C051F8",
+  "physicalDeviceActions": false,
+  "fixture": "voiceover-target, existing synthetic 75-second project",
+  "baseline": {
+    "draftId": "voiceover-target",
+    "videoClipCount": 3,
+    "savedTakeCount": 4,
+    "videoRowsSha256BeforeAndAfter": "97a10a26bef52453e28c7d6c561c8f2ceddedbbde582796213292550e2298282",
+    "savedTakeRowsSha256BeforeAndAfter": "35974f9a0cd2dfad18295479233bf9f210bb350dd32c02ab0fea74e3361071e5"
+  },
+  "checks": {
+    "freshPermissionInitial": {
+      "pass": false,
+      "promptShown": true,
+      "allowLeavesRetry": true,
+      "reproduction": "Reset only owned simulator microphone permission, tap an existing saved red take, accept Allow.",
+      "resolvedBy": "freshPermissionFixed",
+      "status": "Reproduced on initial artifact; fixed and retested before final screenshots."
+    },
+    "tapExistingTake": {
+      "pass": true,
+      "accessibilityId": "name == 'voiceover.take.a8c035cc-bb9d-46ee-8d66-2a317ef1e5a5'",
+      "nativeTapFrame": {
+        "y": 746,
+        "x": 188,
+        "width": 28,
+        "height": 24
+      },
+      "beforePlayheadMs": 0.0,
+      "afterPlayheadMs": 200.0,
+      "noDataMutation": true,
+      "entersVoiceoverReady": true,
+      "readoutResolutionMs": 100,
+      "cursorMovedToVisibleBarPoint": true,
+      "zoomedNativeTapFrame": {
+        "x": 201,
+        "y": 746,
+        "width": 56,
+        "height": 24
+      },
+      "expectedPoint": "Center of the visible latest overlapping 621ms take; displayed playhead is 0.2s at 0.1s resolution."
+    },
+    "nativeTimelinePan": {
+      "pass": true,
+      "elementId": "editor.timeline",
+      "beforePlayheadMs": 200.0,
+      "afterPlayheadMs": 3900.0,
+      "noVoiceoverEntry": true,
+      "noDataMutation": true
+    },
+    "nativeTimelinePinch": {
+      "pass": true,
+      "elementId": "editor.timeline",
+      "scaleRequested": 2,
+      "beforeTake4WidthDp": 28,
+      "afterTake4WidthDp": 56,
+      "noVoiceoverEntry": true,
+      "noDataMutation": true
+    },
+    "captureBusyAndUndo": {
+      "pass": true,
+      "savedTakeId": "5035f570-4212-44c3-aed8-ef9d6cc83ccb",
+      "takeDurationMs": 1504.5625,
+      "recordingPlayheadMs": 3400.0,
+      "takeButtonsDisabledDuringCapture": 5,
+      "undoRestoresOriginalTakes": true,
+      "undoPlayheadMs": 600.0,
+      "expectedUndoMs": 621.204458,
+      "readoutResolutionMs": 100,
+      "busyEvidence": "recording-busy.xml",
+      "limitation": "Disabled semantic take controls observed during capture; no second simultaneous touch injected."
+    },
+    "freshPermissionFixed": {
+      "pass": true,
+      "systemPromptShown": true,
+      "retryShownWhilePromptOpen": false,
+      "allowAutomaticallyReadiesCapture": true,
+      "noAddedTakeOnEntry": true,
+      "postGrantCaptureSaved": true,
+      "postGrantTakeDurationMs": 504.79166666666663,
+      "postGrantUndoRestoresOriginalTakes": true,
+      "undoDisplayedMs": 600.0,
+      "resetScope": "Only com.mieweb.pulse microphone permission on owned simulator"
+    },
+    "finalArtifactTap": {
+      "pass": true,
+      "beforePlayheadMs": 0.0,
+      "afterPlayheadMs": 200.0,
+      "entersVoiceoverReady": true,
+      "noDataMutation": true
+    }
+  },
+  "limitations": [
+    "Simulator native input does not establish acoustic latency or physical-device microphone behavior.",
+    "Native element taps are checked against accessibility IDs; full VoiceOver screen-reader navigation remains a separate check."
+  ],
+  "cleanup": {
+    "verified": true,
+    "sessionDeleted": true,
+    "hostExited": true,
+    "ownedSimulatorRunnerExited": true,
+    "port8246Closed": true,
+    "appLeftOnHome": true,
+    "originalVideoAndTakesPreserved": true,
+    "physicalDeviceActions": false,
+    "rawMicrophoneFilesCopiedOutsideSimulator": false
+  },
+  "videoUnchanged": true,
+  "savedTakesRestored": true,
+  "artifact": {
+    "appPath": "/tmp/pulse-224-pr-ui/Simulator-Pulse.app",
+    "hermesSha256": "14ead065314891be82cbaf8a53ced02fee7ea1aa937f48b5cfc13db9980ca8bc",
+    "description": "PR JavaScript with permission-prompt fix in known stable Scene-native simulator shell; exact candidate native release build verified separately."
+  },
+  "screenshots": ["timeline-before-tap.png", "timeline-after-tap.png"],
+  "actualCandidateReleaseSmoke": {
+    "artifact": "/tmp/pulse-224-pr-sim-derived/Build/Products/Release-iphonesimulator/Pulse.app",
+    "sourceCommit": "403304c",
+    "baseCommit": "d4b5312",
+    "nativeCandidate": "305239a6",
+    "executableSha256": "40032741b1b5b8813ab858d5e08914a92ea19a658f1652661ad8e36d605e8b32",
+    "hermesSha256": "061809cd9bc18b9ba337f8609e59a9f94498a416f040ecc53fc7f77c9ef34490",
+    "pass": true,
+    "savedTakeTapEntersReady": true,
+    "tapDoesNotAddTake": true,
+    "tapPlayheadDisplayedMs": 200.0,
+    "captureDurationMs": 506.9583333333333,
+    "takeCountAfterCapture": 5,
+    "takeCountAfterUndo": 4,
+    "undoPlayheadDisplayedMs": 600.0,
+    "expectedUndoMs": 621.204458,
+    "readoutResolutionMs": 100,
+    "originalVideoAndTakeRowsPreserved": true,
+    "freshPermission": "Not repeated on this binary; same JS permission code passed a fresh reset/Allow in the prior fixed-artifact check.",
+    "cleanup": {
+      "verified": true,
+      "sessionDeleted": true,
+      "hostExited": true,
+      "ownedSimulatorRunnerExited": true,
+      "port8246Closed": true,
+      "appLeftOnHome": true,
+      "physicalDeviceActions": false,
+      "rawMicrophoneFilesCopiedOutsideSimulator": false
+    }
+  }
+}

@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { getDefaultConfig } = require('expo/metro-config');
 
@@ -15,11 +16,24 @@ const SEP = '[\\\\/]';
 const localModules = {
   '@mieweb/pulse-editor': path.resolve(__dirname, 'modules/pulse-editor/src/index.tsx'),
 };
+// A local test source can symlink these modules from another checkout. Metro resolves their
+// files to that real path; block its standalone dependencies as well as the logical path.
+const realModuleDirs = [
+  ...new Set(
+    Object.values(localModules).map((entry) => fs.realpathSync(path.dirname(path.dirname(entry)))),
+  ),
+];
 config.resolver.blockList = [
   ...[].concat(config.resolver.blockList ?? []),
   // Either path separator, so the pattern also matches Metro's paths on Windows.
   new RegExp(
     `^${modulesDir.split(path.sep).map(escape).join(SEP)}${SEP}[^\\\\/]+${SEP}(node_modules|example)${SEP}.*`,
+  ),
+  ...realModuleDirs.map(
+    (directory) =>
+      new RegExp(
+        `^${directory.split(path.sep).map(escape).join(SEP)}${SEP}(node_modules|example)${SEP}.*`,
+      ),
   ),
 ];
 const defaultResolveRequest = config.resolver.resolveRequest;

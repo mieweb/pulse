@@ -4,7 +4,9 @@ import {
   type ExportAudio,
 } from '@/core/media/merge-signature';
 import { getDraftUploadStatus, getMergedExport, setMergedExport } from '@/db/drafts';
+import type { VoiceoverMix } from '@/core/media/voiceover';
 import type { Segment } from '@/db/schema';
+import { getVoiceover } from '@/db/voiceovers';
 import type { MergedOutput } from '@/features/upload/core/types';
 import { absolutize, exportFileExists, exportRelPath, persistExportFile } from '@/utils/file-store';
 
@@ -16,13 +18,16 @@ export async function loadMergedExport(
   draftId: string,
   segments: Segment[],
   audio: ExportAudio,
+  voiceover?: VoiceoverMix,
 ): Promise<MergedOutput | null> {
+  const mix = voiceover ?? (await getVoiceover(draftId));
   const record = await getMergedExport(draftId);
   if (!record) return null;
   const durationMs = currentExportDuration(
     { fileExists: exportFileExists(draftId), ...record },
     segments,
     audio,
+    mix,
   );
   return durationMs == null ? null : { path: absolutize(exportRelPath(draftId)), durationMs };
 }
@@ -43,12 +48,14 @@ export async function resolveMergedExport(
   draftId: string,
   segments: Segment[],
   audio: ExportAudio,
-  mergeClips: () => Promise<MergedOutput>,
+  mergeClips: (voiceover: VoiceoverMix) => Promise<MergedOutput>,
 ): Promise<MergedOutput> {
-  const persisted = await loadMergedExport(draftId, segments, audio);
+  // Snapshot audio once: the cache key and native merge must describe the same takes and mutes.
+  const mix = await getVoiceover(draftId);
+  const persisted = await loadMergedExport(draftId, segments, audio, mix);
   if (persisted) return persisted;
-  const signature = exportSignature(segments, audio);
-  const merged = await mergeClips();
+  const signature = exportSignature(segments, audio, mix);
+  const merged = await mergeClips(mix);
   return {
     path: await persistMergedExport(draftId, signature, merged),
     durationMs: merged.durationMs,

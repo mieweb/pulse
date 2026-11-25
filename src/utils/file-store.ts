@@ -1,6 +1,11 @@
 import { Directory, File } from 'expo-file-system';
 
-import { editedSegmentRelPath, exportRelPath, segmentRelPath } from './media-paths';
+import {
+  editedSegmentRelPath,
+  exportRelPath,
+  segmentRelPath,
+  voiceoverRelPath,
+} from './media-paths';
 import { documentDir } from '@/utils/storage-root';
 import { heldMediaPaths, isMediaHeld } from '@/core/media-holds';
 
@@ -11,6 +16,7 @@ export {
   exportRelPath,
   segmentRelPath,
   thumbRelPath,
+  voiceoverRelPath,
 } from './media-paths';
 
 // Clips live under the document directory (safe from system eviction). The DB stores
@@ -63,6 +69,25 @@ export async function persistRecording(
 ): Promise<string> {
   await new File(cacheUri).move(segmentDest(draftId, segmentId));
   return segmentRelPath(draftId, segmentId);
+}
+
+/** Stage a narration source, retaining the cache file until its row has committed. */
+export async function persistVoiceoverRecording(
+  cacheUri: string,
+  draftId: string,
+  takeId: string,
+): Promise<string> {
+  const extension = /\.(caf|m4a|wav)$/i.exec(cacheUri)?.[1].toLowerCase() ?? 'caf';
+  const relative = voiceoverRelPath(draftId, takeId, extension);
+  const dest = new File(absolutize(relative));
+  dest.parentDirectory.create({ intermediates: true, idempotent: true });
+  try {
+    await new File(toFileUri(cacheUri)).copy(dest);
+  } catch (error) {
+    deleteQuietly(dest.uri);
+    throw error;
+  }
+  return relative;
 }
 
 /**

@@ -189,6 +189,13 @@ Imported summary checkpoints participate in the restored library’s next collec
 The first-pass request is tracked in [#331](https://github.com/mieweb/pulse/issues/331);
 native UI checks and screenshots are in the [Summary verification record](../screenshots/validation/summary/README.md).
 
+## Voiceover takes
+
+iOS editor **+ → Voiceover** stores narration as independent draft-level audio takes with source
+trims and saved video/narration track mutes. Migration `0023`, whole-take Undo, full-draft transfer
+and recovery behavior are described in [voiceover.md](voiceover.md). Video clip edits retain the
+take's absolute draft position; copying selected clips does not copy narration.
+
 ## Launch and recovery
 
 `openLibrary` (`src/db/snapshots.ts`) runs as `src/db/client.ts` loads, before migrations. Nothing

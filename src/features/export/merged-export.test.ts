@@ -11,6 +11,13 @@ const mockRow: {
 } = { signature: null, durationMs: null, uploadStatus: null };
 const mockFile: { exists: boolean; from: string | null } = { exists: false, from: null };
 
+const mockVoiceover = {
+  takes: [] as import('@/db/schema').VoiceoverTake[],
+  sourceMuted: false,
+  voiceoverMuted: false,
+};
+jest.mock('@/db/voiceovers', () => ({ getVoiceover: async () => ({ ...mockVoiceover }) }));
+
 jest.mock('@/db/drafts', () => ({
   getMergedExport: async () => ({ signature: mockRow.signature, durationMs: mockRow.durationMs }),
   setMergedExport: async (_id: string, m: { signature: string; durationMs: number } | null) => {
@@ -33,6 +40,7 @@ jest.mock('@/utils/file-store', () => ({
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { exportSignature, mergedSignature } from '@/core/media/merge-signature';
 import { resolveMergedExport } from './merged-export';
+import type { VoiceoverMix } from '@/core/media/voiceover';
 /* eslint-enable import/first */
 
 const EXPORT = 'file:///docs/drafts/d1/export.mp4';
@@ -50,6 +58,7 @@ const AUDIO = { sampleRate: 48000, channels: 1 };
 const mergeTo = (path: string, durationMs = 2000) => jest.fn(async () => ({ path, durationMs }));
 
 beforeEach(() => {
+  Object.assign(mockVoiceover, { takes: [], sourceMuted: false, voiceoverMuted: false });
   Object.assign(mockRow, { signature: null, durationMs: null, uploadStatus: null });
   Object.assign(mockFile, { exists: false, from: null });
 });
@@ -117,6 +126,35 @@ describe('resolveMergedExport', () => {
     const merge = mergeTo('/cache/m2.mp4');
     await resolveMergedExport('d1', clips, AUDIO, merge);
     expect(merge).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-merges after narration changes and gives native merge the exact keyed snapshot', async () => {
+    await resolveMergedExport('d1', clips, AUDIO, mergeTo('/cache/no-narration.mp4'));
+    const take = {
+      filename: 'drafts/d1/voiceover/a.caf',
+      startMs: 250,
+      trimStartMs: 40,
+      trimEndMs: 640,
+    } as import('@/db/schema').VoiceoverTake;
+    mockVoiceover.takes = [take];
+    const merge = jest.fn(async (mix: VoiceoverMix) => {
+      // A concurrent mute edit must not label these bytes as the newer mix.
+      mockVoiceover.voiceoverMuted = true;
+      expect(mix.voiceoverMuted).toBe(false);
+      return { path: '/cache/with-narration.mp4', durationMs: 2000 };
+    });
+    await resolveMergedExport('d1', clips, AUDIO, merge);
+    expect(merge).toHaveBeenCalledTimes(1);
+    expect(mockRow.signature).toBe(
+      exportSignature(clips, AUDIO, {
+        takes: [take],
+        sourceMuted: false,
+        voiceoverMuted: false,
+      }),
+    );
+    const newer = mergeTo('/cache/muted.mp4');
+    await resolveMergedExport('d1', clips, AUDIO, newer);
+    expect(newer).toHaveBeenCalledTimes(1);
   });
 
   it('never replaces the export while the draft is uploading', async () => {

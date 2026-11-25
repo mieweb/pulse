@@ -12,6 +12,7 @@ import {
   relFileExists,
   segmentFileDeletionPaths,
   thumbRelPath,
+  voiceoverRelPath,
 } from '@/utils/file-store';
 import { type ClipAnchor, END, noteClipsAdded, resolveAnchor } from '@/core/clip-anchor';
 import { waitForClipWrites } from '@/core/draft-write-barrier';
@@ -47,7 +48,7 @@ import {
   type HostContextColumns,
 } from './host-context';
 import type { ClipTranscript, Draft, Segment } from './schema';
-import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
+import { clipTranscripts, drafts, segments, uploadJobs, voiceoverTakes } from './schema';
 import { noteHeldFiles } from './held-files';
 import { deleteSavedLink } from './secure-token';
 import {
@@ -717,10 +718,12 @@ export async function addSegmentCover(
   coverFailed(video);
 }
 
-async function beginClipMutation(draftId: string): Promise<void> {
+export async function beginDraftMutation(draftId: string): Promise<void> {
   assertEditable();
   await takeOutForChange(draftId, 'edited');
 }
+
+const beginClipMutation = beginDraftMutation;
 
 /** Whether a clip is still in the database (not deleted, nor its draft). */
 export async function segmentExists(segmentId: string): Promise<boolean> {
@@ -1382,8 +1385,23 @@ export async function duplicateDraft(draftId: string): Promise<string> {
           .select()
           .from(clipTranscripts)
           .where(inArray(clipTranscripts.segmentId, [...newIds.keys()]));
+  const narration = await db
+    .select()
+    .from(voiceoverTakes)
+    .where(eq(voiceoverTakes.draftId, draftId))
+    .orderBy(asc(voiceoverTakes.sequence));
 
   try {
+    const narrationRows: (typeof voiceoverTakes.$inferInsert)[] = [];
+    for (const take of narration) {
+      const takeId = Crypto.randomUUID();
+      const extension = take.filename.slice(take.filename.lastIndexOf('.') + 1);
+      const filename = voiceoverRelPath(copyId, takeId, extension);
+      if (!(await copyRelFile(take.filename, filename))) {
+        throw new Error('One of its narration recordings is missing.');
+      }
+      narrationRows.push({ ...take, id: takeId, draftId: copyId, filename });
+    }
     const segmentRows: (typeof segments.$inferInsert)[] = [];
     // Clips can share an original: each file is copied once.
     const copied = new Set<string>();
@@ -1420,12 +1438,19 @@ export async function duplicateDraft(draftId: string): Promise<string> {
           id: copyId,
           name: `${source.draft.name || 'Untitled'} copy`,
           captionY: source.draft.captionY,
+          sourceAudioMuted: source.draft.sourceAudioMuted,
+          voiceoverMuted: source.draft.voiceoverMuted,
           isSummary: source.draft.isSummary,
           lastClipNumber: source.draft.lastClipNumber,
           createdVia: source.draft.createdVia,
         })
         .run();
       if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
+      for (let i = 0; i < narrationRows.length; i += 100) {
+        tx.insert(voiceoverTakes)
+          .values(narrationRows.slice(i, i + 100))
+          .run();
+      }
       if (transcripts.length > 0) {
         tx.insert(clipTranscripts)
           .values(

@@ -63,7 +63,13 @@ const TABLES: SQLiteTable[] = (() => {
 })();
 const tableName = (t: SQLiteTable) => getTableConfig(t).name;
 /** Tables a selection carries (a draft and its rows); the others go only with the library. */
-const DRAFT_TABLES = new Set(['drafts', 'segments', 'draft_transcripts', 'clip_transcripts']);
+const DRAFT_TABLES = new Set([
+  'drafts',
+  'segments',
+  'draft_transcripts',
+  'clip_transcripts',
+  'voiceover_takes',
+]);
 const LIBRARY_TABLES = new Set(['settings', 'upload_destinations']);
 /**
  * Tables that never travel: the upload outbox, the receipts of sent drafts and this install's own
@@ -161,7 +167,7 @@ function selectRows(conn: SQLiteDatabase, t: SQLiteTable, draftIds?: string[]): 
       .from(t)
       .orderBy(sql`rowid`)
       .all();
-  const { drafts, segments, draftTranscripts, clipTranscripts } = schema;
+  const { drafts, segments, draftTranscripts, clipTranscripts, voiceoverTakes } = schema;
   const where =
     t === drafts
       ? inArray(drafts.id, draftIds)
@@ -169,13 +175,15 @@ function selectRows(conn: SQLiteDatabase, t: SQLiteTable, draftIds?: string[]): 
         ? inArray(segments.draftId, draftIds)
         : t === draftTranscripts
           ? inArray(draftTranscripts.draftId, draftIds)
-          : inArray(
-              clipTranscripts.segmentId,
-              d
-                .select({ id: segments.id })
-                .from(segments)
-                .where(inArray(segments.draftId, draftIds)),
-            );
+          : t === voiceoverTakes
+            ? inArray(voiceoverTakes.draftId, draftIds)
+            : inArray(
+                clipTranscripts.segmentId,
+                d
+                  .select({ id: segments.id })
+                  .from(segments)
+                  .where(inArray(segments.draftId, draftIds)),
+              );
   return d
     .select()
     .from(t)
@@ -322,11 +330,13 @@ export function checkProject(value: unknown): ProjectDocument {
   const idsOf = (rows: Row[] | undefined) => new Set((rows ?? []).map((r) => r.id));
   const draftIds = idsOf(t.drafts);
   const segmentIds = idsOf(t.segments);
+  const takeIds = idsOf(t.voiceover_takes);
   if (
-    [...draftIds, ...segmentIds].some((id) => typeof id !== 'string') ||
+    [...draftIds, ...segmentIds, ...takeIds].some((id) => typeof id !== 'string') ||
     (t.segments ?? []).some((r) => !draftIds.has(r.draftId)) ||
     (t.draft_transcripts ?? []).some((r) => !draftIds.has(r.draftId)) ||
-    (t.clip_transcripts ?? []).some((r) => !segmentIds.has(r.segmentId))
+    (t.clip_transcripts ?? []).some((r) => !segmentIds.has(r.segmentId)) ||
+    (t.voiceover_takes ?? []).some((r) => !draftIds.has(r.draftId))
   ) {
     throw new Error(DAMAGED_PROJECT);
   }
@@ -502,6 +512,7 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
   for (const [draft, history] of histories) {
     if (history) for (const id of historyClipIds(history)) clipId(draft, id);
   }
+  const takeIds = new Map((t.voiceover_takes ?? []).map((r) => [r.id as string, freshId()]));
   const draftOfSeg = new Map((t.segments ?? []).map((r) => [r.id as string, r.draftId as string]));
   const paths = new Map<string, Map<string, string>>(
     [...draftIds.keys()].map((id) => [id, new Map()]),
@@ -515,8 +526,11 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
     if (mapped.has(old)) return mapped.get(old)!;
     const name = old.slice(old.lastIndexOf('/') + 1);
     const stem = name.split('.')[0];
-    const folder = `drafts/${draftIds.get(oldDraft)}/segments`;
-    let next = `${folder}/${segIds.get(oldDraft)!.get(stem) ?? stem}${name.slice(stem.length)}`;
+    const directory = old.split('/')[2] === 'voiceovers' ? 'voiceovers' : 'segments';
+    const mappedId =
+      directory === 'voiceovers' ? takeIds.get(stem) : segIds.get(oldDraft)!.get(stem);
+    const folder = `drafts/${draftIds.get(oldDraft)}/${directory}`;
+    let next = `${folder}/${mappedId ?? stem}${name.slice(stem.length)}`;
     while (reserved.has(next) && reserved.get(next) !== old) {
       next = `${folder}/retained-${++collision}-${name}`;
     }
@@ -548,6 +562,12 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
       captionEdit: r.captionEdit == null ? null : remapCaption(r.captionEdit, draft),
     };
   });
+  const voiceovers = (t.voiceover_takes ?? []).map((r) => ({
+    ...r,
+    id: takeIds.get(r.id as string),
+    draftId: draftIds.get(r.draftId as string),
+    filename: remap(r.filename as string, r.draftId as string),
+  }));
   // Derived files (pristine and baked-edit thumbs) that the document carried.
   for (const m of doc.media) {
     const draft = m.path.split('/')[1];
@@ -609,6 +629,7 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
         mergedDurationMs: null,
       })),
       segments,
+      voiceover_takes: voiceovers,
       draft_transcripts: (t.draft_transcripts ?? []).map((r) => ({
         ...r,
         draftId: draftIds.get(r.draftId as string),

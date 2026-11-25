@@ -40,6 +40,7 @@ import { CATALOG_FILE, CATALOG_PART, parseCatalog } from './catalog-filter';
 const WATCHED = new Set([
   'drafts',
   'segments',
+  'voiceover_takes',
   'upload_jobs',
   'upload_receipts',
   'clip_transcripts',
