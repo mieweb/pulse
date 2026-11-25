@@ -19,6 +19,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   useWindowDimensions,
@@ -51,6 +52,7 @@ import { renameDraft, segmentsForDraft, setDraftCaptionsOff } from '@/db/drafts'
 import { drafts } from '@/db/schema';
 import type { ExportScreenProps } from '@/features/export/contract';
 import { exportActions } from '@/features/export/primary-action';
+import { fitExportPreview } from '@/features/export/preview-layout';
 import { checkSend, TRIM_LABEL, uploadRulesOf } from '@/features/export/send-checks';
 import { useExport } from '@/features/export/use-export';
 import {
@@ -433,7 +435,12 @@ export function ExportScreen({
         styles.fill,
         { backgroundColor: theme.groupedBackground, paddingTop: insets.top + Spacing.two },
       ]}>
-      <View style={styles.center}>
+      <ScrollView
+        style={styles.fill}
+        contentContainerStyle={styles.center}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        testID="export.content">
         {state.status === 'merging' && (
           <>
             {/* The ring stands in for StateMessage's icon: it's the progress itself. */}
@@ -785,7 +792,7 @@ export function ExportScreen({
               )}
             </View>
           )}
-      </View>
+      </ScrollView>
       <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.two }]}>
         <CloseButton onClose={close} label="Back from export" testID="export.close" />
       </View>
@@ -840,9 +847,11 @@ function MergedPreview({
   // scale rather than reserved at the largest size, which would leave a gap at the usual one.
   const { fontScale } = useWindowDimensions();
   const metaRow =
-    META_LINE_HEIGHT * Math.min(fontScale, META_MAX_SCALE) + META_PILL_PAD_V * 2 + META_GAP;
-  const cardWidth = frame ? Math.min(frame.width, ((frame.height - metaRow) * 9) / 16) : 0;
-  const cardHeight = (cardWidth * 16) / 9;
+    META_LINE_HEIGHT * Math.min(fontScale, META_MAX_SCALE) +
+    META_PILL_PAD_V * 2 +
+    StyleSheet.hairlineWidth * 2 +
+    META_GAP;
+  const card = frame ? fitExportPreview(frame.width, frame.height, metaRow) : null;
 
   return (
     <View
@@ -850,15 +859,15 @@ function MergedPreview({
       onLayout={({ nativeEvent: { layout } }) =>
         setFrame({ width: layout.width, height: layout.height })
       }>
-      {frame != null && (
+      {card && (
         <View style={[styles.metaPill, ControlScrim[mode]]}>
           <ThemedText maxFontSizeMultiplier={META_MAX_SCALE} style={styles.metaText}>
             {meta}
           </ThemedText>
         </View>
       )}
-      {frame != null && (
-        <View style={[styles.previewCard, { width: cardWidth, height: cardHeight }]}>
+      {card && (
+        <View style={[styles.previewCard, card]}>
           <View style={styles.previewSurface}>
             {/* Fullscreen/PiP off: captions are an RN overlay, not burned in, so they'd be lost. */}
             <VideoView
@@ -873,15 +882,13 @@ function MergedPreview({
               surfaceType="textureView"
             />
             {/* The captions as the editor draws them, where they were placed; shows only. */}
-            {cardWidth > 0 && cardHeight > 0 && (
-              <SkiaCaption
-                lines={lines}
-                timeMs={timeMs}
-                style={captionStyle}
-                width={cardWidth}
-                height={cardHeight}
-              />
-            )}
+            <SkiaCaption
+              lines={lines}
+              timeMs={timeMs}
+              style={captionStyle}
+              width={card.width}
+              height={card.height}
+            />
             {note}
           </View>
         </View>
@@ -939,6 +946,7 @@ const META_MAX_SCALE = 1.3;
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   footer: {
+    flexShrink: 0,
     paddingHorizontal: Spacing.three,
     flexDirection: 'row',
     alignItems: 'center',
@@ -962,7 +970,9 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   center: {
-    flex: 1,
+    // Fill a roomy viewport; when actions outgrow it (keyboard/large text), they scroll above
+    // the separate return footer instead of shrinking into the preview or covering Close.
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,

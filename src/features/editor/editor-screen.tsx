@@ -1110,6 +1110,7 @@ export function EditorScreen({
         {screenCapture && add.screenHere && (
           <View style={styles.screenStop}>
             <screenCapture.StopPill
+              overVideo={false}
               began={screen.began}
               starting={screen.starting && !screenLive}
               stopping={screen.phase === 'stopping'}

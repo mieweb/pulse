@@ -111,5 +111,7 @@ export type ScreenCapturePort = {
     starting: boolean;
     stopping: boolean;
     onStop: () => void;
+    /** False on a themed background; defaults to the recorder's over-video appearance. */
+    overVideo?: boolean;
   }>;
 };
