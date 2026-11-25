@@ -26,13 +26,23 @@ export type AiEditorSelection = {
   selectedIds: string[];
 };
 
-type NativeAiEditor = {
+type AiEditor = {
   availability(): Promise<AiEditorAvailability>;
   selectPassages(
     passages: AiEditorPassage[],
     targetDurationMs: number,
   ): Promise<AiEditorSelection>;
   cancel(): Promise<void>;
+};
+
+type NativeAiEditor = {
+  availability(): Promise<AiEditorAvailability>;
+  selectPassages(
+    passages: AiEditorPassage[],
+    targetDurationMs: number,
+    requestId: string,
+  ): Promise<AiEditorSelection>;
+  cancel(requestId: string): Promise<void>;
 };
 
 // This module is deliberately optional: the existing app and unsupported platforms
@@ -55,7 +65,11 @@ const unavailable: AiEditorAvailability =
         message: 'The on-device AI editor requires an eligible iPhone with iOS 26 or later.',
       };
 
-const aiEditor: NativeAiEditor = {
+const requestPrefix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+let requestSequence = 0;
+let activeRequest: { id: string; promise: Promise<AiEditorSelection> } | null = null;
+
+const aiEditor: AiEditor = {
   async availability() {
     return native ? native.availability() : unavailable;
   },
@@ -65,10 +79,37 @@ const aiEditor: NativeAiEditor = {
         code: 'ERR_AI_UNAVAILABLE',
       });
     }
-    return native.selectPassages(passages, targetDurationMs);
+    if (activeRequest) {
+      throw Object.assign(new Error('An on-device selection is already running.'), {
+        code: 'ERR_AI_BUSY',
+      });
+    }
+    const id = `${requestPrefix}-${++requestSequence}`;
+    // Publish the ID before crossing the bridge. Native actor tasks may register
+    // cancellation before selection, so both operations carry the same ID.
+    const request = {
+      id,
+      promise: Promise.resolve().then(() =>
+        native.selectPassages(passages, targetDurationMs, id),
+      ),
+    };
+    activeRequest = request;
+    try {
+      return await request.promise;
+    } finally {
+      if (activeRequest === request) activeRequest = null;
+    }
   },
   async cancel() {
-    await native?.cancel();
+    const request = activeRequest;
+    if (!native || !request) return;
+    try {
+      await native.cancel(request.id);
+    } finally {
+      // Native may only have recorded a cancellation tombstone so far. Wait for
+      // the corresponding selection to observe it before allowing the next call.
+      await request.promise.catch(() => {});
+    }
   },
 };
 

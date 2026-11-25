@@ -22,7 +22,11 @@ module.exports = {
     '^@mieweb/pulse-embed$': '<rootDir>/embed/packages/pulse-embed/src/index',
     '^@mieweb/pulse-embed/(react|testing)$': '<rootDir>/embed/packages/pulse-embed/src/$1/index',
   },
-  testMatch: ['<rootDir>/src/**/*.test.ts', '<rootDir>/embed/**/*.test.ts'],
+  testMatch: [
+    '<rootDir>/src/**/*.test.ts',
+    '<rootDir>/embed/**/*.test.ts',
+    '<rootDir>/modules/expo-ai-editor/src/*.test.ts',
+  ],
   testPathIgnorePatterns: ['/node_modules/', ...embedIgnored],
   // Independent git submodules with their own package.json — exclude them from
   // haste-map scanning so jest doesn't see a naming collision with this app's own

@@ -19,6 +19,8 @@ planner owns batching and validates IDs, order and the actual final duration.
 One request runs at a time. `cancel()` requests Swift task cancellation and resolves
 after that request settles; the engine rejects a cancelled result and releases its
 busy state before allowing a new request.
+Internal request IDs preserve cancellation even if its native task runs before
+selection registers; module destruction cancels active and queued selections.
 Model refusal, context limits, unsupported languages, unavailability and failures
 are reported to JavaScript without substituting synthetic selections.
 

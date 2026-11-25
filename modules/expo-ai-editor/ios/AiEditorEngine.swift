@@ -23,7 +23,9 @@ struct AiEditorError: LocalizedError {
 // settles, so a second call cannot overlap a still-cancelling generation.
 actor AiEditorEngine {
   private var activeTask: Task<[String], Error>?
-  private var activeRequestId: UUID?
+  private var activeRequestId: String?
+  private var cancelledRequestIds: [String] = []
+  private var destroyed = false
 
   nonisolated static func availability() -> AiEditorAvailability {
     #if targetEnvironment(simulator)
@@ -67,7 +69,16 @@ actor AiEditorEngine {
     #endif
   }
 
-  func select(_ passages: [AiEditorPassage], targetDurationMs: Double) async throws -> [String] {
+  func select(
+    _ passages: [AiEditorPassage], targetDurationMs: Double, requestId: String
+  ) async throws -> [String] {
+    guard !requestId.isEmpty, requestId.utf16.count <= 128 else {
+      throw AiEditorError(code: "ERR_AI_INVALID_INPUT", message: "Invalid AI editing request ID.")
+    }
+    if destroyed || cancelledRequestIds.contains(requestId) {
+      cancelledRequestIds.removeAll { $0 == requestId }
+      throw AiEditorError(code: "ERR_AI_CANCELLED", message: "AI editing was cancelled.")
+    }
     let status = Self.availability()
     guard status.available else {
       throw AiEditorError(code: "ERR_AI_UNAVAILABLE", message: status.message)
@@ -96,11 +107,11 @@ actor AiEditorEngine {
     guard #available(iOS 26.0, *) else {
       throw AiEditorError(code: "ERR_AI_UNAVAILABLE", message: status.message)
     }
-    let requestId = UUID()
     let task = Task { try await Self.generate(passages, targetDurationMs: targetDurationMs) }
     activeTask = task
     activeRequestId = requestId
     defer {
+      cancelledRequestIds.removeAll { $0 == requestId }
       if activeRequestId == requestId {
         activeTask = nil
         activeRequestId = nil
@@ -118,15 +129,27 @@ actor AiEditorEngine {
     }
   }
 
-  func cancel() async {
-    guard let task = activeTask else { return }
-    let requestId = activeRequestId
+  func cancel(requestId: String) async {
+    guard !requestId.isEmpty, requestId.utf16.count <= 128 else { return }
+    // Bridge Tasks are not ordered: cancellation can arrive before select has
+    // registered its task. Remember it, bounded even for stale/duplicate cancels.
+    if !cancelledRequestIds.contains(requestId) {
+      cancelledRequestIds.append(requestId)
+      if cancelledRequestIds.count > 128 { cancelledRequestIds.removeFirst() }
+    }
+    guard activeRequestId == requestId, let task = activeTask else { return }
     task.cancel()
     _ = await task.result
     if activeRequestId == requestId {
       activeTask = nil
       activeRequestId = nil
     }
+  }
+
+  func cancelAll() async {
+    // Module destruction also blocks selects whose bridge Task has not registered.
+    destroyed = true
+    if let requestId = activeRequestId { await cancel(requestId: requestId) }
   }
 
   @available(iOS 26.0, *)

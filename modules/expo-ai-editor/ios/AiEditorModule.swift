@@ -18,13 +18,15 @@ public final class AiEditorModule: Module {
     }
 
     AsyncFunction("selectPassages") {
-      (records: [AiEditorPassageRecord], targetDurationMs: Double, promise: Promise) in
+      (records: [AiEditorPassageRecord], targetDurationMs: Double, requestId: String, promise: Promise) in
       let passages = records.map {
         AiEditorPassage(id: $0.id, text: $0.text, durationMs: $0.durationMs)
       }
       Task {
         do {
-          let ids = try await self.engine.select(passages, targetDurationMs: targetDurationMs)
+          let ids = try await self.engine.select(
+            passages, targetDurationMs: targetDurationMs, requestId: requestId
+          )
           promise.resolve(["selectedIds": ids])
         } catch let error as AiEditorError {
           promise.reject(error.code, error.message)
@@ -34,15 +36,15 @@ public final class AiEditorModule: Module {
       }
     }
 
-    AsyncFunction("cancel") { (promise: Promise) in
+    AsyncFunction("cancel") { (requestId: String, promise: Promise) in
       Task {
-        await self.engine.cancel()
+        await self.engine.cancel(requestId: requestId)
         promise.resolve()
       }
     }
 
     OnDestroy { [engine] in
-      Task { await engine.cancel() }
+      Task { await engine.cancelAll() }
     }
   }
 }
