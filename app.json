@@ -28,10 +28,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "allowBackup": false,
-      "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
-      ],
+      "permissions": ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"],
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_MEDIA_IMAGES",
@@ -60,6 +57,7 @@
       ],
       "expo-sqlite",
       "expo-video",
+      "./plugins/with-ios-scene-lifecycle",
       "./plugins/with-disable-script-sandboxing",
       "expo-image",
       "expo-sharing",
