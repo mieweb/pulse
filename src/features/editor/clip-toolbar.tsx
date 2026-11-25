@@ -1,6 +1,8 @@
 import { type ReactNode, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  I18nManager,
+  Platform,
   Pressable,
   ScrollView,
   type ScrollViewProps,
@@ -85,6 +87,7 @@ function ScrollableTools({
   const [contentWidth, setContentWidth] = useState(0);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [atEnd, setAtEnd] = useState(false);
+  const androidRTL = Platform.OS === 'android' && I18nManager.isRTL;
   return (
     <>
       <ScrollView
@@ -95,11 +98,15 @@ function ScrollableTools({
         onLayout={(event) => setViewportWidth(event.nativeEvent.layout.width)}
         onContentSizeChange={(width) => setContentWidth(width)}
         onScroll={({ nativeEvent }) => {
-          offset.current = nativeEvent.contentOffset.x;
-          setAtEnd(
-            offset.current + nativeEvent.layoutMeasurement.width >=
-              nativeEvent.contentSize.width - 4,
+          const end = Math.max(
+            0,
+            nativeEvent.contentSize.width - nativeEvent.layoutMeasurement.width,
           );
+          // Android uses physical offsets; iOS Fabric already reports logical RTL offsets.
+          offset.current = androidRTL
+            ? end - nativeEvent.contentOffset.x
+            : nativeEvent.contentOffset.x;
+          setAtEnd(offset.current >= end - 4);
         }}
         scrollEventThrottle={16}>
         {children}
@@ -115,7 +122,8 @@ function ScrollableTools({
               const end = Math.max(0, contentWidth - viewportWidth);
               // Half-page overlap keeps enlarged labels fully reachable between pages.
               const next = Math.min(end, offset.current + Math.max(44, viewportWidth / 2));
-              scroll.current?.scrollTo({ x: atEnd ? 0 : next, animated: true });
+              const target = atEnd ? 0 : next;
+              scroll.current?.scrollTo({ x: androidRTL ? end - target : target, animated: true });
             },
           }}
         />

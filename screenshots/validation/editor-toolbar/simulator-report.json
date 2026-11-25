@@ -138,5 +138,36 @@
     "sessionDelete": 200,
     "runnerExit": -15,
     "simulatorShutdown": 0
+  },
+  "prReviewVerification": {
+    "headBeforeRtlFollowup": "8d51b81a155c0602f4cdeec31893eeb92305bb45",
+    "cleanRootTypeScriptPassed": true,
+    "extraTypeScriptExclusions": false,
+    "lintPassed": true,
+    "embedTypechecksPassed": true,
+    "iosAndroidEmbedBundlesPassed": true,
+    "protocolPassed": true,
+    "changedFileFormattingPassed": true,
+    "jest": {
+      "suitesPassed": 162,
+      "testsPassed": 2376,
+      "suitesSkippedLocally": 1,
+      "integrationTestsSkippedLocally": 8
+    },
+    "githubCiAtRecordedHead": {
+      "checksPassed": 9,
+      "integrationCasesPassed": 2
+    }
+  },
+  "rtlCoordinateFollowup": {
+    "androidRtlPhysicalOffsetsNormalized": true,
+    "androidRtlTargetsMirrored": true,
+    "iosFabricPagingUnchanged": true,
+    "verification": "Independent source review against React Native native implementation and logical/physical offset tracing; no Android/RTL native interaction",
+    "installed3371PredatesFollowup": true,
+    "originalNativePayloadHashesPreserved": true,
+    "actualHandlerCoordinateCasesPassed": 24,
+    "affectedTypechecksLintEmbedBundlesAndFormattingPassed": true,
+    "followupSourceSha256": "46b4a138caf9ad7791c9b4e21b1e6a62fa6769f6d8b297ebed51cc2b96994287"
   }
 }

@@ -41,6 +41,23 @@ checks were repeated; the pure-logic Jest result was reused because it does not 
 this toolbar. The subsequent 2.8 merge changed version metadata only; version/config/notes checks
 passed and historical release entries were preserved. Logs: `/tmp/pulse-337-main-checks/`.
 
+## Clean PR verification and RTL follow-up
+
+A clean PR worktree at `8d51b81` passed standard root TypeScript without additional exclusions,
+lint, embed/client typing, iOS/Android embed bundles, protocol and changed-file formatting.
+Its full Jest run passed **162 suites / 2,376 tests**, with one suite / eight integration tests
+skipped locally. All **nine GitHub CI checks** passed at that head, including two integration
+cases. The original shared-checkout desktop diagnostics above remain historical context.
+
+Independent source review then found that Android RTL scrolling uses physical offsets while
+iOS Fabric already normalizes them. The helper now normalizes Android RTL incoming offsets and
+mirrors outgoing targets, preserving logical More/First paging. This source-only correction was
+reviewed against React Native's native implementation. All 24 actual-handler coordinate cases
+passed across Android/iOS, RTL/LTR, More/First and boundary dimensions. Root/embed/client typing,
+lint, both embed bundles and changed-source formatting passed again after the correction.
+Android/RTL native interaction remains unverified; iOS paging behavior is unchanged. The installed combined build **3371 predates this follow-up**;
+its recorded source/payload hashes and native results remain associated with that original build.
+
 ## Native verification (menu-only build)
 
 Both Release native shells were built with the exact main engine pin
