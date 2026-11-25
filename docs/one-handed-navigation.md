@@ -114,3 +114,48 @@ remaining gaps. Source inspection and unit tests cannot establish physical thumb
 | Swipe return/dismiss                            | Report supported, blocked and unverified surfaces; verify each enabled gesture uses the existing logical close path.                                                               | Gesture-conflict inventory above remains open until each affected surface is implemented and checked. |
 | Exceptions and overlap                          | Separate OS-owned dialogs/native chrome from app-owned controls. Record rationale, reachable fallback and linked follow-up for app exceptions.                                     | #104 export/keyboard/long-destination/toast combinations and all deferred sheets.                     |
 | Rule carried forward                            | AGENTS rule and PR template apply before UI implementation; every future PR declares applicability or N/A.                                                                         | Review evidence stays with each future UI change.                                                     |
+
+## First test build: observed validation
+
+The test build uses application source at `dce8303` on
+[PR #327](https://github.com/mieweb/pulse/pull/327). The signed Release build was installed in
+place on the requested iPhone, launched without a debugger, and its running process verified.
+No drafts were removed and no physical test/capture runner was started. The shared device guard
+returned `released` before handoff. This establishes installation and launch, not physical
+left/right thumb reach or camera recording correctness.
+
+Source checks passed: root, embed and embed-client TypeScript; full lint; protocol generation;
+and the embed dependency/bundle check. Jest passed 147 suites and 2,100 tests, with the opt-in
+PulseVault suite's eight tests skipped locally. Both pinned/latest PulseVault integration jobs
+passed in GitHub, along with all nine PR checks at the application-source commit.
+
+Native accessibility checks used task-owned iOS 26 simulators and artificial local clips:
+
+- On the 375 × 667 phone, a library card opened Edit directly. Close, Undo, Redo and Export were
+  accessible at `y = 619` with 44-point height. Disabled history commands retained their places.
+- Rotate → Undo → Redo → Undo worked through those lower buttons. A two-clip native export
+  completed; the lower Share action opened the system sheet, whose down-swipe dismissal returned
+  to Export. Lower return controls returned to the editor and library.
+- New recording opened an empty recorder. Expanded camera tools were at `y = 531`, the shutter
+  at `y = 439`, and Close/Tools at `y = 607`. The shutter was disabled because the simulator has
+  no camera; this is not a Record/Stop hardware test.
+- On the 440 × 956 phone, editor commands remained at `y = 874` in main/edit modes and at the
+  largest accessibility text setting. Recording more opened the same project and returned to
+  its existing editor. Expanded recorder tools and shutter stayed in the lower half at normal
+  and maximum text sizes, and a single-clip native export completed.
+- The large phone's denied-camera gate kept Close and Open Settings at the bottom and returned
+  to Home through Close. Simulator camera/microphone permissions and text size were restored
+  after this check. The large system share sheet also opened and dismissed through its named
+  system dismissal region; its lack of a Close/Cancel button remains an OS-owned limitation.
+
+Before is the cached previous #318 simulator build; after is this PR's application source. Both
+captures use the same synthetic two-clip draft on the small phone.
+
+| Before                                                                        | After                                                                           |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| ![Editor commands at the top](images/one-handed-navigation/editor-before.png) | ![Editor commands at the bottom](images/one-handed-navigation/editor-after.png) |
+
+[Expanded lower recorder tools](images/one-handed-navigation/recorder-tools.png) are captured
+separately. Android, physical grip/Record/Stop, live screen-recording combinations, caption
+keyboard states, real destination sending and the deferred audit surfaces remain acceptance
+work. OS-owned share controls retain system placement and dismissal behavior.
