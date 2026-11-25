@@ -44,9 +44,9 @@ export function useEditorAdditions({
   layout,
   timeMs,
   focused,
+  previewReady,
   pause,
   seekTo,
-  endTrim,
   recordAdded,
   leaveEditMode,
   openOver,
@@ -59,10 +59,10 @@ export function useEditorAdditions({
   layout: { starts: readonly number[]; totalMs: number };
   timeMs: SharedValue<number>;
   focused: boolean;
+  /** The native preview is ready with this clip list, rather than the pre-insert timeline. */
+  previewReady: boolean;
   pause: () => void;
   seekTo: (ms: number) => void;
-  /** Once the preview has the new clips (as a trim's end). */
-  endTrim: (ms: number) => void;
   /** One undo step for an addition. */
   recordAdded: (ids: string[], splits?: readonly SplitReceipt[]) => void;
   leaveEditMode: () => void;
@@ -136,12 +136,12 @@ export function useEditorAdditions({
   // just added. Tried again as the clips change, until `until`.
   const pendingGoal = useRef<{ goal: PlayheadGoal; until: number } | null>(null);
   /** The playhead to `goal` (`playheadGoalMs`); false while its clip isn't in the list yet. */
-  const placeGoal = (goal: PlayheadGoal, rebuilt: boolean) => {
+  const placeGoal = (goal: PlayheadGoal) => {
     const at = playheadGoalMs(goal, clipIds, layout.starts, layout.totalMs);
-    if (at == null) return false;
-    // Clips just changed: once the preview has the new clips (as a trim's end); else at once.
-    if (rebuilt) endTrim(at);
-    else seekTo(at);
+    if (at == null || !previewReady) return false;
+    // Rows can arrive before the native timeline has rebuilt. Seeking its old item loses this
+    // position when it is replaced; retain the goal until this clip list is ready to seek.
+    seekTo(at);
     return true;
   };
   const takeAdded = useEffectEvent(() => {
@@ -158,7 +158,7 @@ export function useEditorAdditions({
     const goal = playheadGoal(takeEditorReturn(draftId), grouped.placeAfter);
     if (!goal) return;
     leaveEditMode();
-    const placed = placeGoal(goal, false);
+    const placed = placeGoal(goal);
     // A place from the recorder resolves with any list, but one behind the clips just added puts
     // it short of them: once more as the list catches up, briefly (an id can also be one the
     // recorder deleted again, a retake, which never shows up).
@@ -170,10 +170,10 @@ export function useEditorAdditions({
     const p = pendingGoal.current;
     if (!p) return;
     if (Date.now() > p.until) pendingGoal.current = null;
-    else if (placeGoal(p.goal, true)) pendingGoal.current = null;
-    // Only a change of the clips places it (the layout follows them).
+    else if (placeGoal(p.goal)) pendingGoal.current = null;
+    // Rows and native readiness arrive independently; either can make the goal resolvable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clips]);
+  }, [clips, previewReady, layout]);
   const imagesWere = useRef(false);
   useEffect(() => {
     const ended = imagesWere.current && !images.importing;

@@ -587,9 +587,12 @@ export function EditorScreen({
     layout,
     timeMs: values.timeMs,
     focused,
+    previewReady:
+      !!builtStatus?.ready &&
+      !builtStatus.error &&
+      builtStatus.clipStartsMs.length === clips.length,
     pause: ctl.pause,
     seekTo: ctl.seekTo,
-    endTrim: ctl.endTrim,
     recordAdded: history.recordAdded,
     leaveEditMode: () => setMode((m) => (m === 'edit' ? 'main' : m)),
     openOver,
