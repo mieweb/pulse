@@ -93,33 +93,29 @@ export function useEditorAdditions({
   const imageBatch = useRef<ImageBatch | null>(null);
   const pendingSplits = useRef<SplitReceipt[]>([]);
   // The items' callbacks run on a press, never during render: the ref is only read then.
-  const actionsAt = (target: () => ClipAnchor) =>
-    editorAddActions({
-      anchorNow: target,
-      pause,
-      record: onAddClips && ((anchor) => openOver(() => onAddClips(draftId, anchor))),
-      recordScreen:
-        screenCapture && !screenLive && !screen.importing
-          ? (anchor) => void screenCapture.start(async () => draftId, true, anchor)
-          : undefined,
-      importVideo: (anchor) => importer.importVideo(draftId, anchor),
-      importImages: (anchor) =>
-        void images.importImages(draftId, () => anchor, {
-          onWriting: (id) => {
-            imageBatch.current = batchWriting(imageBatch.current, id);
-          },
-        }),
-      fromAnotherPulse: anotherPulse.action
-        ? (anchor) => {
-            otherAnchor.current = anchor;
-            anotherPulse.action?.onPress();
-          }
+  // eslint-disable-next-line react-hooks/refs -- callbacks read refs only when an item is chosen
+  const actions = editorAddActions({
+    anchorNow,
+    pause,
+    record: onAddClips && ((anchor) => openOver(() => onAddClips(draftId, anchor))),
+    recordScreen:
+      screenCapture && !screenLive && !screen.importing
+        ? (anchor) => void screenCapture.start(async () => draftId, true, anchor)
         : undefined,
-    });
-  // eslint-disable-next-line react-hooks/refs -- callbacks read refs only when an item is chosen
-  const actions = actionsAt(anchorNow);
-  // eslint-disable-next-line react-hooks/refs -- callbacks read refs only when an item is chosen
-  const appendActions = actionsAt(() => END);
+    importVideo: (anchor) => importer.importVideo(draftId, anchor),
+    importImages: (anchor) =>
+      void images.importImages(draftId, () => anchor, {
+        onWriting: (id) => {
+          imageBatch.current = batchWriting(imageBatch.current, id);
+        },
+      }),
+    fromAnotherPulse: anotherPulse.action
+      ? (anchor) => {
+          otherAnchor.current = anchor;
+          anotherPulse.action?.onPress();
+        }
+      : undefined,
+  });
 
   useEffect(() => {
     const stop = expectClipsAdded(draftId, (split) => void dropTakenOut(split.before));
@@ -195,7 +191,6 @@ export function useEditorAdditions({
 
   return {
     actions,
-    appendActions,
     /** An import, a batch or this draft's screen take is adding clips: the "+" is busy. */
     busy:
       importer.importing || images.importing || (screen.importing && screen.draftId === draftId),

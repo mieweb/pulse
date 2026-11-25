@@ -161,8 +161,8 @@ function usePlaybackSessionOnReturn() {
  * merged at the playhead. Captions show over the preview (drag one to move them all) and on a
  * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
  *
- * The "+" beside Play inserts at the exact playhead, splitting only metadata inside a clip.
- * The right-edge "+" always appends a new beat. Both offer recordings, imports and screen takes;
+ * The sticky right-edge "+" inserts at the exact playhead, splitting only metadata inside a clip
+ * or appending a new beat at the end. It offers recordings, imports and screen takes;
  * the playhead then sits after the addition. One undo reverses the split and insertion together.
  *
  * No router: where Close, Export, Record a clip here and the captions model go is the caller's
@@ -984,15 +984,6 @@ export function EditorScreen({
             style={styles.play}>
             <Icon name={playing ? 'pause.fill' : 'play.fill'} size={22} tintColor={theme.text} />
           </Pressable>
-          <EditorAddMenu
-            actions={add.actions}
-            busy={add.busy}
-            progress={add.progress}
-            progressText={add.progressText}
-            progressCount={add.progressCount}
-            position="playhead"
-            onOpen={ctl.pause}
-          />
           <View style={styles.switchSlot}>
             <ViewSwitcher
               view={view}
@@ -1048,17 +1039,16 @@ export function EditorScreen({
               onBlankTap={deselect}
             />
           )}
-          {/* Append a beat: over the clips at the right edge, outside their scroll and gestures, so it
+          {/* Add at the playhead: over the clips at the right edge, outside their scroll and gestures, so it
               stays put while they scroll under it (each view pads half its width at the end, so
               the last clip scrolls clear of it) and while a clip is selected. */}
           <View style={styles.add} pointerEvents="box-none">
             <EditorAddMenu
-              actions={add.appendActions}
+              actions={add.actions}
               busy={add.busy}
               progress={add.progress}
               progressText={add.progressText}
               progressCount={add.progressCount}
-              position="end"
               onOpen={ctl.pause}
             />
           </View>

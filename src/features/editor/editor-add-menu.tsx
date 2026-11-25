@@ -12,9 +12,8 @@ import { useTheme } from '@/hooks/use-theme';
 export const ADD_SIZE = 44;
 
 /**
- * Both editor "+" controls use the shared add menu: beside Play to insert at the exact
- * playhead, or at the right edge of the clips to append a new beat. Drawn like the
- * recorder's "+" (a round 44 pt button with a plus), in the theme's inverted colours so it reads
+ * The editor's sticky right-edge "+" inserts at the exact playhead, appending at the end.
+ * Drawn like the recorder's "+" (a round 44 pt button with a plus), in the theme's inverted colours so it reads
  * over the clips and the background alike. While a video it started is converting it shows a
  * spinner, or a ring once the conversion reports progress, and takes no taps.
  */
@@ -24,7 +23,6 @@ export function EditorAddMenu({
   progress,
   progressText,
   progressCount,
-  position,
   onOpen,
 }: {
   actions: MenuAction[];
@@ -36,15 +34,12 @@ export function EditorAddMenu({
   progressText?: string;
   /** Shown beside the ring during a batch of images ("2/5"). */
   progressCount?: string;
-  position: 'playhead' | 'end';
 }) {
   const theme = useTheme();
   const ring = busy ? progress : null;
-  const label = position === 'playhead' ? 'Insert at playhead' : 'Append beat';
+  const label = 'Insert at playhead';
   const hint =
-    position === 'playhead'
-      ? 'Adds clips here, splitting the current clip if needed.'
-      : 'Adds a new beat at the end of this Pulse.';
+    'Adds clips at the playhead, splitting the current clip if needed. At the end, appends a new beat.';
   return (
     <PlusMenu
       actions={actions}
@@ -67,7 +62,7 @@ export function EditorAddMenu({
               ? { min: 0, max: 100, now: Math.round(ring * 100), text: progressText }
               : undefined
           }
-          testID={position === 'playhead' ? 'editor.insertClips' : 'editor.addClips'}
+          testID="editor.addClips"
           style={({ pressed }) => [
             styles.button,
             { backgroundColor: theme.text, borderColor: theme.background },

@@ -178,6 +178,9 @@ export function anchorForExactPlayhead(
 ): ClipAnchor {
   const n = Math.min(clips.length, starts.length);
   if (n === 0 || !Number.isFinite(timeMs) || timeMs >= totalMs) return END;
+  // The editor represents an end seek as totalMs - 1 so the preview can show its last frame.
+  // Treat that position as append, rather than creating an invisible one-millisecond half.
+  if (timeMs > 0 && timeMs >= totalMs - 1) return END;
   const ids = clips.slice(0, n).map((c) => c.id);
   let i = 0;
   while (i + 1 < n && starts[i + 1] <= timeMs) i++;

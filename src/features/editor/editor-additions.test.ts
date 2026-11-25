@@ -107,10 +107,10 @@ describe('editorAddActions', () => {
     expect(record).toHaveBeenCalledWith({ before: 'a', next: 'b' });
   });
 
-  it('the append menu always passes END to every media action regardless of the playhead', () => {
+  it('appends every media type when the playhead is at the end', () => {
     const add = jest.fn();
     const actions = editorAddActions({
-      anchorNow: () => END,
+      anchorNow,
       pause: () => {},
       record: add,
       recordScreen: add,
@@ -118,7 +118,7 @@ describe('editorAddActions', () => {
       importImages: add,
       fromAnotherPulse: add,
     });
-    playhead = 1200;
+    playhead = 4000;
     for (const action of actions) action.onPress();
     expect(add).toHaveBeenCalledTimes(5);
     expect(add.mock.calls.every(([anchor]) => anchor === END)).toBe(true);
