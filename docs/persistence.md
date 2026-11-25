@@ -69,6 +69,14 @@ Pause duration and retained breathing space are checked inside each beat's playe
 including trims and speed changes. Beats sharing a source reuse its raw audio-energy scan;
 they do not reuse already-qualified/padded cuts from another beat.
 
+Dragging from one transcript word to another selects the continuous span in reading order,
+including wrapped lines and beat boundaries. Starting on a selected word deselects that span;
+reversing or shrinking the gesture restores the pre-drag selection outside its current endpoints.
+Each contiguous highlighted run is a passage, so pauses and intervening untimed beats are included
+without cutting unchecked gaps. Holding at the viewport edges scrolls while selecting; drags
+starting in blank margins scroll normally. Taps, two-endpoint Range and the lower Previous/Next
+controls remain available. Dragging changes only the review selection until **Apply cuts**.
+
 Applying unions overlapping, frame-snapped source cuts and stores every retained range in one
 SQLite transaction and one persistent Undo step. Source/render, caption-edit and model-transcript
 snapshots are checked before any write. A changed review input rejects the whole operation.
@@ -80,6 +88,11 @@ clip edits, so thumbnail work cannot invalidate a pending trim, speed or crop sa
 Generated range covers are regenerated on Redo rather than duplicated in its receipt. If later
 transcript results enlarge the replay beyond retention limits, the actual Undo/Redo transaction
 also refuses without changing the timeline or discarding its recovery history.
+Receipts distinguish intentional whole-beat removal from later deletion of the applied ranges.
+Only an explicitly fully removed beat can restore its original with no surviving applied rows;
+missing ordinary split ranges are skipped. Bulk receipts track every generated range, so a later
+surviving fragment still identifies its operation. Older unmarked entries with no surviving rows
+report a recovery error and keep their history/media rather than guessing which intent occurred.
 Separate draft narration remains anchored as above. Quiet-audio detection is not a semantic speech
 classifier; review very quiet speech and music-backed recordings before applying its proposals.
 

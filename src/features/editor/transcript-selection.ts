@@ -3,28 +3,49 @@ import type { ClipWindow } from '@/utils/segment-window';
 type Source = { clipId: string; inMs: number; outMs: number };
 type Word = { id: string; clipId: string; index: number; startMs: number; endMs: number };
 
-/** Passage cuts include pauses and intervening beats; individual word selections keep gaps
- * between unselected words. All values stay in each source file's millisecond clock. */
+/** Passage cuts include pauses and intervening beats. `runs` applies that behavior separately
+ * to each contiguous selected word run, preserving unchecked gaps. Individual word selection
+ * keeps its existing within-beat grouping. Values stay in each source file's millisecond clock. */
 export function transcriptSelectionRanges(
   sources: readonly Source[],
   words: readonly Word[],
   selected: ReadonlySet<string>,
-  passage: boolean,
+  passage: boolean | 'runs',
 ): Map<string, ClipWindow[]> {
   const out = new Map<string, ClipWindow[]>();
-  const chosen = words.filter((word) => selected.has(word.id));
-  if (!chosen.length) return out;
-  if (passage) {
-    const first = chosen[0];
-    const last = chosen[chosen.length - 1];
+  if (!selected.size) return out;
+  const addPassage = (first: Word, last: Word) => {
     const from = sources.findIndex((source) => source.clipId === first.clipId);
     const to = sources.findIndex((source) => source.clipId === last.clipId);
-    if (from < 0 || to < from) return out;
+    if (from < 0 || to < from) return;
     sources.slice(from, to + 1).forEach((source, index) => {
       const startMs = Math.max(source.inMs, index === 0 ? first.startMs : source.inMs);
       const endMs = Math.min(source.outMs, index === to - from ? last.endMs : source.outMs);
-      if (endMs > startMs) out.set(source.clipId, [{ startMs, endMs }]);
+      if (endMs > startMs) {
+        const ranges = out.get(source.clipId) ?? [];
+        ranges.push({ startMs, endMs });
+        out.set(source.clipId, ranges);
+      }
     });
+  };
+  if (passage === true) {
+    const chosen = words.filter((word) => selected.has(word.id));
+    if (chosen.length) addPassage(chosen[0], chosen[chosen.length - 1]);
+    return out;
+  }
+  if (passage === 'runs') {
+    let first: Word | null = null;
+    let last: Word | null = null;
+    for (const word of words) {
+      if (selected.has(word.id)) {
+        first ??= word;
+        last = word;
+      } else if (first && last) {
+        addPassage(first, last);
+        first = last = null;
+      }
+    }
+    if (first && last) addPassage(first, last);
     return out;
   }
   let previous: Word | null = null;

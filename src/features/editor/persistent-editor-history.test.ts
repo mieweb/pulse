@@ -415,6 +415,46 @@ describe('persistent editor Undo on a migrated library', () => {
     await reopened.close();
   });
 
+  it('keeps ambiguous older rowless receipts and their media as recovery inputs', async () => {
+    const draftId = await createDraft();
+    const a = await add(draftId, 'older-cleanup');
+    const first = open(draftId);
+    const original = (await segmentsForDraft(draftId))[0];
+    await cutTranscriptRanges(draftId, [
+      {
+        clipId: original.id,
+        sourceKey: renderKey(original),
+        captionKey: original.captionEdit,
+        fps: 30,
+        ranges: [{ startMs: 0, endMs: 1000 }],
+      },
+    ]);
+    await waitForUndoHistory();
+    await first.close();
+    const older = saved(draftId)!;
+    const step = older.past.at(-1);
+    if (step?.kind !== 'added' || !step.splits) throw new Error('Expected cleanup receipt.');
+    for (const split of step.splits) {
+      delete split.fullyRemoved;
+      delete split.appliedIds;
+    }
+    conn.runSync('UPDATE drafts SET undo_history = ? WHERE id = ?', JSON.stringify(older), draftId);
+    const reopened = open(draftId);
+    reopened.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(reopened.failed).toHaveBeenCalledWith(
+      'undo',
+      expect.objectContaining({ message: expect.stringContaining('retained for recovery') }),
+    );
+    expect(clipRows(draftId)).toEqual([]);
+    expect(saved(draftId)).toEqual(older);
+    expect(hasRetainedUndo(draftId)).toBe(true);
+    await reopened.close();
+    dropHeldFiles(referencedMediaPaths(expoDb));
+    expect(existsSync(a.absolute)).toBe(true);
+    expect(saved(draftId)).toEqual(older);
+  });
+
   it.each(['whole beat', 'interior'])(
     'keeps accepted large-caption %s cleanup Undo and Redo after separate session reloads',
     async (cut) => {

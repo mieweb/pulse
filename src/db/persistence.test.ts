@@ -898,6 +898,7 @@ describe('undo history in .pulse files', () => {
       const step = history.past.at(-1);
       if (step?.kind !== 'added' || !step.splits?.length) throw new Error('Expected cleanup.');
       expect(step.ids).toEqual([]);
+      expect(step.splits[0]).toMatchObject({ fullyRemoved: true, appliedIds: [] });
       expect([...historyClipIds(history)]).not.toContain(original.id);
       const taken = await app.drafts.takeOutSegments(step.ids, step.splits, undefined, copy);
       expect(taken).not.toBeNull();
@@ -1065,6 +1066,7 @@ describe('undo history in .pulse files', () => {
         },
       });
       expect(receipt).not.toHaveProperty('firstInsertedId');
+      expect(receipt.fullyRemoved).toBe(false);
       first.store.recordAdded([], [receipt]);
       await app.flushUndo!();
       expect(rows(D2)).toHaveLength(2);
@@ -1086,6 +1088,7 @@ describe('undo history in .pulse files', () => {
       if (copiedStep.kind !== 'added') throw new Error('Expected split step');
       expect(copiedStep.ids).toEqual([]);
       expect(copiedStep.splits?.[0]).not.toHaveProperty('firstInsertedId');
+      expect(copiedStep.splits?.[0].fullyRemoved).toBe(false);
       imported.store.redo(now(copy), noSnapshot);
       await app.flushUndo!();
       expect(rows(copy)).toHaveLength(2);
@@ -1442,6 +1445,44 @@ describe('undo history in .pulse files', () => {
         expect(readMedia(rel)).toBe(readFileSync(join(source.docDir, rel), 'utf8'));
       }
     }
+    launched.conn.closeSync();
+  });
+
+  it('retains intentional whole-beat cleanup markers in a library backup and restart', async () => {
+    use(newDevice());
+    const src = await openMigrated();
+    seedFixture(src);
+    const app = appLibrary();
+    const [original] = await app.drafts.segmentsForDraft(D2);
+    await app.drafts.cutTranscriptRanges(D2, [
+      {
+        clipId: original.id,
+        sourceKey: renderKey(original),
+        captionKey: original.captionEdit,
+        fps: 30,
+        ranges: [{ startMs: 0, endMs: original.durationMs }],
+      },
+    ]);
+    const history = savedUndo(src, D2);
+    const step = history.past.at(-1);
+    if (step?.kind !== 'added') throw new Error('Expected cleanup step.');
+    expect(step.splits?.[0]).toMatchObject({ fullyRemoved: true, appliedIds: [] });
+    const uri = await createLibraryBackup(src, 1000);
+    app.client.expoDb.closeSync();
+    src.closeSync();
+    use(newDevice());
+    const dst = await openMigrated();
+    await restoreLibraryBackup(dst, uri, 2000);
+    dst.closeSync();
+    const launched = openLibrary(3000);
+    await migrate(drizzle(launched.conn), migrations);
+    expect(savedUndo(launched.conn, D2)).toEqual(history);
+    expect(
+      launched.conn.getFirstSync<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM segments WHERE draft_id = ?',
+        D2,
+      )?.n,
+    ).toBe(0);
     launched.conn.closeSync();
   });
 

@@ -1,14 +1,8 @@
 import { probe } from '@mieweb/pulse-editor';
 import { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/icon';
 import { PrimaryButton } from '@/components/primary-button';
@@ -28,6 +22,7 @@ import { clipRender, type ClipWindow } from '@/utils/segment-window';
 import { userMessage } from '@/utils/user-message';
 import { CommandButton } from './editor-controls';
 import { transcriptSelectionRanges } from './transcript-selection';
+import { useTranscriptDrag } from './use-transcript-drag';
 export type TranscriptSource = {
   segment: Segment;
   sourceKey: string;
@@ -94,6 +89,7 @@ export function TranscriptEditorSheet({
   const [retry, setRetry] = useState(0);
   const [selectedWords, setSelectedWords] = useState<ReadonlySet<string>>(new Set());
   const [rangeMode, setRangeMode] = useState(false);
+  const [draggedSelection, setDraggedSelection] = useState(false);
   const [rangeAnchor, setRangeAnchor] = useState<string | null>(null);
   const [cursor, setCursor] = useState(0);
   const [fillers, setFillers] = useState(true);
@@ -123,6 +119,26 @@ export function TranscriptEditorSheet({
         ? [{ id: wordId(source, index), source, index, word }]
         : [];
     });
+  });
+  const { scrollRef: transcriptScrollRef, ...drag } = useTranscriptDrag({
+    words: words.map((entry) => ({ id: entry.id, group: entry.source.segment.id })),
+    selected: selectedWords,
+    enabled: mode === 'words' && !applying && analysis === null,
+    onStart: () => {
+      setRangeMode(false);
+      setRangeAnchor(null);
+      setDraggedSelection(true);
+      onStopPreview();
+      return () => {
+        setRangeMode(rangeMode);
+        setRangeAnchor(rangeAnchor);
+        setDraggedSelection(draggedSelection);
+      };
+    },
+    onChange: (selection, index) => {
+      setSelectedWords(selection);
+      setCursor(index);
+    },
   });
   useEffect(() => {
     let live = true;
@@ -165,6 +181,7 @@ export function TranscriptEditorSheet({
   };
   const close = () => {
     if (applyingRef.current) return;
+    drag.cancel();
     stopAnalysis();
     onStopPreview();
     onClose();
@@ -182,10 +199,12 @@ export function TranscriptEditorSheet({
     onStopPreview();
     setScope(next);
     setSelectedWords(new Set());
+    setDraggedSelection(false);
     setRangeAnchor(null);
     setCursor(0);
   };
   const toggleWord = (entry: Word) => {
+    setDraggedSelection(false);
     setCursor(words.findIndex((word) => word.id === entry.id));
     if (rangeMode) {
       const first = words.findIndex((word) => word.id === rangeAnchor);
@@ -283,7 +302,7 @@ export function TranscriptEditorSheet({
             endMs: entry.word.t1 * 10,
           })),
           selectedWords,
-          rangeMode,
+          rangeMode ? true : draggedSelection ? 'runs' : false,
         )
       : new Map<string, ClipWindow[]>();
   const addRange = (id: string, range: ClipWindow) =>
@@ -318,9 +337,11 @@ export function TranscriptEditorSheet({
     cutCount += plan.removed.length;
   }
   const busy = applying || analysis !== null;
+  const controlsBusy = busy || drag.dragging;
   const apply = async () => {
     if (
       busy ||
+      drag.isActive() ||
       abort.current ||
       applyingRef.current ||
       !requests.length ||
@@ -368,354 +389,400 @@ export function TranscriptEditorSheet({
       visible
       animationType="slide"
       presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined}
-      allowSwipeDismissal={!applying}
+      allowSwipeDismissal={!applying && mode !== 'words'}
       onRequestClose={close}>
-      <View
-        onAccessibilityEscape={close}
-        style={[
-          styles.sheet,
-          {
-            backgroundColor: theme.groupedBackground,
-            paddingTop: Platform.OS === 'android' ? insets.top : 0,
-          },
-        ]}>
-        <ThemedText type="title3" accessibilityRole="header" style={styles.title}>
-          Edit transcript
-        </ThemedText>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          {mode === 'words' ? (
-            <>
-              <ThemedText type="footnote" themeColor="textSecondary">
-                Select words across sentences to cut their recorded audio and video. Use Range to
-                choose the first and last word of a passage.
-              </ThemedText>
-              {scoped.map((source) => (
-                <View key={source.segment.id} style={styles.group}>
-                  <ThemedText type="headline">{source.label}</ThemedText>
-                  <View style={styles.words}>
-                    {words
-                      .filter((entry) => entry.source.segment.id === source.segment.id)
-                      .map((entry) => (
-                        <Pressable
-                          key={entry.id}
-                          disabled={busy}
-                          onPress={() => toggleWord(entry)}
-                          accessibilityRole="checkbox"
-                          accessibilityState={{
-                            checked: selectedWords.has(entry.id),
-                            disabled: busy,
-                          }}
-                          accessibilityLabel={`${source.label}, word ${entry.index + 1}: ${entry.word.text}`}
-                          testID={`transcript.word.${entry.id}`}
-                          style={[
-                            styles.word,
-                            {
-                              backgroundColor: selectedWords.has(entry.id)
-                                ? theme.accent
-                                : theme.card,
-                              borderColor: entry.id === rangeAnchor ? theme.accent : 'transparent',
-                            },
-                          ]}>
-                          <ThemedText
-                            type="subheadline"
-                            style={{
-                              color: selectedWords.has(entry.id) ? theme.onAccent : theme.text,
-                            }}>
-                            {entry.word.text}
-                          </ThemedText>
-                        </Pressable>
-                      ))}
-                  </View>
-                  {!words.some((entry) => entry.source.segment.id === source.segment.id) && (
-                    <ThemedText type="footnote" themeColor="textSecondary">
-                      No timed transcript yet. Use Captions in the editor to create one. Quiet-pause
-                      cleanup works without a transcript.
-                    </ThemedText>
-                  )}
-                </View>
-              ))}
-            </>
-          ) : (
-            <>
-              <ThemedText type="footnote" themeColor="textSecondary">
-                Review detected fillers and measured quiet pauses before applying. Models may omit
-                ums; very quiet speech can resemble silence. Muted and no-audio beats are skipped.
-                Pauses use playback time, with 120 ms of breathing space kept at each side.
-              </ThemedText>
-              <ThemedText type="footnote" themeColor="textSecondary">
-                Filler words: {DEFAULT_FILLER_WORDS.join(', ')}. Separate narration stays at its
-                existing timeline position.
-              </ThemedText>
-              {analysis && (
-                <View style={styles.progress}>
-                  <ActivityIndicator />
-                  <ThemedText type="subheadline">
-                    Analyzing beat {Math.min(analysis.done + 1, analysis.total)} of {analysis.total}
-                    …
-                  </ThemedText>
-                </View>
-              )}
-              {candidates.map((candidate) => (
-                <View
-                  key={candidate.id}
-                  style={[styles.candidate, { backgroundColor: theme.card }]}>
-                  <Pressable
-                    style={styles.candidateChoice}
-                    disabled={busy}
-                    onPress={() => toggleCandidate(candidate.id)}
-                    accessibilityRole="checkbox"
-                    accessibilityState={{
-                      checked: selectedCandidates.has(candidate.id),
-                      disabled: busy,
-                    }}
-                    accessibilityLabel={`${candidate.source.label}: ${candidate.label}, ${seconds((candidate.endMs - candidate.startMs) / clipRender(candidate.source.segment).speed)}${candidate.reviewOnly ? ', review quiet beat' : ''}`}>
-                    <Icon
-                      name={
-                        selectedCandidates.has(candidate.id) ? 'checkmark.circle.fill' : 'circle'
-                      }
-                      size={22}
-                      tintColor={
-                        selectedCandidates.has(candidate.id) ? theme.accent : theme.textSecondary
-                      }
-                    />
-                    <View style={styles.candidateText}>
-                      <ThemedText type="subheadlineEmphasized">{candidate.label}</ThemedText>
-                      <ThemedText type="caption1" themeColor="textSecondary">
-                        {candidate.source.label} ·{' '}
-                        {seconds(
-                          (candidate.endMs - candidate.startMs) /
-                            clipRender(candidate.source.segment).speed,
-                        )}
-                        {candidate.reviewOnly ? ' · Review quiet beat' : ''}
-                      </ThemedText>
-                    </View>
-                  </Pressable>
-                  <CommandButton
-                    icon="play.fill"
-                    label={`Listen to ${candidate.label} in ${candidate.source.label}`}
-                    disabled={busy}
-                    onPress={() => preview(candidate.source, candidate.startMs, candidate.endMs)}
-                  />
-                </View>
-              ))}
-              {!busy && !candidates.length && (
-                <ThemedText type="footnote" themeColor="textSecondary">
-                  {analyzed
-                    ? 'No matching fillers or quiet pauses found.'
-                    : 'Tap Analyze to find matching words and quiet pauses.'}
-                </ThemedText>
-              )}
-            </>
-          )}
-        </ScrollView>
+      <GestureHandlerRootView style={styles.flex}>
         <View
+          onAccessibilityEscape={close}
           style={[
-            styles.footer,
-            { borderColor: theme.border, paddingBottom: Math.max(insets.bottom, 12) },
+            styles.sheet,
+            {
+              backgroundColor: theme.groupedBackground,
+              paddingTop: Platform.OS === 'android' ? insets.top : 0,
+            },
           ]}>
-          {error && (
+          <ThemedText type="title3" accessibilityRole="header" style={styles.title}>
+            Edit transcript
+          </ThemedText>
+          <GestureDetector gesture={drag.pan}>
+            <View style={styles.flex} collapsable={false} onLayout={drag.viewportLayout}>
+              <GestureDetector gesture={drag.native}>
+                <Animated.ScrollView
+                  ref={transcriptScrollRef}
+                  onScroll={drag.onScroll}
+                  onContentSizeChange={drag.contentSize}
+                  scrollEventThrottle={16}
+                  contentInsetAdjustmentBehavior="never"
+                  bounces={false}
+                  keyboardShouldPersistTaps="handled"
+                  testID="transcript.scroll">
+                  <View style={styles.content}>
+                    {mode === 'words' ? (
+                      <>
+                        <ThemedText type="footnote" themeColor="textSecondary">
+                          Drag across words to select a passage. Start on highlighted text to
+                          deselect. Swipe the margins to scroll. Range also works with two taps.
+                        </ThemedText>
+                        {scoped.map((source) => (
+                          <View
+                            key={source.segment.id}
+                            style={styles.group}
+                            onLayout={(event) => drag.groupLayout(source.segment.id, event)}>
+                            <ThemedText type="headline">{source.label}</ThemedText>
+                            <View
+                              style={styles.words}
+                              onLayout={(event) => drag.paragraphLayout(source.segment.id, event)}>
+                              {words
+                                .filter((entry) => entry.source.segment.id === source.segment.id)
+                                .map((entry) => (
+                                  <Pressable
+                                    key={entry.id}
+                                    disabled={busy}
+                                    onPress={() => {
+                                      if (!drag.consumePress()) toggleWord(entry);
+                                    }}
+                                    onLayout={(event) => drag.wordLayout(entry.id, event)}
+                                    accessibilityRole="checkbox"
+                                    accessibilityState={{
+                                      checked: selectedWords.has(entry.id),
+                                      disabled: busy,
+                                    }}
+                                    accessibilityLabel={`${source.label}, word ${entry.index + 1}: ${entry.word.text}`}
+                                    testID={`transcript.word.${entry.id}`}
+                                    style={[
+                                      styles.word,
+                                      {
+                                        backgroundColor: selectedWords.has(entry.id)
+                                          ? theme.accent
+                                          : theme.card,
+                                        borderColor:
+                                          entry.id === rangeAnchor ? theme.accent : 'transparent',
+                                      },
+                                    ]}>
+                                    <ThemedText
+                                      type="subheadline"
+                                      style={{
+                                        color: selectedWords.has(entry.id)
+                                          ? theme.onAccent
+                                          : theme.text,
+                                      }}>
+                                      {entry.word.text}
+                                    </ThemedText>
+                                  </Pressable>
+                                ))}
+                            </View>
+                            {!words.some(
+                              (entry) => entry.source.segment.id === source.segment.id,
+                            ) && (
+                              <ThemedText type="footnote" themeColor="textSecondary">
+                                No timed transcript yet. Use Captions in the editor to create one.
+                                Quiet-pause cleanup works without a transcript.
+                              </ThemedText>
+                            )}
+                          </View>
+                        ))}
+                      </>
+                    ) : (
+                      <>
+                        <ThemedText type="footnote" themeColor="textSecondary">
+                          Review detected fillers and measured quiet pauses before applying. Models
+                          may omit ums; very quiet speech can resemble silence. Muted and no-audio
+                          beats are skipped. Pauses use playback time, with 120 ms of breathing
+                          space kept at each side.
+                        </ThemedText>
+                        <ThemedText type="footnote" themeColor="textSecondary">
+                          Filler words: {DEFAULT_FILLER_WORDS.join(', ')}. Separate narration stays
+                          at its existing timeline position.
+                        </ThemedText>
+                        {analysis && (
+                          <View style={styles.progress}>
+                            <ActivityIndicator />
+                            <ThemedText type="subheadline">
+                              Analyzing beat {Math.min(analysis.done + 1, analysis.total)} of{' '}
+                              {analysis.total}…
+                            </ThemedText>
+                          </View>
+                        )}
+                        {candidates.map((candidate) => (
+                          <View
+                            key={candidate.id}
+                            style={[styles.candidate, { backgroundColor: theme.card }]}>
+                            <Pressable
+                              style={styles.candidateChoice}
+                              disabled={busy}
+                              onPress={() => toggleCandidate(candidate.id)}
+                              accessibilityRole="checkbox"
+                              accessibilityState={{
+                                checked: selectedCandidates.has(candidate.id),
+                                disabled: busy,
+                              }}
+                              accessibilityLabel={`${candidate.source.label}: ${candidate.label}, ${seconds((candidate.endMs - candidate.startMs) / clipRender(candidate.source.segment).speed)}${candidate.reviewOnly ? ', review quiet beat' : ''}`}>
+                              <Icon
+                                name={
+                                  selectedCandidates.has(candidate.id)
+                                    ? 'checkmark.circle.fill'
+                                    : 'circle'
+                                }
+                                size={22}
+                                tintColor={
+                                  selectedCandidates.has(candidate.id)
+                                    ? theme.accent
+                                    : theme.textSecondary
+                                }
+                              />
+                              <View style={styles.candidateText}>
+                                <ThemedText type="subheadlineEmphasized">
+                                  {candidate.label}
+                                </ThemedText>
+                                <ThemedText type="caption1" themeColor="textSecondary">
+                                  {candidate.source.label} ·{' '}
+                                  {seconds(
+                                    (candidate.endMs - candidate.startMs) /
+                                      clipRender(candidate.source.segment).speed,
+                                  )}
+                                  {candidate.reviewOnly ? ' · Review quiet beat' : ''}
+                                </ThemedText>
+                              </View>
+                            </Pressable>
+                            <CommandButton
+                              icon="play.fill"
+                              label={`Listen to ${candidate.label} in ${candidate.source.label}`}
+                              disabled={busy}
+                              onPress={() =>
+                                preview(candidate.source, candidate.startMs, candidate.endMs)
+                              }
+                            />
+                          </View>
+                        ))}
+                        {!busy && !candidates.length && (
+                          <ThemedText type="footnote" themeColor="textSecondary">
+                            {analyzed
+                              ? 'No matching fillers or quiet pauses found.'
+                              : 'Tap Analyze to find matching words and quiet pauses.'}
+                          </ThemedText>
+                        )}
+                      </>
+                    )}
+                  </View>
+                </Animated.ScrollView>
+              </GestureDetector>
+            </View>
+          </GestureDetector>
+          <View
+            style={[
+              styles.footer,
+              { borderColor: theme.border, paddingBottom: Math.max(insets.bottom, 12) },
+            ]}>
+            {error && (
+              <ThemedText
+                type="footnote"
+                style={{ color: theme.warning }}
+                accessibilityLiveRegion="polite">
+                {error}
+              </ThemedText>
+            )}
+            {prepareError && (
+              <Pressable
+                onPress={() => {
+                  setPrepareError(null);
+                  setRetry((n) => n + 1);
+                }}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Retry reading video frame rates">
+                <ThemedText type="footnote" style={{ color: theme.warning }}>
+                  {prepareError} Tap to retry.
+                </ThemedText>
+              </Pressable>
+            )}
             <ThemedText
               type="footnote"
-              style={{ color: theme.warning }}
-              accessibilityLiveRegion="polite">
-              {error}
+              style={styles.summary}
+              accessibilityLiveRegion="polite"
+              testID="transcript.summary">
+              {missingRate
+                ? 'Reading source video…'
+                : `${cutCount} ${cutCount === 1 ? 'cut' : 'cuts'} · ${seconds(removedMs)} shorter`}
             </ThemedText>
-          )}
-          {prepareError && (
-            <Pressable
-              onPress={() => {
-                setPrepareError(null);
-                setRetry((n) => n + 1);
-              }}
-              disabled={busy}
-              accessibilityRole="button"
-              accessibilityLabel="Retry reading video frame rates">
-              <ThemedText type="footnote" style={{ color: theme.warning }}>
-                {prepareError} Tap to retry.
-              </ThemedText>
-            </Pressable>
-          )}
-          <ThemedText
-            type="footnote"
-            style={styles.summary}
-            accessibilityLiveRegion="polite"
-            testID="transcript.summary">
-            {missingRate
-              ? 'Reading source video…'
-              : `${cutCount} ${cutCount === 1 ? 'cut' : 'cuts'} · ${seconds(removedMs)} shorter`}
-          </ThemedText>
-          <View style={styles.row}>
-            <Choice
-              label={'This beat'}
-              selected={scope === 'beat'}
-              onPress={() => changeScope('beat')}
-              disabled={busy || !currentId}
-            />
-            <Choice
-              label={'Whole Pulse'}
-              selected={scope === 'pulse'}
-              onPress={() => changeScope('pulse')}
-              disabled={busy}
-            />
-            <Choice
-              label={'Words'}
-              selected={mode === 'words'}
-              onPress={() => {
-                onStopPreview();
-                setMode('words');
-                setCursor(0);
-              }}
-              disabled={busy}
-            />
-            <Choice
-              label={'Clean up'}
-              selected={mode === 'cleanup'}
-              onPress={() => {
-                onStopPreview();
-                setMode('cleanup');
-                setCursor(0);
-              }}
-              disabled={busy}
-            />
-          </View>
-          {mode === 'words' ? (
             <View style={styles.row}>
               <Choice
-                label={rangeAnchor ? 'Choose last word' : 'Range'}
-                selected={rangeMode}
-                onPress={() => {
-                  setRangeMode(!rangeMode);
-                  setRangeAnchor(null);
-                  setSelectedWords(new Set());
-                }}
-                disabled={busy}
+                label={'This beat'}
+                selected={scope === 'beat'}
+                onPress={() => changeScope('beat')}
+                disabled={controlsBusy || !currentId}
               />
               <Choice
-                label={'Select all words'}
-                selected={false}
-                onPress={() => {
-                  setRangeMode(false);
-                  setRangeAnchor(null);
-                  setSelectedWords(new Set(words.map((word) => word.id)));
-                }}
-                disabled={busy}
+                label={'Whole Pulse'}
+                selected={scope === 'pulse'}
+                onPress={() => changeScope('pulse')}
+                disabled={controlsBusy}
               />
               <Choice
-                label={'Clear'}
-                selected={false}
+                label={'Words'}
+                selected={mode === 'words'}
                 onPress={() => {
-                  setSelectedWords(new Set());
-                  setRangeAnchor(null);
+                  onStopPreview();
+                  setMode('words');
+                  setCursor(0);
                 }}
-                disabled={busy}
+                disabled={controlsBusy}
+              />
+              <Choice
+                label={'Clean up'}
+                selected={mode === 'cleanup'}
+                onPress={() => {
+                  onStopPreview();
+                  setMode('cleanup');
+                  setCursor(0);
+                }}
+                disabled={controlsBusy}
               />
             </View>
-          ) : (
+            {mode === 'words' ? (
+              <View style={styles.row}>
+                <Choice
+                  label={rangeAnchor ? 'Choose last word' : 'Range'}
+                  selected={rangeMode}
+                  onPress={() => {
+                    setRangeMode(!rangeMode);
+                    setDraggedSelection(false);
+                    setRangeAnchor(null);
+                    setSelectedWords(new Set());
+                  }}
+                  disabled={controlsBusy}
+                />
+                <Choice
+                  label={'Select all words'}
+                  selected={false}
+                  onPress={() => {
+                    setRangeMode(false);
+                    setDraggedSelection(false);
+                    setRangeAnchor(null);
+                    setSelectedWords(new Set(words.map((word) => word.id)));
+                  }}
+                  disabled={controlsBusy}
+                />
+                <Choice
+                  label={'Clear'}
+                  selected={false}
+                  onPress={() => {
+                    setSelectedWords(new Set());
+                    setDraggedSelection(false);
+                    setRangeAnchor(null);
+                  }}
+                  disabled={controlsBusy}
+                />
+              </View>
+            ) : (
+              <View style={styles.row}>
+                <Choice
+                  label={'Fillers'}
+                  selected={fillers}
+                  onPress={() => {
+                    invalidateAnalysis();
+                    setFillers(!fillers);
+                  }}
+                  disabled={busy}
+                />
+                <Choice
+                  label={`Pauses ≥${seconds(pauseMs)}`}
+                  selected={quiet}
+                  onPress={() => {
+                    invalidateAnalysis();
+                    setQuiet(!quiet);
+                  }}
+                  disabled={busy}
+                />
+                <Choice
+                  label={`Pause length: ${seconds(pauseMs)}`}
+                  selected={false}
+                  onPress={() => {
+                    invalidateAnalysis();
+                    setPauseMs(
+                      PAUSE_OPTIONS_MS[
+                        (PAUSE_OPTIONS_MS.indexOf(pauseMs) + 1) % PAUSE_OPTIONS_MS.length
+                      ],
+                    );
+                  }}
+                  disabled={busy}
+                />
+                <Choice
+                  label={'Analyze'}
+                  selected={false}
+                  onPress={() => void analyze()}
+                  disabled={busy || (!fillers && !quiet)}
+                />
+              </View>
+            )}
             <View style={styles.row}>
-              <Choice
-                label={'Fillers'}
-                selected={fillers}
-                onPress={() => {
-                  invalidateAnalysis();
-                  setFillers(!fillers);
-                }}
-                disabled={busy}
+              <CommandButton
+                icon="chevron.left"
+                label="Previous transcript item"
+                disabled={controlsBusy || cursor <= 0 || count === 0}
+                onPress={() => setCursor((n) => Math.max(0, n - 1))}
               />
-              <Choice
-                label={`Pauses ≥${seconds(pauseMs)}`}
-                selected={quiet}
-                onPress={() => {
-                  invalidateAnalysis();
-                  setQuiet(!quiet);
+              <Pressable
+                style={styles.cursor}
+                disabled={controlsBusy || count === 0}
+                accessibilityRole="checkbox"
+                accessibilityState={{
+                  checked: currentSelected,
+                  disabled: controlsBusy || count === 0,
                 }}
-                disabled={busy}
-              />
-              <Choice
-                label={`Pause length: ${seconds(pauseMs)}`}
-                selected={false}
+                accessibilityLabel={`${currentLabel}${rangeAnchor ? ', choose the last word of the range' : ''}`}
                 onPress={() => {
-                  invalidateAnalysis();
-                  setPauseMs(
-                    PAUSE_OPTIONS_MS[
-                      (PAUSE_OPTIONS_MS.indexOf(pauseMs) + 1) % PAUSE_OPTIONS_MS.length
-                    ],
-                  );
+                  if (activeWord) toggleWord(activeWord);
+                  else if (activeCandidate) toggleCandidate(activeCandidate.id);
+                }}>
+                <ThemedText type="footnote" numberOfLines={2} style={styles.summary}>
+                  {count > 0 ? `${Math.min(cursor + 1, count)} of ${count}: ` : ''}
+                  {currentLabel}
+                  {currentSelected ? ' ✓' : ''}
+                </ThemedText>
+              </Pressable>
+              <CommandButton
+                icon="play.fill"
+                label="Listen to current transcript item"
+                disabled={controlsBusy || count === 0}
+                onPress={() => {
+                  if (activeWord)
+                    preview(activeWord.source, activeWord.word.t0 * 10, activeWord.word.t1 * 10);
+                  else if (activeCandidate)
+                    preview(activeCandidate.source, activeCandidate.startMs, activeCandidate.endMs);
                 }}
-                disabled={busy}
               />
-              <Choice
-                label={'Analyze'}
-                selected={false}
-                onPress={() => void analyze()}
-                disabled={busy || (!fillers && !quiet)}
+              <CommandButton
+                icon="chevron.right"
+                label="Next transcript item"
+                disabled={controlsBusy || cursor >= count - 1 || count === 0}
+                onPress={() => setCursor((n) => Math.min(count - 1, n + 1))}
               />
             </View>
-          )}
-          <View style={styles.row}>
-            <CommandButton
-              icon="chevron.left"
-              label="Previous transcript item"
-              disabled={busy || cursor <= 0 || count === 0}
-              onPress={() => setCursor((n) => Math.max(0, n - 1))}
-            />
-            <Pressable
-              style={styles.cursor}
-              disabled={busy || count === 0}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: currentSelected, disabled: busy || count === 0 }}
-              accessibilityLabel={`${currentLabel}${rangeAnchor ? ', choose the last word of the range' : ''}`}
-              onPress={() => {
-                if (activeWord) toggleWord(activeWord);
-                else if (activeCandidate) toggleCandidate(activeCandidate.id);
-              }}>
-              <ThemedText type="footnote" numberOfLines={2} style={styles.summary}>
-                {count > 0 ? `${Math.min(cursor + 1, count)} of ${count}: ` : ''}
-                {currentLabel}
-                {currentSelected ? ' ✓' : ''}
-              </ThemedText>
-            </Pressable>
-            <CommandButton
-              icon="play.fill"
-              label="Listen to current transcript item"
-              disabled={busy || count === 0}
-              onPress={() => {
-                if (activeWord)
-                  preview(activeWord.source, activeWord.word.t0 * 10, activeWord.word.t1 * 10);
-                else if (activeCandidate)
-                  preview(activeCandidate.source, activeCandidate.startMs, activeCandidate.endMs);
-              }}
-            />
-            <CommandButton
-              icon="chevron.right"
-              label="Next transcript item"
-              disabled={busy || cursor >= count - 1 || count === 0}
-              onPress={() => setCursor((n) => Math.min(count - 1, n + 1))}
-            />
-          </View>
-          <View style={styles.row}>
-            <PrimaryButton
-              label="Cancel"
-              variant="card"
-              disabled={applying}
-              onPress={close}
-              style={styles.flex}
-            />
-            <PrimaryButton
-              label={applying ? 'Applying cuts…' : 'Apply cuts'}
-              busy={applying}
-              disabled={
-                busy ||
-                !requests.length ||
-                missingRate ||
-                (rangeMode && rangeAnchor !== null && mode === 'words')
-              }
-              onPress={() => void apply()}
-              style={styles.flex}
-              testID="transcript.apply"
-            />
+            <View style={styles.row}>
+              <PrimaryButton
+                label="Cancel"
+                variant="card"
+                disabled={applying}
+                onPress={close}
+                style={styles.flex}
+              />
+              <PrimaryButton
+                label={applying ? 'Applying cuts…' : 'Apply cuts'}
+                busy={applying}
+                disabled={
+                  controlsBusy ||
+                  !requests.length ||
+                  missingRate ||
+                  (rangeMode && rangeAnchor !== null && mode === 'words')
+                }
+                onPress={() => void apply()}
+                style={styles.flex}
+                testID="transcript.apply"
+              />
+            </View>
           </View>
         </View>
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

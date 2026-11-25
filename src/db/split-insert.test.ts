@@ -250,6 +250,60 @@ function databaseHistory(
 }
 
 describe('bulk transcript source cuts', () => {
+  it('restores an intentional whole-beat removal without resurrecting a deleted sibling cut', async () => {
+    const t = await setup();
+    const before = await segmentsForDraft(t.d);
+    put(before[1].originalFilename, 'second beat video bytes');
+    const cut = await cutTranscriptRanges(
+      t.d,
+      before.map((row, i) => ({
+        clipId: row.id,
+        sourceKey: renderKey(row),
+        captionKey: row.captionEdit,
+        fps: 30,
+        ranges: i === 0 ? [{ startMs: 500, endMs: 3500 }] : [{ startMs: 100, endMs: 300 }],
+      })),
+    );
+    retained.push(...cut.splits.map((split) => split.before));
+    expect(cut.splits.map((split) => split.fullyRemoved)).toEqual([true, false]);
+    for (const id of cut.ids) await deleteSegment(id);
+    expect(await segmentsForDraft(t.d)).toEqual([]);
+    const taken = await takeOutSegments(cut.ids, cut.splits, undefined, t.d);
+    expect(taken).not.toBeNull();
+    retained.push(taken!);
+    expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a]);
+    expect(taken!.replaced?.map((row) => row.id)).toEqual([t.a]);
+    await restoreSegments(taken!, undefined, t.d);
+    expect(await segmentsForDraft(t.d)).toEqual([]);
+  });
+
+  it('still undoes a bulk cut when only a later retained range survives', async () => {
+    const t = await setup();
+    const cut = await cutTranscriptRanges(t.d, [
+      {
+        clipId: t.a,
+        sourceKey: renderKey(t.before),
+        captionKey: t.before.captionEdit,
+        fps: 30,
+        ranges: [
+          { startMs: 1000, endMs: 1500 },
+          { startMs: 2000, endMs: 2500 },
+        ],
+      },
+    ]);
+    retained.push(...cut.splits.map((split) => split.before));
+    expect(cut.ids).toHaveLength(3);
+    expect(cut.splits[0].appliedIds).toEqual(cut.ids);
+    await deleteSegment(cut.ids[0]);
+    await deleteSegment(cut.ids[1]);
+    const taken = await takeOutSegments(cut.ids, cut.splits, undefined, t.d);
+    expect(taken).not.toBeNull();
+    retained.push(taken!);
+    expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a, t.b]);
+    await restoreSegments(taken!, undefined, t.d);
+    expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([cut.ids[2], t.b]);
+  });
+
   it('atomically applies multiple edge/interior cuts and persists one reversible step', async () => {
     const t = await setup();
     const original = (await segmentsForDraft(t.d))[0];
@@ -826,6 +880,34 @@ describe('transcript-driven source cut', () => {
 });
 
 describe('standalone split at playhead', () => {
+  it.each(['split', 'speech cut'])(
+    'skips a deleted %s after both applied halves are gone',
+    async (kind) => {
+      const t = await setup();
+      const receipt =
+        kind === 'split'
+          ? await splitSegment(t.d, t.anchor())
+          : await cutSegmentRange(t.d, {
+              clipId: t.a,
+              sourceKey: renderKey(t.before),
+              startMs: 1500,
+              endMs: 2000,
+              rightId: `${t.d}-cut-right`,
+              fps: 30,
+            });
+      retained.push(receipt.before);
+      expect(receipt.fullyRemoved).toBe(false);
+      await deleteSegment(t.a);
+      await deleteSegment(receipt.rightId);
+      const before = await segmentsForDraft(t.d);
+      const draft = conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d);
+      expect(await takeOutSegments([], [receipt], undefined, t.d)).toBeNull();
+      expect(await segmentsForDraft(t.d)).toEqual(before);
+      expect(before.map((row) => row.id)).toEqual([t.b]);
+      expect(conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d)).toEqual(draft);
+    },
+  );
+
   it.each(['standalone', 'split + insert'])(
     'rejects a floating-point recut at the same playhead atomically (%s)',
     async (operation) => {

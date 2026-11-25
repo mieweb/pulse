@@ -1,5 +1,9 @@
 # Bulk transcript editing and speech cleanup
 
+The current drag interaction and latest phone handoff are recorded in the
+[drag validation](transcript-drag-validation.md). The results below retain the earlier bulk and
+review-fix runtime snapshots.
+
 Verified 2026-11-25 with Pulse 2.8.0, based on main `6e74151` and native
 `pulse-editor` `306ff1d`. The feature changes application JavaScript and reuses the existing
 native audio extractor, timeline composer and export engine. No dependency or schema changed.
@@ -144,8 +148,8 @@ No physical device was attached for the review fixes.
 
 ## Phone installation
 
-The matching signed Pulse **2.8.0 (1)** build was installed in place, with a private library
+The then-current signed Pulse **2.8.0 (1)** build was installed in place, with a private library
 backup taken first. iOS blocked the launch because the phone was locked, so the post-launch
 library comparison could not complete. The global device guard verified release; no physical
-automation or capture runner was started. Unlock the phone and open Pulse to begin testing.
-The updated test notes are in **About**.
+automation or capture runner was started. The [latest drag-build handoff](transcript-drag-validation.md#native-results-and-phone-handoff)
+subsequently verified a running app and preserved library. Test notes are in **About**.

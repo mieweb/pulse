@@ -1,0 +1,566 @@
+{
+  "date": "2026-11-25",
+  "runtime": {
+    "baseCommit": "bc3352cf6c65dcd317932405c076ceb5e18d52c2",
+    "frozenWorkingTree": true,
+    "productionSourceFileCount": 329,
+    "sourceHashesAfterQAUnchanged": true,
+    "jsSHA256": "6ec6eb21dee8bf0f106ab932461bf1496dc7af79e87fd6b5ea4a8cde4993720e",
+    "configSHA256": "c2f225ae6d4ca66f76c824406802b8efbe11d33912f7febe0ba58f171e7e7139",
+    "nativeEngineCommit": "306ff1d999589be6615275c60567ba371f073efd",
+    "notesVersion": "2.8.0",
+    "notesMatchTrackedFile": true,
+    "nativeAXMatchingNotes": 6,
+    "nativeFullyReadableNotes": 6,
+    "platform": "iOS26 simulator, iPhone17Pro, default text size, LTR",
+    "nativeAccessibilityDriver": "XCUITest/WebDriverAgent",
+    "gestureDriver": "W3C touch paths derived from native AX word rectangles",
+    "physicalDevicesUsed": false,
+    "sessionRemoved": true,
+    "ownedRunnerProcessesExited": true,
+    "ownedRunnerPortClosed": true,
+    "simulatorRunnerAbsent": true,
+    "productionSourceFileSetAfterQAMatches": true
+  },
+  "productionSourceHashesSHA256": "9c544924dce4e00fccc08ff9e2bef17d3a856648d4402b80ff0bc4e749c06d54",
+  "featureFileSHA256": {
+    "docs/testing/transcript-cut-test-notes.json": "1a42c064197d30d33ead9e5ae31be2bbb488331b4a4759db050e74f7ec97e84d",
+    "src/db/drafts.ts": "e1151a392971d9473956a2a084ba65a47a9b37ed02430650326c75a439cfe7e0",
+    "src/db/persisted-history.ts": "c109ca2b8be8b755d6524872fa5ae39b38122171ad065a57e99c506734bd5e5d",
+    "src/features/editor/transcript-drag.ts": "322d4be31849cf2c645fddea24200875119ac6dd46d0654256baf0e3d7c97c8f",
+    "src/features/editor/transcript-editor-sheet.tsx": "250662d9726df0fe39bb433648c497783f279d94036a587a5985a0a7f44e8faa",
+    "src/features/editor/transcript-selection.ts": "49a1bf81fe91efe12fa6166cc4df2ba5f5bb734d3816d2e9554461ed13516836",
+    "src/features/editor/use-transcript-drag.ts": "b061b34bca9be292d3f05a01d41c4a6a1df62b79024544cdee9fdbf82634a961"
+  },
+  "sourceChecks": {
+    "testSuitesPassed": 169,
+    "testsPassed": 2487,
+    "testSuitesSkippedLocally": 1,
+    "testsSkippedLocally": 8,
+    "rootTypeScript": "passed",
+    "embedTypeScript": "passed",
+    "lint": "passed",
+    "protocolGeneration": "passed",
+    "embedBundlesAndBoundaries": "passed"
+  },
+  "nativeChecks": [
+    {
+      "check": "Fresh touch requested 20ms after lift preserves drag and toggles the fresh word",
+      "passed": true,
+      "details": {
+        "inputStyle": "distinct pointers, delay before second first move, one touch lifecycle each",
+        "requestedLiftToFreshDownMs": 20,
+        "matchedExpected": true,
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7"
+        ],
+        "requestAndAXLookupElapsedMs": 2487.4139577150345
+      }
+    },
+    {
+      "check": "Fresh touch requested 100ms after lift preserves drag and toggles the fresh word",
+      "passed": true,
+      "details": {
+        "inputStyle": "distinct pointers, delay before second first move, one touch lifecycle each",
+        "requestedLiftToFreshDownMs": 100,
+        "matchedExpected": true,
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7"
+        ],
+        "requestAndAXLookupElapsedMs": 2601.549624465406
+      }
+    },
+    {
+      "check": "Fresh touch requested 150ms after lift preserves drag and toggles the fresh word",
+      "passed": true,
+      "details": {
+        "inputStyle": "distinct pointers, delay before second first move, one touch lifecycle each",
+        "requestedLiftToFreshDownMs": 150,
+        "matchedExpected": true,
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7"
+        ],
+        "requestAndAXLookupElapsedMs": 2371.1505830287933
+      }
+    },
+    {
+      "check": "Fresh touch requested 300ms after lift preserves drag and toggles the fresh word",
+      "passed": true,
+      "details": {
+        "inputStyle": "distinct pointers, delay before second first move, one touch lifecycle each",
+        "requestedLiftToFreshDownMs": 300,
+        "matchedExpected": true,
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7"
+        ],
+        "requestAndAXLookupElapsedMs": 2460.41245944798
+      }
+    },
+    {
+      "check": "Native word checkboxes and reachable button alternatives remain available",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Fixture wraps words onto multiple lines",
+      "passed": true,
+      "details": {
+        "start": {
+          "x": 68.0,
+          "y": 225.0,
+          "width": 46.0,
+          "height": 44.0
+        },
+        "end": {
+          "x": 173.0,
+          "y": 275.0,
+          "width": 61.0,
+          "height": 44.0
+        }
+      }
+    },
+    {
+      "check": "AX tap still toggles one word",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": ["transcript.word.drag-beat-1:word:0"],
+        "summary": "1 cut \u00b7 1.0s shorter"
+      }
+    },
+    {
+      "check": "Direct touch tap toggles one word without extra selection",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [],
+        "summary": "0 cuts \u00b7 0.0s shorter"
+      }
+    },
+    {
+      "check": "Forward drag selects the inclusive contiguous span across wrapped lines",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7",
+          "transcript.word.drag-beat-1:word:8",
+          "transcript.word.drag-beat-1:word:9"
+        ],
+        "summary": "1 cut \u00b7 12.5s shorter"
+      }
+    },
+    {
+      "check": "A fresh touch requested 20ms after drag lift toggles independently without a trailing press",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7"
+        ],
+        "summary": "2 cuts \u00b7 10.0s shorter"
+      }
+    },
+    {
+      "check": "Backward upward drag selects the same inclusive span",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7",
+          "transcript.word.drag-beat-1:word:8",
+          "transcript.word.drag-beat-1:word:9"
+        ],
+        "summary": "1 cut \u00b7 12.5s shorter"
+      }
+    },
+    {
+      "check": "Moving the finger back shrinks the span and restores words beyond the endpoint",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4"
+        ],
+        "summary": "1 cut \u00b7 5.5s shorter"
+      }
+    },
+    {
+      "check": "Select all remains available",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:0",
+          "transcript.word.drag-beat-1:word:1",
+          "transcript.word.drag-beat-1:word:10",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-1:word:2",
+          "transcript.word.drag-beat-1:word:3",
+          "transcript.word.drag-beat-1:word:4",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7",
+          "transcript.word.drag-beat-1:word:8",
+          "transcript.word.drag-beat-1:word:9"
+        ],
+        "summary": "1 cut \u00b7 15.5s shorter"
+      }
+    },
+    {
+      "check": "Dragging from a selected word unselects the contiguous span",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:0",
+          "transcript.word.drag-beat-1:word:10",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-1:word:8",
+          "transcript.word.drag-beat-1:word:9"
+        ],
+        "summary": "2 cuts \u00b7 6.5s shorter"
+      }
+    },
+    {
+      "check": "Shrinking an unselect drag restores the words outside the final span",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:0",
+          "transcript.word.drag-beat-1:word:10",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-1:word:5",
+          "transcript.word.drag-beat-1:word:6",
+          "transcript.word.drag-beat-1:word:7",
+          "transcript.word.drag-beat-1:word:8",
+          "transcript.word.drag-beat-1:word:9"
+        ],
+        "summary": "2 cuts \u00b7 10.0s shorter"
+      }
+    },
+    {
+      "check": "A second touch cancels the active selection gesture and restores its baseline",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": ["transcript.word.drag-beat-1:word:0"],
+        "summary": "1 cut \u00b7 1.0s shorter"
+      }
+    },
+    {
+      "check": "Starting a vertical scroll in blank transcript space scrolls without changing selection",
+      "passed": true,
+      "details": {
+        "word1YBefore": 225.0,
+        "word1YAfter": -170.0
+      }
+    },
+    {
+      "check": "A drag crosses the beat heading and selects all intervening words",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:10",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-2:word:0",
+          "transcript.word.drag-beat-2:word:1"
+        ],
+        "summary": "2 cuts \u00b7 4.5s shorter"
+      }
+    },
+    {
+      "check": "Cross-beat drag summary includes the complete timeline passage",
+      "passed": true,
+      "details": "2 cuts \u00b7 4.5s shorter"
+    },
+    {
+      "check": "Holding a drag at the lower edge auto-scrolls and selects initially offscreen words",
+      "passed": true,
+      "details": {
+        "anchorIndex": 30,
+        "initialLastVisibleIndex": 35,
+        "selectedIndices": [
+          30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+          52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66
+        ]
+      }
+    },
+    {
+      "check": "Edge auto-scroll and selection stop after finger lift",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Holding a drag at the upper edge auto-scrolls upward with a contiguous selection",
+      "passed": true,
+      "details": {
+        "anchorIndex": 36,
+        "initialFirstVisibleIndex": 36,
+        "selectedIndices": [
+          0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+          25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
+        ]
+      }
+    },
+    {
+      "check": "Cancel discards all gesture proposals without changing saved source rows",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Final drag has the expected four words before Apply",
+      "passed": true,
+      "details": {
+        "selectedWordIDs": [
+          "transcript.word.drag-beat-1:word:10",
+          "transcript.word.drag-beat-1:word:11",
+          "transcript.word.drag-beat-2:word:0",
+          "transcript.word.drag-beat-2:word:1"
+        ],
+        "summary": "2 cuts \u00b7 4.5s shorter"
+      }
+    },
+    {
+      "check": "One Apply commits the dragged passage as a 4.5-second timeline cut",
+      "passed": true,
+      "details": {
+        "durationMs": 91500,
+        "clipCount": 6
+      }
+    },
+    {
+      "check": "One Undo restores all six original beats after drag selection",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "One Redo reapplies the complete dragged passage",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Dragged passage persists through process restart",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Persistent Undo and Redo retain the entire drag operation",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Original spoken source bytes remain unchanged",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "About exposes all six exact bundled 2.8 test notes through native accessibility",
+      "passed": true,
+      "details": {
+        "matchingNotes": 6,
+        "version": "2.8.0"
+      }
+    },
+    {
+      "check": "Every test note can be fully read in the native scrolling About presentation",
+      "passed": true,
+      "details": {
+        "fullyVisibleNotes": 6,
+        "totalNotes": 6
+      }
+    }
+  ],
+  "timeline": {
+    "fixture": "Six repetitions of one actual spoken/color-coded16-second source,12 timed words each",
+    "initialDurationMs": 96000,
+    "finalDurationMs": 91500,
+    "removedPassageMs": 4500,
+    "initialBeatCount": 6,
+    "retainedClipCount": 6,
+    "retainedSourceRanges": [
+      {
+        "beat": 1,
+        "originalDurationMs": 16000,
+        "sourceStartMs": 0,
+        "sourceEndMs": 13700,
+        "speed": 1,
+        "timelineMs": 13700
+      },
+      {
+        "beat": 2,
+        "originalDurationMs": 16000,
+        "sourceStartMs": 2200,
+        "sourceEndMs": 16000,
+        "speed": 1,
+        "timelineMs": 13800
+      },
+      {
+        "beat": 3,
+        "originalDurationMs": 16000,
+        "sourceStartMs": 0,
+        "sourceEndMs": 16000,
+        "speed": 1,
+        "timelineMs": 16000
+      },
+      {
+        "beat": 4,
+        "originalDurationMs": 16000,
+        "sourceStartMs": 0,
+        "sourceEndMs": 16000,
+        "speed": 1,
+        "timelineMs": 16000
+      },
+      {
+        "beat": 5,
+        "originalDurationMs": 16000,
+        "sourceStartMs": 0,
+        "sourceEndMs": 16000,
+        "speed": 1,
+        "timelineMs": 16000
+      },
+      {
+        "beat": 6,
+        "originalDurationMs": 16000,
+        "sourceStartMs": 0,
+        "sourceEndMs": 16000,
+        "speed": 1,
+        "timelineMs": 16000
+      }
+    ],
+    "sourceSHA256": "e331a3ead46914f7c7dd9d397f788cdd076290987f00e1e9c42e1dd25e5327ce",
+    "sourceBytesUnchanged": true,
+    "oneUndoRestoresOriginalBeats": true,
+    "oneRedoReappliesPassage": true,
+    "persistentUndoRedoAfterRestart": true,
+    "exportRerunInThisFocusedValidation": false
+  },
+  "freshTouchInputs": [
+    {
+      "inputStyle": "distinct pointers, delay before second first move, one touch lifecycle each",
+      "requestedLiftToFreshDownMs": 20,
+      "matchedExpected": true,
+      "selectedWordIDs": [
+        "transcript.word.drag-beat-1:word:1",
+        "transcript.word.drag-beat-1:word:11",
+        "transcript.word.drag-beat-1:word:2",
+        "transcript.word.drag-beat-1:word:3",
+        "transcript.word.drag-beat-1:word:4",
+        "transcript.word.drag-beat-1:word:5",
+        "transcript.word.drag-beat-1:word:6",
+        "transcript.word.drag-beat-1:word:7"
+      ],
+      "requestAndAXLookupElapsedMs": 2487.4139577150345
+    },
+    {
+      "inputStyle": "distinct pointers, delay before second first move, one touch lifecycle each",
+      "requestedLiftToFreshDownMs": 100,
+      "matchedExpected": true,
+      "selectedWordIDs": [
+        "transcript.word.drag-beat-1:word:1",
+        "transcript.word.drag-beat-1:word:11",
+        "transcript.word.drag-beat-1:word:2",
+        "transcript.word.drag-beat-1:word:3",
+        "transcript.word.drag-beat-1:word:4",
+        "transcript.word.drag-beat-1:word:5",
+        "transcript.word.drag-beat-1:word:6",
+        "transcript.word.drag-beat-1:word:7"
+      ],
+      "requestAndAXLookupElapsedMs": 2601.549624465406
+    },
+    {
+      "inputStyle": "distinct pointers, delay before second first move, one touch lifecycle each",
+      "requestedLiftToFreshDownMs": 150,
+      "matchedExpected": true,
+      "selectedWordIDs": [
+        "transcript.word.drag-beat-1:word:1",
+        "transcript.word.drag-beat-1:word:11",
+        "transcript.word.drag-beat-1:word:2",
+        "transcript.word.drag-beat-1:word:3",
+        "transcript.word.drag-beat-1:word:4",
+        "transcript.word.drag-beat-1:word:5",
+        "transcript.word.drag-beat-1:word:6",
+        "transcript.word.drag-beat-1:word:7"
+      ],
+      "requestAndAXLookupElapsedMs": 2371.1505830287933
+    },
+    {
+      "inputStyle": "distinct pointers, delay before second first move, one touch lifecycle each",
+      "requestedLiftToFreshDownMs": 300,
+      "matchedExpected": true,
+      "selectedWordIDs": [
+        "transcript.word.drag-beat-1:word:1",
+        "transcript.word.drag-beat-1:word:11",
+        "transcript.word.drag-beat-1:word:2",
+        "transcript.word.drag-beat-1:word:3",
+        "transcript.word.drag-beat-1:word:4",
+        "transcript.word.drag-beat-1:word:5",
+        "transcript.word.drag-beat-1:word:6",
+        "transcript.word.drag-beat-1:word:7"
+      ],
+      "requestAndAXLookupElapsedMs": 2460.41245944798
+    }
+  ],
+  "phoneHandoff": {
+    "version": "2.8.0",
+    "build": "1",
+    "runtimeMatchesSimulator": true,
+    "installedInPlace": true,
+    "launchedAndRunning": true,
+    "existingProjectAndHistoryMetadataPreserved": true,
+    "globalDeviceGuardStatus": "released",
+    "physicalAutomationStarted": false,
+    "captureStarted": false
+  },
+  "evidenceSHA256": {
+    "before.png": "68f48587dceaf4b3e75c30cfa1d4586c84cb497fe5dfe5f6cc2bd47e7525a1e5",
+    "selected-lines.png": "2541dd113e9fb4bbf67d32d8598e135e0779e479af85a287a90ff92b602f5646",
+    "shrunk.png": "3fac50b352dfb26c2c48f813ac6752eebfd147080949bf00cbcf9fa477b87844",
+    "deselected.png": "fb683122d5e3ac8240458c7c072f26c471a19ae42a1f2444732c174639fc5948",
+    "edge-scroll.png": "becab97597b1b78d49789bc36770d664ca5809630e56f4ea69d2d65a14713dbb",
+    "applied.png": "abafa2da8a10ab871e96db921fc0de72e9a817ac6483b95fe958f68eb8d26ac1",
+    "test-notes.png": "8e7a4ac1679455cfbc5259f567d39b38d90d0f11cbc7cb0e1fdc07f4417d7121",
+    "source.mp4": "e331a3ead46914f7c7dd9d397f788cdd076290987f00e1e9c42e1dd25e5327ce"
+  }
+}

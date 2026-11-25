@@ -2,11 +2,11 @@
   "version": "2.8.0",
   "date": "2026-11-25",
   "notes": [
-    "Bulk transcript test build (PR #339). Open a project in Edit → Transcript. Words shows the whole transcript: select individual words, or use Range and choose the first and last word of a passage. Transcript is also available from Captions.",
-    "Choose This beat or Whole Pulse. Selected words can span sentences and beats. Apply cuts removes their recorded picture and sound together; one Undo restores the entire batch, and Redo reapplies it.",
-    "Clean up → Analyze finds transcribed um/uh-style fillers and measured quiet pauses. Use Pause length to change the minimum pause. Review each proposal, uncheck any you want to keep, and use Listen before applying.",
-    "Pause detection reads the actual audio, retains a little breathing space, and skips muted or no-audio beats. Entirely quiet material needs an explicit selection. Very quiet speech can resemble silence, so review proposals before Apply cuts.",
-    "Filler matching only finds words present in the transcript; some speech models omit ums. Words such as like and so are kept by default. Edit and Hide word still change captions only. Separate narration keeps its draft-clock placement.",
-    "Try Undo/Redo, close and reopen the project, restart Pulse, then export. The saved timeline and export should agree. Please test natural speech cut quality and one-hand reach. Android UI and variable-frame-rate footage still need verification."
+    "Transcript drag test build (PR #339). Open Edit → Transcript → Words. Drag from one word to another, including down wrapped lines, to highlight the passage. Start on a highlighted word to deselect a span; drag back to shrink it.",
+    "Choose This beat or Whole Pulse. Hold near the top or bottom edge to scroll while selecting. Swipe a blank margin to scroll without selecting. Individual taps, Range with two endpoints, and the lower Previous/Next controls remain available.",
+    "Apply cuts removes the selected recorded picture and sound together. One Undo restores the batch; Redo reapplies it, including after restarting Pulse. Oversized operations refuse safely if Undo or Redo cannot be retained. Undo entries for completely removed clips from older test builds may show a recovery message; their source video is kept.",
+    "Clean up → Analyze proposes transcribed um/uh-style fillers and measured quiet pauses. Pause length follows playback time. Review, uncheck and Listen before applying; wholly quiet, muted and no-audio material is protected from automatic selection.",
+    "Filler matching only finds words present in the transcript; speech models may omit ums. Like and so are kept by default. Caption Edit and Hide word remain caption-only. Separate narration keeps its timeline position.",
+    "Try dragging forward/backward, across beats, back toward the starting word, and into either scrolling edge; lift, then tap a word. Please test natural speech cut quality and one-hand reach. Android UI, large text/RTL and variable-frame-rate footage still need verification."
   ]
 }

@@ -556,14 +556,18 @@ export async function cutTranscriptRanges(
       removedMs += plan.removedMs;
       const { file, ...settings } = clipRender(original);
       const rightId = Crypto.randomUUID();
+      const appliedIds: string[] = [];
       const receipt: SplitReceipt = {
         before: { draftId, order, rows: [original], transcripts },
         rightId,
+        fullyRemoved: plan.kept.length === 0,
+        appliedIds,
       };
       splits.push(receipt);
       noteHeldFiles(tx, takenFiles(receipt.before));
       for (const [i, window] of plan.kept.entries()) {
         const id = i === 0 ? rightId : Crypto.randomUUID();
+        appliedIds.push(id);
         const editState = canonicalEdit(
           JSON.stringify({
             ...settings,
@@ -699,6 +703,7 @@ async function commitSegments(
         receipt = {
           before: { draftId, order, rows: [original], transcripts },
           rightId: point.rightId,
+          fullyRemoved: false,
           ...(k > 0 && { firstInsertedId: newSegments[0].id }),
         };
         at = { order: original.order + 1, shift: true };
@@ -1150,6 +1155,10 @@ export type SplitReceipt = {
   rightId: string;
   /** Present when adding media triggered the split; absent for a standalone split. */
   firstInsertedId?: string;
+  /** True only when this operation intentionally left no range of the original clip. */
+  fullyRemoved?: boolean;
+  /** Bulk source ranges can have more than two rows; track each applied identity explicitly. */
+  appliedIds?: string[];
 };
 
 /**
@@ -1167,7 +1176,7 @@ export async function takeOutSegments(
   const wanted = takenSegmentIds(segmentIds, splits);
   if (wanted.size === 0) return null;
   const found = await db
-    .select({ draftId: segments.draftId })
+    .select({ id: segments.id, draftId: segments.draftId })
     .from(segments)
     .where(inArray(segments.id, [...wanted]));
   if (!found.length && !splits.length) return null;
@@ -1178,6 +1187,8 @@ export async function takeOutSegments(
   ) {
     throw new Error('The clips to undo belong to different drafts.');
   }
+  const restorable = restorableSplitReceipts(splits, new Set(found.map((row) => row.id)));
+  if (!found.length && !restorable.length) return null;
   await beginClipMutation(draftId);
   const taken = db.transaction((tx) =>
     takeOutSegmentsInTransaction(tx, draftId, segmentIds, splits, checkpoint),
@@ -1195,8 +1206,28 @@ export async function takeOutSegments(
 function takenSegmentIds(segmentIds: readonly string[], splits: readonly SplitReceipt[]) {
   return new Set([
     ...segmentIds,
-    ...splits.flatMap((split) => [split.rightId, ...split.before.rows.map((row) => row.id)]),
+    ...splits.flatMap((split) => [
+      split.rightId,
+      ...(split.appliedIds ?? []),
+      ...split.before.rows.map((row) => row.id),
+    ]),
   ]);
+}
+
+function restorableSplitReceipts(
+  splits: readonly SplitReceipt[],
+  liveIds: ReadonlySet<string>,
+): SplitReceipt[] {
+  return splits.filter((split) => {
+    const applied = split.appliedIds ?? [split.rightId, ...split.before.rows.map((row) => row.id)];
+    if (split.fullyRemoved === true || applied.some((id) => liveIds.has(id))) return true;
+    if (split.fullyRemoved === undefined) {
+      throw new Error(
+        'This older edit has no remaining clips. Its original media is retained for recovery.',
+      );
+    }
+    return false;
+  });
 }
 
 /** Shared by real Undo and the cut's synchronous, rolled-back retention preflight. */
@@ -1224,7 +1255,8 @@ function takeOutSegmentsInTransaction(
     .orderBy(asc(segments.order))
     .all();
   const rows = all.filter((r) => wanted.has(r.id));
-  if (rows.length === 0 && !splits.length) return null;
+  const restorable = restorableSplitReceipts(splits, new Set(all.map((row) => row.id)));
+  if (rows.length === 0 && !restorable.length) return null;
   const ids = rows.map((r) => r.id);
   const transcripts = tx
     .select()
@@ -1234,9 +1266,12 @@ function takeOutSegmentsInTransaction(
   if (ids.length) tx.delete(segments).where(inArray(segments.id, ids)).run();
   // Split + insert is one operation: put the unsplit originals back in the same commit that
   // takes the left/right halves and inserted clips out. The held rows retain the applied form.
-  const generated = new Set([...segmentIds, ...splits.map((split) => split.rightId)]);
+  const generated = new Set([
+    ...segmentIds,
+    ...splits.flatMap((split) => [split.rightId, ...(split.appliedIds ?? [])]),
+  ]);
   const originals = new Map<string, Segment>();
-  for (const split of splits) {
+  for (const split of restorable) {
     // Several additions can be taken together when returning from the recorder. Keep the
     // earliest original of each clip, and never resurrect a half/object created by this group.
     const rows = split.before.rows.filter(
