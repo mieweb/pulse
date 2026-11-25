@@ -77,6 +77,8 @@ export function usePreviewTransport() {
       afterBuild: null as number | null,
       /** Where the editor opened (a clip's start): the preview's first seek goes there. */
       placeMs: null as number | null,
+      placing: false,
+      placeSeq: 0,
       /** Play once the seeks in flight have landed (play from the start, at the end). */
       playAfterSeek: false,
       /** Where the playhead was last sent while paused: the preview settles on a whole frame, up
@@ -104,6 +106,7 @@ export function usePreviewTransport() {
         c.inflight = true;
         c.sentAt = Date.now();
         const seq = ++c.seq;
+        const placeSeq = c.placeSeq;
         ref
           .seek(ms)
           .then(
@@ -120,9 +123,16 @@ export function usePreviewTransport() {
               return;
             }
             // The last seek's frame (paused reports during seeks are earlier ones', see onTime).
-            if (landed != null && !c.dragging && !c.playing && c.afterBuild == null) {
+            if (
+              landed != null &&
+              !c.dragging &&
+              !c.playing &&
+              c.afterBuild == null &&
+              c.placeMs == null
+            ) {
               c.settle(landed);
             }
+            if (c.placing && c.placeMs == null && placeSeq === c.placeSeq) c.cancelPlace();
             if (c.playAfterSeek) {
               c.playAfterSeek = false;
               c.ref?.play();
@@ -136,6 +146,14 @@ export function usePreviewTransport() {
         c.inflight = false;
         c.pending = null;
         c.seq++;
+      },
+      /** A newer position owns the preview; old ready callbacks/timeouts can't place it again. */
+      cancelPlace: () => {
+        if (!c.placing && c.placeMs == null) return;
+        c.placeMs = null;
+        c.placing = false;
+        c.placeSeq++;
+        covered.set(0);
       },
       /** The preview paused on the frame at `ms`: the playhead goes there, unless it's the frame
        * for where the playhead was sent (it stays where it was sent). */
@@ -167,23 +185,18 @@ export function usePreviewTransport() {
       },
       onStatus: (st: PreviewStatus) => {
         setStatus(st);
-        if (c.placeMs != null && (st.error || !c.ref)) {
-          c.placeMs = null;
-          covered.set(0);
-        }
+        if (c.placing && (st.error || !c.ref)) c.cancelPlace();
         if (st.ready && !st.error && c.placeMs != null && c.ref) {
           const ms = c.placeMs;
-          const ref = c.ref;
-          const placed = () => {
-            c.placeMs = null;
-            covered.set(0);
-          };
-          ref
-            .seek(ms)
-            .catch(() => {})
-            .finally(placed);
+          const placeSeq = c.placeSeq;
+          // Native sends another ready status when a rebuilt timeline arrives. Consume this
+          // once, and use the same sequence/pending queue as newer insertion or scrub seeks.
+          c.placeMs = null;
+          c.seek(ms);
           // Unanswered, the preview still uncovers (on whatever frame it has).
-          setTimeout(placed, SEEK_GIVE_UP_MS);
+          setTimeout(() => {
+            if (placeSeq === c.placeSeq) c.cancelPlace();
+          }, SEEK_GIVE_UP_MS);
         }
         if (st.ready && !st.error && c.afterBuild != null) {
           const ms = c.afterBuild;
@@ -197,6 +210,8 @@ export function usePreviewTransport() {
       /** The preview view went away: Nitro never hands back a null ref, so drop it here (calls
        * until the next one is ready are no-ops instead of reaching a released view). */
       detach: () => {
+        c.giveUp();
+        c.cancelPlace();
         c.ref = null;
       },
       /** The timeline's length as the editor lays it out (known before the preview is up). */
@@ -207,6 +222,7 @@ export function usePreviewTransport() {
       play: () => {
         const ref = c.ref;
         if (!ref) return;
+        c.cancelPlace();
         c.target = null;
         // At the end, play from the start, once the preview is there (a play sent with the seek
         // would start at the end and stop).
@@ -249,15 +265,19 @@ export function usePreviewTransport() {
       /** Open at `ms` (before the preview is up): the playhead starts there, and so does the
        * preview, without showing its first frame. */
       place: (ms: number) => {
+        c.cancelPlace();
         c.lastMs = ms;
         c.target = ms;
         timeMs.set(ms);
         if (ms <= 0) return;
         c.placeMs = ms;
+        c.placing = true;
+        c.placeSeq++;
         covered.set(1);
       },
       /** Move the playhead and the preview to `ms` (a tap, a selection). */
       seekTo: (ms: number) => {
+        c.cancelPlace();
         const t = Math.max(0, Math.min(ms, Math.max(0, c.totalMs - 1)));
         c.target = t;
         c.afterBuild = null;
@@ -265,6 +285,7 @@ export function usePreviewTransport() {
         c.seek(t);
       },
       beginDrag: () => {
+        c.cancelPlace();
         c.dragging = true;
         c.target = null;
         c.afterBuild = null;
@@ -275,9 +296,13 @@ export function usePreviewTransport() {
         }
         c.ref?.setScrubbing(true);
       },
-      onTarget: (ms: number) => c.seek(ms),
+      onTarget: (ms: number) => {
+        c.cancelPlace();
+        c.seek(ms);
+      },
       /** A scrub (or a caption grip's drag) ended at `ms`: the playhead there, one exact seek. */
       endScrub: (ms: number) => {
+        c.cancelPlace();
         c.ref?.setScrubbing(false);
         c.dragging = false;
         c.target = ms;
@@ -287,6 +312,7 @@ export function usePreviewTransport() {
       },
       /** A trim ended: the playhead goes to the new edge once the trimmed timeline is up. */
       endTrim: (ms: number) => {
+        c.cancelPlace();
         c.ref?.setScrubbing(false);
         c.dragging = false;
         c.lastMs = ms;

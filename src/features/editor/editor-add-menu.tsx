@@ -4,6 +4,7 @@ import type { MenuAction } from '@/components/action-menu';
 import { Icon } from '@/components/icon';
 import { ProgressRing } from '@/components/progress-ring';
 import { Opacity } from '@/constants/theme';
+import type { EditorView } from '@/db/settings';
 import { BatchCount } from '@/features/recorder/batch-count';
 import { PlusMenu } from '@/features/recorder/plus-menu';
 import { useTheme } from '@/hooks/use-theme';
@@ -12,7 +13,7 @@ import { useTheme } from '@/hooks/use-theme';
 export const ADD_SIZE = 44;
 
 /**
- * The editor's sticky right-edge "+" inserts at the exact playhead, appending at the end.
+ * The editor's sticky right-edge "+" adds at this view's playhead position, appending at the end.
  * Drawn like the recorder's "+" (a round 44 pt button with a plus), in the theme's inverted colours so it reads
  * over the clips and the background alike. While a video it started is converting it shows a
  * spinner, or a ring once the conversion reports progress, and takes no taps.
@@ -23,6 +24,7 @@ export function EditorAddMenu({
   progress,
   progressText,
   progressCount,
+  view,
   onOpen,
 }: {
   actions: MenuAction[];
@@ -34,12 +36,15 @@ export function EditorAddMenu({
   progressText?: string;
   /** Shown beside the ring during a batch of images ("2/5"). */
   progressCount?: string;
+  view: EditorView;
 }) {
   const theme = useTheme();
   const ring = busy ? progress : null;
   const label = 'Insert at playhead';
   const hint =
-    'Adds clips at the playhead, splitting the current clip if needed. At the end, appends a new beat.';
+    view === 'clips'
+      ? 'Adds before the beat in its first half, or after it in its second half. At the midpoint, adds after. At the end, appends a new beat.'
+      : 'Adds clips at the playhead, splitting the current clip if needed. At the end, appends a new beat.';
   return (
     <PlusMenu
       actions={actions}

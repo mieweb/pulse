@@ -161,8 +161,9 @@ function usePlaybackSessionOnReturn() {
  * merged at the playhead. Captions show over the preview (drag one to move them all) and on a
  * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
  *
- * The sticky right-edge "+" inserts at the exact playhead, splitting only metadata inside a clip
- * or appending a new beat at the end. It offers recordings, imports and screen takes;
+ * The sticky right-edge "+" inserts at the nearest beat boundary in Clips view (a midpoint goes
+ * after), or at the exact playhead in Timeline view, splitting metadata when inside a clip.
+ * At the end it appends. It offers recordings, imports and screen takes;
  * the playhead then sits after the addition. One undo reverses the split and insertion together.
  *
  * No router: where Close, Export, Record a clip here and the captions model go is the caller's
@@ -587,6 +588,7 @@ export function EditorScreen({
     layout,
     timeMs: values.timeMs,
     focused,
+    view,
     previewReady:
       !!builtStatus?.ready &&
       !builtStatus.error &&
@@ -1045,6 +1047,7 @@ export function EditorScreen({
           <View style={styles.add} pointerEvents="box-none">
             <EditorAddMenu
               actions={add.actions}
+              view={view}
               busy={add.busy}
               progress={add.progress}
               progressText={add.progressText}

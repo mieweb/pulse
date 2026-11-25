@@ -3,7 +3,6 @@ import { randomUUID } from 'expo-crypto';
 import type { SharedValue } from 'react-native-reanimated';
 
 import {
-  anchorForExactPlayhead,
   END,
   type ClipAnchor,
   expectClipsAdded,
@@ -13,6 +12,7 @@ import {
   takeEditorReturn,
 } from '@/core/clip-anchor';
 import { dropTakenOut, type SplitReceipt } from '@/db/drafts';
+import type { EditorView } from '@/db/settings';
 import { useFromAnotherPulse } from '@/features/recorder/from-another-pulse';
 import { useScreenTake } from '@/features/recorder/screen-take';
 import { useImportImages } from '@/features/recorder/use-import-images';
@@ -22,6 +22,7 @@ import type { EditorScreenProps } from './contract';
 import type { EditorClip } from './use-editor-draft';
 import {
   batchWriting,
+  editorAddAnchor,
   editorAddActions,
   groupAdditions,
   type ImageBatch,
@@ -44,6 +45,7 @@ export function useEditorAdditions({
   layout,
   timeMs,
   focused,
+  view,
   previewReady,
   pause,
   seekTo,
@@ -59,6 +61,7 @@ export function useEditorAdditions({
   layout: { starts: readonly number[]; totalMs: number };
   timeMs: SharedValue<number>;
   focused: boolean;
+  view: EditorView;
   /** The native preview is ready with this clip list, rather than the pre-insert timeline. */
   previewReady: boolean;
   pause: () => void;
@@ -71,11 +74,9 @@ export function useEditorAdditions({
 } & Pick<EditorScreenProps, 'onAddClips' | 'screenCapture' | 'placeLabels'>) {
   // Not compiled by the React Compiler, as the editor screen it came out of isn't.
   'use no memo';
-  // Capture the exact source position when an action is chosen. Media preparation can then take
-  // its time without moving the insertion, and a failed/canceled add never splits the clip.
+  // Capture this view's insertion position when an action is chosen, before media preparation.
   const clipIds = clips.map((c) => c.id);
-  const anchorNow = () =>
-    anchorForExactPlayhead(clips, layout.starts, layout.totalMs, timeMs.get(), randomUUID);
+  const anchorNow = () => editorAddAnchor(view, clips, layout, timeMs.get(), randomUUID);
   const importer = useImportVideo();
   const images = useImportImages();
   const screen = useScreenTake(screenCapture);
