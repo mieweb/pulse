@@ -13,11 +13,11 @@
     },
     "hermesSha256": "d935f2f3c02c9523f820bcf5f2395df8f92fdb08b1d30a354bddd1229883edec",
     "configSha256": "a16eedacad85c7a50b8c479ad91473eea1d061408526bb9aeae1a92ad716a989",
-    "nativeOwnershipFollowup": "Parent/native agent reviewing a separate completed-CAF lifetime edge; this controls-only check uses the previously verified 305239a6 shell.",
     "sourceContentCommit": "b39ff5573dc1c5c7af8e8d29ace3d0779bbc3383",
     "nativeOriginalExecutableSha256": "40032741b1b5b8813ab858d5e08914a92ea19a658f1652661ad8e36d605e8b32",
     "nativeInstalledExecutableSha256": "71a79220c7edf55d8c5a70082e0c532d39c6f77e320b844b851035b0ebad7b0d",
-    "installedHermesMatchesBuiltBundle": true
+    "installedHermesMatchesBuiltBundle": true,
+    "nativeOwnershipScope": "Historical controls-only check used native 305239a6. The completed-CAF ownership fix is included in 306ff1d; its exact final Release binary smoke is recorded in finalCandidateReleaseSmoke. Specific ownership regressions are covered by the native unit tests."
   },
   "checks": {
     "standardStartStop": {
@@ -99,5 +99,61 @@
     "targetedNoCacheLint": "passed",
     "rootTypecheck": "passed"
   },
-  "screenshots": ["review-start-ready.png", "review-stop-recording.png"]
+  "screenshots": ["review-start-ready.png", "review-stop-recording.png"],
+  "finalCandidateReleaseSmoke": {
+    "artifact": "/tmp/pulse-224-pr-sim-derived/Build/Products/Release-iphonesimulator/Pulse.app",
+    "appSourceCommit": "4dbf8e7f446658678a091013cfe4100ec2641832",
+    "controlsSourceCommit": "b39ff5573dc1c5c7af8e8d29ace3d0779bbc3383",
+    "nativeCommit": "306ff1d999589be6615275c60567ba371f073efd",
+    "executableSha256": "bc463f5cba2756880d0bd186f988d6b1fccdae8da6ab84a8bf7093dd97b5f329",
+    "hermesSha256": "c35dfcb1eedcec1fbcab087c6096e6458edf6ed1f8096f69fa2aadbb848bd758",
+    "configSha256": "3b150c023e9c5d7e327c940dfd3cdaab4ed28c282b12c4cd521bed660a762d2c",
+    "pass": true,
+    "savedTakeEntryNoAddedRecording": true,
+    "tapPlayheadDisplayedMs": 200.0,
+    "startControl": {
+      "type": "XCUIElementTypeButton",
+      "name": "voiceover.toggle",
+      "label": "Start recording voiceover",
+      "enabled": "true",
+      "visible": "true",
+      "accessible": "true",
+      "x": "306",
+      "y": "772",
+      "width": "80",
+      "height": "45"
+    },
+    "stopControl": {
+      "type": "XCUIElementTypeButton",
+      "name": "voiceover.toggle",
+      "label": "Stop recording voiceover",
+      "enabled": "true",
+      "visible": "true",
+      "accessible": "true",
+      "x": "306",
+      "y": "772",
+      "width": "80",
+      "height": "45"
+    },
+    "recordedDurationMs": 1478.5416666666667,
+    "countAfterStop": 5,
+    "countAfterUndo": 4,
+    "undoDisplayedMs": 600.0,
+    "expectedUndoMs": 621.204458,
+    "readoutResolutionMs": 100,
+    "originalVideoAndTakeRowsPreserved": true,
+    "installedExecutableAndHermesMatchBuild": true,
+    "scope": "Exact final native Release binary smoke; the preceding controls report covers hold/phase guard checks. Full screen-reader/hardware behavior remains unverified.",
+    "cleanup": {
+      "verified": true,
+      "sessionDeleted": true,
+      "hostExited": true,
+      "ownedSimulatorRunnerExited": true,
+      "port8246Closed": true,
+      "appLeftOnHome": true,
+      "originalVideoAndTakeRowsPreserved": true,
+      "physicalDeviceActions": false,
+      "rawMicrophoneFilesCopiedOutsideSimulator": false
+    }
+  }
 }

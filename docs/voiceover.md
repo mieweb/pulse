@@ -66,6 +66,8 @@ gaps rather than saving a take with a missing tail or compressed timing. Retry r
 microphone. A failed durable save can retry the original capture after any in-flight save
 finishes; repeated interruptions and Retry cannot save the same capture concurrently. Leaving
 the workflow discards that unsaved capture.
+Once native capture delivers a completed file, Pulse owns its lifetime. A later recording or
+preview closure cannot delete that file while a save or retry is using it.
 
 Each saved take logs `[voiceover] capture timing` with timeline bounds and these native metrics:
 
@@ -97,6 +99,7 @@ yarn install --immutable
 yarn nitrogen
 yarn typecheck
 sh scripts/check-voiceover-samples.sh
+sh scripts/check-voiceover-file-ownership.sh
 tests/voiceover-mix/run.sh /tmp/pulse-voiceover-mix
 ```
 
@@ -104,7 +107,7 @@ The sample test exercises the shipping CAF writer with timestamped synthetic PCM
 48 kHz, a full minute, five successive takes and a seek/retake. The mix harness compares preview
 composition audio against the exported MP4 for a one-minute take, five trimmed takes crossing
 video boundaries, gaps, track mutes and a sped-up video clip. See its
-[README](https://github.com/morepriyam/pulse-editor/blob/305239a6f52f6c379d2d4c52043ce090ad688988/tests/voiceover-mix/README.md) for the evidence limits.
+[README](https://github.com/morepriyam/pulse-editor/blob/306ff1d999589be6615275c60567ba371f073efd/tests/voiceover-mix/README.md) for the evidence limits.
 
 Rebuild the native app after these changes; a JS refresh cannot add microphone methods:
 

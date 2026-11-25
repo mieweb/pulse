@@ -3,7 +3,46 @@
 2026-11-25, iOS first, [issue #224](https://github.com/mieweb/pulse/issues/224).
 Behavior and build instructions: [voiceover.md](../voiceover.md).
 
-## Current PR checks
+## Review follow-up
+
+The review follow-up fixes interrupted save/Retry serialization and adds a standard **Start** /
+**Stop** button alongside the hold shortcut. App source `b39ff55` passes root, embed and client
+TypeScript checks, `npm run lint -- --no-cache`, protocol generation and `npm run check:embed`.
+`npm test -- --runInBand` passes 162 suites / 2,376 tests; eight integration tests remain skipped
+locally. The previous PR head's CI also passed both real PulseVault integration jobs.
+
+Deferred-promise regressions reproduce the original overlapping writes and verify that Retry
+waits for an interrupted save, writes again only after failure, and handles another interruption
+during Retry without concurrent writes. Workflow disposal waits before discarding a failed
+capture, and stale microphone readiness/errors cannot overwrite a newer interruption.
+
+The controls' interaction tests cover standard activation, Stop during native startup, blocked
+Start during preparation/save/Undo, and hold ownership across cancellation. The delayed
+Pressability release callback is removed so it cannot stop a newer take.
+
+Native follow-up `306ff1d` transfers completed-file ownership to the host before resolving Stop.
+Its real-file regression delays copying a delivered take until after cancellation and a new take:
+the original file and copied bytes survive, while unclaimed replacement/drop/cancelled-completion
+files are reclaimed. This covers reopening Voiceover while a prior session still saves its CAF.
+The native PCM checks, simulator SDK typecheck, TypeScript, lint and formatting also pass.
+The Pulse Release Simulator build at parent `4dbf8e7`, pinned to `306ff1d`, passed after refreshing
+Pods to include the new ownership helper. No JavaScript API or generated binding changed.
+Its exact-binary smoke also passed: tapping a saved take opened Start/Stop without adding one;
+standard activation saved a 1.48-second take; Undo restored the original four takes, unchanged
+video rows and the displayed 0.6-second cursor for the 621.204458 ms target. The controls report
+below records matching built/installed executable and Hermes hashes plus verified cleanup.
+
+Native simulator checks of this app source with the previously built `305239a6` native shell
+passed: Start/Stop exposes a native button with explicit labels and an 80×45-point frame; Stop
+remains enabled while recording, and Start is disabled while saving. Start/Stop saved a 1.59-second
+take, the hold shortcut saved a 505 ms take, and each Undo restored the original four takes and
+cursor. [Controls report](../../screenshots/validation/voiceover/review-controls-simulator.json)
+records source hashes, artifact provenance and verified automation cleanup. Actual screen-reader
+and Switch Control use, large-text/RTL layout and physical reach remain unverified.
+Screenshots show the [ready controls](../../screenshots/validation/voiceover/review-start-ready.png)
+and [Stop during recording](../../screenshots/validation/voiceover/review-stop-recording.png).
+
+## Initial submitted PR checks
 
 Source checks ran on candidate `403304c`, based on `main` at `d4b5312` after the existing
 Summary, persistent-history, one-handed-navigation and export-screen changes merged. The native
