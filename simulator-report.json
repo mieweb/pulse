@@ -1,0 +1,135 @@
+{
+  "issue": "https://github.com/mieweb/pulse/issues/337",
+  "date": "2026-11-25",
+  "platform": "iOS 26.0, isolated iPhone SE 3rd generation, 375x667 points",
+  "fixture": "12 synthetic portrait clips; Delete reduced fixture to 11; no user media",
+  "build": "Existing native simulator shell, full production app JavaScript rebundled for the final toolbar changes; no native-code change for this task",
+  "finalBundleSha256": "af10ab45ae2bf365b1b724e809955132e077c00065fb7e8f5570b31fa232618a",
+  "finalSourceSha256": {
+    "src/features/editor/clip-toolbar.tsx": "c4e69fa201ef056bb952d465a766d5bb463dc7cfb9a1ab993a3ea3887bdf4938",
+    "src/features/editor/editor-screen.tsx": "eb8bbead1275124a178b0a027c9481a89ec160e2a866473b88a907736bcf4608"
+  },
+  "functional": {
+    "priorityToolsVisible": true,
+    "fullRowScrollsIncludingDone": true,
+    "lastToolRotateVisibleAfterSwipe": true,
+    "speedSelectionAndDone": true,
+    "reset": true,
+    "deleteCounts": [
+      12,
+      11
+    ],
+    "deleteUndoContract": "Existing deliberate behavior: deletion is not restored by Undo; no change to deletion/history logic.",
+    "speedUndoRedoUndo": [
+      0.5,
+      1,
+      0.5,
+      1
+    ],
+    "splitUndoRedoUndo": [
+      11,
+      12,
+      11,
+      12,
+      11
+    ],
+    "doneEditing": true,
+    "darkLargestText": true,
+    "darkScrollToRotateAndBack": true,
+    "closeNavigation": true,
+    "finalNormalFourToolsFullyVisible": true,
+    "finalScrollToRotateAndBack": 3,
+    "finalSpeedDone": true,
+    "finalDoneEditing": true,
+    "finalLargeFontLabelsFitVertically": true,
+    "finalLargestFontRotateReachable": true,
+    "finalDarkLargestText": true,
+    "finalLargestFontLabelsFitVertically": true,
+    "finalCloseNavigation": true,
+    "finalExportNavigation": "Reached native Merging screen for 11 clips; completion/upload outside toolbar check."
+  },
+  "finalChecks": {
+    "source": "Source, format, lint, app/embed typing, protocol and embed bundles pass; standard root tsc retains 14 pre-existing pulse-desktop errors; 157 suites / 2205 tests passed with 1 suite / 8 integration tests skipped"
+  },
+  "cleanup": {
+    "firstRunnerRun": [
+      {
+        "sessionDelete": 200
+      },
+      {
+        "terminate": "com.facebook.WebDriverAgentRunner.xctrunner",
+        "exit": 0,
+        "stderr": ""
+      },
+      {
+        "terminate": "com.mieweb.pulse",
+        "exit": 0,
+        "stderr": ""
+      },
+      {
+        "shutdownExit": 0,
+        "stderr": "",
+        "runnerExit": -15
+      }
+    ],
+    "ownedSupervisorAndXcodebuildExited": true,
+    "simulatorShutdown": true,
+    "physicalDevicesUsed": false,
+    "secondRunnerRun": [
+      {
+        "sessionDelete": 200
+      },
+      {
+        "terminate": "com.facebook.WebDriverAgentRunner.xctrunner",
+        "exit": 3,
+        "stderr": "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nSimulator device failed to terminate com.facebook.WebDriverAgentRunner.xctrunner.\nfound nothing to terminate\nUnderlying error (domain=NSPOSIXErrorDomain, code=3):\n\tThe request to terminate \"com.facebook.WebDriverAgentRunner.xctrunner\" failed. found nothing to terminate\n\tfound nothing to terminate\n"
+      },
+      {
+        "terminate": "com.mieweb.pulse",
+        "exit": 0,
+        "stderr": ""
+      },
+      {
+        "shutdownExit": 0,
+        "stderr": "",
+        "runnerExit": -15
+      }
+    ],
+    "finalRunnerRun": [
+      {
+        "sessionDelete": 200
+      },
+      {
+        "terminate": "com.facebook.WebDriverAgentRunner.xctrunner",
+        "exit": 0,
+        "stderr": ""
+      },
+      {
+        "terminate": "com.mieweb.pulse",
+        "exit": 0,
+        "stderr": ""
+      },
+      {
+        "shutdownExit": 0,
+        "stderr": "",
+        "runnerExit": -15
+      }
+    ],
+    "finalEvidenceRecapture": "Fresh settled normal-text screenshot; no application source changes; final automation session deleted and dedicated simulator shut down."
+  },
+  "limitations": [
+    "Reporter phone and Android not tested",
+    "VoiceOver spoken navigation not manually exercised",
+    "Caption toolbar completion not exercised natively; no configured model in fixture",
+    "Separate transport time labels still become very large at largest text",
+    "Export check established navigation to Merging, not generation completion or upload"
+  ],
+  "evidence": [
+    "reporter-before.jpg",
+    "after-light.png",
+    "after-scrolled.png",
+    "after-dark-largest-text.png",
+    "after-dark-largest-scrolled.png",
+    "after-speed-picker.png"
+  ]
+}
