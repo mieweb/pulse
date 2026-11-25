@@ -170,6 +170,10 @@ npm run ios       # or: npm run android
 
 Pulse uses native modules (VisionCamera, Whisper, FFmpeg), so it needs a **dev build**, not Expo Go.
 
+For Xcode 27 builds, `plugins/with-ios-scene-lifecycle.js` enables Expo's existing scene
+delegate during prebuild. iOS 27 requires this lifecycle for apps built with its SDK;
+the plugin preserves the startup fix when regenerating `ios/` with a clean prebuild.
+
 The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this app is built against. It holds the protocol JSON Schemas that `src/features/upload/core/protocol.gen.ts` is generated from, and it is the server used by the integration suite (see [Testing](#testing)).
 
 **No camera? No problem.** In a dev build, the Home screen has `+ seed` / `clear` buttons that create a "Dev sample" draft from the bundled `assets/dev/` clips — including deliberately mismatched resolution/fps/codec/orientation clips that exercise the export-normalization path — so the full editor is drivable on a simulator. See [assets/dev/README.md](assets/dev/README.md).
