@@ -5,6 +5,7 @@ import { anchorFromRouteParam, anchorToRouteParam, type ClipAnchor } from '@/cor
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import type { EditorView } from '@/db/settings';
 import { EditorScreen } from '@/features/editor/editor-screen';
+import { isAiEditingEnabled } from '@/features/ai-edit/enabled';
 import { screenCapturePort } from '@/features/screen-capture/screen-capture';
 import { usePlaceLabels } from '@/features/upload/pairing/use-destinations';
 
@@ -18,6 +19,7 @@ const addClips = (draftId: string, anchor: ClipAnchor) =>
     params: { draftId, returnTo: 'editor', anchor: anchorToRouteParam(anchor) },
   });
 const openModelSheet = () => router.push('/on-device-ai');
+const openAiEdit = (draftId: string) => router.push({ pathname: '/ai-edit', params: { draftId } });
 
 const asView = (v: string | undefined): EditorView | undefined =>
   v === 'clips' || v === 'timeline' ? v : undefined;
@@ -47,6 +49,7 @@ export default function EditorRoute() {
         view={asView(view)}
         onClose={close}
         onExport={openExport}
+        onAiEdit={isAiEditingEnabled() ? openAiEdit : undefined}
         onAddClips={addClips}
         // Screen recording is the Pulse app's: the embed's editor has no Record screen.
         screenCapture={screenCapturePort}

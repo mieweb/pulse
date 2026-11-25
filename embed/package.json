@@ -58,6 +58,9 @@
   "expo": {
     "autolinking": {
       "nativeModulesDir": "../modules",
+      "exclude": [
+        "expo-ai-editor"
+      ],
       "ios": {
         "buildFromSource": [
           "expo-file-system"

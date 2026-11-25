@@ -63,6 +63,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     extra: {
       ...config.extra,
+      // Development sessions enable experiments by default. An offline Release phone build
+      // must opt in explicitly; CI/store builds can never opt in through this environment flag.
+      developerFeatures: {
+        developerBuild: !ci && process.env.PULSE_DEVELOPER_BUILD === '1',
+        aiEditing: process.env.PULSE_AI_EDIT !== '0',
+      },
       linkHost: LINK_HOST,
       // Generated from this checkout, never fetched on the phone: notes match the build offline.
       releaseNotes: collectReleaseNotes({

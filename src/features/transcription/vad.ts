@@ -66,12 +66,20 @@ async function initVadContext(filePath: string): Promise<WhisperVadContext> {
   return initWhisperVad({ filePath, useGpu: false });
 }
 
-async function loadVad(): Promise<WhisperVadContext> {
+async function loadVad(allowModelDownload: boolean): Promise<WhisperVadContext> {
   if (ctx) return ctx;
   if (unavailable) throw new Error('VAD unavailable on this device');
+  if (!allowModelDownload) {
+    if (!isVadModelReady()) throw new Error('The VAD model isn’t downloaded');
+    // A captions request may already be downloading or initializing VAD. Offline-only work
+    // must not wait on that request; its optional speech gate can fail open immediately.
+    if (loadPromise) throw new Error('VAD is already loading');
+  }
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
-    await ensureVadModel(); // transient (offline) failures throw here and are intentionally not cached
+    if (allowModelDownload) {
+      await ensureVadModel(); // transient download failures are intentionally not cached
+    }
     let vadCtx: WhisperVadContext;
     try {
       vadCtx = await initVadContext(vadFile().uri);
@@ -103,12 +111,17 @@ export async function releaseVad(): Promise<void> {
  * any detected speech. Throws if the VAD model isn't yet available (e.g. offline before its first
  * download) — callers should treat that as "unknown" and fail open (transcribe anyway) rather
  * than dropping captions.
+ * With `allowModelDownload: false`, only an already-loaded context or a whole cached model is
+ * used; a missing model or an in-flight load throws immediately without starting a download.
  *
  * NOTE: `detectSpeechData` segments' `t0`/`t1` are in **centiseconds**, like Whisper's transcript
  * lines (a 12 s clip's speech reads 99–1203). We only count segments here.
  */
-export async function hasSpeech(pcm: ArrayBuffer): Promise<boolean> {
-  const vadCtx = await loadVad();
+export async function hasSpeech(
+  pcm: ArrayBuffer,
+  options?: { allowModelDownload?: boolean },
+): Promise<boolean> {
+  const vadCtx = await loadVad(options?.allowModelDownload ?? true);
   const segments = await vadCtx.detectSpeechData(pcm);
   return segments.length > 0;
 }

@@ -21,6 +21,7 @@ export const FORBIDDEN_PATHS = [
     reason: '.pulse transfer and backup are standalone-only.',
   },
   { path: 'src/features/screen-capture/', reason: 'Screen recording is standalone-only.' },
+  { path: 'src/features/ai-edit/', reason: 'AI editing is a standalone developer experiment.' },
   { path: 'src/features/upload/pairing/', reason: 'Pairing is standalone-only.' },
   // Pairing until PR2-B moves it into upload/pairing (eslint.config.js lists the same files).
   { path: 'src/features/upload/pairing-sheet.tsx', reason: 'Pairing is standalone-only.' },

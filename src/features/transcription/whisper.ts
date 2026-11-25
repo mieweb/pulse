@@ -18,9 +18,9 @@ export type { TranscriptLine, TranscriptWord } from '@/core/types/transcription'
  * unavailable (e.g. its model hasn't downloaded yet offline) we fail **open** — assume speech and
  * let Whisper run — so a VAD hiccup never silently drops real captions.
  */
-async function isSilent(pcm: ArrayBuffer): Promise<boolean> {
+async function isSilent(pcm: ArrayBuffer, allowModelDownload: boolean): Promise<boolean> {
   try {
-    return !(await hasSpeech(pcm));
+    return !(await hasSpeech(pcm, { allowModelDownload }));
   } catch {
     return false;
   }
@@ -101,16 +101,18 @@ async function loadContext(model: WhisperModel): Promise<Context> {
  * Pipeline: pulse-editor decodes the audio track in memory to what both engines take — 16 kHz
  * mono 16-bit PCM, downmixed and band-limited resampled natively — and the VAD gate and the model
  * both read that one buffer: no temp file, no second decode. The model must be downloaded already
- * (the queue only runs with one); this never downloads it.
+ * (the queue only runs with one); this never downloads the speech model. VAD may download its
+ * smaller model on first use unless `allowModelDownload` is false, which keeps all inference
+ * local and treats a missing VAD model as unknown speech activity.
  *
  * @param fileUri absolute file URI of the clip's media (the file it plays from).
  */
 export async function transcribeWords(
   fileUri: string,
   model: WhisperModel,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; allowModelDownload?: boolean },
 ): Promise<TranscriptWord[]> {
-  const { signal } = options ?? {};
+  const { signal, allowModelDownload = true } = options ?? {};
   // Cancelled during a step before inference (the clip deleted, the recorder started recording,
   // the model switched): stop there, so no inference starts for nobody.
   const stopIfCancelled = () => {
@@ -123,7 +125,7 @@ export async function transcribeWords(
   // Pre-gate on voice activity: silent/noise-only clips make Whisper hallucinate (the
   // multilingual model emits Chinese on noise, or canned subtitle credits on silence). Skip the
   // model entirely: an empty transcript settles the clip instead of re-running.
-  if (await isSilent(pcm)) return [];
+  if (await isSilent(pcm, allowModelDownload)) return [];
   stopIfCancelled();
 
   const ctx = await loadContext(model);

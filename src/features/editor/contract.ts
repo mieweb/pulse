@@ -22,6 +22,8 @@ export type EditorScreenProps = {
   onClose: () => void;
   /** Export, after the editor's pending writes are on disk. */
   onExport: (draftId: string) => void;
+  /** Optional developer experiment. Only the standalone developer shell supplies it. */
+  onAiEdit?: (draftId: string) => void;
   /**
    * "Record a clip here" in the editor's "+": the recorder for this draft, its insert cursor at
    * `anchor` (the exact playhead, including a pending metadata split). Without it the "+" offers only what the editor does

@@ -51,7 +51,7 @@ const CORE_FEATURES = [
   'logs',
   'embed',
 ].map((f) => `./src/features/${f}`);
-const STANDALONE_FEATURES = ['onboarding', 'about', 'draft-transfer', 'screen-capture'];
+const STANDALONE_FEATURES = ['onboarding', 'about', 'draft-transfer', 'screen-capture', 'ai-edit'];
 
 /**
  * Pairing (links, the paired pool and its sheets): standalone-only, and out of the embed's bundle

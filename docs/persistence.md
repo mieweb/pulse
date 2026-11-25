@@ -121,6 +121,12 @@ Imported summary checkpoints participate in the restored library’s next collec
 The first-pass request is tracked in [#331](https://github.com/mieweb/pulse/issues/331);
 native UI checks and screenshots are in the [Summary verification record](../screenshots/validation/summary/README.md).
 
+The developer [AI editing preview](ai-editing.md) creates a separate ordinary draft from selected
+source windows. It stages independent source-media copies and commits the new draft, excerpt
+segments and copied transcripts together. Source rows and files remain unchanged; no Summary
+cutoff is advanced. Cancellation, stale source timing and failed staging/transactions leave no
+partial draft. This requires no schema migration.
+
 ## Launch and recovery
 
 `openLibrary` (`src/db/snapshots.ts`) runs as `src/db/client.ts` loads, before migrations. Nothing

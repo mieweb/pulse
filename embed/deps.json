@@ -42,6 +42,7 @@
   },
   "excluded": {
     "@react-native-async-storage/async-storage": "Only the legacy one-time move into SQLite read it, which an embedded library never had (B6).",
+    "expo-ai-editor": "Standalone developer experiment using Apple Intelligence for rough cuts; PulseKit does not expose or link AI editing.",
     "expo-clipboard": "Pairing, About and the app's upload link only (B6).",
     "expo-document-picker": ".pulse import and library restore only, both hidden in the embed (B6, PR1-L).",
     "expo-linking": "The host app owns incoming links; the embed opens URLs through React Native's Linking.",

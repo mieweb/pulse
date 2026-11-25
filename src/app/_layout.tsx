@@ -87,6 +87,7 @@ function ThemedNavigation() {
           <Stack.Screen name="new-project" options={{ ...fullScreen, gestureEnabled: false }} />
           <Stack.Screen name="export" options={fullScreen} />
           <Stack.Screen name="editor" options={{ ...fullScreen, gestureEnabled: false }} />
+          <Stack.Screen name="ai-edit" options={{ ...fullScreen, gestureEnabled: false }} />
           <Stack.Screen
             name="about"
             options={() => ({

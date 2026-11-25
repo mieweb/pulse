@@ -1,0 +1,7 @@
+{
+  "name": "expo-ai-editor",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local, on-device passage selection for the Pulse editing experiment",
+  "main": "src/AiEditorModule.ts"
+}

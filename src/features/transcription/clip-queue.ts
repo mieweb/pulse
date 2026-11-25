@@ -34,7 +34,7 @@ type Job = { segmentId: string; draftId: string; file: string; model: WhisperMod
 const pending: Job[] = [];
 let running: { job: Job; abort: AbortController; done: Promise<void> } | null = null;
 /** Why the queue is paused: the recorder is recording, the app is in the background. */
-const pausedFor = new Set<'recording' | 'background'>();
+const pausedFor = new Set<'recording' | 'background' | 'ai-edit'>();
 
 if (AppState.currentState === 'background') pausedFor.add('background');
 AppState.addEventListener('change', (state) => setPaused('background', state === 'background'));
@@ -67,7 +67,14 @@ export function setClipQueuePaused(on: boolean): void {
   setPaused('recording', on);
 }
 
-function setPaused(reason: 'recording' | 'background', on: boolean): void {
+/** The foreground AI editor shares one speech context with captions; wait before using it. */
+export async function pauseClipQueueForAiEdit(): Promise<() => void> {
+  setPaused('ai-edit', true);
+  await running?.done;
+  return () => setPaused('ai-edit', false);
+}
+
+function setPaused(reason: 'recording' | 'background' | 'ai-edit', on: boolean): void {
   const was = pausedFor.size > 0;
   if (on) pausedFor.add(reason);
   else pausedFor.delete(reason);

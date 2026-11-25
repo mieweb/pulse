@@ -1,0 +1,12 @@
+{
+  "version": "2.7.0",
+  "date": "2026-11-25",
+  "notes": [
+    "Developer AI editing preview: open a project, enter its editor and tap the sparkle button labelled AI edit. Pulse will create a separate AI cut and open it in Timeline view. Your original project stays unchanged.",
+    "Try a clear English talking-head recording around ten minutes long. The experiment selects original spoken passages to fit approximately 115 seconds; it keeps your original voice and the selected passages' order. Review the meaning and every join before sharing.",
+    "Before testing offline, download a speech model in On-device AI (Parakeet for English) and make sure Apple Intelligence is enabled and its model is ready. AI editing uses the on-device system model and never falls back to a cloud service.",
+    "After setup, try the same recording in airplane mode, with Wi-Fi off. Preview the new cuts, adjust them with the normal editor and export. Please compare essential points, sentence endings, repetition and the final MP4 duration.",
+    "Cancel or background Pulse while an AI edit runs, then try again. A canceled run should leave no partial AI-cut project. Use source-video speech with audio unmuted; separate voiceover takes are not supported yet. Unavailable models and unsupported devices show an explanation.",
+    "This is a developer-only experimental build. The AI edit button is hidden in ordinary release builds. This first implementation uses transcript selection with Apple Intelligence; OmniShotCut visual shot detection and newly written summaries are still follow-up work in issue 341."
+  ]
+}

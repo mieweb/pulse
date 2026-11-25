@@ -183,6 +183,7 @@ export function EditorScreen({
   view: openView,
   onClose,
   onExport,
+  onAiEdit,
   onAddClips,
   onOpenModelSheet,
   screenCapture,
@@ -926,6 +927,18 @@ export function EditorScreen({
         <Pressable style={styles.header} onPress={deselect} accessible={false}>
           <HeaderButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
           <View style={styles.headerRight}>
+            {onAiEdit && (
+              <HeaderButton
+                icon="sparkles"
+                label="AI edit"
+                testID="editor.ai-edit"
+                disabled={clips.length === 0 || add.busy || history.busy || splitBusy}
+                onPress={() => {
+                  ctl.pause();
+                  void flushDraftWrites().then(() => onAiEdit(draftId));
+                }}
+              />
+            )}
             <HeaderButton
               icon="arrow.uturn.backward"
               label="Undo"
