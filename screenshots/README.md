@@ -50,6 +50,41 @@ both canvases. Generic bezels are deliberate: neither capture device has
 official frame art, and stores accept (and expect) stylized marketing frames.
 Captions live in the `CAPTIONS` map in [frame.mjs](frame/frame.mjs).
 
+## Version screen verification (2026-11-25)
+
+Native iPhone 16e simulator, iOS 26.0. The current source's JavaScript, assets and Expo config
+were bundled into an existing release simulator shell with the existing iOS startup repair;
+this verifies the native UI, rather than a fresh native archive. The baseline uses the same
+About screen as `cf6771c`, with older build metadata.
+
+| Capture | Result |
+| --- | --- |
+| [Before](validation/version-release-notes/before-about.png) | Original version/About screen |
+| [Current build](validation/version-release-notes/after-about.png) | Complete bundled release notes and Release history action |
+| [History](validation/version-release-notes/after-history-top.png) | Previous versions with calendar dates and summaries |
+| [History end](validation/version-release-notes/after-history-bottom.png) | Fifth previous release reachable by scrolling |
+| [Large text](validation/version-release-notes/large-about.png) | History action wraps at the largest accessibility text size |
+| [Large history](validation/version-release-notes/large-history-top.png) | Notes wrap and scroll at the largest accessibility text size |
+
+WDA checks used native accessibility labels/roles and native ScrollView scrolling, with no
+coordinate actions. Current notes, all five earlier releases, closing history back to About,
+and closing About back to drafts passed at default and largest Dynamic Type. Compatibility,
+backup, logs and issue controls remain reachable by scrolling. VoiceOver audio, Android UI and
+a fresh signed archive were not tested.
+
+The same JavaScript bundle and current Expo config were subsequently signed into an unchanged
+native device shell and installed on the user's iPhone 17 Pro. Installation and launch were
+verified, and the deployment session was released before handoff. The user approved merging
+after this device handoff. The existing scene lifecycle startup repair belongs to the native
+shell and is outside this feature's source changes.
+
+Source verification: `npx tsc --noEmit`, `npm run lint`, `npm test -- --runInBand`
+(149 suites / 2,108 tests passed; server integration suite skipped),
+`node scripts/gen-protocol-types.mjs --check`, and `npx expo config --json` passed.
+Changed source files pass Prettier; the workflows retain their pre-existing YAML formatting.
+Git fixtures cover exact build commits, adjacent release ranges, missing merge summaries,
+unrelated tags and unavailable/shallow history.
+
 ## Store size cheat sheet
 
 - **App Store Connect**: 6.5" display — 1284×2778 portrait. App Store Connect

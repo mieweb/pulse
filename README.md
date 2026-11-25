@@ -181,6 +181,16 @@ The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this ap
 
 **No camera? No problem.** In a dev build, the Home screen has `+ seed` / `clear` buttons that create a "Dev sample" draft from the bundled `assets/dev/` clips — including deliberately mismatched resolution/fps/codec/orientation clips that exercise the export-normalization path — so the full editor is drivable on a simulator. See [assets/dev/README.md](assets/dev/README.md).
 
+The version/About screen shows release notes for the installed build. Tap **Release history**
+for the previous five releases. Notes are generated from Git when `app.config.ts` is evaluated
+and bundled for offline use; they do not query GitHub from the app. `app-v<version>` tags mark
+release boundaries. The current notes include changes since the previous version's tag through
+the build commit, including changes made after tagging the current version. History uses the
+ranges between earlier tags. A full Git checkout with release tags is required; source archives
+or shallow clones show notes as unavailable rather than unrelated or incomplete history.
+The iOS and Android build workflows fetch this history before prebuild. Change summaries come
+from commit/PR titles, so write those titles for someone reading the release notes.
+
 ## Pulse inside another app
 
 PulseKit is Pulse packaged for other apps: a Capacitor or Cordova app opens Pulse full screen to
