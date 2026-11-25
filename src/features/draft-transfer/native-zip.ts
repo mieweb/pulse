@@ -2,6 +2,7 @@ import { Directory, File } from 'expo-file-system';
 import { zip } from 'react-native-zip-archive';
 
 import { ensureFreeSpace, nativeMd5 } from '@/utils/disk-space';
+import { holdMediaPaths } from '@/core/media-holds';
 
 /** A file:// URI as the plain path native code (expo-sqlite's `directory`, zip) takes. */
 export const plainPath = (uri: string) =>
@@ -32,42 +33,49 @@ export async function zipFlat(
   out: File,
   extra: { names: string[]; write: (files: ArchivedFile[]) => void },
 ): Promise<ArchivedFile[]> {
-  const taken = new Set(extra.names);
-  const copies = new Set<number>();
-  const entries = sources.map(({ path }, i) => {
-    let entry = path.slice(path.lastIndexOf('/') + 1);
-    if (taken.has(entry)) {
-      while (taken.has(entry)) entry = `${i}-${entry}`;
-      copies.add(i);
-    }
-    taken.add(entry);
-    return entry;
-  });
-  const size = (i: number) => sources[i].file.size ?? 0;
-  ensureFreeSpace(
-    sources.reduce((sum, _, i) => sum + size(i), 0) +
-      [...copies].reduce((sum, i) => sum + size(i), 0),
-  );
-  const files = sources.map((s) => s.file);
-  for (const i of copies) {
-    files[i].copySync(new File(stage, entries[i]));
-    files[i] = new File(stage, entries[i]);
-  }
-  const archived: ArchivedFile[] = [];
-  for (const [i, file] of files.entries()) {
-    archived.push({
-      path: sources[i].path,
-      entry: entries[i],
-      size: file.size ?? 0,
-      md5: nativeMd5(file),
+  // Capture the document's exact file set before the first yield. Clip/history cleanup and
+  // whole-draft deletion honor the same holds, so later edits cannot invalidate this archive.
+  const release = holdMediaPaths(sources.map((source) => source.path));
+  try {
+    const taken = new Set(extra.names);
+    const copies = new Set<number>();
+    const entries = sources.map(({ path }, i) => {
+      let entry = path.slice(path.lastIndexOf('/') + 1);
+      if (taken.has(entry)) {
+        while (taken.has(entry)) entry = `${i}-${entry}`;
+        copies.add(i);
+      }
+      taken.add(entry);
+      return entry;
     });
-    await yieldToUi();
+    const size = (i: number) => sources[i].file.size ?? 0;
+    ensureFreeSpace(
+      sources.reduce((sum, _, i) => sum + size(i), 0) +
+        [...copies].reduce((sum, i) => sum + size(i), 0),
+    );
+    const files = sources.map((s) => s.file);
+    for (const i of copies) {
+      files[i].copySync(new File(stage, entries[i]));
+      files[i] = new File(stage, entries[i]);
+    }
+    const archived: ArchivedFile[] = [];
+    for (const [i, file] of files.entries()) {
+      archived.push({
+        path: sources[i].path,
+        entry: entries[i],
+        size: file.size ?? 0,
+        md5: nativeMd5(file),
+      });
+      await yieldToUi();
+    }
+    extra.write(archived);
+    await zip(
+      [...files, ...extra.names.map((n) => new File(stage, n))].map((f) => plainPath(f.uri)),
+      plainPath(out.uri),
+      { compressionLevel: 0 },
+    );
+    return archived;
+  } finally {
+    release();
   }
-  extra.write(archived);
-  await zip(
-    [...files, ...extra.names.map((n) => new File(stage, n))].map((f) => plainPath(f.uri)),
-    plainPath(out.uri),
-    { compressionLevel: 0 },
-  );
-  return archived;
 }

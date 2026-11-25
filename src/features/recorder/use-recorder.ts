@@ -15,6 +15,7 @@ import {
 
 import { type ClipAnchor, END, sameAnchor } from '@/core/clip-anchor';
 import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
+import { waitForUndoHistory } from '@/core/undo-write-barrier';
 import {
   addSegment,
   addSegmentCover,
@@ -32,6 +33,7 @@ import {
   getRecorderPrefs,
   setSetting,
 } from '@/db/settings';
+import { hasRetainedUndo } from '@/features/editor/persistent-editor-history';
 import { useToast } from '@/features/toast/toast-provider';
 import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { describeError, formatBytes, formatSeconds } from '@/features/upload/core/upload-log';
@@ -275,7 +277,11 @@ export function useRecorder(
     if (id && segmentCount.current === 0 && safeToDelete && !screenCaptureRef.current?.holds(id)) {
       // The count can lag a clip that just landed (a screen recording's import): the db decides.
       void (async () => {
+        // An editor can have taken its last clip out for Redo. Let that checkpoint finish before
+        // deciding whether the draft is disposable; the saved rows needed by Redo count too.
+        await waitForUndoHistory();
         if ((await segmentsForDraft(id)).length > 0) return;
+        if (hasRetainedUndo(id)) return;
         dropClipJobs({ draftId: id });
         await deleteDraft(id);
       })();

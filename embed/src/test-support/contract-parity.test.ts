@@ -117,14 +117,17 @@ afterAll(() => {
 /** The upload server that never answers (`setup.server`), and every other request: they hang. */
 function hangingFetch(_url: unknown, init?: { signal?: AbortSignal | null }): Promise<never> {
   return new Promise((_resolve, reject) => {
-    init?.signal?.addEventListener('abort', () =>
-      reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
-    );
+    const aborted = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+    if (init?.signal?.aborted) aborted();
+    else init?.signal?.addEventListener('abort', aborted, { once: true });
   });
 }
 
 /** A fresh device: its folders, a fresh module registry, and Pulse JS booted on its library. */
-async function nodeSubject(setup: PulseContractSetup): Promise<PulseContractSubject> {
+async function nodeSubject(
+  setup: PulseContractSetup,
+  observe?: (bus: NativeBus) => void,
+): Promise<PulseContractSubject> {
   const home = join(ROOT, `device-${++device}`);
   const documents = join(home, 'Library/PulseKit/ns');
   let load!: () => Promise<Awaited<ReturnType<typeof import('./node-adapter').createNodePulse>>>;
@@ -144,6 +147,7 @@ async function nodeSubject(setup: PulseContractSetup): Promise<PulseContractSubj
       .requireActual<typeof import('@/utils/storage-root')>('@/utils/storage-root')
       .setStorageRoots({ documents, caches: join(home, 'Library/Caches/PulseKit/ns') });
     const bus = jest.requireMock<{ mockBus: NativeBus }>('expo-brownfield').mockBus;
+    observe?.(bus);
     const adapter = jest.requireActual<typeof import('./node-adapter')>('./node-adapter');
     load = () =>
       adapter.createNodePulse({
@@ -179,4 +183,56 @@ describe('the fake', () => {
 
 describe('the real Pulse JS (node adapter)', () => {
   runPulseContract(nodeSubject, { describe, it, expect });
+});
+
+describe('the Node facade shutdown', () => {
+  it('the hanging fetch stand-in rejects signals aborted before and after the request', async () => {
+    const already = new AbortController();
+    already.abort();
+    await expect(
+      hangingFetch('https://vault.test', { signal: already.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    const later = new AbortController();
+    const fetching = hangingFetch('https://vault.test', { signal: later.signal });
+    later.abort();
+    await expect(fetching).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('fails unanswered host calls while the bus is connected, then releases the idle runtime', async () => {
+    const events: string[] = [];
+    let stop = () => {};
+    const subject = await nodeSubject({ flows: [{ result: 'sent' }] }, (bus) => {
+      stop = bus.listen((message) => {
+        events.push(String(message.type));
+      });
+    });
+    let requested!: () => void;
+    const request = new Promise<void>((resolve) => {
+      requested = resolve;
+    });
+    subject.client.setHostServices({
+      getUploadTarget: () => {
+        requested();
+        return new Promise(() => {});
+      },
+      refreshUploadToken: () => new Promise(() => {}),
+    });
+    try {
+      await subject.client.configure({ uploadMode: 'pulse' });
+      const result = await subject.client.record({
+        key: 'shutdown:target',
+        kind: 'shutdown',
+        id: 'target',
+        label: 'Pending target',
+      });
+      expect(result.status).toBe('completed');
+      await request;
+      expect(events).not.toContain('pulse.released');
+      await subject.dispose?.();
+      expect(events.filter((type) => type === 'pulse.released')).toHaveLength(1);
+    } finally {
+      await subject.dispose?.();
+      stop();
+    }
+  });
 });

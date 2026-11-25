@@ -1,12 +1,22 @@
-import { getTableColumns, inArray, is, sql } from 'drizzle-orm';
+import { eq, getTableColumns, inArray, is, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import { getTableConfig, SQLiteTable } from 'drizzle-orm/sqlite-core';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import journal from '../../drizzle/meta/_journal.json';
+import {
+  historyClipIds,
+  historyOwnedClipIds,
+  assertHistoryOwnership,
+  parsePersistedHistory,
+  remapPersistedHistory,
+  requiredHistoryMediaPaths,
+  trimPersistedHistory,
+} from '@/db/persisted-history';
 import { exportRelPath } from '@/utils/media-paths';
-import { referencedMediaPaths } from './media-refs';
+import { liveSegmentMediaPaths, referencedMediaPaths } from './media-refs';
 import * as schema from './schema';
+import { checkpointForRows, historyCheckpoint, historyOwners } from './undo-history';
 
 // The `pulse-project` document (v2): every row of the chosen drafts — or of the whole library —
 // with every column, read from the Drizzle schema so a new column is carried without code here.
@@ -192,6 +202,16 @@ export function buildProject(
     if (draftIds && !DRAFT_TABLES.has(name)) continue;
     tables[name] = selectRows(conn, t, draftIds);
   }
+  const owners = historyOwners(conn);
+  for (const row of tables.drafts ?? []) {
+    const history = parsePersistedHistory(row.undoHistory as string | null, row.id as string);
+    if (history) assertHistoryOwnership(history, row.id as string, owners);
+    // A kill between a row write and the next undo checkpoint cannot transfer an older stack
+    // against newer live rows. The current draft remains recoverable without that stack.
+    if (history && history.checkpoint !== historyCheckpoint(conn, row.id as string)) {
+      row.undoHistory = null;
+    }
+  }
   const exports = new Set(draftIds?.map(exportRelPath));
   const media = [...referencedMediaPaths(conn, draftIds)]
     .filter((p) => !exports.has(p))
@@ -200,6 +220,7 @@ export function buildProject(
       const byteLength = opts.byteLength(path);
       return byteLength == null ? [] : [{ path, byteLength }];
     });
+  assertHistoryMedia(tables, new Map(media.map((m) => [m.path, m.byteLength])));
   return {
     format: PROJECT_FORMAT,
     version: PROJECT_VERSION,
@@ -222,6 +243,54 @@ const isPlainEntry = (entry: unknown, taken: Set<string>) =>
   !/[/\\]/.test(entry) &&
   !taken.has(entry);
 const DAMAGED_PROJECT = 'This .pulse file is damaged.';
+
+/** A project's canonical live and dormant rows establish ownership before any IDs are copied. */
+function projectHistoryOwners(tables: Record<string, Row[]>): Map<string, string> {
+  const owners = new Map<string, string>();
+  const claim = (id: string, draftId: string) => {
+    const current = owners.get(id);
+    owners.set(id, current !== undefined && current !== draftId ? '' : draftId);
+  };
+  for (const row of tables.segments ?? []) claim(row.id as string, row.draftId as string);
+  for (const row of tables.drafts ?? []) {
+    const draftId = row.id as string;
+    const history = parsePersistedHistory(row.undoHistory as string | null | undefined, draftId);
+    if (history) for (const id of historyOwnedClipIds(history)) claim(id, draftId);
+  }
+  return owners;
+}
+
+/** Redo rows without their videos must never be accepted as a recoverable history. */
+function assertHistoryMedia(
+  tables: Record<string, Row[]>,
+  carried: ReadonlyMap<string, number>,
+): void {
+  for (const row of tables.drafts ?? []) {
+    const history = parsePersistedHistory(
+      row.undoHistory as string | null | undefined,
+      row.id as string,
+    );
+    if (history && [...requiredHistoryMediaPaths(history)].some((path) => !carried.has(path))) {
+      throw new Error('Undo history media is missing.');
+    }
+    if (!history) continue;
+    const clips = (tables.segments ?? []).filter((clip) => clip.draftId === row.id);
+    const clipIds = new Set(clips.map((clip) => clip.id));
+    const live = liveSegmentMediaPaths(
+      clips,
+      (tables.clip_transcripts ?? [])
+        .filter((transcript) => clipIds.has(transcript.segmentId))
+        .map((transcript) => transcript.file as string),
+    );
+    const retained = trimPersistedHistory(history, (path) => carried.get(path) ?? null, live);
+    if (
+      retained.past.length !== history.past.length ||
+      retained.future.length !== history.future.length
+    ) {
+      throw new Error('Undo history exceeds its retention limit.');
+    }
+  }
+}
 
 /** A parsed document checked against this build's schema: no table or column it doesn't know. */
 export function checkProject(value: unknown): ProjectDocument {
@@ -261,12 +330,36 @@ export function checkProject(value: unknown): ProjectDocument {
   ) {
     throw new Error(DAMAGED_PROJECT);
   }
+  try {
+    const owners = projectHistoryOwners(t);
+    for (const row of t.drafts ?? []) {
+      const history = parsePersistedHistory(
+        row.undoHistory as string | null | undefined,
+        row.id as string,
+      );
+      if (history) assertHistoryOwnership(history, row.id as string, owners);
+      if (
+        history &&
+        history.checkpoint !==
+          checkpointForRows(
+            row.captionY,
+            (t.segments ?? []).filter((clip) => clip.draftId === row.id),
+          )
+      )
+        throw new Error(DAMAGED_PROJECT);
+    }
+    assertHistoryMedia(t, new Map(doc.media.map((m) => [m.path, m.byteLength])));
+  } catch {
+    throw new Error(DAMAGED_PROJECT);
+  }
   const entries = new Set<string>([PROJECT_NAME]);
   for (const m of doc.media) {
     if (
       typeof m.path !== 'string' ||
       m.path.startsWith('/') ||
       m.path.split('/').includes('..') ||
+      !Number.isSafeInteger(m.byteLength) ||
+      m.byteLength < 0 ||
       (m.md5 !== undefined && !/^[0-9a-f]{32}$/.test(m.md5)) ||
       (m.entry !== undefined && !isPlainEntry(m.entry, entries))
     ) {
@@ -388,16 +481,47 @@ export type CopyPlan = {
 export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan {
   const t = doc.tables;
   const draftIds = new Map((t.drafts ?? []).map((r) => [r.id as string, freshId()]));
-  const segIds = new Map((t.segments ?? []).map((r) => [r.id as string, freshId()]));
+  // Snapshot-only IDs (e.g. a deleted clip) and dormant redo rows also belong to this copy.
+  // Maps are per draft: even a historical reference to another draft's old ID cannot link the
+  // imported history to that draft, or to another draft imported in the same file.
+  const segIds = new Map<string, Map<string, string>>(
+    [...draftIds.keys()].map((id) => [id, new Map()]),
+  );
+  const clipId = (draft: string, id: string) => {
+    const ids = segIds.get(draft)!;
+    if (!ids.has(id)) ids.set(id, freshId());
+    return ids.get(id)!;
+  };
+  for (const row of t.segments ?? []) clipId(row.draftId as string, row.id as string);
+  const histories = new Map(
+    (t.drafts ?? []).map((r) => [
+      r.id as string,
+      parsePersistedHistory(r.undoHistory as string | null | undefined, r.id as string),
+    ]),
+  );
+  for (const [draft, history] of histories) {
+    if (history) for (const id of historyClipIds(history)) clipId(draft, id);
+  }
   const draftOfSeg = new Map((t.segments ?? []).map((r) => [r.id as string, r.draftId as string]));
-  const paths = new Map<string, string>(); // old → new
+  const paths = new Map<string, Map<string, string>>(
+    [...draftIds.keys()].map((id) => [id, new Map()]),
+  ); // owning draft → old path → new path
   const files = new Map<string, string>(); // new → old
+  const reserved = new Map<string, string>(); // destination → source, including optional files
+  let collision = 0;
   const carried = new Set(doc.media.map((m) => m.path));
   const remap = (old: string, oldDraft: string) => {
+    const mapped = paths.get(oldDraft)!;
+    if (mapped.has(old)) return mapped.get(old)!;
     const name = old.slice(old.lastIndexOf('/') + 1);
     const stem = name.split('.')[0];
-    const next = `drafts/${draftIds.get(oldDraft)}/segments/${segIds.get(stem) ?? stem}${name.slice(stem.length)}`;
-    paths.set(old, next);
+    const folder = `drafts/${draftIds.get(oldDraft)}/segments`;
+    let next = `${folder}/${segIds.get(oldDraft)!.get(stem) ?? stem}${name.slice(stem.length)}`;
+    while (reserved.has(next) && reserved.get(next) !== old) {
+      next = `${folder}/retained-${++collision}-${name}`;
+    }
+    reserved.set(next, old);
+    mapped.set(old, next);
     if (carried.has(old)) files.set(next, old);
     return next;
   };
@@ -416,7 +540,7 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
     const p = (v: unknown) => (typeof v === 'string' ? remap(v, draft) : v);
     return {
       ...r,
-      id: segIds.get(r.id as string),
+      id: clipId(draft, r.id as string),
       draftId: draftIds.get(draft),
       originalFilename: p(r.originalFilename),
       editedFilename: p(r.editedFilename),
@@ -427,23 +551,40 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
   // Derived files (pristine and baked-edit thumbs) that the document carried.
   for (const m of doc.media) {
     const draft = m.path.split('/')[1];
-    if (!paths.has(m.path) && draftIds.has(draft)) remap(m.path, draft);
+    if (draftIds.has(draft) && !paths.get(draft)!.has(m.path)) remap(m.path, draft);
   }
   const clips = (t.clip_transcripts ?? []).map((r) => {
     const draft = draftOfSeg.get(r.segmentId as string)!;
     return {
       ...r,
-      segmentId: segIds.get(r.segmentId as string),
+      segmentId: clipId(draft, r.segmentId as string),
       file: remap(r.file as string, draft),
     };
   });
-  // A signature joins the clips' file paths: rewrite each known path, longest first, in one pass.
-  const known = [...paths.keys()].sort((a, b) => b.length - a.length);
-  const pattern = known.length
-    ? new RegExp(known.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
-    : null;
-  const resign = (s: unknown) =>
-    typeof s === 'string' && pattern ? s.replace(pattern, (m) => paths.get(m)!) : s;
+  const copiedHistory = new Map(
+    [...histories].map(([draft, history]) => [
+      draft,
+      history
+        ? JSON.stringify(
+            remapPersistedHistory(history, {
+              draftId: draftIds.get(draft)!,
+              mapId: (id) => clipId(draft, id),
+              mapPath: (path) => remap(path, draft),
+            }),
+          )
+        : null,
+    ]),
+  );
+  // A signature joins file paths. Each owning draft gets its own mapping when drafts share a
+  // source file; the copy's transcript must never retain a path into a sibling or source draft.
+  const resign = (s: unknown, draft: string) => {
+    const mapped = paths.get(draft)!;
+    const known = [...mapped.keys()].sort((a, b) => b.length - a.length);
+    const pattern = known.length
+      ? new RegExp(known.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
+      : null;
+    return typeof s === 'string' && pattern ? s.replace(pattern, (m) => mapped.get(m)!) : s;
+  };
   return {
     draftIds: [...draftIds.values()],
     files,
@@ -451,6 +592,7 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
       drafts: (t.drafts ?? []).map((r) => ({
         ...r,
         id: draftIds.get(r.id as string),
+        undoHistory: copiedHistory.get(r.id as string),
         uploadServer: null,
         uploadArtifactId: null,
         uploadStatus: null,
@@ -470,7 +612,7 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
       draft_transcripts: (t.draft_transcripts ?? []).map((r) => ({
         ...r,
         draftId: draftIds.get(r.draftId as string),
-        signature: resign(r.signature),
+        signature: resign(r.signature, r.draftId as string),
       })),
       clip_transcripts: clips,
     },
@@ -479,5 +621,24 @@ export function planCopy(doc: ProjectDocument, freshId: () => string): CopyPlan 
 
 /** Commit a copy's rows in one transaction, once its files are in place. */
 export function commitCopy(conn: SQLiteDatabase, plan: CopyPlan): void {
-  drizzle(conn).transaction((tx) => insertAll(tx, plan.rows));
+  drizzle(conn).transaction((tx) => {
+    insertAll(tx, plan.rows);
+    // Copying changes IDs and paths, so the source checkpoint cannot describe the new rows.
+    // Stamp it in the same transaction as the rows, after all children have been inserted.
+    for (const row of plan.rows.drafts ?? []) {
+      const id = row.id as string;
+      const history = parsePersistedHistory(row.undoHistory as string | null | undefined, id);
+      if (!history) continue;
+      const saved = JSON.stringify({ ...history, checkpoint: historyCheckpoint(conn, id) });
+      // Longer copied IDs/paths can enlarge an otherwise valid source envelope. Refuse the
+      // whole copy transaction rather than importing history that cannot hydrate on reopening.
+      parsePersistedHistory(saved, id);
+      tx.update(schema.drafts)
+        .set({
+          undoHistory: saved,
+        })
+        .where(eq(schema.drafts.id, id))
+        .run();
+    }
+  });
 }

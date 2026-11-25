@@ -29,10 +29,14 @@ const mockDrafts = new Map<string, DraftRead>();
 let mockLibrary: typeof import('./library') | null = null;
 let mockOnScreen: { place: null; draftId: string | null } | null = null;
 let mockFinalize: () => Promise<void> = async () => {};
+let mockUndoCheckpoint: () => Promise<void> = async () => {};
 const mockSave =
   jest.fn<(opts: { requestId: string; exportPath: string }) => Promise<Record<string, FileRef>>>();
 
 jest.mock('@/features/editor/draft-writes', () => ({ flushDraftWrites: async () => {} }));
+jest.mock('@/core/undo-write-barrier', () => ({
+  waitForUndoHistory: () => mockUndoCheckpoint(),
+}));
 jest.mock('@/features/recorder/recorder-presence', () => ({
   finalizeRecorders: () => mockFinalize(),
   recorderOnScreen: () => mockOnScreen,
@@ -57,6 +61,7 @@ jest.mock(
 );
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 jest.mock('@/utils/video', () => ({}));
+jest.mock('@/features/transcription/clip-queue', () => ({ dropClipJobs: () => {} }));
 jest.mock('@/db/secure-token', () => ({ deleteSavedLink: async () => {} }));
 jest.mock('expo-crypto', () => ({
   randomUUID: () => jest.requireActual<typeof import('node:crypto')>('node:crypto').randomUUID(),
@@ -101,6 +106,7 @@ beforeEach(() => {
   mockDrafts.clear();
   mockOnScreen = null;
   mockFinalize = async () => {};
+  mockUndoCheckpoint = async () => {};
   mockSave.mockReset();
 });
 afterEach(() => {
@@ -137,6 +143,32 @@ describe('a failure', () => {
 });
 
 describe("the host's close", () => {
+  it('waits for an addition Undo checkpoint before observing the final draft and ending', async () => {
+    const { store, controller } = flow();
+    mockDrafts.set('d1', draft('d1', 2));
+    mockOnScreen = { place: null, draftId: 'd1' };
+    controller.observe();
+    let finishUndo!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finishUndo = resolve;
+    });
+    mockUndoCheckpoint = async () => {
+      await pending;
+      mockDrafts.set('d1', { ...draft('d1', 0), retainedUndo: true });
+    };
+    const closing = controller.hostClose(false);
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    expect(store.state().end).toBeNull();
+    expect(store.state().clipCount).toBe(2);
+
+    finishUndo();
+    await closing;
+    expect(store.state().clipCount).toBe(0);
+    expect(store.state().retainedUndo).toBe(true);
+    expect(store.state().end).toMatchObject({ status: 'closed', draftId: 'd1' });
+    expect(store.state().deleteDraft).toBeNull();
+  });
+
   it('saves the take first; with discard the new draft goes', async () => {
     const { store, controller } = flow();
     const land = takeInFlight('d1');
@@ -227,6 +259,7 @@ describe('Use this video', () => {
     );
     const first = controller.useVideo(video);
     const second = controller.useVideo(video);
+    for (let turn = 0; turn < 4; turn++) await Promise.resolve();
     copied();
     await Promise.all([first, second]);
     expect(mockSave).toHaveBeenCalledTimes(1);
@@ -237,6 +270,25 @@ describe('Use this video', () => {
       durationMs: 4000,
       export: { rel: 'results/r1.mp4' },
     });
+  });
+
+  it('waits for the Undo checkpoint before building the file-mode project', async () => {
+    const { store, controller } = onExport();
+    let checkpointed!: () => void;
+    mockUndoCheckpoint = () =>
+      new Promise<void>((resolve) => {
+        checkpointed = resolve;
+      });
+    mockSave.mockResolvedValue({ export: ref('results/r1.mp4'), project: ref('results/r1.pj') });
+    const using = controller.useVideo(video);
+    for (let turn = 0; turn < 4; turn++) await Promise.resolve();
+    expect(mockSave).not.toHaveBeenCalled();
+    expect(store.state().end).toBeNull();
+
+    checkpointed();
+    await using;
+    expect(mockSave).toHaveBeenCalledTimes(1);
+    expect(store.state().end).toMatchObject({ status: 'completed', mode: 'file' });
   });
 
   it('ends failed{export.failed} with the draft when the copy fails', async () => {

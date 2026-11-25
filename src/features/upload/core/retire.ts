@@ -1,7 +1,7 @@
 import { count, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { draftDisplayName } from '@/db/drafts';
+import { deleteDraftMedia, draftDisplayName } from '@/db/drafts';
 import { LibraryError } from '@/db/host-context';
 import {
   deleteExpiredReceipts,
@@ -19,7 +19,6 @@ import {
   type Tx,
   type UploadJob,
 } from '@/db/upload-jobs';
-import { deleteDraftDir } from '@/utils/file-store';
 
 import { nextJobState } from './outbox';
 import { describeError, shortId, uploadLog } from './upload-log';
@@ -67,7 +66,7 @@ function draftForReceipt(tx: Tx, draftId: string) {
 /** Steps 2–3 for one draft: delete its folder, then record that it's gone. */
 function deleteMedia(draftId: string, now: number): boolean {
   try {
-    deleteDraftDir(draftId);
+    if (!deleteDraftMedia(draftId)) return false;
   } catch (e) {
     uploadLog.warn(
       `retire: draft ${shortId(draftId)}'s folder not deleted yet: ${describeError(e)}`,

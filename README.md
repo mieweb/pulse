@@ -86,7 +86,7 @@ flowchart TB
 - To split without adding media, move the playhead inside a clip and tap **Split** on the main toolbar; opening Edit or selecting a clip is unnecessary. Split is also available in the clip toolbar. It works in Clips and Timeline views, preserves the clip's edits and captions, and supports one-step Undo/Redo. Split is disabled at clip boundaries and the end.
 - An image batch registers one history step when its first clip commits and extends it as later images arrive. Edits remain available; Undo/Redo waits until the batch finishes or is canceled. A canceled partial batch keeps its committed clips in that step.
 - Undoing an addition can remove the last remaining clips. The editor stays open for Redo, which restores those clips with their edits; export stays disabled while the draft is empty.
-- Undo/Redo history lasts for the editor session. Current edits travel in `.pulse` files; persisting the history is tracked separately in [#325](https://github.com/mieweb/pulse/issues/325). See [persistence](docs/persistence.md#editor-operations-and-session-history).
+- Undo/Redo survives reopening and app restarts, and travels with its retained media in `.pulse` files, including an empty draft with clips available for Redo. History has bounded step, media and JSON retention; see [persistence](docs/persistence.md#editor-operations-and-undo) for limits and interruption recovery.
 - Smart merge on export: clips with matching formats are concatenated losslessly (passthrough); mixed resolution/fps/codec/orientation drafts conform only the outlier clips, with a full re-encode fallback
 - Save to Photos or Files, share anywhere, or upload — with a live progress ring
 

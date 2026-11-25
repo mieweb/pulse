@@ -225,7 +225,10 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
   /** When each delivering draft is polled next, and how many polls it has had. */
   const polls = new Map<string, { at: number; n: number }>();
   /** The pass under way for each draft, and how to stop it. */
-  const running = new Map<string, { clientKey: string; abort: AbortController }>();
+  const running = new Map<
+    string,
+    { clientKey: string; abort: AbortController; settled: Promise<void> }
+  >();
   const progressListeners = new Set<(p: UploadProgress) => void>();
   const lastProgress = new Map<string, number>();
 
@@ -684,7 +687,11 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
     let job = getUploadJob(draftId);
     if (!job) return;
     const abort = new AbortController();
-    running.set(draftId, { clientKey: job.clientKey, abort });
+    let completed!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      completed = resolve;
+    });
+    running.set(draftId, { clientKey: job.clientKey, abort, settled });
     try {
       // Each state at most once per pass: queued → uploading → delivering.
       for (let step = 0; step < 3 && job && accountActive && !abort.signal.aborted; step++) {
@@ -713,6 +720,7 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
       if (!isAbort(e)) log.warn(`job ${shortId(draftId)}: pass stopped: ${describeError(e)}`);
     } finally {
       running.delete(draftId);
+      completed();
     }
   }
 
@@ -782,7 +790,14 @@ export function createJobRunner(overrides: Partial<RunnerDeps> = {}): JobRunner 
   }
 
   async function idle(): Promise<void> {
-    while (draining) await draining;
+    // recheck can call runJob directly, outside drain. Pausing aborts its upload but cannot
+    // cancel a host reply, so its final database writes must settle before namespace release.
+    while (draining || running.size) {
+      await Promise.all([
+        ...(draining ? [draining] : []),
+        ...[...running.values()].map((pass) => pass.settled),
+      ]);
+    }
   }
 
   function stopRunning(): void {

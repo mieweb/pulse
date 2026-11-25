@@ -415,6 +415,7 @@ describe('standalone split at playhead', () => {
     const t = await setup(true);
     const receipt = await splitSegment(t.d, t.anchor());
     expect(has(t.video)).toBe(true); // The unsplit original is held for Undo.
+    conn.runSync('UPDATE drafts SET undo_history = NULL WHERE id = ?', t.d);
     await dropTakenOut(receipt.before);
     expect(has(t.video)).toBe(false);
     expect(has(t.baked)).toBe(true); // Both applied halves still use the baked source.

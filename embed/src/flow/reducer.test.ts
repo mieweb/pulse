@@ -489,6 +489,89 @@ describe('completion', () => {
   });
 });
 
+describe('an empty draft retained for Redo', () => {
+  const emptied = () =>
+    run(
+      recorded(),
+      { type: 'edit' },
+      { type: 'edited', clipCount: 0 },
+      { type: 'undoRetention', retainedUndo: true },
+    );
+
+  it('keeps the draft and returns its ID after a user close or host close', () => {
+    const sheet = run(emptied(), { type: 'close' });
+    expect(sheet).toMatchObject({ sheet: 'exit', end: null, deleteDraft: null });
+    const kept = run(sheet, { type: 'keep' });
+    expect(kept.end).toEqual({ status: 'closed', reason: 'user', draftId: 'd1' });
+    expect(kept).toMatchObject({ deleteDraft: null, stage: 'none' });
+    const hostClosed = run(emptied(), { type: 'hostClose' });
+    expect(hostClosed.end).toEqual({ status: 'closed', reason: 'host', draftId: 'd1' });
+    expect(hostClosed.deleteDraft).toBeNull();
+  });
+
+  it('keeps the draft and names it in a failure result', () => {
+    const failed = run(emptied(), { type: 'error', error: failure });
+    expect(failed.end).toEqual({ status: 'failed', error: failure, draftId: 'd1' });
+    expect(failed.deleteDraft).toBeNull();
+  });
+
+  it('still deletes a new draft when the person or host explicitly discards it', () => {
+    const discarded = run(emptied(), { type: 'close' }, { type: 'discard' });
+    expect(discarded.end).toEqual({ status: 'canceled', reason: 'user' });
+    expect(discarded.deleteDraft).toBe('d1');
+    const hostDiscarded = run(emptied(), { type: 'hostClose', discard: true });
+    expect(hostDiscarded.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(hostDiscarded.deleteDraft).toBe('d1');
+  });
+
+  it('permits record-continue to reopen the editor for Redo, while video export still needs clips', () => {
+    const continued = initFlow(
+      'r1',
+      { ...recordNew, draft: { continue: 'd1' } },
+      { context, clipCount: 0, retainedUndo: true },
+    );
+    expect(continued.retainedUndo).toBe(true);
+    const editor = run(continued, { type: 'edit' });
+    expect(editor.stack).toEqual(['recorder', 'editor']);
+    expect(flowReducer(editor, { type: 'export' })).toBe(editor);
+    expect(flowReducer(editor, { type: 'merged' })).toBe(editor);
+    const opened = initFlow(
+      'r1',
+      { entry: 'edit', draftId: 'd1' },
+      { context, clipCount: 0, retainedUndo: true },
+    );
+    expect(opened.retainedUndo).toBe(true);
+  });
+
+  it('allows automatic cleanup after retention clears without another clip-count change', () => {
+    const cleared = run(emptied(), { type: 'undoRetention', retainedUndo: false });
+    expect(cleared.clipCount).toBe(0);
+    const closed = run(cleared, { type: 'hostClose' });
+    expect(closed.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(closed.deleteDraft).toBe('d1');
+  });
+
+  it('refreshes retention while a take, Send, or exit sheet is waiting', () => {
+    const taking = run(emptied(), { type: 'addClips' }, { type: 'record' });
+    const waiting = run(
+      taking,
+      { type: 'hostClose' },
+      { type: 'undoRetention', retainedUndo: true },
+    );
+    const stopped = run(waiting, { type: 'stop' });
+    expect(stopped.end).toEqual({ status: 'closed', reason: 'host', draftId: 'd1' });
+    const onExport = run(recorded(), { type: 'edit' }, { type: 'export' }, { type: 'sendStarted' });
+    expect(run(onExport, { type: 'undoRetention', retainedUndo: true }).retainedUndo).toBe(true);
+    const sheet = run(emptied(), { type: 'close' });
+    const expired = run(
+      sheet,
+      { type: 'undoRetention', retainedUndo: false },
+      { type: 'hostClose' },
+    );
+    expect(expired.deleteDraft).toBe('d1');
+  });
+});
+
 describe('host close', () => {
   it('without discard keeps the take: closed{host}, even over the sheet', () => {
     expect(run(recorded(), { type: 'hostClose' }).end).toEqual({

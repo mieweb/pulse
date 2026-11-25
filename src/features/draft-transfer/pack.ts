@@ -1,6 +1,7 @@
 import { Directory, File } from 'expo-file-system';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { waitForUndoHistory } from '@/core/undo-write-barrier';
 import { buildProject, PROJECT_NAME } from '@/db/project';
 import { absolutize } from '@/utils/file-store';
 import { zipFlat } from './native-zip';
@@ -35,6 +36,7 @@ export async function exportDrafts(
   now: number,
 ): Promise<string> {
   if (draftIds.length === 0) throw new Error('No drafts selected.');
+  await waitForUndoHistory();
   const doc = buildProject(conn, { draftIds, now, byteLength });
   const drafts = doc.tables.drafts;
   if (drafts.length === 0) throw new Error('The selected drafts are gone.');

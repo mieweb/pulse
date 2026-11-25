@@ -1,13 +1,10 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import { dropTakenOut, restoreSegments, takeOutSegments } from '@/db/drafts';
+import { editorUndoSession } from '@/features/editor/persistent-editor-history';
 import { useToast } from '@/features/toast/toast-provider';
-import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { userMessage } from '@/utils/user-message';
 
-import { flushDraftWrites } from './draft-writes';
 import type { Present, SnapshotDiff } from './editor-history';
-import { createEditorHistory } from './editor-history-store';
 import type { EditorClip, EditValue } from './use-editor-draft';
 
 /**
@@ -18,10 +15,12 @@ import type { EditorClip, EditValue } from './use-editor-draft';
  * dropped and the next one tried.
  *
  * Undoing an addition takes its clips out of the draft but keeps their files, so a redo puts them
- * back as they were (labels, edits, captions, transcripts). Their files go once no redo can: the
- * redo stack cleared by a new change, or the editor closing. History lives for the session.
+ * back as they were (labels, edits, captions, transcripts). A versioned checkpoint retains both
+ * stacks across closing and restart; files are reclaimed after durable invalidation or eviction.
  */
 export function useEditorHistory(
+  draftId: string,
+  ready: boolean,
   clips: EditorClip[],
   setValue: (id: string, value: EditValue) => void,
   reorder: (ids: string[]) => void,
@@ -31,35 +30,26 @@ export function useEditorHistory(
   setCaptionY: (y: number | null) => void,
 ) {
   const { showToast } = useToast();
-  const [store] = useState(() =>
-    createEditorHistory({
-      flush: flushDraftWrites,
-      takeOut: async (ids, splits) => {
-        const taken = await takeOutSegments(ids, splits);
-        // Out of the draft: their transcriptions stop, as a deleted clip's do. A take-out that
-        // failed leaves them running.
-        if (taken) {
-          const restored = new Set((splits ?? []).flatMap((s) => s.before.rows.map((r) => r.id)));
-          dropClipJobs({
-            segmentIds: taken.rows.filter((r) => !restored.has(r.id)).map((r) => r.id),
-          });
-        }
-        return taken;
-      },
-      restore: restoreSegments,
-      drop: dropTakenOut,
-      failed: (direction, e) =>
-        showToast({
-          kind: 'error',
-          title: direction === 'undo' ? 'Couldn’t undo' : 'Couldn’t redo',
-          message: userMessage(e, 'Try again.', `${direction} added clips`),
-        }),
-    }),
-  );
+  const [session] = useState(() => editorUndoSession(draftId));
+  const store = session.store;
   useEffect(() => {
-    store.open();
-    return () => store.dispose();
-  }, [store]);
+    return session.open((direction, e) =>
+      showToast({
+        kind: 'error',
+        title:
+          direction === 'undo'
+            ? 'Couldn’t undo'
+            : direction === 'redo'
+              ? 'Couldn’t redo'
+              : 'Couldn’t save Undo',
+        message: userMessage(e, 'Try again.', `${direction} undo history`),
+      }),
+    );
+  }, [session, showToast]);
+  // Deletion has no Undo step, but changes the state the existing stacks are saved against.
+  useEffect(() => {
+    session.changed();
+  }, [session, clips, captions, captionY]);
   const history = useSyncExternalStore(store.subscribe, store.getState);
 
   const present = (): Present => ({ clips, captions, captionY });
@@ -72,17 +62,23 @@ export function useEditorHistory(
 
   return {
     /** Call before an edit. `opKey` (e.g. `speed:<id>`) merges quick repeats into one step. */
-    record: (opKey: string | null) => store.record(present(), opKey),
+    record: (opKey: string | null) => {
+      if (ready) store.record(present(), opKey);
+    },
     /** Added clips and/or a standalone split committed: one step reverses the whole operation. */
     recordAdded: store.recordAdded,
     beginBatch: store.beginBatch,
     endBatch: store.endBatch,
     /** Ends a merge window (a drag let go). */
     close: store.close,
-    undo: () => store.undo(present(), apply),
-    redo: () => store.redo(present(), apply),
-    canUndo: history.past.length > 0 && !history.batchOpen && !history.busy,
-    canRedo: history.future.length > 0 && !history.batchOpen && !history.busy,
+    undo: () => {
+      if (ready) store.undo(present(), apply);
+    },
+    redo: () => {
+      if (ready) store.redo(present(), apply);
+    },
+    canUndo: ready && history.past.length > 0 && !history.batchOpen && !history.busy,
+    canRedo: ready && history.future.length > 0 && !history.batchOpen && !history.busy,
     busy: history.busy,
     /** An addition is moving through the database or its clips are retained for redo. */
     keepEmptyOpen: history.keepEmptyOpen,
