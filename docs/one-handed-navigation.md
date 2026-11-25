@@ -13,10 +13,12 @@ The first PR is one cohesive change with guidance, implementation and verificati
 
 1. Establish the repository and PR review rule before changing UI.
 2. Move recorder Close/Export, editor Close/Undo/Redo/Export, export Close and app-owned permission
-   actions into lower control areas. Move app-owned screen-recording Stop lower. Expose recorder
-   camera tools in an expandable inline lower row that leaves Record available. Preserve the
-   existing callbacks and operation guards; the shared Export button has at least a 44-point
-   target. This PR does not introduce a shared footer architecture or redesign destination logic.
+   actions into lower control areas. Editor commands and contextual tools share one toolbar;
+   caption typing replaces it with Cancel, text entry and Done. Move app-owned screen-recording
+   Stop lower. Expose recorder camera tools in an expandable inline lower row that leaves Record
+   available. Preserve the existing callbacks and operation guards; Export has at least a
+   44-point target, including the editor's compact icon. This PR does not introduce a shared
+   footer architecture or redesign destination logic.
 3. Open an existing library draft in the editor; New recording opens the camera. Recording more
    from the editor remains part of the same draft. Preserve explicit host/deep-link recording
    requests instead of treating every existing identifier as a library-open request.
@@ -115,14 +117,67 @@ remaining gaps. Source inspection and unit tests cannot establish physical thumb
 | Exceptions and overlap                          | Separate OS-owned dialogs/native chrome from app-owned controls. Record rationale, reachable fallback and linked follow-up for app exceptions.                                     | #104 export/keyboard/long-destination/toast combinations and all deferred sheets.                     |
 | Rule carried forward                            | AGENTS rule and PR template apply before UI implementation; every future PR declares applicability or N/A.                                                                         | Review evidence stays with each future UI change.                                                     |
 
-## First test build: observed validation
+## Compact editor toolbar revision
 
-The test build uses application source at `dce8303` on
+Feedback on the initial `dce8303` build identified wasted vertical space: contextual tools and
+global commands occupied separate bottom rows. The revised editor combines them in one
+60-point toolbar, with the safe-area inset applied once:
+
+**Close · contextual tools · Undo · Redo · Export**
+
+This replaces the initial 76-point tools area plus 52-point commands area, recovering 68 points
+for the preview and timeline. Contextual tools scroll horizontally in their available space;
+the four global commands retain fixed places and at least 44-point targets. Export uses a compact
+icon with the same accessibility label. Caption typing replaces the entire toolbar with
+Cancel/text/Done above the keyboard. History and navigation callbacks, recorder controls and the
+export screen's behavior are unchanged by this revision.
+
+**Remaining horizontal-tool exception:** tools that do not fit require a horizontal swipe in the
+lower contextual region. This preserves media space and touch-target size without adding another
+row, but there is no visible tap-only alternative for revealing offscreen tools yet. That remains
+an exception for review under #310, alongside precision gesture alternatives; a lower menu or
+step controls are possible follow-ups. Verify access to every tool, including Done, at narrow
+widths, supported text sizes and in RTL, without a scroll activating an adjacent command.
+
+### Revision validation (`3c52200`)
+
+All seven source checks passed again: root/embed/client TypeScript, full lint, protocol generation,
+the embed bundle/dependency check, and Jest (147 suites / 2,100 tests passed; the same opt-in
+integration suite's eight tests skipped locally).
+
+Native iOS 26 accessibility checks measured the same 68-point gain on both phone layouts:
+
+- **375 × 667:** preview height increased from 333 to 401 points. Close, Undo, Redo and Export
+  share `y = 615`, each an actual 44 × 44 target. Rotate → Undo → Redo → Undo and two-clip native
+  export completed through the integrated controls.
+- **440 × 956:** preview height increased from 546 to 614 points. The same commands remain at
+  `y = 870` in Main, Clip, Captions and Speed modes, including maximum accessibility text. A
+  native swipe on the contextual toolbar exposed later tools; a speed change and Undo passed.
+- Caption entry still replaces the whole toolbar in source, but its native keyboard state
+  remains unverified: selecting the rendered caption word has no native accessibility node.
+  Track native caption selection and its keyboard retest under #310. No coordinate fallback
+  was used. The existing transport time display also overflows at maximum text; this remains
+  a separate open layout finding, while the integrated toolbar fits.
+
+The signed Release from application commit `3c52200` was installed in place and launched on the
+requested iPhone, its process verified, and the global device lease returned `released` before
+handoff. No physical test/capture runner or debugger was started. Build metadata's dirty flag
+reflects concurrent documentation edits; application source hashes stayed unchanged through
+both builds. Physical grip/Record/Stop and the broader acceptance work remain user/device checks.
+
+| Initial stacked toolbar                                                                    | Compact toolbar                                                                 |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| ![Initial separate tool and command rows](images/one-handed-navigation/editor-stacked.png) | ![Commands and tools in one row](images/one-handed-navigation/editor-after.png) |
+
+## Initial test build (`dce8303`): observed validation
+
+The initial test build uses application source at `dce8303` on
 [PR #327](https://github.com/mieweb/pulse/pull/327). The signed Release build was installed in
 place on the requested iPhone, launched without a debugger, and its running process verified.
 No drafts were removed and no physical test/capture runner was started. The shared device guard
 returned `released` before handoff. This establishes installation and launch, not physical
-left/right thumb reach or camera recording correctness.
+left/right thumb reach or camera recording correctness. The coordinates and results in this
+section describe that initial stacked-row layout, not the compact toolbar revision above.
 
 Source checks passed: root, embed and embed-client TypeScript; full lint; protocol generation;
 and the embed dependency/bundle check. Jest passed 147 suites and 2,100 tests, with the opt-in
@@ -148,12 +203,14 @@ Native accessibility checks used task-owned iOS 26 simulators and artificial loc
   after this check. The large system share sheet also opened and dismissed through its named
   system dismissal region; its lack of a Close/Cancel button remains an OS-owned limitation.
 
-Before is the cached previous #318 simulator build; after is this PR's application source. Both
-captures use the same synthetic two-clip draft on the small phone.
+Before is the cached previous #318 simulator build; after is the initial `dce8303` build with
+separate lower tool and command rows. Both captures use the same synthetic two-clip draft on the
+small phone. These captures are retained as initial-build evidence, separately from the compact
+toolbar above.
 
-| Before                                                                        | After                                                                           |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| ![Editor commands at the top](images/one-handed-navigation/editor-before.png) | ![Editor commands at the bottom](images/one-handed-navigation/editor-after.png) |
+| Before                                                                        | After                                                                              |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| ![Editor commands at the top](images/one-handed-navigation/editor-before.png) | ![Initial stacked lower commands](images/one-handed-navigation/editor-stacked.png) |
 
 [Expanded lower recorder tools](images/one-handed-navigation/recorder-tools.png) are captured
 separately. Android, physical grip/Record/Stop, live screen-recording combinations, caption
