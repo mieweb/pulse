@@ -1,0 +1,103 @@
+{
+  "platform": "iOS Simulator 26.0, iPhone 17 Pro",
+  "simulatorUdid": "4B78B036-6293-4390-B8FC-BE59D2C051F8",
+  "metadata": {
+    "sourceHead": "bc2437fff5d712b29c99d59910e34ebdb699f077",
+    "sourceDirty": true,
+    "nativeShell": "Actual native candidate Release build 305239a6, previously smoke-tested",
+    "nativeExecutableSha256": "40032741b1b5b8813ab858d5e08914a92ea19a658f1652661ad8e36d605e8b32",
+    "sourceFileSha256": {
+      "voiceover-controls.tsx": "4d3b7b5c9f6efec7510c621da333632897fa74315f32bb97cc940c0e32f1f54e",
+      "voiceover-controls.test.ts": "9a27324ce9dca66383b6330067d00399c304b81b290229d3616200fa93e96dfa",
+      "voiceover-session.ts": "9437aad0c1d60dd1a4d04eb194024788ccd8588b6af42d64ae3d313609a01cea"
+    },
+    "hermesSha256": "d935f2f3c02c9523f820bcf5f2395df8f92fdb08b1d30a354bddd1229883edec",
+    "configSha256": "a16eedacad85c7a50b8c479ad91473eea1d061408526bb9aeae1a92ad716a989",
+    "nativeOwnershipFollowup": "Parent/native agent reviewing a separate completed-CAF lifetime edge; this controls-only check uses the previously verified 305239a6 shell.",
+    "sourceContentCommit": "b39ff5573dc1c5c7af8e8d29ace3d0779bbc3383",
+    "nativeOriginalExecutableSha256": "40032741b1b5b8813ab858d5e08914a92ea19a658f1652661ad8e36d605e8b32",
+    "nativeInstalledExecutableSha256": "71a79220c7edf55d8c5a70082e0c532d39c6f77e320b844b851035b0ebad7b0d",
+    "installedHermesMatchesBuiltBundle": true
+  },
+  "checks": {
+    "standardStartStop": {
+      "pass": true,
+      "startControl": {
+        "type": "XCUIElementTypeButton",
+        "name": "voiceover.toggle",
+        "label": "Start recording voiceover",
+        "enabled": "true",
+        "visible": "true",
+        "accessible": "true",
+        "x": "306",
+        "y": "772",
+        "width": "80",
+        "height": "45"
+      },
+      "stopControl": {
+        "type": "XCUIElementTypeButton",
+        "name": "voiceover.toggle",
+        "label": "Stop recording voiceover",
+        "enabled": "true",
+        "visible": "true",
+        "accessible": "true",
+        "x": "306",
+        "y": "772",
+        "width": "80",
+        "height": "45"
+      },
+      "recordedDurationMs": 1588.4375,
+      "countAfterStop": 5,
+      "countAfterUndo": 4,
+      "undoDisplayedMs": 600.0,
+      "expectedUndoMs": 621.204458,
+      "readoutResolutionMs": 100,
+      "doneUndoMuteDisabledDuringCapture": true,
+      "nativeSavingDisabledStateObserved": true,
+      "savingGuardUnitTested": true
+    },
+    "holdShortcut": {
+      "pass": true,
+      "nativeInput": "touchAndHold on native panel found as the semantic Start/Stop button ancestor; its center is inside the hold shortcut. No absolute coordinate event injected.",
+      "panelFrame": {
+        "y": 698,
+        "x": 0,
+        "width": 402,
+        "height": 176
+      },
+      "holdShortcutIntentionallyAbsentFromAccessibilityTree": true,
+      "accessibleEquivalent": "voiceover.toggle Start/Stop",
+      "requestedHoldSeconds": 0.5,
+      "recordedDurationMs": 504.83333333333337,
+      "countAfterUndo": 4,
+      "undoDisplayedMs": 600.0,
+      "readoutResolutionMs": 100
+    }
+  },
+  "limitations": [
+    "Full VoiceOver navigation, Switch Control hardware activation, and physical-device behavior were not tested.",
+    "Semantic simulator taps exercise the native accessible Start/Stop button; they do not emulate a full screen-reader session."
+  ],
+  "cleanup": {
+    "verified": true,
+    "sessionDeleted": true,
+    "hostExited": true,
+    "ownedSimulatorRunnerExited": true,
+    "port8246Closed": true,
+    "appLeftOnHome": true,
+    "physicalDeviceActions": false,
+    "rawMicrophoneFilesCopiedOutsideSimulator": false
+  },
+  "baseline": {
+    "savedTakeCount": 4,
+    "videoClipCount": 3,
+    "originalVideoAndTakeRowsPreserved": true
+  },
+  "focusedTests": {
+    "command": "npm test -- --runInBand src/features/editor/voiceover-controls.test.ts",
+    "passed": 13,
+    "targetedNoCacheLint": "passed",
+    "rootTypecheck": "passed"
+  },
+  "screenshots": ["review-start-ready.png", "review-stop-recording.png"]
+}
