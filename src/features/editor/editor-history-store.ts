@@ -51,11 +51,17 @@ export function createEditorHistory(deps: HistoryDeps) {
   /** Counts recorded changes, so a step finishing knows whether one came in meanwhile. */
   let changes = 0;
   let running: Promise<void> | null = null;
+  let pendingAddition = false;
+  let snapshot = { ...history, keepEmptyOpen: false };
   let disposed = false;
   const listeners = new Set<() => void>();
 
   const set = (next: History<Step>) => {
     history = next;
+    snapshot = {
+      ...history,
+      keepEmptyOpen: pendingAddition || takenOut(history.future).length > 0,
+    };
     for (const l of listeners) l();
   };
   const dropAll = (steps: readonly Step[]) => {
@@ -147,12 +153,16 @@ export function createEditorHistory(deps: HistoryDeps) {
         return;
       case 'takeOut':
       case 'putBack': {
+        // Set before either operation publishes an empty stack or the database removes rows.
+        pendingAddition = true;
         const run =
           plan.kind === 'takeOut'
             ? takeOut(plan.history, plan.step, plan.ids)
             : putBack(plan.history, plan.step);
         running = run.finally(() => {
           running = null;
+          pendingAddition = false;
+          set(history);
         });
         return;
       }
@@ -160,7 +170,7 @@ export function createEditorHistory(deps: HistoryDeps) {
   };
 
   return {
-    getState: () => history,
+    getState: () => snapshot,
     subscribe(listener: () => void): () => void {
       listeners.add(listener);
       return () => {

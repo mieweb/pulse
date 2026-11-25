@@ -80,6 +80,7 @@ flowchart TB
 ### Editing & export
 
 - Per-clip trim and transform via FFmpeg — destructive but safe: re-editing always reopens the untouched original
+- Undoing an addition can remove the last remaining clips. The editor stays open for Redo, which restores those clips with their edits; export stays disabled while the draft is empty.
 - Smart merge on export: clips with matching formats are concatenated losslessly (passthrough); mixed resolution/fps/codec/orientation drafts conform only the outlier clips, with a full re-encode fallback
 - Save to Photos or Files, share anywhere, or upload — with a live progress ring
 

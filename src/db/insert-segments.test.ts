@@ -318,6 +318,45 @@ describe('taking added clips out and putting them back (the editor’s undo/redo
     ).toEqual([{ model: 'm' }]);
   });
 
+  it('restores the final edited addition after the original clip is deleted', async () => {
+    const d = await createDraft();
+    await addSegment(d, clip(s(d, 'a')));
+    await insertSegments(d, { before: s(d, 'a') }, [clip(s(d, 'x'))]);
+    conn.getAllSync(
+      `UPDATE segments SET edit_state = '{"muted":true}', caption_edit = 'c' WHERE id = ?`,
+      s(d, 'x'),
+    );
+    conn.getAllSync(
+      "INSERT INTO clip_transcripts (segment_id, model, file, status, words) VALUES (?, 'm', 'f', 'done', '[]')",
+      s(d, 'x'),
+    );
+    const row = () => conn.getFirstSync('SELECT * FROM segments WHERE id = ?', s(d, 'x'));
+    const transcripts = () =>
+      conn.getAllSync('SELECT * FROM clip_transcripts WHERE segment_id = ?', s(d, 'x'));
+    const before = row();
+    const words = transcripts();
+    await deleteSegment(s(d, 'a'));
+    expect(ids(d)).toEqual([s(d, 'x')]);
+
+    const del = jest.spyOn(fileStore, 'deleteSegmentFile').mockImplementation(() => {});
+    try {
+      const taken = await takeOutSegments([s(d, 'x')]);
+      expect(ids(d)).toEqual([]);
+      expect(row()).toBeNull();
+      expect(transcripts()).toEqual([]);
+      expect(del).not.toHaveBeenCalled();
+
+      await restoreSegments(taken!);
+      expect(ids(d)).toEqual([s(d, 'x')]);
+      expect(row()).toEqual(before);
+      expect(transcripts()).toEqual(words);
+      expect(lastClipNumber(d)).toBe(2);
+      expect(del).not.toHaveBeenCalled();
+    } finally {
+      del.mockRestore();
+    }
+  });
+
   it('puts clips back after the clip they followed even after a reorder', async () => {
     const d = await added(); // a x y b c
     const taken = await takeOutSegments([s(d, 'x'), s(d, 'y')]); // a b c

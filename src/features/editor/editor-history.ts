@@ -97,9 +97,8 @@ const isEmpty = (d: SnapshotDiff) =>
 
 /**
  * The next undo or redo to carry out, skipping (and dropping) steps that would change nothing: a
- * state step that only touched deleted clips, or an addition whose clips have all gone. An
- * addition that would leave the draft with no clips (the editor closes on an empty draft) can't be
- * undone: that undo does nothing and drops the step, and undoes nothing older in its place.
+ * state step that only touched deleted clips, or an addition whose clips have all gone. Taking
+ * out the last clips is allowed: the editor stays open with their files retained for redo.
  * `history` is the history once the step is done, except for an addition, which takes its clips
  * out or puts them back first: `history` is the one it starts from, the step still on top
  * (editor-history-store.ts moves it).
@@ -120,10 +119,9 @@ export function planStep(h: History<Step>, direction: 'undo' | 'redo', now: Pres
     if (top.kind === 'added') {
       if (direction === 'undo') {
         const live = top.ids.filter((id) => ids.includes(id));
-        if (live.length > 0 && live.length < ids.length) {
+        if (live.length > 0) {
           return { kind: 'takeOut', history: h, step: top, ids: live };
         }
-        if (live.length > 0) return { kind: 'none', history: { ...h, past: h.past.slice(0, -1) } };
       } else if (top.taken) {
         return { kind: 'putBack', history: h, step: top as AddedStep & { taken: TakenOutClips } };
       }
@@ -140,6 +138,18 @@ export function planStep(h: History<Step>, direction: 'undo' | 'redo', now: Pres
         ? { ...h, past: h.past.slice(0, -1) }
         : { ...h, future: h.future.slice(0, -1) };
   }
+}
+
+/**
+ * Keep an emptied undo session until restored clips have reached the screen. A database redo
+ * can finish before its live query publishes rows, so completion alone must not close it.
+ */
+export function keepEmptyEditorOpen(
+  retained: boolean,
+  clipCount: number,
+  historyKeepsOpen: boolean,
+): boolean {
+  return historyKeepsOpen || (clipCount === 0 && retained);
 }
 
 /** The clips taken out by additions on the redo stack: their files go when it's cleared. */
