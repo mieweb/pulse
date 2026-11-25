@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import childProcess, { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -160,5 +160,66 @@ describe('build-time release notes', () => {
     } finally {
       missingGit.mockRestore();
     }
+  });
+});
+
+describe('explicit local test-build notes', () => {
+  const testNote = {
+    version: '1.2.0',
+    date: '2026-11-25',
+    notes: ['Try Home + → Blank project. The recorder should open immediately.'],
+  };
+
+  it('includes uncommitted test instructions while retaining release history and ordinary builds', () => {
+    commit('feat: First release');
+    tag('1.0.0');
+    commit('feat: Earlier feature');
+    tag('1.1.0');
+    commit('feat: Committed work');
+    const ordinary = collectReleaseNotes({ version: '1.2.0', cwd: repo });
+    writeFileSync(join(repo, 'test-notes.json'), JSON.stringify(testNote));
+
+    const local = collectReleaseNotes({
+      version: '1.2.0',
+      cwd: repo,
+      testNotesFile: 'test-notes.json',
+    });
+    expect(local.current).toEqual(testNote);
+    expect(local.history).toEqual(ordinary.history);
+    expect(local.history).toHaveLength(1);
+    expect(collectReleaseNotes({ version: '1.2.0', cwd: repo })).toEqual(ordinary);
+    expect(git('status', '--porcelain')).toContain('?? test-notes.json');
+  });
+
+  it('can supply local test instructions when Git release history is unavailable', () => {
+    writeFileSync(join(root, 'test-notes.json'), JSON.stringify(testNote));
+    expect(
+      collectReleaseNotes({ version: '1.2.0', cwd: root, testNotesFile: 'test-notes.json' }),
+    ).toEqual({ current: testNote, history: [] });
+  });
+
+  it('rejects wrong-version, invalid-date and empty test instructions', () => {
+    for (const invalid of [
+      { ...testNote, version: '1.1.0' },
+      { ...testNote, date: '2026-02-30' },
+      { ...testNote, date: null },
+      { ...testNote, notes: [] },
+      { ...testNote, notes: [' '] },
+      { ...testNote, notes: [42] },
+      null,
+    ]) {
+      writeFileSync(join(repo, 'test-notes.json'), JSON.stringify(invalid));
+      expect(() =>
+        collectReleaseNotes({ version: '1.2.0', cwd: repo, testNotesFile: 'test-notes.json' }),
+      ).toThrow(/Invalid test release notes/);
+    }
+  });
+
+  it('fails clearly when an explicitly requested file is missing or malformed', () => {
+    const read = () =>
+      collectReleaseNotes({ version: '1.2.0', cwd: repo, testNotesFile: 'test-notes.json' });
+    expect(read).toThrow(/Could not read test release notes/);
+    writeFileSync(join(repo, 'test-notes.json'), '{unfinished JSON');
+    expect(read).toThrow(/Could not read test release notes/);
   });
 });

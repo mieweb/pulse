@@ -1,0 +1,12 @@
+{
+  "version": "2.7.0",
+  "date": "2026-11-25",
+  "notes": [
+    "Summary test build: tap Home +, then Blank project. The recorder should open immediately without a second submit button.",
+    "Home + → Summary → Choose projects: compare each project's thumbnail with Home, check a few projects, then Create summary. Their beats should open together as editable copies; the originals stay unchanged.",
+    "Try Today, Yesterday and the From/Through calendar dates. The preview should include beats added during those dates, even in older projects.",
+    "Create a summary, add a new beat to an older project, then try Since last summary. Only the new beat should be collected.",
+    "View last summary should open the previous update. Closing it should return to the summary form with your name and checked projects preserved.",
+    "Older beats use their project's last-modified date as an approximation. New beats have precise addition times. Please check thumbnail appearance and the recording flow on your phone."
+  ]
+}

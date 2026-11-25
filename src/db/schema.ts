@@ -24,6 +24,10 @@ export const drafts = sqliteTable(
   {
     id: text('id').primaryKey(),
     name: text('name'),
+    // Summary copies never become source work. Only an actual collection records a cutoff;
+    // duplicating a summary keeps its marker without advancing the next collection window.
+    isSummary: integer('is_summary', { mode: 'boolean' }).notNull().default(false),
+    summaryCutoffAt: integer('summary_cutoff_at'),
     // Per-draft upload destination (§4). A draft is "paired" when these are set (via
     // `setUploadDestination`); there is no separate mode flag. `uploadArtifactId` is the video's
     // artifact id from the pairing deep link — the TUS artifactId of the video, and the `relatedTo`
@@ -93,6 +97,9 @@ export const segments = sqliteTable(
       .notNull()
       .references(() => drafts.id, { onDelete: 'cascade' }),
     order: integer('sort_order').notNull(),
+    // Time this beat was added, unchanged by edits/reorders/splits. Insertion paths stamp it
+    // explicitly; 0 is the SQL fallback for legacy rows without a known timestamp.
+    addedAt: integer('added_at').notNull().default(0),
     // Clip name shown on the thumb badge. Minted from the draft's `lastClipNumber` counter
     // at insert and NEVER renumbered — reorder mutates `order`, delete leaves gaps — so the
     // badge stays a stable identity for the draft's lifetime; a future rename feature just

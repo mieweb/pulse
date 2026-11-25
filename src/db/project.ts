@@ -285,8 +285,19 @@ function insertAll(
   tx: { insert: ReturnType<typeof drizzle>['insert'] },
   rows: Record<string, Row[]>,
 ) {
+  const legacyBeatTimes = new Map(
+    (rows.drafts ?? []).map((draft) => [draft.id, draft.lastModified ?? draft.createdAt ?? 0]),
+  );
   for (const t of CARRIED) {
-    const list = rows[tableName(t)] ?? [];
+    const source = rows[tableName(t)] ?? [];
+    const list =
+      t === schema.segments
+        ? source.map((row) => ({
+            ...row,
+            // Documents from before beat timestamps get the same approximation as migration 0021.
+            addedAt: row.addedAt ?? legacyBeatTimes.get(row.draftId) ?? 0,
+          }))
+        : source;
     for (let i = 0; i < list.length; i += 100) {
       tx.insert(t)
         .values(list.slice(i, i + 100))

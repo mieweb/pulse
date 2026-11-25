@@ -200,6 +200,7 @@ describe('createEditorHistory: additions', () => {
     const clip = (id: string, editState: string | null = null): Row => ({
       id,
       draftId: 'd',
+      addedAt: 1000,
       order: id === 'a' ? 0 : 1,
       label: id,
       originalFilename: `${id}.mp4`,

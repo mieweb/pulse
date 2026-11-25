@@ -68,6 +68,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       releaseNotes: collectReleaseNotes({
         version: config.version ?? 'unknown',
         commit: process.env.GITHUB_SHA ?? 'HEAD',
+        // Local phone handoffs can describe uncommitted work. CI keeps release history notes.
+        testNotesFile: ci ? undefined : process.env.PULSE_TEST_NOTES_FILE,
       }),
       build: {
         commit: process.env.GITHUB_SHA ?? git('rev-parse HEAD'),

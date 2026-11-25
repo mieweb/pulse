@@ -380,3 +380,28 @@ describe('0020_host_context_outbox', () => {
     ]);
   });
 });
+
+describe('0021_summary_projects', () => {
+  it('backfills legacy beats once from the project modification time and preserves their children', () => {
+    const db = new DatabaseSync(':memory:');
+    applyMigrations(db, (f) => f < '0021');
+    db.exec('PRAGMA foreign_keys = ON');
+    db.prepare("INSERT INTO drafts (id, created_at, last_modified) VALUES ('old', 100, 900)").run();
+    db.prepare(
+      "INSERT INTO segments (id, draft_id, sort_order, original_filename, duration_ms) VALUES ('beat', 'old', 0, 'drafts/old/segments/beat.mp4', 1000)",
+    ).run();
+    db.prepare(
+      "INSERT INTO clip_transcripts (segment_id, model, file, status) VALUES ('beat', 'base', 'drafts/old/segments/beat.mp4', 'done')",
+    ).run();
+    applyMigrations(db, (f) => f.startsWith('0021'));
+    expect(db.prepare('SELECT added_at FROM segments').get()).toEqual({ added_at: 900 });
+    expect(db.prepare('SELECT is_summary, summary_cutoff_at FROM drafts').get()).toEqual({
+      is_summary: 0,
+      summary_cutoff_at: null,
+    });
+    db.prepare("UPDATE drafts SET last_modified = 1200 WHERE id = 'old'").run();
+    expect(db.prepare('SELECT added_at FROM segments').get()).toEqual({ added_at: 900 });
+    expect(db.prepare('SELECT count(*) AS n FROM clip_transcripts').get()).toEqual({ n: 1 });
+    db.close();
+  });
+});

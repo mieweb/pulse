@@ -151,6 +151,8 @@ async function migrateDraft(draft: LegacyDraft): Promise<boolean> {
         label: String(i + 1),
         originalFilename: clip.relPath,
         durationMs: clip.durationMs,
+        // The old format has no clip timestamp: use its project's last known change.
+        addedAt: parseTimestamp(draft.lastModified, createdAt),
         thumbnail: hasThumb ? thumbRel : null,
       })
       .onConflictDoNothing();
