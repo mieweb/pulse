@@ -1,6 +1,7 @@
 import { merge, type MergeClip, type MergeOptions } from '@mieweb/pulse-editor';
 
 import { REELS_TARGET, type ExportAudio } from '@/core/media/merge-signature';
+import { EMPTY_VOICEOVER, toVoiceoverMix, type VoiceoverMix } from '@/core/media/voiceover';
 import type { Segment } from '@/db/schema';
 import type { MergedOutput } from '@/features/upload/core/types';
 import { absolutize } from '@/utils/file-store';
@@ -56,8 +57,9 @@ export async function mergeWithEditor(
   recorder: RecorderFormat,
   signal: AbortSignal,
   onProgress: (progress: number) => void,
+  voiceover: VoiceoverMix = EMPTY_VOICEOVER,
 ): Promise<MergedOutput> {
-  const options = mergeOptions(recorder);
+  const options = { ...mergeOptions(recorder), ...toVoiceoverMix(voiceover) };
   const started = Date.now();
   const result = await merge(segments.map(toMergeClip), options, { onProgress, signal });
   console.info(

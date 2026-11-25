@@ -20,6 +20,37 @@ function applyMigrations(db: DatabaseSync, filter: (file: string) => boolean): v
   }
 }
 
+describe('0023_voiceover_takes', () => {
+  it('keeps existing clip edits and adds unmuted draft channels and independent narration', () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      db.exec('PRAGMA foreign_keys = ON');
+      applyMigrations(db, (f) => f < '0023');
+      db.exec("INSERT INTO drafts (id) VALUES ('voice-draft')");
+      db.exec(
+        "INSERT INTO segments (id,draft_id,sort_order,original_filename,duration_ms,edit_state) VALUES ('voice-video','voice-draft',0,'video.mp4',60000,'{\"muted\":true}')",
+      );
+      const before = db.prepare('SELECT * FROM segments').all();
+      applyMigrations(db, (f) => f.startsWith('0023'));
+      expect(db.prepare('SELECT * FROM segments').all()).toEqual(before);
+      expect(db.prepare('SELECT source_audio_muted,voiceover_muted FROM drafts').get()).toEqual({
+        source_audio_muted: 0,
+        voiceover_muted: 0,
+      });
+      db.exec(
+        "INSERT INTO voiceover_takes (id,draft_id,filename,start_ms,duration_ms,trim_start_ms,trim_end_ms,sequence) VALUES ('take','voice-draft','drafts/voice-draft/voiceovers/take.caf',1000,60000,100,59000,1)",
+      );
+      expect(
+        db.prepare('SELECT start_ms,trim_start_ms,trim_end_ms FROM voiceover_takes').get(),
+      ).toEqual({ start_ms: 1000, trim_start_ms: 100, trim_end_ms: 59000 });
+      db.exec("DELETE FROM drafts WHERE id='voice-draft'");
+      expect(db.prepare('SELECT * FROM voiceover_takes').all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('0014_drop_upload_unit', () => {
   let db: DatabaseSync;
 

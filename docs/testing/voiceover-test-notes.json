@@ -1,0 +1,13 @@
+{
+  "version": "2.7.0",
+  "date": "2026-11-25",
+  "notes": [
+    "Voiceover phone test: Home → open an existing project in Edit → + → Voiceover. Allow microphone access if asked. Hold to narrate while the picture plays; release should pause, save one take and leave the playhead at its end.",
+    "After saving a take, tap ✓ to leave Voiceover, then tap the saved narration block in the timeline. The Voiceover controls should reopen and the playhead should move to where you tapped. Tapping a gap should keep the usual editor controls.",
+    "Make five short takes, then tap Undo take repeatedly, including immediately after release. Each Undo should remove the latest whole take and return to the preceding take’s end. The video stays unchanged. Hold again for an immediate retake.",
+    "Record across clip boundaries, including a continuous minute. Say a cue at obvious picture changes near the beginning and end, then compare editor playback and export for delayed starts, clipped words or growing drift. Simulator checks passed; physical microphone timing needs your review.",
+    "Preview audio is temporarily silent while recording. On playback, source audio and narration should mix, and source audio should continue in narration gaps. Try Video audio and Narration mutes independently, then both together for silence.",
+    "Tap ✓, close and reopen the project, then export. Takes, placement and mute settings should survive. Backgrounding during a hold should cancel that unfinished take, preserve earlier takes and offer Retry.",
+    "Prototype limits: no narration Redo, transcript assistance or replacement yet. Seeking backward and recording adds another take; overlapping takes play together."
+  ]
+}

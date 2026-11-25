@@ -7,6 +7,11 @@ export function segmentRelPath(draftId: string, segmentId: string): string {
   return `drafts/${draftId}/segments/${segmentId}.mp4`;
 }
 
+/** An immutable narration source, separate from the draft's video clips. */
+export function voiceoverRelPath(draftId: string, takeId: string, extension = 'caf'): string {
+  return `drafts/${draftId}/voiceovers/${takeId}.${extension}`;
+}
+
 /**
  * A baked edit's relative path (older versions re-encoded edits) — coexists with the pristine
  * original. Each

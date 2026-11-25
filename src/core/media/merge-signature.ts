@@ -1,6 +1,8 @@
 import type { Segment } from '@/db/schema';
 import { segmentSignature } from '@/utils/segment-window';
 
+import type { VoiceoverMix } from './voiceover';
+
 // The app's export contract: reels-style portrait 1080×1920 H.264 30fps, on every platform.
 // Pinned so the canvas is never inferred from the clips — recorder clips and normalized imports
 // already match (lossless fast path); anything else (e.g. a landscape library import) conforms.
@@ -37,8 +39,23 @@ export type ExportAudio = { sampleRate: number; channels: number };
  * layout is learned from recordings (recorder-format.ts), so it can change after an export was
  * saved (a device's first recording); a different one merges again.
  */
-export const exportSignature = (segments: Segment[], audio: ExportAudio): string =>
-  `${mergedSignature(segments)}|audio ${audio.sampleRate}x${audio.channels}`;
+export const exportSignature = (
+  segments: Segment[],
+  audio: ExportAudio,
+  voiceover?: VoiceoverMix,
+): string =>
+  `${mergedSignature(segments)}|audio ${audio.sampleRate}x${audio.channels}${voiceoverSignature(voiceover)}`;
+
+/** Leave pre-narration exports reusable when the draft's audio is unchanged. Source paths are
+ * immutable, like video files; placement, source trims and both track mute settings affect sound. */
+export function voiceoverSignature(mix?: VoiceoverMix): string {
+  if (!mix || (!mix.takes.length && !mix.sourceMuted && !mix.voiceoverMuted)) return '';
+  return `|voiceover ${JSON.stringify([
+    mix.sourceMuted,
+    mix.voiceoverMuted,
+    mix.takes.map((take) => [take.filename, take.startMs, take.trimStartMs, take.trimEndMs]),
+  ])}`;
+}
 
 /** What's on record for a draft's persisted export (the `drafts` row + whether the file exists). */
 export type PersistedExport = {
@@ -57,7 +74,10 @@ export function currentExportDuration(
   persisted: PersistedExport,
   segments: Segment[],
   audio: ExportAudio,
+  voiceover?: VoiceoverMix,
 ): number | null {
   if (!persisted.fileExists || persisted.durationMs == null) return null;
-  return persisted.signature === exportSignature(segments, audio) ? persisted.durationMs : null;
+  return persisted.signature === exportSignature(segments, audio, voiceover)
+    ? persisted.durationMs
+    : null;
 }

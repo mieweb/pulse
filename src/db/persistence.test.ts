@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { getTableColumns, is } from 'drizzle-orm';
+import { eq, getTableColumns, is } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
 import { getTableConfig, SQLiteTable } from 'drizzle-orm/sqlite-core';
@@ -151,6 +151,8 @@ const S2 = 'seg-A2'; // edit as settings, caption edit, cover
 const S3 = 'seg-A3'; // a split sharing S1's original
 const D2 = 'draft-B';
 const S4 = 'seg-B1';
+const V1 = 'take-A1';
+const VOICEOVER = `drafts/${D}/voiceovers/${V1}.caf`;
 const P = (seg: string, rest: string, draft = D) => `drafts/${draft}/segments/${seg}${rest}`;
 const EDIT_JSON =
   '{"startMs":120,"endMs":2400,"rotation":90,"flipH":false,"crop":null,"muted":true,"speed":1.5}';
@@ -173,6 +175,8 @@ function seedFixture(conn: SQLiteDatabase) {
         mergedSignature: `${SIG}|audio 48000x2`,
         mergedDurationMs: 4321,
         captionY: 0.37,
+        sourceAudioMuted: true,
+        voiceoverMuted: true,
         lastClipNumber: 3,
         createdAt: 1790000000123.5, // unixepoch('subsec') * 1000 stores fractions
         lastModified: 1790000000999,
@@ -261,6 +265,19 @@ function seedFixture(conn: SQLiteDatabase) {
       editedLines: '[{"text":"Hello!","t0":0,"t1":50}]',
       durationMs: 4321,
       createdAt: 1790000000500.25,
+    })
+    .run();
+  d.insert(schema.voiceoverTakes)
+    .values({
+      id: V1,
+      draftId: D,
+      filename: VOICEOVER,
+      startMs: 350,
+      durationMs: 2000,
+      trimStartMs: 100,
+      trimEndMs: 1800,
+      sequence: 1,
+      createdAt: 1790000000600,
     })
     .run();
   d.insert(schema.clipTranscripts)
@@ -393,6 +410,7 @@ const FIXTURE_MEDIA = [
   P(S3, '.cover.333.jpg'),
   P(S3, '.thumb.jpg'),
   `drafts/${D}/export.mp4`, // derived: the persisted export
+  VOICEOVER,
   P(S4, '.mp4', D2),
   P(S4, '.thumb.jpg', D2),
   `drafts/${D2}/export.mp4`,
@@ -612,7 +630,7 @@ describe('schema-driven project document', () => {
     use(target);
     const dst = await openMigrated();
     seedFixture(dst); // the same ids already here: a copy must not clobber them
-    const ids = ['new-D', 'new-1', 'new-2', 'new-3'];
+    const ids = ['new-D', 'new-1', 'new-2', 'new-3', 'new-4'];
     const fresh = () => ids.shift()!;
     expect(await pulseFileKind(uri)).toBe('project');
     const [newDraft] = await importProjectFile(dst, uri, fresh);
@@ -624,7 +642,8 @@ describe('schema-driven project document', () => {
           .replaceAll(D, 'new-D')
           .replaceAll(S1, 'new-1')
           .replaceAll(S2, 'new-2')
-          .replaceAll(S3, 'new-3'),
+          .replaceAll(S3, 'new-3')
+          .replaceAll(V1, 'new-4'),
       );
     const got = buildProject(dst, { draftIds: ['new-D'], now: 0, byteLength }).tables;
     const cleared = {
@@ -643,7 +662,7 @@ describe('schema-driven project document', () => {
       mergedDurationMs: null,
     };
     expect(got.drafts).toEqual([{ ...swap(srcRows.drafts[0]), ...cleared }]);
-    for (const t of ['segments', 'draft_transcripts', 'clip_transcripts']) {
+    for (const t of ['segments', 'draft_transcripts', 'clip_transcripts', 'voiceover_takes']) {
       expect([t, got[t]]).toEqual([t, swap(srcRows[t])]);
     }
     // The local draft with the source's ids is untouched, and every copied file has its bytes.
@@ -681,13 +700,15 @@ describe('schema-driven project document', () => {
 
     use(newDevice());
     const dst = await openMigrated();
-    const ids = ['n-D', 'n-1', 'n-2', 'n-3'];
+    const ids = ['n-D', 'n-1', 'n-2', 'n-3', 'n-4'];
     const [copy] = await importProjectFile(dst, `file://${deflated}`, () => ids.shift()!);
     expect(copy).toBe('n-D');
     const doc = JSON.parse(strFromU8(stored['project.json']));
     for (const m of doc.media) {
       const swapped = m.path.replace(D, 'n-D').replace(S1, 'n-1').replace(S2, 'n-2');
-      expect(readMedia(swapped.replace(S3, 'n-3'))).toBe(strFromU8(stored[m.entry]));
+      expect(readMedia(swapped.replace(S3, 'n-3').replace(V1, 'n-4'))).toBe(
+        strFromU8(stored[m.entry]),
+      );
     }
     expect(readdirSync(env.docDir).some((n) => n.startsWith('.pulse-restore-'))).toBe(false);
   });
@@ -864,10 +885,18 @@ describe('undo history in .pulse files', () => {
     const archived = parsePersistedHistory(doc.tables.drafts[0].undoHistory as string, D)!;
     expect(archived).toEqual(original);
     expect(new Set(doc.media.map((m) => m.path))).toEqual(
-      new Set([...historyMediaPaths(original)].filter((p) => byteLength(p) !== null)),
+      new Set([VOICEOVER, ...historyMediaPaths(original)].filter((p) => byteLength(p) !== null)),
     );
     let id = 0;
     const [copy] = await importProjectFile(conn, uri, () => `copy-${++id}`);
+    const copiedVoice = drizzle(conn)
+      .select()
+      .from(schema.voiceoverTakes)
+      .where(eq(schema.voiceoverTakes.draftId, copy))
+      .get()!;
+    expect(copiedVoice.id).not.toBe(V1);
+    expect(copiedVoice.filename.startsWith(`drafts/${copy}/voiceovers/`)).toBe(true);
+    expect(readMedia(copiedVoice.filename)).toBe(readMedia(VOICEOVER));
     const history = savedUndo(conn, copy);
     const sourceIds = historyClipIds(original);
     expect([...historyClipIds(history)].every((x) => !sourceIds.has(x))).toBe(true);
@@ -929,6 +958,8 @@ describe('undo history in .pulse files', () => {
     ).toBe(sourceSaved);
     expect(readMedia(P(S2, '.mp4'))).toBe(`bytes of ${P(S2, '.mp4')}`);
     expect(existsSync(join(env.docDir, row.originalFilename))).toBe(true);
+    expect(existsSync(join(env.docDir, copiedVoice.filename))).toBe(true);
+    expect(readMedia(copiedVoice.filename)).toBe(readMedia(VOICEOVER));
   });
 
   it('reopens and transfers a direct split’s Undo/Redo without an inserted clip', async () => {
@@ -1582,6 +1613,11 @@ describe('referencedMediaPaths and library safety', () => {
     expect(() => assertSafeLibrary(conn)).toThrow('Unsafe draft or clip id.');
     conn.execSync(`DELETE FROM drafts WHERE id = '..'`);
     conn.execSync(`UPDATE segments SET thumbnail = 'drafts/../logs/pulse.log' WHERE id = '${S4}'`);
+    expect(() => assertSafeLibrary(conn)).toThrow('Unsafe media path.');
+    conn.execSync(`UPDATE segments SET thumbnail = NULL WHERE id = '${S4}'`);
+    conn.execSync(
+      `UPDATE voiceover_takes SET filename = 'drafts/../logs/pulse.log' WHERE id = '${V1}'`,
+    );
     expect(() => assertSafeLibrary(conn)).toThrow('Unsafe media path.');
   });
 });

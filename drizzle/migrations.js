@@ -24,6 +24,7 @@ import m0019 from './0019_link_places.sql';
 import m0020 from './0020_host_context_outbox.sql';
 import m0021 from './0021_summary_projects.sql';
 import m0022 from './0022_persistent_undo.sql';
+import m0023 from './0023_voiceover_takes.sql';
 
   export default {
     journal,
@@ -50,6 +51,8 @@ m0018,
 m0019,
 m0020,
 m0021,
-m0022
+m0022,
+m0023
     }
   }
+  
