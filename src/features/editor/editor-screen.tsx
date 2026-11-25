@@ -1182,20 +1182,18 @@ export function EditorScreen({
           </View>
         )}
 
-        <Pressable
-          // One shared row for commands and tools; caption entry replaces it above the keyboard.
-          // Apply the home inset once, without a separate row or extra vertical padding.
+        <View
+          // Full-width tools above the lower commands; caption entry replaces both rows.
+          // Keep the home inset once and allow enlarged labels to grow without clipping.
           style={[
             styles.tools,
             {
-              height:
+              minHeight:
                 (voiceoverMode ? VOICEOVER_CONTROLS_HEIGHT : TOOLBAR_HEIGHT) +
                 (typing ? 0 : insets.bottom),
               paddingBottom: typing ? 0 : insets.bottom,
             },
-          ]}
-          onPress={deselect}
-          accessible={false}>
+          ]}>
           {voiceoverMode ? (
             <VoiceoverControls
               voiceover={voiceover}
@@ -1215,8 +1213,7 @@ export function EditorScreen({
               }}
             />
           ) : (
-            <View style={styles.toolbar}>
-              <CommandButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
+            <>
               <View style={styles.contextTools}>
                 {captionTools ? (
                   <CaptionTools
@@ -1282,30 +1279,33 @@ export function EditorScreen({
                   />
                 )}
               </View>
-              {/* Keep command slots fixed when disabled, including an empty draft awaiting Redo. */}
-              <CommandButton
-                icon="arrow.uturn.backward"
-                label="Undo"
-                onPress={undo}
-                disabled={!history.canUndo}
-                testID="editor.undo"
-              />
-              <CommandButton
-                icon="arrow.uturn.forward"
-                label="Redo"
-                onPress={redo}
-                disabled={!history.canRedo}
-                testID="editor.redo"
-              />
-              <ExportButton
-                onPress={openExport}
-                disabled={clips.length === 0}
-                testID="editor.export"
-                compact
-              />
-            </View>
+              <View style={styles.toolbar}>
+                <CommandButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
+                {/* Keep command slots fixed when disabled, including an empty draft awaiting Redo. */}
+                <CommandButton
+                  icon="arrow.uturn.backward"
+                  label="Undo"
+                  onPress={undo}
+                  disabled={!history.canUndo}
+                  testID="editor.undo"
+                />
+                <CommandButton
+                  icon="arrow.uturn.forward"
+                  label="Redo"
+                  onPress={redo}
+                  disabled={!history.canRedo}
+                  testID="editor.redo"
+                />
+                <ExportButton
+                  onPress={openExport}
+                  disabled={clips.length === 0}
+                  testID="editor.export"
+                  compact
+                />
+              </View>
+            </>
           )}
-        </Pressable>
+        </View>
 
         {cropping && cropClip && (
           <CropEditor
@@ -1329,14 +1329,14 @@ export function EditorScreen({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   toolbar: {
-    height: TOOLBAR_HEIGHT,
+    minHeight: TOOLBAR_HEIGHT,
     paddingHorizontal: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-evenly',
     gap: 4,
   },
-  contextTools: { flex: 1, minWidth: 0 },
+  contextTools: { minWidth: 0 },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
   track: { height: STRIP_HEIGHT },
   // Centred on the clip tiles, which both views draw under the ruler.

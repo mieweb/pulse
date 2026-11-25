@@ -7,6 +7,18 @@ row alone does not establish that its opposite edge is reachable. The developmen
 [AGENTS.md](../AGENTS.md#one-handed-phone-use); the [PR template](../.github/pull_request_template.md)
 requires applicability, flow evidence and reviewed exceptions.
 
+## Editor toolbar follow-up (#337)
+
+The current editor gives contextual tools a full-width lower row above Close, Undo, Redo and
+Export. Clip tools start with Delete, Split, Speed and Reset. Done scrolls with the tools;
+More/First provide a button alternative to horizontal swipes, including long speed menus.
+Enlarged labels can grow vertically, and scrolling or tapping gaps does not leave Edit.
+
+This supersedes the compact single-row geometry described in the historical #327 checkpoints
+below. The global commands remain lower; actual reach with either hand is still a physical
+acceptance check. See [the toolbar validation and phone-test record](testing/editor-toolbar-validation.md)
+for the latest-main base, source checks, before/after captures and remaining limitations.
+
 ## First implementation scope
 
 The first PR is one cohesive change with guidance, implementation and verification checkpoints:
