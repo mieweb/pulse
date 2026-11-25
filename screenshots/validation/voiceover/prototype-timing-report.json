@@ -1,0 +1,660 @@
+{
+  "recordScope": "Historical prototype measurements, before the final take-entry change. Not a physical-device timing measurement or final PR binary claim.",
+  "sourceReportSha256": "b7c7c8725476d92053d82fdf18c89a02688f0d41712ccbdc079c8f8948fc7853",
+  "evidence": {
+    "date": "2026-11-25",
+    "issue": "https://github.com/mieweb/pulse/issues/224",
+    "platform": {
+      "device": "iPhone 17 Pro",
+      "runtime": "iOS26.0 23A343",
+      "simulatorUdid": "4B78B036-6293-4390-B8FC-BE59D2C051F8",
+      "physicalDeviceUsed": false,
+      "automation": "WebDriverAgent semantic labels/identifiers; no coordinate fallback"
+    },
+    "finalBuildHashes": {
+      "Pulse": "56896c449ef8f6c19aa1324caa1f8baf4aa5fad463a25be72779ea23759dbbef",
+      "main.jsbundle": "12ee3a90d8d18aecdc9123ef75d646427ca1d1c367fe93c158a15f19d017cc3a"
+    },
+    "fixture": {
+      "draft": "voiceover-target",
+      "videoClips": 3,
+      "eachClipMs": 25000,
+      "totalMs": 75000,
+      "sourceToneHz": 330,
+      "sourceVideoRowsUnchanged": true
+    },
+    "checks": {
+      "openViaPlusVoiceover": "passed",
+      "warmMicrophoneBeforeRecording": "passed",
+      "twoFiveTakeSequences": "passed",
+      "tenWholeTakeUndosAndCorrectCursor": "passed",
+      "threeAdditionalPretestUndos": "passed",
+      "undoImmediatelyAfterRelease": "passed",
+      "rapidConsecutiveHolds": "passed",
+      "short100msHold": "passed",
+      "savedTakeAndMuteReopen": "passed",
+      "seek24500msAndCrossVideoBoundary": "passed",
+      "sourceContinuesUnderNarrationAndInGaps": "passed",
+      "native75SecondExport": "passed"
+    },
+    "finalRepeatedTakeUndoLoops": [
+      {
+        "takes": [
+          {
+            "take": 1,
+            "saved": {
+              "id": "ed1420b6-6e9f-4cea-9741-6456ccd87275",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/ed1420b6-6e9f-4cea-9741-6456ccd87275.caf",
+              "start_ms": 0.003084299921989441,
+              "duration_ms": 707.9583333333334,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 707.9462437000781,
+              "sequence": 1,
+              "created_at": 1795591355380
+            },
+            "cursorMs": 700.0
+          },
+          {
+            "take": 2,
+            "saved": {
+              "id": "de9af8f0-0a27-40fa-a1fa-d847d67b192a",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/de9af8f0-0a27-40fa-a1fa-d847d67b192a.caf",
+              "start_ms": 708.1485779336515,
+              "duration_ms": 709.9583333333334,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 709.9513960663485,
+              "sequence": 2,
+              "created_at": 1795591357250
+            },
+            "cursorMs": 1400.0
+          },
+          {
+            "take": 3,
+            "saved": {
+              "id": "dc5b472a-92c5-4e1c-9bf9-f781d72f0188",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/dc5b472a-92c5-4e1c-9bf9-f781d72f0188.caf",
+              "start_ms": 1418.2795163238873,
+              "duration_ms": 705.9583333333334,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 705.9437766761127,
+              "sequence": 3,
+              "created_at": 1795591359148
+            },
+            "cursorMs": 2100.0
+          },
+          {
+            "take": 4,
+            "saved": {
+              "id": "0296d4aa-870d-4108-8443-e9595914da2d",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/0296d4aa-870d-4108-8443-e9595914da2d.caf",
+              "start_ms": 2124.381794308024,
+              "duration_ms": 708.0625,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 708.0625,
+              "sequence": 4,
+              "created_at": 1795591361036
+            },
+            "cursorMs": 2800.0
+          },
+          {
+            "take": 5,
+            "saved": {
+              "id": "7da407e1-340f-4973-9079-b23ba1470300",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/7da407e1-340f-4973-9079-b23ba1470300.caf",
+              "start_ms": 2832.5955561659944,
+              "duration_ms": 705.0416666666666,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 705.0416666666665,
+              "sequence": 5,
+              "created_at": 1795591362941
+            },
+            "cursorMs": 3500.0
+          }
+        ],
+        "undos": [
+          {
+            "remaining": 4,
+            "expectedMs": 2832.444294308024,
+            "cursorMs": 2800.0,
+            "wallMsIncludingWDAQueries": 955.5347077548504
+          },
+          {
+            "remaining": 3,
+            "expectedMs": 2124.223293,
+            "cursorMs": 2100.0,
+            "wallMsIncludingWDAQueries": 973.3859589323401
+          },
+          {
+            "remaining": 2,
+            "expectedMs": 1418.099974,
+            "cursorMs": 1400.0,
+            "wallMsIncludingWDAQueries": 944.5216255262494
+          },
+          {
+            "remaining": 1,
+            "expectedMs": 707.949328,
+            "cursorMs": 700.0,
+            "wallMsIncludingWDAQueries": 902.9513327404857
+          },
+          {
+            "remaining": 0,
+            "expectedMs": 0.003084299921989441,
+            "cursorMs": 0.0,
+            "wallMsIncludingWDAQueries": 919.8442501947284
+          }
+        ]
+      },
+      {
+        "takes": [
+          {
+            "take": 1,
+            "saved": {
+              "id": "03b6aa17-4365-4e09-a865-347182fedaea",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/03b6aa17-4365-4e09-a865-347182fedaea.caf",
+              "start_ms": 0.022125640392303466,
+              "duration_ms": 455.875,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 455.8670293596077,
+              "sequence": 1,
+              "created_at": 1795591370786
+            },
+            "cursorMs": 400.0
+          },
+          {
+            "take": 2,
+            "saved": {
+              "id": "fc0c6aef-8b01-40d2-aa94-c6f70c4cbddc",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/fc0c6aef-8b01-40d2-aa94-c6f70c4cbddc.caf",
+              "start_ms": 456.0908634143715,
+              "duration_ms": 458.1458333333333,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 458.13295058562846,
+              "sequence": 2,
+              "created_at": 1795591372298
+            },
+            "cursorMs": 900.0
+          },
+          {
+            "take": 3,
+            "saved": {
+              "id": "80b607a8-e8c3-4f15-afd7-179b0d8160fc",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/80b607a8-e8c3-4f15-afd7-179b0d8160fc.caf",
+              "start_ms": 914.2403754448295,
+              "duration_ms": 454.8125,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 454.80561055517035,
+              "sequence": 3,
+              "created_at": 1795591373921
+            },
+            "cursorMs": 1300.0
+          },
+          {
+            "take": 4,
+            "saved": {
+              "id": "cb986af5-0556-48b8-bd52-428323cffed0",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/cb986af5-0556-48b8-bd52-428323cffed0.caf",
+              "start_ms": 1369.2236113238873,
+              "duration_ms": 474.22916666666663,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 474.2206886761128,
+              "sequence": 4,
+              "created_at": 1795591375621
+            },
+            "cursorMs": 1800.0
+          },
+          {
+            "take": 5,
+            "saved": {
+              "id": "37b09821-3805-4407-8fec-4edf11abc7cf",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/37b09821-3805-4407-8fec-4edf11abc7cf.caf",
+              "start_ms": 1843.6805093231678,
+              "duration_ms": 477.6041666666667,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 477.5953786768323,
+              "sequence": 5,
+              "created_at": 1795591377303
+            },
+            "cursorMs": 2300.0
+          }
+        ],
+        "undos": [
+          {
+            "remaining": 4,
+            "expectedMs": 1843.4443,
+            "cursorMs": 1800.0,
+            "wallMsIncludingWDAQueries": 1054.8886246979237
+          },
+          {
+            "remaining": 3,
+            "expectedMs": 1369.0459859999999,
+            "cursorMs": 1300.0,
+            "wallMsIncludingWDAQueries": 978.6038342863321
+          },
+          {
+            "remaining": 2,
+            "expectedMs": 914.223814,
+            "cursorMs": 900.0,
+            "wallMsIncludingWDAQueries": 927.391791716218
+          },
+          {
+            "remaining": 1,
+            "expectedMs": 455.889155,
+            "cursorMs": 400.0,
+            "wallMsIncludingWDAQueries": 906.8294167518616
+          },
+          {
+            "remaining": 0,
+            "expectedMs": 0.022125640392303466,
+            "cursorMs": 0.0,
+            "wallMsIncludingWDAQueries": 873.9973744377494
+          }
+        ]
+      }
+    ],
+    "finalUndoNativeDiagnostics": [
+      {
+        "targetMs": 1413.222886,
+        "actualMs": 1413.222886,
+        "settled": true
+      },
+      {
+        "targetMs": 704.407837,
+        "actualMs": 704.407837,
+        "settled": true
+      },
+      {
+        "targetMs": 0.00116787850856781,
+        "actualMs": 0.00116787850856781,
+        "settled": true
+      },
+      {
+        "targetMs": 2832.444294308024,
+        "actualMs": 2832.444294308024,
+        "settled": true
+      },
+      {
+        "targetMs": 2124.223293,
+        "actualMs": 2124.223293,
+        "settled": true
+      },
+      {
+        "targetMs": 1418.099974,
+        "actualMs": 1418.099974,
+        "settled": true
+      },
+      {
+        "targetMs": 707.949328,
+        "actualMs": 707.949328,
+        "settled": true
+      },
+      {
+        "targetMs": 0.003084299921989441,
+        "actualMs": 0.003084299921989441,
+        "settled": true
+      },
+      {
+        "targetMs": 1843.4443,
+        "actualMs": 1843.4443,
+        "settled": true
+      },
+      {
+        "targetMs": 1369.0459859999999,
+        "actualMs": 1369.0459859999999,
+        "settled": true
+      },
+      {
+        "targetMs": 914.223814,
+        "actualMs": 914.223814,
+        "settled": true
+      },
+      {
+        "targetMs": 455.889155,
+        "actualMs": 455.889155,
+        "settled": true
+      },
+      {
+        "targetMs": 0.022125640392303466,
+        "actualMs": 0.022125640392303466,
+        "settled": true
+      },
+      {
+        "targetMs": 0.03908511263132095,
+        "actualMs": 0.03908511263132095,
+        "settled": true
+      }
+    ],
+    "finalCapturedTakeMetrics": [
+      {
+        "startMs": 0.003084299921989441,
+        "endMs": 707.949328,
+        "pressToPlaybackMs": 16.14637579768896,
+        "pressToCaptureMs": 0.002084299921989441,
+        "stopAlignmentMs": 0.012089633255300214,
+        "audioVideoOffsetMs": 0.002084299921989441
+      },
+      {
+        "startMs": 708.1485779336515,
+        "endMs": 1418.099974,
+        "pressToPlaybackMs": 18.82820948958397,
+        "pressToCaptureMs": 0.018958933651447296,
+        "stopAlignmentMs": 0.006937266984891721,
+        "audioVideoOffsetMs": 0.018958933651447296
+      },
+      {
+        "startMs": 1418.2795163238873,
+        "endMs": 2124.223293,
+        "pressToPlaybackMs": 49.25941862165928,
+        "pressToCaptureMs": 0.012417323887348175,
+        "stopAlignmentMs": 0.014556657220623492,
+        "audioVideoOffsetMs": 0.012417323887348175
+      },
+      {
+        "startMs": 2124.381794308024,
+        "endMs": 2832.444294308024,
+        "pressToPlaybackMs": 51.42783559858799,
+        "pressToCaptureMs": 0.011251308023929596,
+        "stopAlignmentMs": -0.001177691975954076,
+        "audioVideoOffsetMs": 0.011251308023929596
+      },
+      {
+        "startMs": 2832.5955561659944,
+        "endMs": 3537.637222832661,
+        "pressToPlaybackMs": 63.95733542740345,
+        "pressToCaptureMs": 0.010792165994644165,
+        "stopAlignmentMs": -0.0019821673389515126,
+        "audioVideoOffsetMs": 0.010792165994644165
+      },
+      {
+        "startMs": 0.022125640392303466,
+        "endMs": 455.889155,
+        "pressToPlaybackMs": 16.062834300100803,
+        "pressToCaptureMs": 0.019125640392303467,
+        "stopAlignmentMs": 0.007970640392272799,
+        "audioVideoOffsetMs": 0.019125640392303467
+      },
+      {
+        "startMs": 456.0908634143715,
+        "endMs": 914.223814,
+        "pressToPlaybackMs": 19.628876820206642,
+        "pressToCaptureMs": 0.012375414371490479,
+        "stopAlignmentMs": 0.012882747704850317,
+        "audioVideoOffsetMs": 0.012375414371490479
+      },
+      {
+        "startMs": 914.2403754448295,
+        "endMs": 1369.0459859999999,
+        "pressToPlaybackMs": 66.5061678737402,
+        "pressToCaptureMs": 0.01637544482946396,
+        "stopAlignmentMs": 0.006889444829653257,
+        "audioVideoOffsetMs": 0.01637544482946396
+      },
+      {
+        "startMs": 1369.2236113238873,
+        "endMs": 1843.4443,
+        "pressToPlaybackMs": 66.0726260393858,
+        "pressToCaptureMs": 0.012417323887348175,
+        "stopAlignmentMs": 0.008477990553842574,
+        "audioVideoOffsetMs": 0.012417323887348175
+      },
+      {
+        "startMs": 1843.6805093231678,
+        "endMs": 2321.275888,
+        "pressToPlaybackMs": 83.69000162929296,
+        "pressToCaptureMs": 0.008959323167800903,
+        "stopAlignmentMs": 0.008787989834388554,
+        "audioVideoOffsetMs": 0.008959323167800903
+      },
+      {
+        "startMs": 0.03908511263132095,
+        "endMs": 512.9080419999999,
+        "pressToPlaybackMs": 16.03641826659441,
+        "pressToCaptureMs": 0.017085112631320953,
+        "stopAlignmentMs": 0.006043112631459735,
+        "audioVideoOffsetMs": 0.017085112631320953
+      },
+      {
+        "startMs": 0.053958903193473816,
+        "endMs": 122.2948,
+        "pressToPlaybackMs": 22.35083468258381,
+        "pressToCaptureMs": 0.014958903193473816,
+        "stopAlignmentMs": 0.009158903193480228,
+        "audioVideoOffsetMs": 0.014958903193473816
+      },
+      {
+        "startMs": 122.41142511318064,
+        "endMs": 429.381536,
+        "pressToPlaybackMs": 25.55854246020317,
+        "pressToCaptureMs": 0.01195911318063736,
+        "stopAlignmentMs": 0.00905577984735828,
+        "audioVideoOffsetMs": 0.01195911318063736
+      },
+      {
+        "startMs": 429.59474531595566,
+        "endMs": 735.4057349999999,
+        "pressToPlaybackMs": 66.05933513492346,
+        "pressToCaptureMs": 0.011834315955638885,
+        "stopAlignmentMs": 0.0015103159557270374,
+        "audioVideoOffsetMs": 0.011834315955638885
+      }
+    ],
+    "rapidRetake": {
+      "takes": [
+        {
+          "id": "6f6438c0-7734-464e-a141-d515ac7acd1b",
+          "draft_id": "voiceover-target",
+          "filename": "drafts/voiceover-target/voiceovers/6f6438c0-7734-464e-a141-d515ac7acd1b.caf",
+          "start_ms": 122.41142511318064,
+          "duration_ms": 306.9791666666667,
+          "trim_start_ms": 0.0,
+          "trim_end_ms": 306.9701108868193,
+          "sequence": 2,
+          "created_at": 1795591418304
+        },
+        {
+          "id": "17c3cb41-e5cd-4274-8ae6-4800fcfd1951",
+          "draft_id": "voiceover-target",
+          "filename": "drafts/voiceover-target/voiceovers/17c3cb41-e5cd-4274-8ae6-4800fcfd1951.caf",
+          "start_ms": 429.59474531595566,
+          "duration_ms": 305.8125,
+          "trim_start_ms": 0.0,
+          "trim_end_ms": 305.8109896840443,
+          "sequence": 3,
+          "created_at": 1795591418987
+        }
+      ],
+      "placementGapMs": 0.21320931595568027,
+      "secondsIncludingWDA": 1.5673542907461524
+    },
+    "shortHold": {
+      "id": "c9666d1d-f2e7-4101-ba2a-441ab68d9576",
+      "draft_id": "voiceover-target",
+      "filename": "drafts/voiceover-target/voiceovers/c9666d1d-f2e7-4101-ba2a-441ab68d9576.caf",
+      "start_ms": 0.053958903193473816,
+      "duration_ms": 122.25,
+      "trim_start_ms": 0.0,
+      "trim_end_ms": 122.24084109680652,
+      "sequence": 1,
+      "created_at": 1795591387287
+    },
+    "lifecycleAndSeek": {
+      "persistedTakes": [
+        {
+          "id": "9d539282-4b19-4f86-bee8-22377d8271ff",
+          "draft_id": "voiceover-target",
+          "filename": "drafts/voiceover-target/voiceovers/9d539282-4b19-4f86-bee8-22377d8271ff.caf",
+          "start_ms": 0.00116787850856781,
+          "duration_ms": 704.4166666666667,
+          "trim_start_ms": 0.0,
+          "trim_end_ms": 704.4066691214914,
+          "sequence": 1,
+          "created_at": 1795590968868
+        },
+        {
+          "id": "09a88426-aaae-4341-9b6a-b5f1178956ca",
+          "draft_id": "voiceover-target",
+          "filename": "drafts/voiceover-target/voiceovers/09a88426-aaae-4341-9b6a-b5f1178956ca.caf",
+          "start_ms": 704.4117923455238,
+          "duration_ms": 708.8125,
+          "trim_start_ms": 0.0,
+          "trim_end_ms": 708.8110936544762,
+          "sequence": 2,
+          "created_at": 1795590970685
+        }
+      ],
+      "reopenedMutes": true,
+      "anchorSeekMs": 24500,
+      "newTake": {
+        "id": "ec86f107-da24-43a8-a5da-f87a5f3c2caa",
+        "draft_id": "voiceover-target",
+        "filename": "drafts/voiceover-target/voiceovers/ec86f107-da24-43a8-a5da-f87a5f3c2caa.caf",
+        "start_ms": 24500.01991726458,
+        "duration_ms": 1205.7291666666667,
+        "trim_start_ms": 0.0,
+        "trim_end_ms": 1205.7200967354183,
+        "sequence": 3,
+        "created_at": 1795591114931
+      },
+      "cursorMs": 25700.0
+    },
+    "longCapture": {
+      "buildHashes": {
+        "Pulse": "bfee7dc5f8873dc98e24b4627c805077873d76f9e265b50e44e54f1f5e2296ff",
+        "main.jsbundle": "4b5ff81f75546a3b42f24100bce18d66b0d5a60c5a2585dc837c77d545b031d8"
+      },
+      "holdSeconds": 60,
+      "crossedVideoBoundariesMs": [25000, 50000],
+      "saved": {
+        "state": {
+          "takes": [
+            {
+              "id": "d2aa29d2-12f0-4709-a306-70227148d90e",
+              "draft_id": "voiceover-target",
+              "filename": "drafts/voiceover-target/voiceovers/d2aa29d2-12f0-4709-a306-70227148d90e.caf",
+              "start_ms": 0.03187532460689545,
+              "duration_ms": 60010.22916666667,
+              "trim_start_ms": 0.0,
+              "trim_end_ms": 60010.22916666667,
+              "sequence": 1,
+              "created_at": 1795590788868
+            }
+          ],
+          "draft": {
+            "source_audio_muted": 0,
+            "voiceover_muted": 0,
+            "merged_signature": null,
+            "merged_duration_ms": null
+          }
+        },
+        "wallSeconds": 61.56045566685498,
+        "playheadMs": 60000.0
+      },
+      "nativeMetrics": {
+        "startMs": 0.03187532460689545,
+        "endMs": 60010.26104199128,
+        "pressToPlaybackMs": 16.210167668759823,
+        "pressToCaptureMs": 0.015875324606895447,
+        "stopAlignmentMs": -0.42175400871929014,
+        "audioVideoOffsetMs": 0.015875324606895447
+      },
+      "cafFormat": {
+        "codec": "pcm_f32le",
+        "sampleRate": 48000,
+        "channels": 1
+      },
+      "note": "Measured before subsequent first-buffer/readiness and preview seek-ownership fixes; steady-state PCM capture/host-clock implementation unchanged. Long-take media removed by whole-take Undo."
+    },
+    "export": {
+      "draft": {
+        "source_audio_muted": 0,
+        "voiceover_muted": 0,
+        "merged_signature": "3|drafts/voiceover-target/segments/voice-video-a.mp4|drafts/voiceover-target/segments/voice-video-b.mp4|drafts/voiceover-target/segments/voice-video-c.mp4|audio 48000x1|voiceover [false,false,[[\"drafts/voiceover-target/voiceovers/9d539282-4b19-4f86-bee8-22377d8271ff.caf\",0.00116787850856781,0,704.4066691214914],[\"drafts/voiceover-target/voiceovers/09a88426-aaae-4341-9b6a-b5f1178956ca.caf\",704.4117923455238,0,708.8110936544762],[\"drafts/voiceover-target/voiceovers/ec86f107-da24-43a8-a5da-f87a5f3c2caa.caf\",24500.01991726458,0,1205.7200967354183]]]",
+        "merged_duration_ms": 75000
+      },
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 1080,
+            "height": 1920
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 1
+          }
+        ],
+        "format": {
+          "duration": "75.000000"
+        }
+      },
+      "secondsFromPollStart": 13.252160541713238
+    },
+    "sourceAudioInspection": [
+      {
+        "timeSeconds": 0.2,
+        "context": "inside narration1",
+        "rms": 0.08846622797055652,
+        "source330HzAmplitude": 0.12505525975405352
+      },
+      {
+        "timeSeconds": 2.0,
+        "context": "gap after narration",
+        "rms": 0.08875753926142615,
+        "source330HzAmplitude": 0.12548683874220987
+      },
+      {
+        "timeSeconds": 24.7,
+        "context": "inside narration crossing clip boundary",
+        "rms": 0.08823528856662034,
+        "source330HzAmplitude": 0.12477717978559588
+      },
+      {
+        "timeSeconds": 27.0,
+        "context": "gap in second clip",
+        "rms": 0.08887204217803764,
+        "source330HzAmplitude": 0.1256438365885388
+      },
+      {
+        "timeSeconds": 52.0,
+        "context": "gap in third clip",
+        "rms": 0.088645161601151,
+        "source330HzAmplitude": 0.1253209514201482
+      }
+    ],
+    "timingDefinitions": {
+      "pressToPlaybackMs": "Native command to first displayed moving frame; excludes JS/XCTest dispatch latency",
+      "pressToCaptureMs": "Native command to timestamp of first retained input sample; excludes acoustic/delivery latency",
+      "stopAlignmentMs": "Captured PCM duration minus corresponding paused video interval",
+      "audioVideoOffsetMs": "Input timestamp against scheduled video host clock; not an acoustic measurement",
+      "uiCursorToleranceMs": 100,
+      "uiCursorPrecisionMs": 100
+    },
+    "limitations": [
+      "Physical tactile latency, acoustic synchronization, headphones/Bluetooth, phone-call interruption and physical one-minute drift were not measured.",
+      "Arbitrary finger scrub/zoom and screen-reader interaction were not verified; native seeking was exercised by an anchored editor route.",
+      "No raw microphone media is included in repository evidence."
+    ],
+    "cleanup": {
+      "wdaSessionDeleted": true,
+      "ownedWdaRunnerStopped": true,
+      "ownedXcodebuildHostExited": true,
+      "wdaPortClosed": true,
+      "physicalDeviceSession": "none",
+      "appLeftIn": "Home after app relaunch, saved synthetic3take project retained; microphone workflow process ended"
+    }
+  }
+}

@@ -5,18 +5,24 @@ Behavior and build instructions: [voiceover.md](../voiceover.md).
 
 ## Current PR checks
 
-The PR starts from `main` after the Summary, persistent-history and one-handed-navigation
-changes merged. It adds phase-one narration and tapping a saved take to reopen its controls.
+Source checks ran on candidate `403304c`, based on `main` at `d4b5312` after the existing
+Summary, persistent-history, one-handed-navigation and export-screen changes merged. The native
+pin is `305239a6f52f6c379d2d4c52043ce090ad688988` from
+[morepriyam/pulse-editor#24](https://github.com/morepriyam/pulse-editor/pull/24).
 
 | Check | Result |
 | --- | --- |
-| Final PR root/embed/client typechecks, lint and protocol generation | Pending final run after the take-entry change and native pin |
-| Final PR complete Jest suite and both embed bundle checks | Pending final run after the take-entry change and native pin |
-| Final PR native simulator take-entry regression | Pending fresh before-tap / after-tap evidence |
-| Previously integrated source, `9cb7ac8`, before the take-entry change | Root/embed/client typechecks, lint, protocol generation and both embed bundle checks passed; 159 Jest suites / 2,327 tests passed; one integration suite / eight tests skipped |
-| Native CAF writer checks | 14 continuous CAF cases passed at 44.1/48 kHz, including one minute and five successive takes; four missing/reordered timestamp rejection checks also passed |
+| `npx tsc --noEmit` | Passed on the actual PR source |
+| `npm run lint -- --no-cache` | Passed |
+| `npx tsc --noEmit -p embed` | Passed |
+| `npx tsc --noEmit -p embed/packages/pulse-embed` | Passed |
+| `node scripts/gen-protocol-types.mjs --check` | Passed |
+| `npm test -- --runInBand` | 161 suites / 2,355 tests passed; eight integration tests skipped |
+| `npm run check:embed` | iOS and Android JavaScript bundle/dependency checks passed |
+| Simulator UI regression | First microphone permission grant, take entry, scroll/pinch, capture and Undo passed; fresh images/report linked below |
+| Pinned native Release Simulator build | Passed from the PR's native project with pin `305239a6`; exact-binary take-entry/capture/Undo smoke passed |
+| Native CAF writer checks | 14 continuous CAF cases passed at 44.1/48 kHz, including one minute and five successive takes; four missing/reordered timestamp rejection checks passed |
 | Native host AVFoundation mix harness | Passed one minute, five trimmed takes, gaps, track mutes and retimed video boundaries |
-| Previous iOS Release native builds | Simulator and signed phone shells built with the microphone implementation and generated Nitro bindings; the final sample-continuity guard still needs its final native build/check record |
 | Android native compilation and device behavior | Unverified: Android SDK/build environment unavailable; the Android JavaScript bundle check is a separate result |
 
 All recorded source commands used Node 24.18.0; the native module used its own Yarn lockfile.
@@ -28,11 +34,42 @@ The migration fixture upgrades the prior `0022_persistent_undo` phone library to
 video rows and retained Redo media, then verifies narration addition, Undo, mutes, reopening and
 `.pulse` export. Media held by an active archive remains available after narration Undo.
 
+## Current take-entry regression
+
+The iPhone 17 Pro / iOS 26.0 simulator fixture has three synthetic video clips and four saved
+narration takes. A native tap on a painted narration bar reopened Voiceover ready to record,
+with the displayed playhead moving from 0.0 to 0.2 seconds. Video and saved-take rows were
+unchanged. A timeline pan moved 0.2 to 3.9 seconds, and a 2× pinch widened the bar from 28 to
+56 points; neither gesture opened Voiceover or changed stored data.
+
+A subsequent 1,504.5625 ms recording saved independently. Take controls were disabled during
+capture, and Undo restored the original takes and moved to the previous take's end at the
+readout's 0.1-second resolution. This checked semantic disabled controls; a second simultaneous
+touch was not injected. Resetting only the owned simulator's microphone permission reproduced
+an initial-prompt lifecycle bug. The fix was retested: accepting Allow automatically readied
+the microphone, a 504.791667 ms take saved, and Undo restored the original takes.
+
+The first UI run used the PR JavaScript in a stable Scene-native simulator shell. The final
+Release Simulator artifact was then rebuilt from the PR's native project at source `403304c`
+and native pin `305239a6`. Its exact-binary smoke passed: tapping a saved take opened the ready
+controls without adding a take, a 506.958333 ms recording increased the take count from four to
+five, and Undo restored the original four takes and video rows. The displayed cursor returned
+to 0.6 seconds for the 621.204458 ms target at 0.1-second readout resolution. Fresh permission
+was not reset again on this exact binary; the same JavaScript permission code passed that check
+in the earlier fixed-artifact run.
+
+The [report](../../screenshots/validation/voiceover/tap-simulator-report.json) records artifact
+provenance and verified simulator-runner cleanup. Fresh images show
+[before tapping](../../screenshots/validation/voiceover/timeline-before-tap.png) and
+[after tapping](../../screenshots/validation/voiceover/timeline-after-tap.png).
+
 ## Historical prototype timing and audio evidence
 
 These measurements belong to the earlier prototype runs, not to a controlled measurement of
-the final take-entry change or physical touch/acoustic latency. Their UI predates the current
-PR's final before/after images.
+the final take-entry change or physical touch/acoustic latency. The
+[historical numerical record](../../screenshots/validation/voiceover/prototype-timing-report.json)
+preserves their build hashes, timing values and limitations without carrying the old UI images
+or microphone media.
 
 The dedicated iPhone 17 Pro simulator ran iOS 26.0 with three synthetic 25-second animated
 videos carrying a 330 Hz source tone. A live 60-second microphone hold crossed the 25-second
@@ -79,10 +116,9 @@ headphone/Bluetooth behavior, phone-call interruption or one-minute hardware dri
 remain unverified. Cancellation/retry has source coverage; controlled native lifecycle behavior
 still needs hardware review.
 
-Final before-tap / after-tap images and the simulator report are pending under
-[`screenshots/validation/voiceover/`](../../screenshots/validation/voiceover/). They will show the
-current editor layout. Raw microphone audio is excluded from repository artifacts. The native mix harness and PCM writer checks are reproducible from the submodule;
-generated media stays outside the repository.
+Fresh before-tap / after-tap images and the simulator report are linked above. Raw microphone
+audio is excluded from repository artifacts. The native mix harness and PCM writer checks are
+reproducible from the submodule; generated media stays outside the repository.
 
 Phase two's replacement, truncation and transcript assistance, plus narration Redo, remain
 outside this implementation. Recording at an earlier position adds an independent overlapping
