@@ -3,6 +3,7 @@ import { useAnimatedReaction, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { clipIndexAt } from './timeline-geometry';
+import { canSplitClip } from './clip-split';
 
 /**
  * The index of the clip under the playhead (-1 with no clips), following scrubs, flings and
@@ -25,4 +26,22 @@ export function usePlayheadClip(
   );
   // (Until the reaction answers, a clip just deleted may still be the one heard.)
   return active && index < starts.length ? index : -1;
+}
+
+/** Only crossing a split boundary re-renders React, rather than every scrub/playback frame. */
+export function useCanSplitClip(
+  edit: { startMs: number; endMs: number; speed: number } | null,
+  slotStartMs: number,
+  totalMs: number,
+  timeMs: SharedValue<number>,
+): boolean {
+  const [available, setAvailable] = useState(false);
+  useAnimatedReaction(
+    () => !!edit && canSplitClip(edit, slotStartMs, totalMs, timeMs.get()),
+    (next, previous) => {
+      if (next !== previous) scheduleOnRN(setAvailable, next);
+    },
+    [edit, slotStartMs, totalMs],
+  );
+  return !!edit && available;
 }

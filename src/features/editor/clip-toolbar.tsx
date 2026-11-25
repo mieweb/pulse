@@ -21,6 +21,7 @@ const FLIP_ICON = 'arrow.left.and.right.righttriangle.left.righttriangle.right';
 type Tool = {
   key: string;
   label: string;
+  accessibilityLabel?: string;
   icon?: IconName;
   /** A text glyph instead of an icon (the speed). */
   text?: string;
@@ -41,7 +42,7 @@ function ToolButton({ tool }: { tool: Tool }) {
       onPress={tool.onPress}
       disabled={tool.disabled}
       accessibilityRole="button"
-      accessibilityLabel={tool.label}
+      accessibilityLabel={tool.accessibilityLabel ?? tool.label}
       accessibilityState={{ disabled: !!tool.disabled, busy: !!tool.busy }}
       hitSlop={4}
       style={({ pressed }) => [
@@ -72,6 +73,9 @@ type Props = {
   speed: number;
   editable: boolean;
   edited: boolean;
+  canSplit: boolean;
+  busy: boolean;
+  onSplit: () => void;
   onFlip: () => void;
   onRotate: () => void;
   onCrop: () => void;
@@ -83,10 +87,18 @@ type Props = {
   onDone: () => void;
 };
 
-/** The clip tools: flip, rotate, crop, mute, speed, then reset and delete (✓ leaves edit mode).
+/** The clip tools: split, flip, rotate, crop, mute, speed, then reset and delete (✓ leaves edit mode).
  * They scroll sideways when the screen is too narrow for all of them. */
 export function ClipToolbar(p: Props) {
   const tools: Tool[] = [
+    {
+      key: 'split',
+      label: 'Split',
+      accessibilityLabel: 'Split at playhead',
+      icon: 'scissors',
+      onPress: p.onSplit,
+      disabled: !p.canSplit,
+    },
     { key: 'flip', label: 'Flip', icon: FLIP_ICON, onPress: p.onFlip, disabled: !p.editable },
     {
       key: 'rotate',
@@ -127,7 +139,7 @@ export function ClipToolbar(p: Props) {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollTools}>
         {tools.map((t) => (
-          <ToolButton key={t.key} tool={t} />
+          <ToolButton key={t.key} tool={{ ...t, disabled: p.busy || t.disabled }} />
         ))}
       </ScrollView>
     </View>
