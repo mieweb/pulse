@@ -77,19 +77,19 @@
   },
   "physicalHandoff": {
     "installed": true,
-    "launchVerified": false,
-    "reason": "Installation and library preservation verified; automatic launch remains blocked by locked phone",
+    "launchVerified": true,
+    "reason": "Installation and library preservation verified; launch succeeded after unlock and app was left running for user testing; guard released",
     "privateLibraryBackupAndIntegrityCheckBeforeInstall": true,
     "postInstallLibraryCheck": "passed: every pre-existing draft/segment column and persistent-history metadata unchanged",
     "guardStatus": "released",
     "automationStarted": false,
     "captureStarted": false,
-    "libraryPreserved": true
+    "libraryPreserved": true,
+    "handoffRunning": true
   },
   "limitations": [
     "Physical thumb reach in either hand remains user test",
     "Android/RTL/VoiceOver spoken navigation not exercised",
-    "Caption selection/keyboard remains inherited unverified coverage",
-    "Phone launch remains pending unlock; installation and library preservation passed"
+    "Caption selection/keyboard remains inherited unverified coverage"
   ]
 }

@@ -86,8 +86,11 @@ Start at **Home → open a project → Edit**. Exact instructions are in
 **About → Release notes**, titled **Toolbar #337 phone test**. Try both hands, More/First,
 swiping and enlarged text. Use a spare clip for Delete, which retains its no-Undo behavior.
 
-Pulse 2.8.0 (1) was installed in place after a private SQLite backup and integrity check. iOS
-blocked launch because the phone was locked. A separate bounded read-only comparison verified
-every pre-existing draft/segment column and persistent-history payload unchanged after installation.
-The guard returned `released` after each session; no debugger, WDA/XCTest or screen sharing was
-started. Only the launch check remains pending unlock. Notes and the final payload passed simulator checks.
+Pulse 2.8.0 (1) was installed in place after a private SQLite backup and integrity check. A bounded
+read-only comparison verified every pre-existing draft/segment column and persistent-history
+payload unchanged after installation. After the phone was unlocked, a separate launch-only session
+successfully started Pulse and left it running for user testing. The library was not re-read during
+that launch-only handoff.
+
+The guard returned `released` after every session; no debugger, WDA/XCTest or screen sharing was
+started. Notes and the final payload passed simulator checks.
