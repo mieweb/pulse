@@ -27,6 +27,8 @@ export type AddedStep = {
   taken: TakenOutClips | null;
   /** Original clips changed by this addition, restored together with taking its clips out. */
   splits?: readonly SplitReceipt[];
+  /** An image batch extends this same chronological step while its remaining media prepares. */
+  batchKey?: string;
 };
 
 export type Step = { kind: 'state'; snapshot: Snapshot } | AddedStep;
@@ -102,9 +104,10 @@ const isEmpty = (d: SnapshotDiff) =>
   d.edits.length === 0 && d.captions.size === 0 && d.captionY === undefined && d.order === null;
 
 /**
- * The next undo or redo to carry out, skipping (and dropping) steps that would change nothing: a
- * state step that only touched deleted clips, or an addition whose clips have all gone. Taking
- * out the last clips is allowed: the editor stays open with their files retained for redo.
+ * The next undo or redo to carry out, skipping state steps that change nothing. Additions always
+ * go to storage: the live query may not show all committed clips yet, including just after redo.
+ * Only storage can confirm that an addition's clips have all gone. Taking out the last clips is
+ * allowed: the editor stays open with their files retained for redo.
  * `history` is the history once the step is done, except for an addition, which takes its clips
  * out or puts them back first: `history` is the one it starts from, the step still on top
  * (editor-history-store.ts moves it).
@@ -117,27 +120,13 @@ export type Plan =
 
 export function planStep(h: History<Step>, direction: 'undo' | 'redo', now: Present): Plan {
   const current: Step = { kind: 'state', snapshot: snapshotOf(now) };
-  const ids = now.clips.map((c) => c.id);
   while (true) {
     const stack = direction === 'undo' ? h.past : h.future;
     const top = stack[stack.length - 1];
     if (!top) return { kind: 'none', history: h };
     if (top.kind === 'added') {
       if (direction === 'undo') {
-        const affected = new Set([
-          ...top.ids,
-          ...(top.splits ?? []).flatMap((s) => [s.rightId, ...s.before.rows.map((r) => r.id)]),
-        ]);
-        if ([...affected].some((id) => ids.includes(id))) {
-          return {
-            kind: 'takeOut',
-            history: h,
-            step: top,
-            // The receipt can arrive before the live query publishes the inserted ids. The
-            // database decides which still exist; a stale UI must not leave the object behind.
-            ids: top.splits?.length ? top.ids : top.ids.filter((id) => ids.includes(id)),
-          };
-        }
+        return { kind: 'takeOut', history: h, step: top, ids: top.ids };
       } else if (top.taken) {
         return { kind: 'putBack', history: h, step: top as AddedStep & { taken: TakenOutClips } };
       }

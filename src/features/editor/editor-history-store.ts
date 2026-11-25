@@ -52,7 +52,8 @@ export function createEditorHistory(deps: HistoryDeps) {
   let changes = 0;
   let running: Promise<void> | null = null;
   let pendingAddition = false;
-  let snapshot = { ...history, keepEmptyOpen: false };
+  const openBatches = new Set<string>();
+  let snapshot = { ...history, keepEmptyOpen: false, batchOpen: false, busy: false };
   let disposed = false;
   const listeners = new Set<() => void>();
 
@@ -60,7 +61,9 @@ export function createEditorHistory(deps: HistoryDeps) {
     history = next;
     snapshot = {
       ...history,
-      keepEmptyOpen: pendingAddition || takenOut(history.future).length > 0,
+      keepEmptyOpen: pendingAddition || openBatches.size > 0 || takenOut(history.future).length > 0,
+      batchOpen: openBatches.size > 0,
+      busy: pendingAddition,
     };
     for (const l of listeners) l();
   };
@@ -87,16 +90,32 @@ export function createEditorHistory(deps: HistoryDeps) {
     set({ ...history, past });
   };
 
+  // A slow import can span more than 100 edits. Keep its step until it closes so a later
+  // committed image cannot accidentally create a new step above those intervening edits.
+  const keepOpenBatches = (past: readonly Step[], retained: readonly Step[]) => [
+    ...past.filter(
+      (s) =>
+        s.kind === 'added' && s.batchKey && openBatches.has(s.batchKey) && !retained.includes(s),
+    ),
+    ...retained,
+  ];
+
   const push = (step: Step, opKey: string | null) => {
     if (disposed) return;
     changes++;
     dropAll(history.future);
-    const next = recordStep(history, step, opKey, Date.now());
+    const recorded = recordStep(history, step, opKey, Date.now());
+    const next = { ...recorded, past: keepOpenBatches(history.past, recorded.past) };
     dropOriginals(history.past.filter((s) => !next.past.includes(s)));
     set(next);
   };
 
-  const takeOut = (h: History<Step>, step: AddedStep, ids: string[]) => {
+  const takeOut = (
+    h: History<Step>,
+    step: AddedStep,
+    ids: string[],
+    nextUndo: () => Promise<void> | null,
+  ) => {
     // Off the undo stack while it runs.
     set({ ...h, past: h.past.slice(0, -1), lastOp: null });
     const below = h.past[h.past.length - 2];
@@ -118,6 +137,9 @@ export function createEditorHistory(deps: HistoryDeps) {
       // Nothing left to take out (gone meanwhile): the step is done with.
       if (!taken) {
         dropOriginals([step]);
+        // Only storage can confirm that an addition disappeared. Skip it on this Undo tap,
+        // unless a newer change or an open image batch has superseded the request.
+        if (!disposed && changes === at && openBatches.size === 0) await nextUndo();
         return;
       }
       if (disposed || changes !== at) {
@@ -158,38 +180,42 @@ export function createEditorHistory(deps: HistoryDeps) {
     })();
   };
 
-  const step = (
+  const runStep = (
     direction: 'undo' | 'redo',
     now: Present,
     apply: (diff: SnapshotDiff) => void,
-  ): void => {
-    if (running || disposed) return;
+  ): Promise<void> | null => {
     const plan = planStep(history, direction, now);
     const retained = new Set([...plan.history.past, ...plan.history.future]);
     dropOriginals([...history.past, ...history.future].filter((s) => !retained.has(s)));
     switch (plan.kind) {
       case 'none':
         set(plan.history);
-        return;
+        return null;
       case 'state':
         apply(plan.diff);
         set(plan.history);
-        return;
+        return null;
       case 'takeOut':
       case 'putBack': {
         // Set before either operation publishes an empty stack or the database removes rows.
         pendingAddition = true;
-        const run =
-          plan.kind === 'takeOut'
-            ? takeOut(plan.history, plan.step, plan.ids)
-            : putBack(plan.history, plan.step);
-        running = run.finally(() => {
-          running = null;
-          pendingAddition = false;
-          set(history);
-        });
-        return;
+        return plan.kind === 'takeOut'
+          ? takeOut(plan.history, plan.step, plan.ids, () => runStep(direction, now, apply))
+          : putBack(plan.history, plan.step);
       }
+    }
+  };
+
+  const step = (direction: 'undo' | 'redo', now: Present, apply: (diff: SnapshotDiff) => void) => {
+    if (running || pendingAddition || disposed || openBatches.size > 0) return;
+    const run = runStep(direction, now, apply);
+    if (run) {
+      running = run.finally(() => {
+        running = null;
+        pendingAddition = false;
+        set(history);
+      });
     }
   };
 
@@ -205,9 +231,49 @@ export function createEditorHistory(deps: HistoryDeps) {
     record: (before: Present, opKey: string | null) =>
       push({ kind: 'state', snapshot: snapshotOf(before) }, opKey),
     /** Clips were added to the draft (already in it): one step that takes them all out. */
-    recordAdded: (ids: string[], splits: readonly SplitReceipt[] = []) => {
-      if (ids.length || splits.length)
-        push({ kind: 'added', ids, taken: null, ...(splits.length ? { splits } : {}) }, null);
+    recordAdded: (ids: string[], splits: readonly SplitReceipt[] = [], batchKey?: string) => {
+      if (!ids.length && !splits.length) return;
+      const step: AddedStep = {
+        kind: 'added',
+        ids,
+        taken: null,
+        ...(splits.length ? { splits } : {}),
+        ...(batchKey ? { batchKey } : {}),
+      };
+      if (disposed) {
+        dropOriginals([step]);
+        return;
+      }
+      if (batchKey) {
+        openBatches.add(batchKey);
+        const existing = history.past.find(
+          (s): s is AddedStep => s.kind === 'added' && s.batchKey === batchKey,
+        );
+        if (existing) {
+          changes++;
+          dropAll(history.future);
+          // Preserve the step's identity and position, including async operations' `below`
+          // references. Publishing a new store snapshot still notifies React subscribers.
+          existing.ids = [...new Set([...existing.ids, ...ids])];
+          if (splits.length) existing.splits = [...(existing.splits ?? []), ...splits];
+          set({ ...history, future: [], lastOp: null });
+          return;
+        }
+      }
+      push(step, null);
+    },
+    /** Lock history while a batch prepares; its first commit, not the picker, creates a step. */
+    beginBatch: (key: string): Promise<void> => {
+      if (disposed) return Promise.resolve();
+      openBatches.add(key);
+      set({ ...history, lastOp: null });
+      return running ?? Promise.resolve();
+    },
+    endBatch: (key: string) => {
+      if (!openBatches.delete(key)) return;
+      const past = keepOpenBatches(history.past, history.past.slice(-100));
+      dropOriginals(history.past.filter((s) => !past.includes(s)));
+      set({ ...history, past, lastOp: null });
     },
     close: () => set(closeCoalescing(history)),
     undo: (now: Present, apply: (diff: SnapshotDiff) => void) => step('undo', now, apply),
@@ -222,6 +288,7 @@ export function createEditorHistory(deps: HistoryDeps) {
     dispose() {
       if (disposed) return;
       disposed = true;
+      openBatches.clear();
       dropAll(history.future);
       dropOriginals(history.past);
       set({ ...history, future: [] });

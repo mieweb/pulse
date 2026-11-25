@@ -75,12 +75,15 @@ export function useEditorHistory(
     record: (opKey: string | null) => store.record(present(), opKey),
     /** Clips were added to the draft (already in it): one step that takes them all out. */
     recordAdded: store.recordAdded,
+    beginBatch: store.beginBatch,
+    endBatch: store.endBatch,
     /** Ends a merge window (a drag let go). */
     close: store.close,
     undo: () => store.undo(present(), apply),
     redo: () => store.redo(present(), apply),
-    canUndo: history.past.length > 0,
-    canRedo: history.future.length > 0,
+    canUndo: history.past.length > 0 && !history.batchOpen && !history.busy,
+    canRedo: history.future.length > 0 && !history.batchOpen && !history.busy,
+    busy: history.busy,
     /** An addition is moving through the database or its clips are retained for redo. */
     keepEmptyOpen: history.keepEmptyOpen,
   };
