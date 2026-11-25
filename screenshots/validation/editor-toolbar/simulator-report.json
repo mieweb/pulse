@@ -3,9 +3,65 @@
   "date": "2026-11-25",
   "mainBase": "6e74151dfcfd1c465228b929d9f00090a461c18b",
   "nativePin": "306ff1d999589be6615275c60567ba371f073efd",
-  "version": "2.8.0 (1)",
+  "version": "2.8.0 (3371)",
   "fixture": "Dedicated fresh iPhone SE3, iOS26.0,375x667;12 synthetic clips and3 legacy custom speeds; no user media",
-  "functional": {
+  "finalPhoneBundleSha256": "2db17d9f7e5e64b88591d73001ef25bf3494426cac472591f958c4cbb08a8fb2",
+  "finalPhoneConfigSha256": "1650a2db4ee7df8fa867ead4c9b5ed904fefbb6674d5d3a4b9ddcdfe6c80481b",
+  "builds": {
+    "simulatorRelease": true,
+    "deviceRelease": true,
+    "nativeOwnershipHelperCompiled": true,
+    "final28MetadataRefreshed": true,
+    "phoneAndSimulatorPayloadMatch": true,
+    "signaturesVerified": true
+  },
+  "evidenceScope": "menuOnlyFunctional and menuReviewSourceSha256 describe the independent menu review checks. combinedTestBuild describes the final phone payload, simulator smoke and combined source checks. physicalHandoff is the corrected receipt-matched3371handoff.",
+  "cleanup": {
+    "actions": [
+      {
+        "sessionDelete": 200
+      },
+      {
+        "terminate": "com.facebook.WebDriverAgentRunner.xctrunner",
+        "exit": 3,
+        "stderr": "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nSimulator device failed to terminate com.facebook.WebDriverAgentRunner.xctrunner.\nfound nothing to terminate\nUnderlying error (domain=NSPOSIXErrorDomain, code=3):\n\tThe request to terminate \"com.facebook.WebDriverAgentRunner.xctrunner\" failed. found nothing to terminate\n\tfound nothing to terminate\n"
+      },
+      {
+        "terminate": "com.mieweb.pulse",
+        "exit": 0,
+        "stderr": ""
+      },
+      {
+        "shutdownExit": 0,
+        "stderr": "",
+        "runnerExit": -15
+      }
+    ],
+    "ownedRunnersExited": true
+  },
+  "physicalHandoff": {
+    "installed": true,
+    "launchVerified": true,
+    "reason": "Corrected combined build3371 installed, launched and left running; installed and running identities matched the same new receipt; guard released",
+    "privateLibraryBackupAndIntegrityCheckBeforeInstall": true,
+    "postInstallLibraryCheck": "passed: every pre-existing project/segment column and persistent-history payload unchanged",
+    "guardStatus": "released",
+    "automationStarted": false,
+    "captureStarted": false,
+    "libraryPreserved": true,
+    "handoffRunning": true,
+    "version": "2.8.0 (3371)",
+    "installationReceiptVerified": true,
+    "runningIdentityVerified": true,
+    "finalHandoffIdentityVerified": true,
+    "schemaVersion": 23
+  },
+  "limitations": [
+    "Physical thumb reach in either hand remains user test",
+    "Android/RTL/VoiceOver spoken navigation not exercised",
+    "Caption selection/keyboard remains inherited unverified coverage"
+  ],
+  "menuOnlyFunctional": {
     "initialPriorityToolsAndLowerCommands": true,
     "moreClicksToRotate": 2,
     "swipeCyclesWithoutDismissingEdit": 3,
@@ -37,59 +93,50 @@
     "final28ExactPhoneNotesRendered": true,
     "final28MoreFirstDoneAndClose": true
   },
-  "sourceSha256": {
+  "menuReviewSourceSha256": {
     "src/features/editor/clip-toolbar.tsx": "aaea34dcfaa273d797ec2b80ae07324c064b88500831866d4887f0cddf7945a1",
     "src/features/editor/editor-screen.tsx": "3b26825c7a5fba63dc929aa2684c50388e3538e179e1796113e829a4b040cf15"
   },
-  "finalPhoneBundleSha256": "7d3dde70043e5890b0b12732d650ecb5dee089f60af818f94323703cdebdc5f9",
-  "finalPhoneConfigSha256": "73a04704a60246967c9e05321c0c3939215eaf9b4ba489b0de5a91e7dee59097",
-  "builds": {
-    "simulatorRelease": true,
-    "deviceRelease": true,
-    "nativeOwnershipHelperCompiled": true,
-    "final28MetadataRefreshed": true,
-    "phoneAndSimulatorPayloadMatch": true,
-    "signaturesVerified": true
+  "combinedTestBuild": {
+    "sourceCommit": "d3a853e46005237a8cfb6c828caa82b8fa75f9e3",
+    "sourceUrl": "https://github.com/mieweb/pulse/commit/d3a853e46005237a8cfb6c828caa82b8fa75f9e3",
+    "bulkBase": "34f8191d3d199d105b2ab8a0709344be0ce70136",
+    "reviewBranchIndependent": true,
+    "version": "2.8.0",
+    "nativeBuildNumber": "3371",
+    "expoBuildNumber": "3371",
+    "trackedSourceClean": true,
+    "firstNote": "Toolbar #337 + Bulk Transcript #339 test",
+    "sourceSha256": {
+      "docs/testing/editor-toolbar-bulk-transcript-test-notes.json": "2fffc15e9c20270d04eebebc08ef3a3cf376e43b7f6eab810071d216060ad07c",
+      "src/features/editor/clip-toolbar.tsx": "08ef17667003a446de7bc8140e918658549190526eeb05621cce263ae00d38b7",
+      "src/features/editor/editor-screen.tsx": "d1043821c81cbb1a8b7fea4dc9122223f481bf3e0702121f2cb7dc75d2d9fb35"
+    },
+    "sourceChecks": {
+      "tsc": "passed",
+      "lint": "passed",
+      "jest": "167 suites/2434 tests passed;1 suite/8 integration tests skipped",
+      "protocol": "passed",
+      "embedTypechecks": "passed",
+      "embedBundles": "iOS and Android passed",
+      "notesConfig": "2.8.0, six exact notes, required combined label first",
+      "formatAndDiff": "passed"
+    },
+    "nativeSmoke": {
+      "version": "2.8.0 (3371)",
+      "commit": "d3a853e46005237a8cfb6c828caa82b8fa75f9e3",
+      "allSixNotesRendered": true,
+      "priorityFourFullyVisible": true,
+      "moreClicksToEnd": 2,
+      "allElevenSpeedsReachable": true,
+      "bulkTranscriptEntryAndWordsAndControlsPreserved": true,
+      "doneCancelClose": true
+    }
   },
-  "evidenceScope": "Native operations checked before paging-overlap-only repair; final half-page payload reran normal/largest layout, all11 speeds, More/First, Done/Close. Version2.8 refresh changed metadata only; exact2.8 payload reran notes/version/toolbar smoke.",
-  "cleanup": {
-    "actions": [
-      {
-        "sessionDelete": 200
-      },
-      {
-        "terminate": "com.facebook.WebDriverAgentRunner.xctrunner",
-        "exit": 3,
-        "stderr": "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nSimulator device failed to terminate com.facebook.WebDriverAgentRunner.xctrunner.\nfound nothing to terminate\nUnderlying error (domain=NSPOSIXErrorDomain, code=3):\n\tThe request to terminate \"com.facebook.WebDriverAgentRunner.xctrunner\" failed. found nothing to terminate\n\tfound nothing to terminate\n"
-      },
-      {
-        "terminate": "com.mieweb.pulse",
-        "exit": 0,
-        "stderr": ""
-      },
-      {
-        "shutdownExit": 0,
-        "stderr": "",
-        "runnerExit": -15
-      }
-    ],
-    "ownedRunnersExited": true
-  },
-  "physicalHandoff": {
-    "installed": true,
-    "launchVerified": true,
-    "reason": "Installation and library preservation verified; launch succeeded after unlock and app was left running for user testing; guard released",
-    "privateLibraryBackupAndIntegrityCheckBeforeInstall": true,
-    "postInstallLibraryCheck": "passed: every pre-existing draft/segment column and persistent-history metadata unchanged",
-    "guardStatus": "released",
-    "automationStarted": false,
-    "captureStarted": false,
-    "libraryPreserved": true,
-    "handoffRunning": true
-  },
-  "limitations": [
-    "Physical thumb reach in either hand remains user test",
-    "Android/RTL/VoiceOver spoken navigation not exercised",
-    "Caption selection/keyboard remains inherited unverified coverage"
-  ]
+  "earlierHandoffCorrection": "The unlocked launch recorded in005879b started a later Bulk Transcript installation that had replaced the initial toolbar build; that earlier launch did not verify the toolbar payload.",
+  "combinedSimulatorCleanup": {
+    "sessionDelete": 200,
+    "runnerExit": -15,
+    "simulatorShutdown": 0
+  }
 }

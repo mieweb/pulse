@@ -41,7 +41,7 @@ checks were repeated; the pure-logic Jest result was reused because it does not 
 this toolbar. The subsequent 2.8 merge changed version metadata only; version/config/notes checks
 passed and historical release entries were preserved. Logs: `/tmp/pulse-337-main-checks/`.
 
-## Native verification
+## Native verification (menu-only build)
 
 Both Release native shells were built with the exact main engine pin
 `306ff1d999589be6615275c60567ba371f073efd`, including its ownership helper. Version 2.8 packaging
@@ -52,20 +52,20 @@ Both signatures passed. No dependency versions or native pointers changed in thi
 A dedicated fresh iPhone SE (third generation), iOS 26.0, 375×667, used synthetic clips and three
 legacy custom speeds. The earlier prototype database was not reused.
 
-| Native check              | Result                                                                                                     |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Normal portrait           | Delete, Split, Speed and Reset fully visible; global commands remain in the lower half                     |
-| Swipe navigation          | Three cycles reveal Rotate and return to Done without leaving Edit                                         |
-| More/First                | Button path reaches later tools and returns to Done                                                        |
-| Eleven speeds             | All eight standard and three custom choices fully reachable with buttons, including at largest system text |
-| Speed/Reset               | 0.5× and 3.5× selection, Done and Reset passed                                                             |
-| History                   | Speed Undo/Redo and Split Undo/Redo passed; Delete preserves existing no-Undo semantics                    |
-| Dark/largest text         | Labels fit vertically; later tools, Done and lower commands remain reachable                               |
-| Exact final phone payload | Version 2.8.0, all six notes, paging, Done and Close verified in the simulator                             |
+| Native check            | Result                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Normal portrait         | Delete, Split, Speed and Reset fully visible; global commands remain in the lower half                     |
+| Swipe navigation        | Three cycles reveal Rotate and return to Done without leaving Edit                                         |
+| More/First              | Button path reaches later tools and returns to Done                                                        |
+| Eleven speeds           | All eight standard and three custom choices fully reachable with buttons, including at largest system text |
+| Speed/Reset             | 0.5× and 3.5× selection, Done and Reset passed                                                             |
+| History                 | Speed Undo/Redo and Split Undo/Redo passed; Delete preserves existing no-Undo semantics                    |
+| Dark/largest text       | Labels fit vertically; later tools, Done and lower commands remain reachable                               |
+| Menu-only phone payload | Version 2.8.0, all six notes, paging, Done and Close verified in the simulator                             |
 
 The largest-text test exposed a speed choice clipped between pages. Half-page overlap repaired
 that boundary, and every speed was then verified fully visible through the button path. Operation
-checks preceded only that paging refinement; final payload checks repeated layout, all speeds
+checks preceded only that paging refinement; menu-only payload checks repeated layout, all speeds
 and completion. The 2.8 refresh changed release/version metadata only.
 
 Evidence: [reporter screenshot](../../screenshots/validation/editor-toolbar/reporter-before.jpg),
@@ -82,15 +82,29 @@ All owned simulator sessions ended, runners exited and the dedicated simulator w
 
 ## Phone handoff
 
-Start at **Home → open a project → Edit**. Exact instructions are in
-**About → Release notes**, titled **Toolbar #337 phone test**. Try both hands, More/First,
-swiping and enlarged text. Use a spare clip for Delete, which retains its no-Undo behavior.
+The earlier handoff attribution was incorrect: a later Bulk Transcript installation replaced the
+initial toolbar-only build, and the subsequent unlocked launch started that Bulk build. The launch
+claim recorded in `005879b` therefore did not establish that the toolbar payload was running.
 
-Pulse 2.8.0 (1) was installed in place after a private SQLite backup and integrity check. A bounded
-read-only comparison verified every pre-existing draft/segment column and persistent-history
-payload unchanged after installation. After the phone was unlocked, a separate launch-only session
-successfully started Pulse and left it running for user testing. The library was not re-read during
-that launch-only handoff.
+The corrected handoff is **Pulse 2.8.0 (3371)**, with native and Expo build numbers both **3371**.
+It uses the [separate combined test integration](https://github.com/mieweb/pulse/commit/d3a853e46005237a8cfb6c828caa82b8fa75f9e3)
+on committed [PR #339](https://github.com/mieweb/pulse/pull/339) head `34f8191`; the menu review
+branch remains independent. All recorded installed-Bulk source hashes matched that committed base.
+The combined source preserves everything except the two toolbar files and adds explicit test notes.
+Its root typing, lint, protocol, embed typing/bundles and **167 suites / 2,434 tests** passed;
+one integration suite / eight tests were skipped. The exact combined payload passed simulator
+checks for the four priority tools, More/First, all eleven speeds, Transcript entry/controls,
+Done/Cancel/Close and all six release notes.
 
-The guard returned `released` after every session; no debugger, WDA/XCTest or screen sharing was
-started. Notes and the final payload passed simulator checks.
+The final phone installation, launch and running application were matched to the same new install
+receipt. Every pre-existing project/segment column and persistent-history payload was unchanged;
+the schema remained at migration 23. Pulse was left running for user testing. The device guard
+returned `released`; no debugger, WDA/XCTest or screen sharing was started. Private installation
+identifiers, process identities and library data are excluded from this record.
+
+Start at **Home → open a project → Edit**. In **About → Release notes**, verify the first note is
+**Toolbar #337 + Bulk Transcript #339 test**. Try both hands, More/First, swiping and enlarged text;
+use spare footage for Delete, which has no Undo. The [combined About view](../../screenshots/validation/editor-toolbar/combined-about.png)
+and [combined toolbar](../../screenshots/validation/editor-toolbar/combined-toolbar.png) are
+simulator captures, not photographs or captures of the user's library. Actual thumb reach and
+spoken VoiceOver behavior remain user checks.
