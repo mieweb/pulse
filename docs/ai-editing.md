@@ -16,6 +16,9 @@ The feature defaults on in iOS development sessions. Offline Release builds requ
 experiment in either build type. Both the editor action and the execution entry point check the
 gate. Ordinary release builds expose no AI edit action.
 
+The [phone handoff](testing/ai-edit-phone-build.md) records the installed build and its compatible
+source baseline, verification and remaining acceptance checks.
+
 Build with Node 24.3+ and Xcode 27+, using the repository's native build workflow. The local
 `modules/expo-ai-editor` Expo module requires a native rebuild; a JavaScript reload cannot add it.
 On a local phone handoff, set `PULSE_TEST_NOTES_FILE=docs/testing/ai-edit-test-notes.json` before
