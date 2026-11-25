@@ -54,6 +54,7 @@ import {
 } from './project';
 import * as schema from './schema';
 import { openLibrary, takeSnapshot } from './snapshots';
+import { renderKey } from '@/utils/segment-window';
 
 jest.mock('expo-file-system', () => jest.requireActual('@/test-support/expo-fs-node'));
 jest.mock(
@@ -68,6 +69,7 @@ jest.mock('react-native-zip-archive', () => jest.requireActual('@/test-support/z
 // Only for the library as the app opens it (`@/db/client`, `@/db/drafts`): drafts.ts imports
 // these native modules, none of which the tests here reach.
 jest.mock('@/utils/video', () => ({}));
+jest.mock('@/features/transcription/clip-queue', () => ({ dropClipJobs: () => {} }));
 jest.mock('./secure-token', () => ({ deleteSavedLink: async () => {} }));
 jest.mock('expo-crypto', () => ({
   randomUUID: () => jest.requireActual<typeof import('node:crypto')>('node:crypto').randomUUID(),
@@ -919,6 +921,121 @@ describe('undo history in .pulse files', () => {
     ).toBe(sourceSaved);
     expect(readMedia(P(S2, '.mp4'))).toBe(`bytes of ${P(S2, '.mp4')}`);
     expect(existsSync(join(env.docDir, row.originalFilename))).toBe(true);
+  });
+
+  it('reopens and transfers a direct split’s Undo/Redo without an inserted clip', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    const sourceFile = P(S4, '.mp4', D2);
+    const caption = JSON.stringify({
+      file: sourceFile,
+      words: [{ text: 'split me', t0: 0, t1: 90 }],
+    });
+    conn.runSync('UPDATE segments SET caption_edit = ? WHERE id = ?', caption, S4);
+    conn.runSync(
+      'INSERT INTO clip_transcripts (segment_id, model, file, status, words, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      S4,
+      'tiny',
+      sourceFile,
+      'done',
+      '[{"text":"split me","t0":0,"t1":90}]',
+      1,
+    );
+    const app = appLibrary(true);
+    const closeCallbacks = new Set<() => void>();
+    const failed = jest.fn();
+    const open = (draftId: string) => {
+      const session = app.undo!.editorUndoSession(draftId);
+      const stop = session.open(failed);
+      closeCallbacks.add(stop);
+      return {
+        session,
+        store: session.store,
+        close: async () => {
+          closeCallbacks.delete(stop);
+          stop();
+          await app.flushUndo!();
+        },
+      };
+    };
+    const rows = (draftId: string) =>
+      drizzle(conn)
+        .select()
+        .from(schema.segments)
+        .all()
+        .filter((row) => row.draftId === draftId)
+        .sort((a, b) => a.order - b.order);
+    const now = (draftId: string) => ({
+      clips: rows(draftId).map((row) => ({ id: row.id, editKey: row.editState })),
+      captions: new Map(rows(draftId).map((row) => [row.id, row.captionEdit])),
+      captionY: null,
+    });
+    const noSnapshot = () => {
+      throw new Error('A direct split must remain one structural step.');
+    };
+    try {
+      const original = rows(D2);
+      const first = open(D2);
+      const receipt = await app.drafts.splitSegment(D2, {
+        before: S4,
+        split: {
+          sourceMs: 500,
+          offsetMs: 500,
+          sourceKey: renderKey(original[0]),
+          rightId: 'direct-split-right',
+        },
+      });
+      expect(receipt).not.toHaveProperty('firstInsertedId');
+      first.store.recordAdded([], [receipt]);
+      await app.flushUndo!();
+      expect(rows(D2)).toHaveLength(2);
+      await first.close();
+      const reopened = open(D2);
+      expect(reopened.session).not.toBe(first.session);
+      expect(savedUndo(conn, D2).past[0]).toMatchObject({ kind: 'added', ids: [] });
+      reopened.store.undo(now(D2), noSnapshot);
+      await app.flushUndo!();
+      expect(rows(D2)).toEqual(original);
+      await reopened.close();
+      const sourceHistory = savedUndo(conn, D2);
+      expect(sourceHistory.future).toHaveLength(1);
+      const uri = await exportDrafts(conn, [D2], 54321);
+      let fresh = 0;
+      const [copy] = await importProjectFile(conn, uri, () => `direct-copy-${++fresh}`);
+      const imported = open(copy);
+      const copiedStep = savedUndo(conn, copy).future[0];
+      if (copiedStep.kind !== 'added') throw new Error('Expected split step');
+      expect(copiedStep.ids).toEqual([]);
+      expect(copiedStep.splits?.[0]).not.toHaveProperty('firstInsertedId');
+      imported.store.redo(now(copy), noSnapshot);
+      await app.flushUndo!();
+      expect(rows(copy)).toHaveLength(2);
+      expect(rows(copy).every((row) => row.captionEdit?.includes(`drafts/${copy}/`))).toBe(true);
+      expect(
+        conn.getAllSync<{ words: string }>(
+          'SELECT words FROM clip_transcripts WHERE segment_id IN (SELECT id FROM segments WHERE draft_id = ?)',
+          copy,
+        ),
+      ).toEqual([
+        { words: '[{"text":"split me","t0":0,"t1":90}]' },
+        { words: '[{"text":"split me","t0":0,"t1":90}]' },
+      ]);
+      await imported.close();
+      const copiedReopened = open(copy);
+      expect(copiedReopened.session).not.toBe(imported.session);
+      copiedReopened.store.undo(now(copy), noSnapshot);
+      await app.flushUndo!();
+      expect(rows(copy)).toHaveLength(1);
+      expect(rows(copy)[0].captionEdit).toContain('split me');
+      expect(savedUndo(conn, D2)).toEqual(sourceHistory);
+      expect(rows(D2)).toEqual(original);
+      expect(readMedia(sourceFile)).toBe(`bytes of ${sourceFile}`);
+      expect(failed).not.toHaveBeenCalled();
+    } finally {
+      for (const close of closeCallbacks) close();
+      await app.flushUndo!();
+      app.client.expoDb.closeSync();
+    }
   });
 
   it('preserves split originals, replaced rows and snapshot caption paths when copying', async () => {
@@ -1845,13 +1962,15 @@ function oldBackup(
 }
 
 /** The library as the app opens it on this device (`@/db/client` opens it on import): fresh modules. */
-function appLibrary() {
+function appLibrary(withUndo = false) {
   let mods!: {
     client: typeof import('./client');
     drafts: typeof import('./drafts');
     host: typeof import('./host-context');
     settings: typeof import('./local-settings');
     gate: typeof import('./migrate');
+    undo?: typeof import('@/features/editor/persistent-editor-history');
+    flushUndo?: () => Promise<void>;
   };
   jest.isolateModules(() => {
     mods = {
@@ -1861,6 +1980,14 @@ function appLibrary() {
       host: jest.requireActual<typeof import('./host-context')>('./host-context'),
       settings: jest.requireActual<typeof import('./local-settings')>('./local-settings'),
     };
+    if (withUndo) {
+      mods.undo = jest.requireActual<typeof import('@/features/editor/persistent-editor-history')>(
+        '@/features/editor/persistent-editor-history',
+      );
+      mods.flushUndo = jest.requireActual<typeof import('@/core/undo-write-barrier')>(
+        '@/core/undo-write-barrier',
+      ).waitForUndoHistory;
+    }
   });
   return mods;
 }

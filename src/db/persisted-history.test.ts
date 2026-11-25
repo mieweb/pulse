@@ -156,6 +156,27 @@ describe('saved Undo data validation', () => {
 });
 
 describe('saved Undo references and copy', () => {
+  it('parses and remaps a standalone split with no inserted clips or firstInsertedId', () => {
+    const source = history(
+      [{ kind: 'added', ids: [], taken: null, splits: [{ before: taken('a'), rightId: 'right' }] }],
+      [],
+    );
+    expect(parse(source)).toEqual(source);
+    expect(historyClipIds(source)).toEqual(new Set(['a', 'deleted', 'right']));
+    const copy = remapPersistedHistory(source, {
+      draftId: 'copy',
+      mapId: (id) => `copy-${id}`,
+      mapPath: (file) => file.replace('drafts/d/', 'drafts/copy/'),
+    });
+    expect(parsePersistedHistory(JSON.stringify(copy), 'copy')).toEqual(copy);
+    const split = copy.past[0];
+    if (split.kind !== 'added') throw new Error('Expected standalone split');
+    expect(split.ids).toEqual([]);
+    expect(split.splits?.[0]).toMatchObject({ rightId: 'copy-right', before: { draftId: 'copy' } });
+    expect(split.splits?.[0]).not.toHaveProperty('firstInsertedId');
+    expect(historyClipIds(copy)).toEqual(new Set(['copy-a', 'copy-deleted', 'copy-right']));
+  });
+
   it('lists snapshot-only, dormant, replaced and split IDs and files once', () => {
     const value = compoundHistory();
     expect(historyClipIds(value)).toEqual(new Set(['snapshot-only', 'x', 'deleted', 'a', 'right']));

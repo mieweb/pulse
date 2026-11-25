@@ -53,6 +53,7 @@ import { addSegment, createDraft, deleteSegment } from '@/db/drafts';
 import * as draftFunctions from '@/db/drafts';
 import { dropHeldFiles } from '@/db/held-files';
 import { referencedMediaPaths } from '@/db/media-refs';
+import { historyCheckpoint } from '@/db/undo-history';
 import { editorUndoSession, hasRetainedUndo } from './persistent-editor-history';
 /* eslint-enable import/first */
 
@@ -153,6 +154,65 @@ afterEach(async () => {
 });
 
 describe('persistent editor Undo on a migrated library', () => {
+  it('rejects a matching saved checkpoint whose addition names another draft’s live clip', async () => {
+    const draftA = await createDraft();
+    const a = await add(draftA, 'a');
+    const draftB = await createDraft();
+    const b = await add(draftB, 'b');
+    const beforeA = clipRows(draftA);
+    const beforeB = clipRows(draftB);
+    conn.runSync(
+      'UPDATE drafts SET undo_history = ? WHERE id = ?',
+      JSON.stringify({
+        version: 1,
+        checkpoint: historyCheckpoint(expoDb, draftA),
+        past: [{ kind: 'added', ids: [b.id], taken: null }],
+        future: [],
+      }),
+      draftA,
+    );
+    jest.spyOn(console, 'warn').mockImplementationOnce(() => {});
+
+    const editorA = open(draftA);
+    expect(editorA.store.getState().past).toEqual([]);
+    await waitForUndoHistory();
+    expect(saved(draftA)).toBeNull();
+    expect(clipRows(draftA)).toEqual(beforeA);
+    expect(clipRows(draftB)).toEqual(beforeB);
+    expect(existsSync(a.absolute)).toBe(true);
+    expect(existsSync(b.absolute)).toBe(true);
+  });
+
+  it('rejects a foreign structural clip ID introduced after a valid session hydrates', async () => {
+    const draftA = await createDraft();
+    const a = await add(draftA, 'a');
+    const original = open(draftA);
+    original.store.recordAdded([a.id]);
+    await waitForUndoHistory();
+    await original.close();
+    const draftB = await createDraft();
+    const b = await add(draftB, 'b');
+    const editorA = open(draftA);
+    await waitForUndoHistory();
+    const step = editorA.store.getState().past.at(-1);
+    if (step?.kind !== 'added') throw new Error('Expected the hydrated addition.');
+    const beforeA = clipRows(draftA);
+    const beforeB = clipRows(draftB);
+    step.ids = [b.id];
+
+    editorA.store.undo(present(draftA), (diff) => apply(draftA, diff));
+    await editorA.store.settled();
+    expect(editorA.failed).toHaveBeenCalledWith('undo', expect.anything());
+    expect(clipRows(draftA)).toEqual(beforeA);
+    expect(clipRows(draftB)).toEqual(beforeB);
+    expect(existsSync(a.absolute)).toBe(true);
+    expect(existsSync(b.absolute)).toBe(true);
+    // Leave the fixture's saved state valid for the next simulated library launch.
+    step.ids = [a.id];
+    editorA.store.close();
+    await waitForUndoHistory();
+  });
+
   it('restores both edit stacks from disk after each editor session retires', async () => {
     const draftId = await createDraft();
     const a = await add(draftId, 'a');
