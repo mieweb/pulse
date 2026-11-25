@@ -76,6 +76,51 @@ The Undo/Redo stacks are in memory for the editor session. The saved current row
 bounds, travel in `.pulse` files; the session stacks and media held only for Redo do not. Persistent
 history and its transfer are deferred to [#325](https://github.com/mieweb/pulse/issues/325).
 
+## Summary projects
+
+Home’s **+ → Summary** collects beats from checked projects, an inclusive **From / Through**
+calendar date range, or **Since last summary**. The screen previews the included projects
+with the same first-clip cover thumbnails as Home, plus their beat count and duration.
+With no earlier summary, choose projects or dates first. The last
+summary reminder opens that project in the recorder; a new summary opens there too, ready
+to edit, record more beats or export as one update. Blank project creation opens the usual
+recorder immediately when **Blank project** is tapped, without another submit step.
+
+The source query excludes every summary project, including duplicates of summaries. Beats
+are grouped by source project and keep that project’s timeline order. Files, edit settings,
+clip captions and transcripts are copied under fresh IDs and paths; edits and deletion in
+either project do not affect the other’s copies. A summary is a collection of existing beats,
+with an editable name; this first pass does not generate a written or AI summary.
+
+`segments.addedAt` records when a beat was added. Renaming, editing, reordering, splitting
+and Undo/Redo preserve this timestamp; copying a beat into an ordinary project is a new
+addition. Date boundaries use the device’s native time zone, including daylight saving
+changes. Migration `0021` approximates older beats’ addition dates using their project’s
+last-modified timestamp at upgrade, because earlier versions did not record beat timestamps.
+Legacy draft imports use the available saved draft date. Exact historical dates cannot be
+reconstructed.
+
+`drafts.isSummary` identifies collected projects. A successful collection also stores
+`summaryCutoffAt`, frozen when collection starts. **Since last summary** uses the greatest
+saved cutoff and includes beat additions in `[previous cutoff, new cutoff)`, so a beat added
+in the cutoff’s millisecond waits for the next summary. All collection modes stop at the new
+cutoff; their selected project/date restrictions still apply. Creating a summary from only
+some projects advances the same checkpoint. Editing that summary does not advance it.
+A duplicate keeps the summary marker without a new cutoff. Deleting the most recent summary
+falls back to the latest remaining checkpoint; there is no separate hidden checkpoint.
+
+`src/db/summaries.ts` stages all selected media using the recorder’s clip-copy routine, then
+commits the new draft, beats, transcripts and cutoff in one SQLite transaction. Missing source
+videos, a failed copy or a failed transaction reject the entire collection and clean up the
+copies; the previous checkpoint remains. Killing the app while staging may leave unreferenced
+files, but cannot leave a partial summary or advance its checkpoint. As with other media,
+unreferenced files are preserved for recovery rather than removed by a general sweep.
+
+These schema columns travel automatically in `.pulse` project transfers and library backups.
+Imported summary checkpoints participate in the restored library’s next collection.
+The first-pass request is tracked in [#331](https://github.com/mieweb/pulse/issues/331);
+native UI checks and screenshots are in the [Summary verification record](../screenshots/validation/summary/README.md).
+
 ## Launch and recovery
 
 `openLibrary` (`src/db/snapshots.ts`) runs as `src/db/client.ts` loads, before migrations. Nothing

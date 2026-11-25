@@ -1,0 +1,45 @@
+{
+  "passed": [
+    "Blank project is a native button; one activation opens empty recorder, no submit and no eager draft",
+    "Project checkbox covers visually/pixel match Home red/green first covers",
+    "Missing-cover row renders fallback and retains native checkbox checked value/count",
+    "Today includes only new blue Sign-in beat but displays red first-project cover from yesterday",
+    "Since-last collection preserves source project first cover outside selected time window",
+    "About \u2192 Release notes renders all six exact local/uncommitted-build tester notes",
+    "Light appearance: Home and summary covers, one-tap blank and selected project checklist render",
+    "AX1: source thumbnails, wrapping titles, native checked state and sticky Create remain reachable",
+    "AX1: Blank project from an open summary still opens recorder immediately",
+    "AX1: local build testing notes are visible and wrap in About",
+    "Last testing note fully readable after native scrolling at AX1"
+  ],
+  "method": "Native accessibility labels, roles, checked values, scrolling. Screenshot color samples compare solid synthetic covers; no coordinate actions.",
+  "provenance": {
+    "nativeShellSource": "/tmp/pulse-summary-ui/After.app",
+    "nativeShell": "Reused release simulator shell with existing startup repair; no native compilation",
+    "sourceBranch": "Summary",
+    "bundleSHA256": "70069943f17a9866459ea8a8e08fcb95444f55d586f1473913e0515c14626efb",
+    "notesFile": "docs/testing/summary-test-notes.json",
+    "embeddedNotes": {
+      "version": "2.7.0",
+      "date": "2026-11-25",
+      "notes": [
+        "Summary test build: tap Home +, then Blank project. The recorder should open immediately without a second submit button.",
+        "Home + \u2192 Summary \u2192 Choose projects: compare each project's thumbnail with Home, check a few projects, then Create summary. Their beats should open together as editable copies; the originals stay unchanged.",
+        "Try Today, Yesterday and the From/Through calendar dates. The preview should include beats added during those dates, even in older projects.",
+        "Create a summary, add a new beat to an older project, then try Since last summary. Only the new beat should be collected.",
+        "View last summary should open the previous update. Closing it should return to the summary form with your name and checked projects preserved.",
+        "Older beats use their project's last-modified date as an approximation. New beats have precise addition times. Please check thumbnail appearance and the recording flow on your phone."
+      ]
+    },
+    "simulator": "iPhone16e iOS26.0",
+    "physicalActions": false
+  },
+  "cleanup": {
+    "sessionDeleted": true,
+    "ownedSupervisorExited": true,
+    "ownedRunnerExited": true,
+    "portClosed": true,
+    "simulatorShutdown": true,
+    "physicalActions": false
+  }
+}

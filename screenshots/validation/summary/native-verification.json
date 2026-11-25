@@ -1,0 +1,64 @@
+{
+  "first": {
+    "passed": [
+      "No-last-summary mode is disabled with native NotEnabled trait",
+      "Summary radio native Selected trait",
+      "Today collects 4 beats from 2 projects",
+      "Yesterday collects 1 beat from older project",
+      "Calendar full date labels usable",
+      "Reversed range displays error and disables creation",
+      "Project checkboxes produce 4 beats from 2 checked projects",
+      "Checkbox native checked value",
+      "Empty project omitted from sources"
+    ]
+  },
+  "last": {
+    "passed": [
+      "Latest summary name and cutoff survive reinstall/restart",
+      "Since-last is default native Selected and enabled after summary",
+      "No new beats gives zero count and disabled Create with caught-up message",
+      "View last summary opens copied 4-beat project in recorder",
+      "Close recorder returns to kickoff preserving custom name, collection mode and checked projects",
+      "Summary project absent from checkbox sources"
+    ]
+  },
+  "creation": {
+    "passed": [
+      "Blank project opens empty recorder without eagerly creating draft",
+      "One new beat appended to existing older project gives 1-beat since-last preview",
+      "Next summary contains only that one beat after restart",
+      "Summary copies are excluded from next collection",
+      "Summary rows persist marker and increasing cutoff",
+      "Original five source rows and media SHA256 unchanged"
+    ]
+  },
+  "light": {
+    "passed": [
+      "Exact final source native JS bundle runs after reinstall/restart",
+      "Light mode renders kickoff, calendar, project checkboxes and sticky footer",
+      "All sources totals 6 beats / 3 projects despite 5 copied beats in 2 summaries",
+      "AX1 Dynamic Type accessibility-medium: project checklist scrolls, native checkbox states and footer visible",
+      "AX1 calendar dates selectable by native full-date labels",
+      "AX1 Yesterday=1 beat; Today=5 beats after fresh source addition",
+      "AX1 since-last caught-up state and disabled Create reachable"
+    ]
+  },
+  "provenance": {
+    "target": "Native iPhone 16e simulator, iOS26.0",
+    "nativeShellSource": "/tmp/pulse-version-ui/After.app",
+    "nativeShellDetails": "Existing release simulator shell with prior iOS27 startup repair; current Summary source JavaScript and assets rebundled with expo export:embed, public Expo config updated; no fresh native archive",
+    "baseCommit": "2467627664cdd31c8da31b50601ab03b649d6d69",
+    "mainBundleSHA256": "3cff0b8376f614dc60047375e8803dd156538b1a0c58bf4180b43ff81f32f81f",
+    "binarySHA256": "4bb9512c3075b805d87c16e6e4c85897bfdeeda005db38885b6e837be6a1b62b",
+    "method": "WDA native labels, roles, states, date buttons and ScrollView scrolling; no coordinate actions",
+    "sourceBranch": "Summary"
+  },
+  "cleanup": {
+    "sessionDeleted": true,
+    "runnerExited": true,
+    "supervisorExited": true,
+    "wdaPortClosed": true,
+    "simulatorShutdown": true,
+    "physicalDevicesUsed": false
+  }
+}

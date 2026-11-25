@@ -102,6 +102,7 @@ flowchart TB
 ### Drafts & library
 
 - Local-first draft library on Drizzle ORM + SQLite — create, rename, delete, with live-updating thumbnails
+- Home’s **+** opens **New project**: start a blank recording or create a **Summary** from checked projects, a calendar date range, or beats added since the last summary. The previous summary stays one tap away; collected beats become independent, editable copies. See [summary collection and timestamps](docs/persistence.md#summary-projects).
 - Device-to-device draft sharing as `.pulse` bundles (zip + manifest, with unpack safety limits)
 - First-run onboarding tour
 
@@ -202,6 +203,8 @@ ranges between earlier tags. A full Git checkout with release tags is required; 
 or shallow clones show notes as unavailable rather than unrelated or incomplete history.
 The iOS and Android build workflows fetch this history before prebuild. Change summaries come
 from commit/PR titles, so write those titles for someone reading the release notes.
+For local phone handoffs with uncommitted changes, use the explicit [test-build notes](docs/testing/README.md)
+so **About → Release notes** includes what to try in that build and the expected results.
 
 ## Pulse inside another app
 
