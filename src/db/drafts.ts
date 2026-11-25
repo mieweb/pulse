@@ -368,6 +368,33 @@ export async function insertSegments(
   transcripts: readonly (typeof clipTranscripts.$inferInsert)[] = [],
 ): Promise<string[]> {
   if (newSegments.length === 0) return [];
+  const split = await commitSegments(draftId, anchorOrGet, newSegments, transcripts);
+  const segmentIds = newSegments.map((s) => s.id);
+  if (!noteClipsAdded({ draftId, segmentIds, ...(split && { split }) }) && split) {
+    await afterCommit('drop split original', () => dropTakenOut(split.before));
+  }
+  return segmentIds;
+}
+
+/**
+ * Split a clip at a frozen interior playhead, keeping both halves adjacent and their source
+ * unchanged. The caller owns the returned original snapshot until its history step is discarded
+ * (`dropTakenOut`); record it directly rather than broadcasting a media-addition event.
+ */
+export async function splitSegment(draftId: string, anchor: ClipAnchor): Promise<SplitReceipt> {
+  if (!('before' in anchor) || !anchor.split) {
+    throw new Error('Choose a position inside the clip to split.');
+  }
+  return (await commitSegments(draftId, anchor, [], []))!;
+}
+
+/** Shared transaction for additions (possibly splitting) and an explicit split without media. */
+async function commitSegments(
+  draftId: string,
+  anchorOrGet: ClipAnchor | (() => ClipAnchor),
+  newSegments: readonly NewSegment[],
+  transcripts: readonly (typeof clipTranscripts.$inferInsert)[],
+): Promise<SplitReceipt | undefined> {
   await beginClipMutation(draftId);
   await waitForClipWrites();
   const anchor = typeof anchorOrGet === 'function' ? anchorOrGet() : anchorOrGet;
@@ -388,7 +415,7 @@ export async function insertSegments(
         !original ||
         point.rightId === original.id ||
         newSegments.some((row) => row.id === original.id || row.id === point.rightId) ||
-        (right && right.draftId !== draftId)
+        (right && (right.draftId !== draftId || k === 0))
       ) {
         throw new Error('The clip at the insertion point changed. Choose the position again.');
       }
@@ -423,7 +450,7 @@ export async function insertSegments(
         receipt = {
           before: { draftId, order, rows: [original], transcripts },
           rightId: point.rightId,
-          firstInsertedId: newSegments[0].id,
+          ...(k > 0 && { firstInsertedId: newSegments[0].id }),
         };
         at = { order: original.order + 1, shift: true };
       }
@@ -459,23 +486,24 @@ export async function insertSegments(
       if (copied.length > 0) tx.insert(clipTranscripts).values(copied).run();
       noteHeldFiles(tx, receipt!.before.rows.flatMap(rowFiles));
     }
-    tx.insert(segments)
-      .values(
-        newSegments.map((segment, i) => ({
-          id: segment.id,
-          draftId,
-          order: at.order + i,
-          label: String(firstLabel + i),
-          originalFilename: segment.originalFilename,
-          durationMs: segment.durationMs,
-          thumbnail: segment.thumbnail ?? null,
-          editedFilename: segment.editedFilename ?? null,
-          editedDurationMs: segment.editedDurationMs ?? null,
-          editState: segment.editState ?? null,
-          captionEdit: segment.captionEdit ?? null,
-        })),
-      )
-      .run();
+    if (k > 0)
+      tx.insert(segments)
+        .values(
+          newSegments.map((segment, i) => ({
+            id: segment.id,
+            draftId,
+            order: at.order + i,
+            label: String(firstLabel + i),
+            originalFilename: segment.originalFilename,
+            durationMs: segment.durationMs,
+            thumbnail: segment.thumbnail ?? null,
+            editedFilename: segment.editedFilename ?? null,
+            editedDurationMs: segment.editedDurationMs ?? null,
+            editState: segment.editState ?? null,
+            captionEdit: segment.captionEdit ?? null,
+          })),
+        )
+        .run();
     if (transcripts.length > 0)
       tx.insert(clipTranscripts)
         .values([...transcripts])
@@ -483,18 +511,14 @@ export async function insertSegments(
     if (receipt) noteHeldFiles(tx, takenFiles(receipt.before));
     return receipt;
   });
-  const segmentIds = newSegments.map((s) => s.id);
   if (split) {
     // Direct saves may still be rendering covers outside the editor's write queue. The new
     // structural windows supersede those pre-split revisions, but only after this commit succeeds.
     invalidateEditWrites(split.before.rows.map((row) => row.id));
     hold(split.before);
     void afterCommit('split cover', () => refreshSplitCover(split.rightId));
-    if (!noteClipsAdded({ draftId, segmentIds, split })) {
-      await afterCommit('drop split original', () => dropTakenOut(split.before));
-    }
-  } else noteClipsAdded({ draftId, segmentIds });
-  return segmentIds;
+  }
+  return split;
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -841,11 +865,12 @@ export type TakenOutClips = {
   replaced?: Segment[];
 };
 
-/** One insertion split a clip: the original row is retained so Undo rejoins both halves. */
+/** A clip split: the original row is retained so Undo rejoins both halves. */
 export type SplitReceipt = {
   before: TakenOutClips;
   rightId: string;
-  firstInsertedId: string;
+  /** Present when adding media triggered the split; absent for a standalone split. */
+  firstInsertedId?: string;
 };
 
 /**

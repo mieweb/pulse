@@ -49,7 +49,7 @@ export type EditorClip = {
   sourceKey: string;
   /** Some edit can be reset without undoing the clip's split boundaries. */
   canReset: boolean;
-  /** False for a clip edited before edits were settings (a baked file): only reset and delete. */
+  /** False for a legacy baked edit: split, reset and delete still work on its effective file. */
   editable: boolean;
   /** Timeline length, ms. */
   lengthMs: number;

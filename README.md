@@ -83,6 +83,7 @@ flowchart TB
 - The editor has **one sticky + at the right edge of the clip row**, visible in both views and while editing a clip. **Clips (beat list)** inserts at the nearest clip boundary without splitting: before the clip in its first half, after it in its second half, and after it at the midpoint. **Timeline** inserts at the exact playhead. At the end, either view appends a new clip/beat to the existing Pulse.
 - In Timeline, adding X inside A produces **A-left → X → A-right**, with both halves sharing the source video. One Undo restores A and removes X; Redo restores the insertion. Canceling or failing before the first new clip commits leaves A unsplit.
 - Each split half keeps its own source bounds: trim handles and Reset cannot reveal the sibling's footage. Reset clears that half's transforms and speed without rejoining the clip.
+- To split without adding media, move the playhead inside a clip and tap **Split** on the main toolbar; opening Edit or selecting a clip is unnecessary. Split is also available in the clip toolbar. It works in Clips and Timeline views, preserves the clip's edits and captions, and supports one-step Undo/Redo. Split is disabled at clip boundaries and the end.
 - An image batch registers one history step when its first clip commits and extends it as later images arrive. Edits remain available; Undo/Redo waits until the batch finishes or is canceled. A canceled partial batch keeps its committed clips in that step.
 - Undoing an addition can remove the last remaining clips. The editor stays open for Redo, which restores those clips with their edits; export stays disabled while the draft is empty.
 - Undo/Redo survives reopening and app restarts, and travels with its retained media in `.pulse` files, including an empty draft with clips available for Redo. History has bounded step, media and JSON retention; see [persistence](docs/persistence.md#editor-operations-and-undo) for limits and interruption recovery.
@@ -179,6 +180,16 @@ Pulse uses native modules (VisionCamera, Whisper, FFmpeg), so it needs a **dev b
 The [`pulsevault-mieweb/`](pulsevault-mieweb/) submodule pins the server this app is built against. It holds the protocol JSON Schemas that `src/features/upload/core/protocol.gen.ts` is generated from, and it is the server used by the integration suite (see [Testing](#testing)).
 
 **No camera? No problem.** In a dev build, the Home screen has `+ seed` / `clear` buttons that create a "Dev sample" draft from the bundled `assets/dev/` clips — including deliberately mismatched resolution/fps/codec/orientation clips that exercise the export-normalization path — so the full editor is drivable on a simulator. See [assets/dev/README.md](assets/dev/README.md).
+
+The version/About screen shows release notes for the installed build. Tap **Release history**
+for the previous five releases. Notes are generated from Git when `app.config.ts` is evaluated
+and bundled for offline use; they do not query GitHub from the app. `app-v<version>` tags mark
+release boundaries. The current notes include changes since the previous version's tag through
+the build commit, including changes made after tagging the current version. History uses the
+ranges between earlier tags. A full Git checkout with release tags is required; source archives
+or shallow clones show notes as unavailable rather than unrelated or incomplete history.
+The iOS and Android build workflows fetch this history before prebuild. Change summaries come
+from commit/PR titles, so write those titles for someone reading the release notes.
 
 ## Pulse inside another app
 

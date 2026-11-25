@@ -77,6 +77,7 @@ import {
   segmentsForDraft,
   setClipEdit,
   setEditState,
+  splitSegment,
   takeOutSegments,
   type TakenOutClips,
 } from './drafts';
@@ -228,6 +229,313 @@ function databaseHistory(draftId: string) {
     },
   };
 }
+
+describe('standalone split at playhead', () => {
+  it.each(['standalone', 'split + insert'])(
+    'rejects a floating-point recut at the same playhead atomically (%s)',
+    async (operation) => {
+      const t = await setup();
+      await setClipEdit(t.a, { ...edit, speed: 1.25 });
+      const source = (await segmentsForDraft(t.d))[0];
+      const playhead = 750.123;
+      const sourceCut = 500 + playhead * 1.25;
+      const receipt = await splitSegment(t.d, t.anchor(source, sourceCut));
+      retained.push(receipt.before);
+      const before = await segmentsForDraft(t.d);
+      const right = before[1];
+      const rightStart = effMs(before[0]);
+      expect(sourceCut).toBe(1437.65375);
+      expect(rightStart).toBe(750.1229999999999);
+      // Converting the unchanged playhead back into source time can appear barely inside right.
+      const recut = clipRender(right).inMs + (playhead - rightStart) * 1.25;
+      expect(recut).toBeGreaterThan(sourceCut);
+      const anchor = t.anchor(right, recut, `${t.d}-recut`);
+      const counter = conn.getFirstSync('SELECT last_clip_number FROM drafts WHERE id = ?', t.d);
+      const transcripts = transcript(right.id);
+      const held = conn.getFirstSync(
+        'SELECT value FROM settings WHERE key = ?',
+        'drafts.heldForRedo',
+      );
+      await expect(
+        operation === 'standalone'
+          ? splitSegment(t.d, anchor)
+          : insertSegments(t.d, anchor, [t.object()]),
+      ).rejects.toThrow(/inside/);
+      const after = await segmentsForDraft(t.d);
+      expect(contentRows(after)).toEqual(contentRows(before));
+      expect(after.every((row) => effMs(row) > 0 && row.editedDurationMs !== 0)).toBe(true);
+      expect(conn.getFirstSync('SELECT last_clip_number FROM drafts WHERE id = ?', t.d)).toEqual(
+        counter,
+      );
+      expect(transcript(right.id)).toEqual(transcripts);
+      expect(
+        conn.getFirstSync('SELECT value FROM settings WHERE key = ?', 'drafts.heldForRedo'),
+      ).toEqual(held);
+      expect(t.heard).toEqual([]);
+      expect(bytes(t.video)).toBe('original video bytes');
+    },
+  );
+
+  it.each([0.25, 1.25, 4].flatMap((speed) => ['start', 'end'].map((edge) => ({ speed, edge }))))(
+    'keeps both split halves over one timeline millisecond at $edge, speed $speed',
+    async ({ speed, edge }) => {
+      const t = await setup();
+      await setClipEdit(t.a, { ...edit, speed });
+      const before = await segmentsForDraft(t.d);
+      const render = clipRender(before[0]);
+      const cut = (timelineMs: number) =>
+        edge === 'start' ? render.inMs + timelineMs * speed : render.outMs - timelineMs * speed;
+      const rejectedMedia = t.object();
+      for (const timelineMs of [0.5, 1]) {
+        const anchor = t.anchor(before[0], cut(timelineMs));
+        await expect(splitSegment(t.d, anchor)).rejects.toThrow(/inside/);
+        await expect(insertSegments(t.d, anchor, [rejectedMedia])).rejects.toThrow(/inside/);
+      }
+      expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(before));
+      expect(
+        conn.getFirstSync<{ n: number }>(
+          'SELECT last_clip_number AS n FROM drafts WHERE id = ?',
+          t.d,
+        )?.n,
+      ).toBe(2);
+      expect(t.heard).toEqual([]);
+      expect(bytes(t.video)).toBe('original video bytes');
+
+      const receipt = await splitSegment(t.d, t.anchor(before[0], cut(1.1)));
+      retained.push(receipt.before);
+      const halves = (await segmentsForDraft(t.d)).slice(0, 2);
+      expect(halves.every((row) => effMs(row) > 1 && row.editedDurationMs! > 0)).toBe(true);
+      expect(effMs(halves[0]) + effMs(halves[1])).toBeCloseTo(effMs(before[0]));
+    },
+  );
+
+  it('creates adjacent metadata halves with preserved edits/captions and no media-addition event', async () => {
+    const t = await setup();
+    const receipt = await splitSegment(t.d, t.anchor());
+    retained.push(receipt.before);
+    const rows = await segmentsForDraft(t.d);
+    expect(rows.map((row) => row.id)).toEqual([t.a, receipt.rightId, t.b]);
+    expect(rows.map((row) => row.label)).toEqual(['1', '3', '2']);
+    expect(rows.map((row) => row.order)).toEqual([0, 1, 2]);
+    expect(receipt.before.rows).toEqual([t.before]);
+    expect(receipt.rightId).toBe(`${t.d}-right`);
+    expect(receipt.firstInsertedId).toBeUndefined();
+    expect(clipRender(rows[0])).toMatchObject({
+      file: t.video,
+      inMs: 500,
+      outMs: 1500,
+      speed: 2,
+      rotation: 1,
+      flipped: true,
+    });
+    expect(clipRender(rows[1])).toMatchObject({
+      file: t.video,
+      inMs: 1500,
+      outMs: 3500,
+      speed: 2,
+      rotation: 1,
+      flipped: true,
+    });
+    expect(effMs(rows[0]) + effMs(rows[1])).toBe(effMs(t.before));
+    expect(rows.slice(0, 2).map((row) => row.captionEdit)).toEqual([
+      t.before.captionEdit,
+      t.before.captionEdit,
+    ]);
+    expect(transcript(receipt.rightId)).toEqual(transcript(t.a));
+    expect(bytes(t.video)).toBe('original video bytes');
+    expect(bytes(t.cover)).toBe('original cover bytes');
+    expect(readdirSync(dirname(join(env.docDir, t.video))).sort()).toEqual(
+      [`${t.a}.cover.1.jpg`, `${t.a}.mp4`].sort(),
+    );
+    expect(t.heard).toEqual([]);
+    expect(takeClipsAdded(t.d)).toEqual([]);
+    expect(takeClipSplits(t.d)).toEqual([]);
+    expect(
+      conn.getFirstSync<{ n: number }>('SELECT last_clip_number AS n FROM drafts WHERE id = ?', t.d)
+        ?.n,
+    ).toBe(3);
+  });
+
+  it.each([false, true])(
+    'repeatedly undoes/redoes a split-only history step (legacy %s)',
+    async (legacy) => {
+      const t = await setup(legacy);
+      const receipt = await splitSegment(t.d, t.anchor());
+      const applied = await segmentsForDraft(t.d);
+      const h = databaseHistory(t.d);
+      h.history.recordAdded([], [receipt]);
+      try {
+        for (let cycle = 0; cycle < 3; cycle++) {
+          // Even the immediate tap before a live-query update must undo the structural operation.
+          h.history.undo(presentRows([t.before]), h.apply);
+          await h.settled();
+          expect(h.takeOut).toHaveBeenLastCalledWith([], [receipt]);
+          expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a, t.b]);
+          expect((await segmentsForDraft(t.d))[0]).toEqual(t.before);
+          expect(transcript(receipt.rightId)).toEqual([]);
+          expect(bytes(t.video)).toBe('original video bytes');
+          if (legacy) expect(bytes(t.baked)).toBe('baked video bytes');
+          h.history.redo(await h.present(), h.apply);
+          await h.settled();
+          expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(applied));
+          expect(transcript(receipt.rightId)).toEqual(transcript(t.a));
+        }
+        expect(h.failed).not.toHaveBeenCalled();
+        expect(t.heard).toEqual([]);
+      } finally {
+        h.history.dispose();
+      }
+    },
+  );
+
+  it('keeps trim/reset within each standalone half and normalizes a legacy source', async () => {
+    const t = await setup(true);
+    const receipt = await splitSegment(t.d, t.anchor());
+    retained.push(receipt.before);
+    const halves = (await segmentsForDraft(t.d)).slice(0, 2);
+    expect(halves.map((row) => row.originalFilename)).toEqual([t.baked, t.baked]);
+    expect(halves.map((row) => row.editedFilename)).toEqual([null, null]);
+    for (const [i, row] of halves.entries()) {
+      await setClipEdit(row.id, { ...edit, startMs: 0, endMs: 4000, speed: 4 });
+      await resetEdit(row.id);
+      const current = (await segmentsForDraft(t.d)).find((r) => r.id === row.id)!;
+      expect(clipRender(current)).toMatchObject({
+        file: t.baked,
+        inMs: i === 0 ? 0 : 1500,
+        outMs: i === 0 ? 1500 : 3000,
+        rotation: 0,
+        speed: 1,
+      });
+    }
+    expect(bytes(t.video)).toBe('original video bytes');
+    expect(bytes(t.baked)).toBe('baked video bytes');
+  });
+
+  it('releases obsolete original media when its receipt is discarded and keeps a surviving sibling source', async () => {
+    const t = await setup(true);
+    const receipt = await splitSegment(t.d, t.anchor());
+    expect(has(t.video)).toBe(true); // The unsplit original is held for Undo.
+    await dropTakenOut(receipt.before);
+    expect(has(t.video)).toBe(false);
+    expect(has(t.baked)).toBe(true); // Both applied halves still use the baked source.
+    await deleteSegment(t.a);
+    expect(has(t.baked)).toBe(true); // Deleting the left half must preserve its sibling's source.
+    await deleteSegment(receipt.rightId);
+    expect(has(t.baked)).toBe(false);
+  });
+
+  it('invalidates a direct edit that finishes after a standalone split commits', async () => {
+    const t = await setup();
+    let finish!: (ok: boolean) => void;
+    let reached!: () => void;
+    const rendering = new Promise<boolean>((resolve) => {
+      finish = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const thumbnail = jest.spyOn(video, 'generateThumbnailFile').mockImplementationOnce(() => {
+      reached();
+      return rendering;
+    });
+    const saving = setClipEdit(t.a, { ...edit, startMs: 0, endMs: 4000, speed: 1 });
+    try {
+      await entered;
+      const receipt = await splitSegment(t.d, t.anchor());
+      retained.push(receipt.before);
+      const halves = await segmentsForDraft(t.d);
+      finish(true);
+      await saving;
+      expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(halves));
+      expect(clipRender(halves[0])).toMatchObject({ inMs: 500, outMs: 1500, speed: 2 });
+    } finally {
+      finish(true);
+      await saving;
+      thumbnail.mockRestore();
+    }
+  });
+
+  it.each([500, 3500, NaN, Infinity])(
+    'rejects invalid cut %s without fragments or counter changes',
+    async (cut) => {
+      const t = await setup();
+      const before = await segmentsForDraft(t.d);
+      await expect(splitSegment(t.d, t.anchor(t.before, cut))).rejects.toThrow(/inside/);
+      expect(await segmentsForDraft(t.d)).toEqual(before);
+      expect(
+        conn.getFirstSync<{ n: number }>(
+          'SELECT last_clip_number AS n FROM drafts WHERE id = ?',
+          t.d,
+        )?.n,
+      ).toBe(2);
+      expect(t.heard).toEqual([]);
+    },
+  );
+
+  it.each<ClipAnchor>([{ at: 'end' }, { before: 'missing' }])(
+    'rejects a boundary anchor %j',
+    async (anchor) => {
+      const t = await setup();
+      const before = await segmentsForDraft(t.d);
+      await expect(splitSegment(t.d, anchor)).rejects.toThrow(/inside/);
+      expect(await segmentsForDraft(t.d)).toEqual(before);
+    },
+  );
+
+  it('rejects stale, missing or reused targets instead of splitting somewhere else', async () => {
+    const t = await setup();
+    const anchor = t.anchor();
+    conn.runSync(
+      'UPDATE segments SET edit_state = ? WHERE id = ?',
+      JSON.stringify({ ...edit, speed: 1 }),
+      t.a,
+    );
+    const changed = await segmentsForDraft(t.d);
+    await expect(splitSegment(t.d, anchor)).rejects.toThrow(/changed/);
+    expect(await segmentsForDraft(t.d)).toEqual(changed);
+    const receipt = await splitSegment(t.d, t.anchor(changed[0]));
+    retained.push(receipt.before);
+    const applied = await segmentsForDraft(t.d);
+    await expect(splitSegment(t.d, anchor)).rejects.toThrow(/changed/);
+    expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(applied));
+    await deleteSegment(t.a);
+    await expect(splitSegment(t.d, anchor)).rejects.toThrow(/changed/);
+    expect(t.heard).toEqual([]);
+  });
+
+  it('waits for queued edits and rejects a cut captured before they changed the source', async () => {
+    const t = await setup();
+    let finish!: () => void;
+    let reached!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const restoreBarrier = setClipWriteBarrier(() => {
+      reached();
+      return pending;
+    });
+    try {
+      const splitting = splitSegment(t.d, t.anchor());
+      await entered;
+      expect((await segmentsForDraft(t.d))[0]).toEqual(t.before);
+      conn.runSync(
+        'UPDATE segments SET edit_state = ? WHERE id = ?',
+        JSON.stringify({ ...edit, speed: 1 }),
+        t.a,
+      );
+      finish();
+      await expect(splitting).rejects.toThrow(/changed/);
+      expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a, t.b]);
+      expect(t.heard).toEqual([]);
+    } finally {
+      finish();
+      restoreBarrier();
+    }
+  });
+});
 
 describe('exact split + insert', () => {
   it('commits left/object/right with unchanged source bytes, edits, captions and cloned transcripts', async () => {

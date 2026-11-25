@@ -168,6 +168,26 @@ describe('anchorForExactPlayhead', () => {
     // A very short draft still has a start boundary, even inside the end tolerance.
     expect(anchorForExactPlayhead(clips.slice(0, 1), [0], 1, 0, fresh)).toEqual({ before: 'a' });
   });
+
+  it.each([0.25, 1.25, 4])('uses existing boundaries within 1 timeline ms at speed %s', (speed) => {
+    const edited = [
+      { id: 'a', sourceKey: 'a', edit: { startMs: 500, endMs: 500 + 1000 * speed, speed } },
+      { id: 'b', sourceKey: 'b', edit: { startMs: 0, endMs: 1000, speed: 1 } },
+    ];
+    const fresh = jest.fn(() => 'right');
+    for (const distance of [1e-10, 0.1, 0.5, 1]) {
+      expect(anchorForExactPlayhead(edited, [0, 1000], 2000, distance, fresh)).toEqual({
+        before: 'a',
+        next: 'b',
+      });
+      expect(anchorForExactPlayhead(edited, [0, 1000], 2000, 1000 - distance, fresh)).toEqual({
+        before: 'b',
+      });
+    }
+    expect(fresh).not.toHaveBeenCalled();
+    expect(anchorForExactPlayhead(edited, [0, 1000], 2000, 2, fresh)).toHaveProperty('split');
+    expect(anchorForExactPlayhead(edited, [0, 1000], 2000, 998, fresh)).toHaveProperty('split');
+  });
 });
 
 describe('anchorForPlayhead', () => {

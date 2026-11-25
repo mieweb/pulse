@@ -232,6 +232,26 @@ export function segmentEditValue(s: Segment, value: string | null | undefined): 
   return JSON.stringify({ ...JSON.parse(value), ...JSON.parse(bounded) });
 }
 
+/** Timeline milliseconds treated as an existing boundary, not a new split fragment. */
+export const SPLIT_BOUNDARY_TOLERANCE_MS = 1;
+
+/** Shared by UI worklets, captured anchors and storage; persisted durations round to whole ms. */
+export function isSplitInterior(
+  sourceMs: number,
+  startMs: number,
+  endMs: number,
+  speed: number,
+): boolean {
+  'worklet';
+  return (
+    Number.isFinite(sourceMs) &&
+    Number.isFinite(speed) &&
+    speed > 0 &&
+    (sourceMs - startMs) / speed > SPLIT_BOUNDARY_TOLERANCE_MS &&
+    (endMs - sourceMs) / speed > SPLIT_BOUNDARY_TOLERANCE_MS
+  );
+}
+
 /** Split the rendered source interval without copying or encoding its underlying media. */
 export function splitSegmentAt(
   s: Segment,
@@ -239,7 +259,7 @@ export function splitSegmentAt(
   rightId: string,
 ): { left: Segment; right: Segment } {
   const { file, inMs, outMs, ...settings } = clipRender(s);
-  if (!Number.isFinite(sourceMs) || sourceMs <= inMs || sourceMs >= outMs) {
+  if (!isSplitInterior(sourceMs, inMs, outMs, settings.speed)) {
     throw new Error('The split point must be inside the clip');
   }
   if (!rightId || rightId === s.id) throw new Error('The split needs a new clip id');

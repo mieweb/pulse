@@ -167,8 +167,8 @@ function validSplit(value: unknown, draftId: string): value is SplitReceipt {
     keys(value, ['before', 'rightId', 'firstInsertedId']) &&
     validTaken(value.before, draftId) &&
     isId(value.rightId) &&
-    isId(value.firstInsertedId) &&
-    value.rightId !== value.firstInsertedId &&
+    (value.firstInsertedId === undefined ||
+      (isId(value.firstInsertedId) && value.rightId !== value.firstInsertedId)) &&
     value.before.rows.length > 0 &&
     !value.before.rows.some((row) => row.id === value.rightId || row.id === value.firstInsertedId)
   );
@@ -236,7 +236,7 @@ export function historyClipIds(history: PersistedHistory): Set<string> {
       step.ids.forEach((id) => out.add(id));
       for (const split of step.splits ?? []) {
         out.add(split.rightId);
-        out.add(split.firstInsertedId);
+        if (split.firstInsertedId !== undefined) out.add(split.firstInsertedId);
       }
       for (const taken of takenFrom(step)) {
         taken.order.forEach((id) => out.add(id));
@@ -374,7 +374,9 @@ export function remapPersistedHistory(
                 splits: value.splits.map((split) => ({
                   before: taken(split.before),
                   rightId: mapId(split.rightId),
-                  firstInsertedId: mapId(split.firstInsertedId),
+                  ...(split.firstInsertedId !== undefined
+                    ? { firstInsertedId: mapId(split.firstInsertedId) }
+                    : {}),
                 })),
               }
             : {}),

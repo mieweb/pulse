@@ -65,7 +65,7 @@ export function useEditorHistory(
     record: (opKey: string | null) => {
       if (ready) store.record(present(), opKey);
     },
-    /** Clips were added to the draft (already in it): one step that takes them all out. */
+    /** Added clips and/or a standalone split committed: one step reverses the whole operation. */
     recordAdded: store.recordAdded,
     beginBatch: store.beginBatch,
     endBatch: store.endBatch,

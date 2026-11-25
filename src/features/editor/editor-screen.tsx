@@ -1,6 +1,7 @@
 import { PulsePreview } from '@mieweb/pulse-editor';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { setAudioModeAsync } from 'expo-audio';
+import { randomUUID } from 'expo-crypto';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
@@ -62,7 +63,7 @@ import {
   timelineLayout,
 } from '@/features/editor/timeline-geometry';
 import { captionYQuery, setCaptionY } from '@/db/captions';
-import { allSegments } from '@/db/drafts';
+import { allSegments, splitSegment } from '@/db/drafts';
 import { pruneFrameCache } from '@/features/editor/filmstrip';
 import { toMergeClip } from '@/features/export/editor-merge';
 import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
@@ -70,7 +71,8 @@ import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-dr
 import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
 import { keepEmptyEditorOpen } from '@/features/editor/editor-history';
-import { usePlayheadClip } from '@/features/editor/use-playhead-clip';
+import { useCanSplitAtPlayhead, usePlayheadClip } from '@/features/editor/use-playhead-clip';
+import { clipSplitAnchor } from '@/features/editor/clip-split';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
 import { loadCustomSpeeds, speedMenu } from '@/features/editor/editor-speeds';
@@ -100,6 +102,7 @@ import { useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import { useTheme } from '@/hooks/use-theme';
 import { claimAudioSession } from '@/utils/audio-session';
 import { haptics } from '@/utils/haptics';
+import { userMessage } from '@/utils/user-message';
 import { TILE_HEIGHT } from '@/features/editor/clip-tile';
 import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
 
@@ -154,7 +157,8 @@ function usePlaybackSessionOnReturn() {
  * clips under a centre playhead, and a bottom bar of tools. Every edit applies at once (no Save),
  * with undo/redo in the header; trims snap to source frames as the engine does.
  *
- * The bottom bar's main tools open a mode until its ✓. Edit (or a tap on a clip) edits the clip
+ * The bottom bar offers Split directly; Edit and Captions open a mode until its ✓.
+ * Edit (or a tap on a clip) edits the clip
  * under the playhead, and moving the playhead onto another clip moves the selection with it
  * (nothing is selected on open). Captions picks and downloads a model (every clip is then
  * transcribed in the background); a tapped word is edited or deleted, and sentences are split or
@@ -165,6 +169,9 @@ function usePlaybackSessionOnReturn() {
  * after), or at the exact playhead in Timeline view, splitting metadata when inside a clip.
  * At the end it appends. It offers recordings, imports and screen takes;
  * the playhead then sits after the addition. One undo reverses the split and insertion together.
+ * Split, on the main toolbar and in Edit, cuts at the exact playhead in either view without
+ * adding media;
+ * one Undo rejoins its halves and Redo restores them.
  *
  * No router: where Close, Export, Record a clip here and the captions model go is the caller's
  * (`EditorScreenProps`), and whether the screen is the one on top comes through the focus port.
@@ -474,6 +481,7 @@ export function EditorScreen({
   };
 
   const sel = current >= 0 ? clips[current] : null;
+  const canSplit = useCanSplitAtPlayhead(clips, layout, values.timeMs);
   const selFps = sel ? fpsOf(sel.uri) : null;
   const trim: TrimInfo | null =
     sel?.editable && selFps
@@ -611,6 +619,41 @@ export function EditorScreen({
     placeLabels,
   });
   const { screen, screenLive } = add;
+
+  const splitting = useRef(false);
+  const [splitBusy, setSplitBusy] = useState(false);
+  /** Split the current source window without adding media; one history step rejoins it. */
+  const split = () => {
+    if (splitting.current || history.busy || add.busy) return;
+    ctl.pause();
+    const timeMs = values.timeMs.get();
+    const anchor = clipSplitAnchor(clips, layout, timeMs, randomUUID);
+    if (!anchor) return;
+    splitting.current = true;
+    setSplitBusy(true);
+    haptics.tap();
+    const key = randomUUID();
+    void (async () => {
+      // Finish an Undo already in flight and keep further history taps out until the receipt
+      // owns the committed halves. The database also waits for pending clip edits.
+      await history.beginBatch(key);
+      try {
+        const receipt = await splitSegment(draftId, anchor);
+        history.recordAdded([], [receipt]);
+        ctl.seekTo(timeMs);
+      } catch (error) {
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t split the clip',
+          message: userMessage(error, 'Try another position inside the clip.', 'split clip'),
+        });
+      } finally {
+        history.endBatch(key);
+        splitting.current = false;
+        setSplitBusy(false);
+      }
+    })();
+  };
 
   const reset = () => {
     const t = target();
@@ -1058,7 +1101,7 @@ export function EditorScreen({
             <EditorAddMenu
               actions={add.actions}
               view={view}
-              busy={add.busy || history.busy}
+              busy={add.busy || history.busy || splitBusy}
               progress={add.progress}
               progressText={add.progressText}
               progressCount={add.progressCount}
@@ -1105,7 +1148,9 @@ export function EditorScreen({
             />
           ) : !sel ? (
             <MainToolbar
-              canEdit={clips.length > 0}
+              canEdit={clips.length > 0 && !splitBusy && !history.busy}
+              canSplit={canSplit && !add.busy && !splitBusy && !history.busy}
+              onSplit={split}
               onEdit={() => {
                 haptics.tap();
                 const i = clipIndexAt(layout.starts, ctl.lastMs);
@@ -1137,6 +1182,9 @@ export function EditorScreen({
               speed={sel.edit.speed}
               editable={sel.editable}
               edited={sel.canReset}
+              canSplit={canSplit && !add.busy}
+              busy={splitBusy || history.busy}
+              onSplit={split}
               onFlip={() => edit(null, flippedEdit)}
               onRotate={() => edit('rotate', rotated)}
               onCrop={startCrop}

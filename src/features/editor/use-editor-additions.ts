@@ -173,8 +173,12 @@ export function useEditorAdditions({
     if (batch && grouped.batch) batch.group = grouped.batch;
     for (const { ids, batchKey } of grouped.steps) {
       const ours = new Set(ids);
-      const splits = pendingSplits.current.filter((s) => ours.has(s.firstInsertedId));
-      pendingSplits.current = pendingSplits.current.filter((s) => !ours.has(s.firstInsertedId));
+      const splits = pendingSplits.current.filter(
+        (s) => s.firstInsertedId !== undefined && ours.has(s.firstInsertedId),
+      );
+      pendingSplits.current = pendingSplits.current.filter(
+        (s) => s.firstInsertedId === undefined || !ours.has(s.firstInsertedId),
+      );
       recordAdded(ids, splits, batchKey);
     }
     const goal = playheadGoal(focused ? takeEditorReturn(draftId) : null, grouped.placeAfter);

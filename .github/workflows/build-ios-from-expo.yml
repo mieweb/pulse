@@ -52,6 +52,13 @@ jobs:
       - name: Checkout local native modules
         run: git submodule update --init modules/pulse-editor
 
+      - name: Fetch release history for bundled notes
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --unshallow origin
+          fi
+          git fetch origin 'refs/tags/app-v*:refs/tags/app-v*'
+
       # ── Give every CI build a unique, increasing build number ─────────────
       - name: Stamp build number
         run: |
