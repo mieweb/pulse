@@ -60,7 +60,7 @@
       "details": "2 cuts \u00b7 4.5s shorter"
     },
     {
-      "check": "One batch removes a4.5second passage across beats",
+      "check": "One batch removes a 4.5 second passage across beats",
       "passed": true,
       "details": {
         "durationMs": 11500,
@@ -105,7 +105,7 @@
       "details": null
     },
     {
-      "check": "Cleanup summary measures4.5seconds shorter",
+      "check": "Cleanup summary measures 4.5 seconds shorter",
       "passed": true,
       "details": "4 cuts \u00b7 4.5s shorter"
     },
@@ -235,9 +235,14 @@
       "details": null
     },
     {
-      "check": "At2x a1.5s source pause is below1.0s played threshold",
+      "check": "At 2x, a 1.5 s source pause is below the 1.0 s playback threshold",
       "passed": true,
       "details": "0 cuts \u00b7 0.0s shorter"
+    },
+    {
+      "check": "Quiet PCM analysis works with no model and no transcript",
+      "passed": true,
+      "details": "1 cut \u00b7 0.5s shorter"
     }
   ],
   "media": {
@@ -305,5 +310,18 @@
     "source-beat-1.mp4": "aecf96abd8f382e4d67fc14129470066f0c866026aead2b23d25ccf76e43830e",
     "source-beat-2.mp4": "993504e503768a7eaa3d775fb1e58f7c521f5a8d056f44d18c6450383e5a4dc0",
     "edited.mp4": "34e4d4c05e67a57b83784c4a636268b9f295068516bcb1f4447def04f6131c3b"
+  },
+  "validatedSourceCommit": "cd4ce7737058c5e762fb2d627365a144ba4040b9",
+  "phoneHandoff": {
+    "version": "2.8.0",
+    "build": "1",
+    "installedInPlace": true,
+    "privateLibraryBackup": true,
+    "launchVerified": false,
+    "launchBlocker": "iOS device locked",
+    "postLaunchLibraryComparison": "not completed",
+    "guardStatus": "released",
+    "physicalAutomationStarted": false,
+    "captureStarted": false
   }
 }

@@ -80,6 +80,12 @@ Using Node 24.18.0:
 - The final Range-toggle fix additionally passed TypeScript, lint, formatting and a native
   selection regression.
 
+CI passed on runtime source `cd4ce77`, including the full test job, embed checks, JVM vectors,
+CodeQL, and both pinned/npm-latest PulseVault server integrations. The simulator completed
+25 native checks, including a positive quiet-pause proposal without a model or transcript and
+playback-time threshold behavior at 2× speed. Its owned automation session and runners were
+stopped and the temporary model setting/draft were restored.
+
 Regression tests cover nonadjacent/consecutive word selection, passages across beats without
 words, overlapping/frame-rounded cuts, speed/trim effects, compact caption/transcript rows,
 stale-input rollback, fully removed beats, history-budget rejection, restart/Undo/Redo and
@@ -93,3 +99,11 @@ Physical thumb reach in both hands, small-screen/large-text/RTL layout, full Voi
 announcements, Android native UI, variable-frame-rate footage and naturally spoken boundary
 quality still need verification. The phone handoff is an installation/launch check, not a
 physical replay of the synthetic simulator tests.
+
+## Phone installation
+
+The matching signed Pulse **2.8.0 (1)** build was installed in place, with a private library
+backup taken first. iOS blocked the launch because the phone was locked, so the post-launch
+library comparison could not complete. The global device guard verified release; no physical
+automation or capture runner was started. Unlock the phone and open Pulse to begin testing.
+The updated test notes are in **About**.
