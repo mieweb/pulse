@@ -1,4 +1,4 @@
-import type { TakenOutClips } from '@/db/drafts';
+import type { SplitReceipt, TakenOutClips } from '@/db/drafts';
 import {
   closeCoalescing,
   emptyHistory,
@@ -21,7 +21,7 @@ export type HistoryDeps = {
   /** Every edit asked for is stored (draft-writes.ts): an addition's rows are read after them. */
   flush: () => Promise<void>;
   /** Take an addition's clips out (`takeOutSegments`, then their transcription jobs dropped). */
-  takeOut: (ids: string[]) => Promise<TakenOutClips | null>;
+  takeOut: (ids: string[], splits?: readonly SplitReceipt[]) => Promise<TakenOutClips | null>;
   /** Put them back (`restoreSegments`). */
   restore: (taken: TakenOutClips) => Promise<void>;
   /** Their files, once nothing can put them back (`dropTakenOut`). */
@@ -66,6 +66,15 @@ export function createEditorHistory(deps: HistoryDeps) {
   };
   const dropAll = (steps: readonly Step[]) => {
     for (const taken of takenOut(steps)) void deps.drop(taken);
+    dropOriginals(steps);
+  };
+  const dropOriginals = (steps: readonly Step[]) => {
+    const originals = new Set(
+      steps.flatMap((step) =>
+        step.kind === 'added' ? (step.splits ?? []).map((s) => s.before) : [],
+      ),
+    );
+    for (const before of originals) void deps.drop(before);
   };
   /**
    * The undo stack with `step` back under the changes recorded since `below` was its top. Changes
@@ -82,7 +91,9 @@ export function createEditorHistory(deps: HistoryDeps) {
     if (disposed) return;
     changes++;
     dropAll(history.future);
-    set(recordStep(history, step, opKey, Date.now()));
+    const next = recordStep(history, step, opKey, Date.now());
+    dropOriginals(history.past.filter((s) => !next.past.includes(s)));
+    set(next);
   };
 
   const takeOut = (h: History<Step>, step: AddedStep, ids: string[]) => {
@@ -94,17 +105,24 @@ export function createEditorHistory(deps: HistoryDeps) {
       let taken: TakenOutClips | null = null;
       try {
         await deps.flush();
-        taken = await deps.takeOut(ids);
+        taken = step.splits?.length
+          ? await deps.takeOut(ids, step.splits)
+          : await deps.takeOut(ids);
       } catch (e) {
         // Nothing came out: the step goes back where it was, under any change recorded meanwhile.
         if (!disposed) putUnderChanges(step, below);
+        else dropOriginals([step]);
         deps.failed('undo', e);
         return;
       }
       // Nothing left to take out (gone meanwhile): the step is done with.
-      if (!taken) return;
+      if (!taken) {
+        dropOriginals([step]);
+        return;
+      }
       if (disposed || changes !== at) {
         void deps.drop(taken);
+        dropOriginals([step]);
         return;
       }
       set({ ...history, future: [...history.future, { ...step, taken }] });
@@ -126,13 +144,17 @@ export function createEditorHistory(deps: HistoryDeps) {
           set({ ...history, future: [...history.future, step] });
         } else {
           void deps.drop(step.taken);
+          dropOriginals([step]);
         }
         deps.failed('redo', e);
         return;
       }
-      if (disposed) return;
+      if (disposed) {
+        dropOriginals([step]);
+        return;
+      }
       // Back in the draft: its undo step, under any change recorded meanwhile.
-      putUnderChanges({ kind: 'added', ids: step.ids, taken: null }, below);
+      putUnderChanges({ ...step, taken: null }, below);
     })();
   };
 
@@ -143,6 +165,8 @@ export function createEditorHistory(deps: HistoryDeps) {
   ): void => {
     if (running || disposed) return;
     const plan = planStep(history, direction, now);
+    const retained = new Set([...plan.history.past, ...plan.history.future]);
+    dropOriginals([...history.past, ...history.future].filter((s) => !retained.has(s)));
     switch (plan.kind) {
       case 'none':
         set(plan.history);
@@ -181,8 +205,9 @@ export function createEditorHistory(deps: HistoryDeps) {
     record: (before: Present, opKey: string | null) =>
       push({ kind: 'state', snapshot: snapshotOf(before) }, opKey),
     /** Clips were added to the draft (already in it): one step that takes them all out. */
-    recordAdded: (ids: string[]) => {
-      if (ids.length) push({ kind: 'added', ids, taken: null }, null);
+    recordAdded: (ids: string[], splits: readonly SplitReceipt[] = []) => {
+      if (ids.length || splits.length)
+        push({ kind: 'added', ids, taken: null, ...(splits.length ? { splits } : {}) }, null);
     },
     close: () => set(closeCoalescing(history)),
     undo: (now: Present, apply: (diff: SnapshotDiff) => void) => step('undo', now, apply),
@@ -198,6 +223,7 @@ export function createEditorHistory(deps: HistoryDeps) {
       if (disposed) return;
       disposed = true;
       dropAll(history.future);
+      dropOriginals(history.past);
       set({ ...history, future: [] });
     },
   };

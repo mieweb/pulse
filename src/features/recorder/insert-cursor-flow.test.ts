@@ -42,7 +42,8 @@ jest.mock('expo-crypto', () => {
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { anchorFromRouteParam, anchorToRouteParam, type ClipAnchor } from '@/core/clip-anchor';
 import { expoDb } from '@/db/client';
-import { addSegment, createDraft, deleteSegment } from '@/db/drafts';
+import { addSegment, createDraft, deleteSegment, segmentsForDraft } from '@/db/drafts';
+import { parseEdit, renderKey } from '@/utils/segment-window';
 import {
   anchorAtBoundary,
   boundaryOf,
@@ -96,6 +97,63 @@ describe('the recorder’s insert cursor over real inserts', () => {
       },
     };
   }
+
+  it('keeps an exact editor point through the route and first load, then adds later takes before the right half', async () => {
+    const d = await createDraft();
+    const a = s(d, 'a');
+    const right = s(d, 'right');
+    await addSegment(d, { ...clip(a), durationMs: 4000 });
+    const [original] = await segmentsForDraft(d);
+    const exact: ClipAnchor = {
+      before: a,
+      split: { sourceMs: 1500, sourceKey: renderKey(original), rightId: right, offsetMs: 1500 },
+    };
+    const received = anchorFromRouteParam(anchorToRouteParam(exact));
+    expect(cursorAfterRemoval(received, [], ids(d))).toEqual(exact);
+    const cursor = recorderCursor(d, received);
+    cursor.sync();
+    expect(cursor.get()).toEqual(exact);
+
+    await addSegment(d, clip(s(d, 'x')), cursor.get);
+    cursor.sync();
+    expect(cursor.get()).toEqual({ before: right });
+    await addSegment(d, clip(s(d, 'y')), cursor.get);
+    cursor.sync();
+    expect(ids(d)).toEqual([a, s(d, 'x'), s(d, 'y'), right]);
+    const rows = await segmentsForDraft(d);
+    expect(rows[0].originalFilename).toBe(original.originalFilename);
+    expect(rows[3].originalFilename).toBe(original.originalFilename);
+    expect(parseEdit(rows[0].editState)?.endMs).toBe(1500);
+    expect(parseEdit(rows[3].editState)?.startMs).toBe(1500);
+  });
+
+  it('preserves an exact point in a saved screen-take row and rejects it if its original disappears', async () => {
+    const d = await createDraft();
+    const a = s(d, 'a');
+    const b = s(d, 'b');
+    await addSegment(d, { ...clip(a), durationMs: 4000 });
+    await addSegment(d, clip(b));
+    const [original] = await segmentsForDraft(d);
+    const saved = {
+      anchor: anchorToRouteParam({
+        before: a,
+        next: b,
+        split: {
+          sourceMs: 1500,
+          sourceKey: renderKey(original),
+          rightId: s(d, 'right'),
+          offsetMs: 1500,
+        },
+      }),
+    };
+    const cursor = recorderCursor(d, anchorFromRouteParam(saved.anchor));
+    await cursor.remove(a);
+    cursor.sync();
+    await expect(
+      addSegment(d, clip(s(d, 'screen')), anchorFromRouteParam(saved.anchor)),
+    ).rejects.toThrow('insertion point changed');
+    expect(ids(d)).toEqual([b]);
+  });
 
   it('a run of takes at the cursor stays in order, and a retake goes back in its place', async () => {
     const d = await abc();

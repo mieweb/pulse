@@ -13,7 +13,17 @@ import {
   thumbRelPath,
 } from '@/utils/file-store';
 import { type ClipAnchor, END, noteClipsAdded, resolveAnchor } from '@/core/clip-anchor';
-import { canonicalEdit, editTimelineMs, parseEdit, type ParsedEdit } from '@/utils/segment-window';
+import { waitForClipWrites } from '@/core/draft-write-barrier';
+import {
+  canonicalEdit,
+  editTimelineMs,
+  parseEdit,
+  renderKey,
+  resetSegmentEdit,
+  segmentEditValue,
+  splitSegmentAt,
+  type ParsedEdit,
+} from '@/utils/segment-window';
 import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
 import { isCaptionsOff, parseCaptionEdit, setCaptionsOff } from './captions';
 import { db } from './client';
@@ -337,6 +347,9 @@ export async function addSegment(
  * before the transaction, so a cursor that moved meanwhile is followed. Returns the new clips' ids
  * in order, and tells `onClipsAdded` listeners once they're committed. `transcripts` (copied
  * clips' `clip_transcripts` rows, keyed by the new ids) go in with them.
+ * An interior anchor freezes a source cut and render key: the original becomes the left half,
+ * a new right half follows the inserted clips, and the event carries the original snapshot for
+ * one compound undo. A continued batch uses that right half's boundary without splitting again.
  *
  * Everything is read-then-write, so it all runs inside one transaction: each badge number comes
  * from the draft's monotonic `lastClipNumber` counter (bumped by `k` and read back atomically;
@@ -355,21 +368,96 @@ export async function insertSegments(
 ): Promise<string[]> {
   if (newSegments.length === 0) return [];
   await beginClipMutation(draftId);
+  await waitForClipWrites();
   const anchor = typeof anchorOrGet === 'function' ? anchorOrGet() : anchorOrGet;
   const k = newSegments.length;
-  db.transaction((tx) => {
+  const split = db.transaction((tx): SplitReceipt | undefined => {
+    let receipt: SplitReceipt | undefined;
+    let halves: { left: Segment; right: Segment } | undefined;
+    let at: { order: number; shift: boolean };
+    if ('before' in anchor && anchor.split) {
+      const point = anchor.split;
+      const original = tx
+        .select()
+        .from(segments)
+        .where(and(eq(segments.id, anchor.before), eq(segments.draftId, draftId)))
+        .get();
+      const right = tx.select().from(segments).where(eq(segments.id, point.rightId)).get();
+      if (
+        !original ||
+        point.rightId === original.id ||
+        newSegments.some((row) => row.id === original.id || row.id === point.rightId) ||
+        (right && right.draftId !== draftId)
+      ) {
+        throw new Error('The clip at the insertion point changed. Choose the position again.');
+      }
+      if (right) {
+        const leftBase = parseEdit(original.editState)?.baseWindow;
+        const rightBase = parseEdit(right.editState)?.baseWindow;
+        if (
+          original.originalFilename !== right.originalFilename ||
+          leftBase?.endMs !== point.sourceMs ||
+          rightBase?.startMs !== point.sourceMs
+        )
+          throw new Error('The clip at the insertion point changed. Choose the position again.');
+        // A batch or a run of takes uses the same structural boundary after the first insert.
+        at = { order: right.order, shift: true };
+      } else {
+        if (renderKey(original) !== point.sourceKey) {
+          throw new Error('The clip at the insertion point changed. Choose the position again.');
+        }
+        halves = splitSegmentAt(original, point.sourceMs, point.rightId);
+        const order = tx
+          .select({ id: segments.id })
+          .from(segments)
+          .where(eq(segments.draftId, draftId))
+          .orderBy(asc(segments.order))
+          .all()
+          .map((row) => row.id);
+        const transcripts = tx
+          .select()
+          .from(clipTranscripts)
+          .where(eq(clipTranscripts.segmentId, original.id))
+          .all();
+        receipt = {
+          before: { draftId, order, rows: [original], transcripts },
+          rightId: point.rightId,
+          firstInsertedId: newSegments[0].id,
+        };
+        at = { order: original.order + 1, shift: true };
+      }
+    } else {
+      at = insertSlot(tx, draftId, anchor);
+    }
+    const addedCount = k + (halves ? 1 : 0);
     const [counter] = tx
       .update(drafts)
-      .set({ lastClipNumber: sql`${drafts.lastClipNumber} + ${k}`, lastModified: now })
+      .set({ lastClipNumber: sql`${drafts.lastClipNumber} + ${addedCount}`, lastModified: now })
       .where(eq(drafts.id, draftId))
       .returning({ clipNumber: drafts.lastClipNumber })
       .all();
     if (!counter) throw new Error(`insertSegments: draft ${draftId} not found`);
 
-    const at = insertSlot(tx, draftId, anchor);
-    if (at.shift) shiftFrom(tx, draftId, at.order, k);
+    if (at.shift) shiftFrom(tx, draftId, at.order, addedCount);
 
-    const firstLabel = counter.clipNumber - k + 1;
+    const firstLabel = counter.clipNumber - addedCount + 1;
+    if (halves) {
+      tx.update(segments).set(halves.left).where(eq(segments.id, halves.left.id)).run();
+      tx.insert(segments)
+        .values({
+          ...halves.right,
+          thumbnail: null,
+          order: at.order + k,
+          label: String(firstLabel + k),
+        })
+        .run();
+      const copied = receipt!.before.transcripts.map((row) => ({
+        ...row,
+        segmentId: receipt!.rightId,
+      }));
+      if (copied.length > 0) tx.insert(clipTranscripts).values(copied).run();
+      noteHeldFiles(tx, receipt!.before.rows.flatMap(rowFiles));
+    }
     tx.insert(segments)
       .values(
         newSegments.map((segment, i) => ({
@@ -391,9 +479,19 @@ export async function insertSegments(
       tx.insert(clipTranscripts)
         .values([...transcripts])
         .run();
+    return receipt;
   });
   const segmentIds = newSegments.map((s) => s.id);
-  noteClipsAdded({ draftId, segmentIds });
+  if (split) {
+    // Direct saves may still be rendering covers outside the editor's write queue. The new
+    // structural windows supersede those pre-split revisions, but only after this commit succeeds.
+    invalidateEditWrites(split.before.rows.map((row) => row.id));
+    hold(split.before);
+    void afterCommit('split cover', () => refreshSplitCover(split.rightId));
+    if (!noteClipsAdded({ draftId, segmentIds, split })) {
+      await afterCommit('drop split original', () => dropTakenOut(split.before));
+    }
+  } else noteClipsAdded({ draftId, segmentIds });
   return segmentIds;
 }
 
@@ -640,9 +738,10 @@ export async function deleteSegment(segmentId: string): Promise<void> {
  * must be gone first. A file another row still uses (rows can share a clip: a legacy duplicate, a
  * project import) or one held for a redo (`takeOutSegments`) stays.
  */
-async function deleteRowFiles(seg: Segment): Promise<void> {
+async function deleteRowFiles(seg: Segment, current?: Segment): Promise<void> {
+  const kept = new Set(current ? rowFiles(current) : []);
   for (const rel of rowFiles(seg)) {
-    if (heldFiles.has(rel) || (await fileInUse(rel))) continue;
+    if (kept.has(rel) || heldFiles.has(rel) || (await fileInUse(rel))) continue;
     deleteSegmentFile(rel);
   }
 }
@@ -695,7 +794,8 @@ function release(taken: TakenOutClips): void {
 /**
  * Clips taken out of a draft by the editor's undo of an addition, kept so a redo can put them
  * back (`restoreSegments`): the rows as they were, their transcripts, and the draft's order then.
- * Their files stay on disk until `dropTakenOut`.
+ * Their files stay on disk until `dropTakenOut`. A split receipt also keeps the original row
+ * before the insertion, so the entire split and insertion can be reversed in one transaction.
  */
 export type TakenOutClips = {
   draftId: string;
@@ -703,24 +803,42 @@ export type TakenOutClips = {
   order: string[];
   rows: Segment[];
   transcripts: ClipTranscript[];
+  /** A compound undo restored these originals; redo replaces them with `rows` atomically. */
+  replaced?: Segment[];
+};
+
+/** One insertion split a clip: the original row is retained so Undo rejoins both halves. */
+export type SplitReceipt = {
+  before: TakenOutClips;
+  rightId: string;
+  firstInsertedId: string;
 };
 
 /**
  * Take clips out of their draft (the undo of adding them), keeping their files: the rows go (the
  * draft reads as if they were never added), and what's needed to put them back is returned.
- * Clips already gone are skipped; null when none of them is left.
+ * Split receipts also take out the generated halves and restore their unsplit originals in the
+ * same commit. Clips already gone are skipped; null when none of them is left.
  */
 export async function takeOutSegments(
   segmentIds: readonly string[],
+  splits: readonly SplitReceipt[] = [],
 ): Promise<TakenOutClips | null> {
-  if (segmentIds.length === 0) return null;
+  const wanted = new Set([
+    ...segmentIds,
+    ...splits.flatMap((split) => [split.rightId, ...split.before.rows.map((row) => row.id)]),
+  ]);
+  if (wanted.size === 0) return null;
   const [first] = await db
     .select({ draftId: segments.draftId })
     .from(segments)
-    .where(inArray(segments.id, [...segmentIds]))
+    .where(inArray(segments.id, [...wanted]))
     .limit(1);
   if (!first) return null;
   const { draftId } = first;
+  if (splits.some((split) => split.before.draftId !== draftId)) {
+    throw new Error('The clips to undo belong to different drafts.');
+  }
   await beginClipMutation(draftId);
   const taken = db.transaction((tx) => {
     const all = tx
@@ -729,7 +847,6 @@ export async function takeOutSegments(
       .where(eq(segments.draftId, draftId))
       .orderBy(asc(segments.order))
       .all();
-    const wanted = new Set(segmentIds);
     const rows = all.filter((r) => wanted.has(r.id));
     if (rows.length === 0) return null;
     const ids = rows.map((r) => r.id);
@@ -739,13 +856,36 @@ export async function takeOutSegments(
       .where(inArray(clipTranscripts.segmentId, ids))
       .all();
     tx.delete(segments).where(inArray(segments.id, ids)).run();
+    // Split + insert is one operation: put the unsplit originals back in the same commit that
+    // takes the left/right halves and inserted clips out. The held rows retain the applied form.
+    const generated = new Set([...segmentIds, ...splits.map((split) => split.rightId)]);
+    const originals = new Map<string, Segment>();
+    for (const split of splits) {
+      // Several additions can be taken together when returning from the recorder. Keep the
+      // earliest original of each clip, and never resurrect a half/object created by this group.
+      const rows = split.before.rows.filter(
+        (row) => !generated.has(row.id) && !originals.has(row.id),
+      );
+      if (rows.length === 0) continue;
+      putSegmentsBack(tx, { ...split.before, rows });
+      for (const row of rows) originals.set(row.id, row);
+    }
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
     // Noted on disk too: if Pulse dies with the redo pending, the next launch deletes them.
     noteHeldFiles(tx, rows.flatMap(rowFiles));
-    return { draftId, order: all.map((r) => r.id), rows, transcripts };
+    const taken: TakenOutClips = { draftId, order: all.map((r) => r.id), rows, transcripts };
+    if (splits.length > 0) {
+      taken.replaced = [...originals.values()];
+    }
+    return taken;
   });
   // Its files are kept for the redo, whatever else is deleted meanwhile.
-  if (taken) hold(taken);
+  if (taken) {
+    if (splits.length > 0) {
+      invalidateEditWrites([...taken.rows, ...(taken.replaced ?? [])].map((row) => row.id));
+    }
+    hold(taken);
+  }
   return taken;
 }
 
@@ -763,41 +903,91 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
   db.transaction((tx) => {
     const draft = tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, draftId)).get();
     if (!draft) return;
-    const byId = new Map(taken.rows.map((r) => [r.id, r]));
-    const present = new Set(
-      tx
-        .select({ id: segments.id })
-        .from(segments)
-        .where(eq(segments.draftId, draftId))
-        .all()
-        .map((r) => r.id),
-    );
-    // In the old order, so each clip finds the one before it already back.
-    for (const [i, id] of taken.order.entries()) {
-      const row = byId.get(id);
-      if (!row || present.has(id)) continue;
-      const before = taken.order
-        .slice(0, i)
-        .reverse()
-        .find((x) => present.has(x));
-      const after = taken.order.slice(i + 1).find((x) => present.has(x));
-      const prevOrder = before === undefined ? undefined : orderOf(tx, draftId, before);
-      const at =
-        prevOrder !== undefined
-          ? { order: prevOrder + 1, shift: true }
-          : insertSlot(tx, draftId, after ? { before: after } : END);
-      if (at.shift) shiftFrom(tx, draftId, at.order, 1);
-      tx.insert(segments)
-        .values({ ...row, draftId, order: at.order })
+    if (taken.replaced?.length) {
+      for (const original of taken.replaced) {
+        const current = tx
+          .select()
+          .from(segments)
+          .where(and(eq(segments.id, original.id), eq(segments.draftId, draftId)))
+          .get();
+        if (
+          !current ||
+          renderKey(current) !== renderKey(original) ||
+          current.captionEdit !== original.captionEdit
+        ) {
+          throw new Error('The clip changed since Undo. The insertion could not be redone.');
+        }
+      }
+      tx.delete(segments)
+        .where(
+          and(
+            eq(segments.draftId, draftId),
+            inArray(
+              segments.id,
+              taken.replaced.map((r) => r.id),
+            ),
+          ),
+        )
         .run();
-      present.add(id);
     }
-    const back = taken.transcripts.filter((t) => byId.has(t.segmentId));
-    if (back.length) tx.insert(clipTranscripts).values(back).onConflictDoNothing().run();
+    putSegmentsBack(tx, taken);
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
   });
+  if (taken.replaced?.length) invalidateEditWrites(taken.replaced.map((row) => row.id));
   // Its rows point at its files again, which keeps them; or nothing can put them back.
   release(taken);
+  for (const row of taken.rows) {
+    if (row.thumbnail == null && parseEdit(row.editState)?.baseWindow) {
+      void afterCommit('split cover', () => refreshSplitCover(row.id));
+    }
+  }
+}
+
+/** Restore rows and their transcripts inside a caller's existing synchronous transaction. */
+function putSegmentsBack(tx: Tx, taken: TakenOutClips): void {
+  const { draftId } = taken;
+  const byId = new Map(taken.rows.map((row) => [row.id, row]));
+  const present = new Set(
+    tx
+      .select({ id: segments.id })
+      .from(segments)
+      .where(eq(segments.draftId, draftId))
+      .all()
+      .map((r) => r.id),
+  );
+  for (const [i, id] of taken.order.entries()) {
+    const row = byId.get(id);
+    if (!row || present.has(id)) continue;
+    const before = taken.order
+      .slice(0, i)
+      .reverse()
+      .find((x) => present.has(x));
+    const after = taken.order.slice(i + 1).find((x) => present.has(x));
+    const prevOrder = before === undefined ? undefined : orderOf(tx, draftId, before);
+    const nextOrder = after === undefined ? undefined : orderOf(tx, draftId, after);
+    const free = !tx
+      .select({ id: segments.id })
+      .from(segments)
+      .where(and(eq(segments.draftId, draftId), eq(segments.order, row.order)))
+      .get();
+    const fits =
+      row.order >= 0 &&
+      free &&
+      (prevOrder === undefined || prevOrder < row.order) &&
+      (nextOrder === undefined || row.order < nextOrder);
+    const at = fits
+      ? { order: row.order, shift: false }
+      : prevOrder !== undefined
+        ? { order: prevOrder + 1, shift: true }
+        : insertSlot(tx, draftId, after ? { before: after } : END);
+    if (at.shift) shiftFrom(tx, draftId, at.order, 1);
+    tx.insert(segments)
+      .values({ ...row, draftId, order: at.order })
+      .run();
+    present.add(id);
+  }
+  const back = taken.transcripts.filter((row) => byId.has(row.segmentId));
+  if (back.length) tx.insert(clipTranscripts).values(back).onConflictDoNothing().run();
 }
 
 /**
@@ -807,8 +997,8 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
 export async function dropTakenOut(taken: TakenOutClips): Promise<void> {
   release(taken);
   for (const row of taken.rows) {
-    if (await segmentExists(row.id)) continue;
-    await afterCommit('drop undone clip', () => deleteRowFiles(row));
+    const current = await db.select().from(segments).where(eq(segments.id, row.id)).get();
+    await afterCommit('drop undone clip', () => deleteRowFiles(row, current));
   }
 }
 
@@ -844,15 +1034,51 @@ function coverRev(): number {
  */
 const latestEditRev = new Map<string, number>();
 
-async function saveEdit(segmentId: string, editState: string): Promise<void> {
-  const edit = parseEdit(editState);
-  const durationMs = editTimelineMs(editState);
-  if (!edit || durationMs == null) throw new Error('The editor returned an unusable edit');
-  const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
-  if (!seg) return;
-  await beginClipMutation(seg.draftId);
+function invalidateEditWrites(ids: readonly string[]): void {
+  for (const id of ids) latestEditRev.set(id, coverRev());
+}
+
+/** A split's new right half needs its own first-frame cover, never the left half's image. */
+async function refreshSplitCover(segmentId: string): Promise<void> {
   const rev = coverRev();
   latestEditRev.set(segmentId, rev);
+  const [row] = await db.select().from(segments).where(eq(segments.id, segmentId));
+  const edit = parseEdit(row?.editState);
+  if (!row || row.thumbnail != null || !edit?.baseWindow || latestEditRev.get(segmentId) !== rev)
+    return;
+  const key = renderKey(row);
+  const coverRel = editCoverRelPath(row.draftId, segmentId, rev);
+  const ok = await generateThumbnailFile(absolutize(row.originalFilename), absolutize(coverRel), {
+    editState: row.editState!,
+    startMs: edit.startMs,
+  }).catch(() => false);
+  const applied =
+    ok &&
+    latestEditRev.get(segmentId) === rev &&
+    db.transaction((tx) => {
+      const current = tx.select().from(segments).where(eq(segments.id, segmentId)).get();
+      if (!current || current.thumbnail != null || renderKey(current) !== key) return false;
+      tx.update(segments).set({ thumbnail: coverRel }).where(eq(segments.id, segmentId)).run();
+      return true;
+    });
+  if (!applied) deleteQuietly(absolutize(coverRel));
+}
+
+async function saveEdit(segmentId: string, value: string): Promise<void> {
+  if (!parseEdit(value)) throw new Error('The editor returned an unusable edit');
+  // Reserve the revision before any asynchronous read/lock check: a structural change that
+  // lands anywhere while this request waits must invalidate the whole pre-change intent.
+  const rev = coverRev();
+  latestEditRev.set(segmentId, rev);
+  const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
+  if (!seg || latestEditRev.get(segmentId) !== rev) return;
+  const editState = segmentEditValue(seg, value);
+  const edit = parseEdit(editState);
+  const durationMs = editState == null ? null : editTimelineMs(editState);
+  if (!editState || !edit || durationMs == null)
+    throw new Error('The editor returned an unusable edit');
+  await beginClipMutation(seg.draftId);
+  if (latestEditRev.get(segmentId) !== rev) return;
   // The cover first (160–600 ms on a Galaxy S24), then the edit and its cover in one write: the
   // row never holds an edit with another edit's cover, whenever the app stops.
   const coverRel = editCoverRelPath(seg.draftId, segmentId, rev);
@@ -890,10 +1116,20 @@ async function saveEdit(segmentId: string, editState: string): Promise<void> {
       if (ok) deleteSegmentFile(coverRel);
       return;
     }
-    if (previous.editedFilename) deleteSegmentFile(previous.editedFilename);
+    if (
+      previous.editedFilename &&
+      !heldFiles.has(previous.editedFilename) &&
+      !(await fileInUse(previous.editedFilename))
+    )
+      deleteSegmentFile(previous.editedFilename);
     // Drop the replaced cover only now that the row points away from it; the pristine thumb
     // stays for a reset.
-    if (previous.thumbnail && previous.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
+    if (
+      previous.thumbnail &&
+      previous.thumbnail !== thumbRelPath(seg.draftId, segmentId) &&
+      !heldFiles.has(previous.thumbnail) &&
+      !(await fileInUse(previous.thumbnail))
+    ) {
       deleteSegmentFile(previous.thumbnail);
     }
   });
@@ -904,11 +1140,17 @@ async function saveEdit(segmentId: string, editState: string): Promise<void> {
  * file), so it plays whole and the editor next opens fresh.
  */
 export async function resetEdit(segmentId: string): Promise<void> {
-  const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
-  if (!seg) return;
-  await beginClipMutation(seg.draftId);
   const rev = coverRev();
   latestEditRev.set(segmentId, rev);
+  const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId));
+  if (!seg || latestEditRev.get(segmentId) !== rev) return;
+  const splitReset = resetSegmentEdit(seg);
+  if (splitReset != null) {
+    await saveEdit(segmentId, splitReset);
+    return;
+  }
+  await beginClipMutation(seg.draftId);
+  if (latestEditRev.get(segmentId) !== rev) return;
   // As in `saveEdit`: the pristine cover first, then the cleared edit and that cover in one write,
   // unless a newer edit was asked for meanwhile.
   const thumbRel = thumbRelPath(seg.draftId, segmentId);
@@ -938,12 +1180,18 @@ export async function resetEdit(segmentId: string): Promise<void> {
   await afterCommit('revert edits', async () => {
     // Drop the now-orphaned edited file and thumb only after the row no longer references them.
     const edited = previous?.editedFilename ?? seg.editedFilename;
-    if (edited) {
+    if (edited && !heldFiles.has(edited) && !(await fileInUse(edited))) {
       deleteSegmentFile(edited);
-      deleteSegmentFile(editedThumbRelPath(edited));
+      const thumb = editedThumbRelPath(edited);
+      if (!heldFiles.has(thumb) && !(await fileInUse(thumb))) deleteSegmentFile(thumb);
     }
     // The prior cover, read as it was replaced — never the fresh `thumbRel`.
-    if (previous?.thumbnail && previous.thumbnail !== thumbRel) {
+    if (
+      previous?.thumbnail &&
+      previous.thumbnail !== thumbRel &&
+      !heldFiles.has(previous.thumbnail) &&
+      !(await fileInUse(previous.thumbnail))
+    ) {
       deleteSegmentFile(previous.thumbnail);
     }
   });

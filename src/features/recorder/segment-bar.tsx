@@ -34,9 +34,10 @@ import {
   anchorAtBoundary,
   boundaryOf,
   boundaryX,
-  cursorA11yValue,
+  cursorA11yForAnchor,
+  cursorPosition,
   cursorAfterReorder,
-  insertChipText,
+  insertChipForAnchor,
   orderShown,
   scrollToShow,
 } from './insert-point';
@@ -150,7 +151,14 @@ function Bar({
     const viewport = viewportW.get();
     if (!revealCursor.current || viewport <= 0 || content <= 0) return;
     revealCursor.current = false;
-    const x = boundaryX(boundaryOf(insertAnchor, ids), STRIP);
+    const x = boundaryX(
+      cursorPosition(
+        insertAnchor,
+        ids,
+        segments.map((s) => ({ label: s.label, durationMs: effMs(s) })),
+      ),
+      STRIP,
+    );
     const target = scrollToShow(
       scrollOffset.get(),
       viewport,
@@ -174,13 +182,13 @@ function Bar({
   // after a drop, the grid shows the new order a beat before the draft's clips catch up.
   const [dropped, setDropped] = useState<{ base: Segment[]; ids: string[] } | null>(null);
   const shownIds = orderShown(segments, ids, dropped);
-  const cursorAt = boundaryOf(insertAnchor, shownIds);
   const byId = new Map(segments.map((s) => [s.id, s]));
   const clipInfo = shownIds.flatMap((id) => {
     const s = byId.get(id);
     return s ? [{ label: s.label, durationMs: effMs(s) }] : [];
   });
-  const chip = insertChipText(cursorAt, clipInfo);
+  const cursorAt = cursorPosition(insertAnchor, shownIds, clipInfo);
+  const chip = insertChipForAnchor(insertAnchor, shownIds, clipInfo);
   // A reorder hides the cursor and the chip (the clips move under them); a cursor drag holds the
   // strip's own scrolling still (the cursor scrolls it at the edges).
   const [reordering, setReordering] = useState(false);
@@ -455,7 +463,7 @@ function Bar({
                 enabled={cursorLive}
                 onMove={moveCursor}
                 onDraggingChange={setCursorDragging}
-                a11yValue={cursorA11yValue(cursorAt, clipInfo)}
+                a11yValue={cursorA11yForAnchor(insertAnchor, shownIds, clipInfo)}
                 scrollRef={scrollRef}
                 scrollOffset={scrollOffset}
                 viewportW={viewportW}

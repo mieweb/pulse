@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import {
   anchorForPlayhead,
+  anchorForExactPlayhead,
   anchorFromRouteParam,
   anchorSlot,
   anchorToRouteParam,
@@ -15,18 +16,27 @@ import {
   returnEditorTo,
   sameAnchor,
   takeClipsAdded,
+  takeClipSplits,
   takeEditorReturn,
   timeAtAnchor,
   type ClipAnchor,
 } from './clip-anchor';
 
+const inside: ClipAnchor = {
+  before: 'a',
+  next: 'b',
+  split: { sourceMs: 1500, sourceKey: 'drafts/d/a.mp4#trim', rightId: 'a-right', offsetMs: 250 },
+};
+
 describe('route params', () => {
-  it.each<ClipAnchor>([{ before: 'd1-170' }, { before: 'abc_DEF-9', next: 'x' }, { at: 'end' }])(
-    'round-trips %j',
-    (anchor) => {
-      expect(anchorFromRouteParam(anchorToRouteParam(anchor))).toEqual(anchor);
-    },
-  );
+  it.each<ClipAnchor>([
+    { before: 'd1-170' },
+    { before: 'abc_DEF-9', next: 'x' },
+    { at: 'end' },
+    inside,
+  ])('round-trips %j', (anchor) => {
+    expect(anchorFromRouteParam(anchorToRouteParam(anchor))).toEqual(anchor);
+  });
 
   it.each<[string, unknown]>([
     ['undefined', undefined],
@@ -43,6 +53,30 @@ describe('route params', () => {
     ['plain "end"', 'end'],
   ])('reads %s as the end', (_name, param) => {
     expect(anchorFromRouteParam(param)).toEqual(END);
+  });
+
+  it.each([
+    {},
+    { before: 'a' },
+    { before: '../a', split: { sourceMs: 1, offsetMs: 1, sourceKey: 'file', rightId: 'r' } },
+    { before: 'a', split: { sourceMs: 0, offsetMs: 1, sourceKey: 'file', rightId: 'r' } },
+    { before: 'a', split: { sourceMs: 1, offsetMs: -1, sourceKey: 'file', rightId: 'r' } },
+    { before: 'a', split: { sourceMs: Number.NaN, offsetMs: 1, sourceKey: 'file', rightId: 'r' } },
+    { before: 'a', split: { sourceMs: 1, offsetMs: 1, sourceKey: '', rightId: 'r' } },
+    { before: 'a', split: { sourceMs: 1, offsetMs: 1, sourceKey: 'x'.repeat(4097), rightId: 'r' } },
+    { before: 'a', split: { sourceMs: 1, offsetMs: 1, sourceKey: 'file\nkey', rightId: 'r' } },
+    { before: 'a', split: { sourceMs: 1, offsetMs: 1, sourceKey: 'file', rightId: 'a' } },
+    { before: 'a', split: { sourceMs: 1, offsetMs: 1, sourceKey: 'file', rightId: '../r' } },
+    { before: 'a', next: [], split: { sourceMs: 1, offsetMs: 1, sourceKey: 'file', rightId: 'r' } },
+  ])('rejects a malformed exact source position %j', (value) => {
+    expect(anchorFromRouteParam(`inside:${encodeURIComponent(JSON.stringify(value))}`)).toEqual(
+      END,
+    );
+  });
+
+  it('rejects broken or oversized encoded exact positions', () => {
+    expect(anchorFromRouteParam('inside:%broken')).toEqual(END);
+    expect(anchorFromRouteParam(`inside:${'x'.repeat(20001)}`)).toEqual(END);
   });
 });
 
@@ -72,6 +106,58 @@ describe('resolveAnchor / anchorSlot', () => {
     expect(resolveAnchor({ before: 'x' }, slotOf)).toBeUndefined();
     expect(resolveAnchor(END, slotOf)).toBeUndefined();
     expect(asked).toEqual(['x', 'b', 'b', 'x']);
+  });
+
+  it('keeps an exact point on its original until the right half is committed', () => {
+    expect(anchorSlot(inside, ['a', 'b'])).toBe(0);
+    expect(anchorSlot(inside, ['a', 'x', 'a-right', 'b'])).toBe(2);
+    // Missing original is stale, not a boundary fallback to the next clip.
+    expect(resolveAnchor(inside, (id) => (id === 'b' ? 7 : undefined))).toBeUndefined();
+  });
+});
+
+describe('anchorForExactPlayhead', () => {
+  const clips = [
+    { id: 'a', sourceKey: 'a-key', edit: { startMs: 1000, endMs: 3000, speed: 2 } },
+    { id: 'b', sourceKey: 'b-key', edit: { startMs: 0, endMs: 2000, speed: 1 } },
+    { id: 'c', sourceKey: 'c-key', edit: { startMs: 0, endMs: 1000, speed: 1 } },
+  ];
+  const starts = [0, 1000, 3000];
+
+  it('captures the exact source point through existing trim and speed', () => {
+    expect(anchorForExactPlayhead(clips, starts, 4000, 250, () => 'a-right')).toEqual({
+      before: 'a',
+      next: 'b',
+      split: { sourceMs: 1500, sourceKey: 'a-key', rightId: 'a-right', offsetMs: 250 },
+    });
+    expect(anchorForExactPlayhead(clips, starts, 4000, 750, () => 'a-right')).toMatchObject({
+      before: 'a',
+      split: { sourceMs: 2500, offsetMs: 750 },
+    });
+    expect(anchorForExactPlayhead(clips, starts, 4000, 3999, () => 'c-right')).toMatchObject({
+      before: 'c',
+      split: { sourceMs: 999, sourceKey: 'c-key', rightId: 'c-right' },
+    });
+  });
+
+  it('inserts at boundaries and appends at the end without allocating a half', () => {
+    const fresh = jest.fn(() => 'new');
+    expect(anchorForExactPlayhead(clips, starts, 4000, 0, fresh)).toEqual({
+      before: 'a',
+      next: 'b',
+    });
+    expect(anchorForExactPlayhead(clips, starts, 4000, 1000, fresh)).toEqual({
+      before: 'b',
+      next: 'c',
+    });
+    expect(anchorForExactPlayhead(clips, starts, 4000, 4000, fresh)).toEqual(END);
+    expect(anchorForExactPlayhead(clips, starts, 4000, -1, fresh)).toEqual({
+      before: 'a',
+      next: 'b',
+    });
+    expect(anchorForExactPlayhead(clips, starts, 4000, Number.NaN, fresh)).toEqual(END);
+    expect(anchorForExactPlayhead([], [], 0, 0, fresh)).toEqual(END);
+    expect(fresh).not.toHaveBeenCalled();
   });
 });
 
@@ -147,6 +233,12 @@ describe('timeAtAnchor', () => {
   it('is 0 in an empty draft', () => {
     expect(timeAtAnchor(END, [], [], 0)).toBe(0);
   });
+
+  it('returns the exact point before the split, and the right boundary once committed', () => {
+    expect(timeAtAnchor(inside, ids, starts, 4000)).toBe(250);
+    expect(timeAtAnchor(inside, ['b', 'a', 'c'], [0, 2000, 3000], 4000)).toBe(2250);
+    expect(timeAtAnchor(inside, ['a', 'x', 'a-right', 'b'], [0, 250, 1250, 2000], 4000)).toBe(1250);
+  });
 });
 
 describe('sameAnchor / isEnd', () => {
@@ -160,9 +252,55 @@ describe('sameAnchor / isEnd', () => {
     expect(isEnd(END)).toBe(true);
     expect(isEnd({ before: 'a' })).toBe(false);
   });
+
+  it('distinguishes frozen split positions and ordinary boundaries on the same clip', () => {
+    expect(sameAnchor(inside, { ...inside })).toBe(true);
+    expect(sameAnchor(inside, { before: 'a', next: 'b' })).toBe(false);
+    if (isEnd(inside) || !inside.split) throw new Error('expected an inside anchor');
+    expect(sameAnchor(inside, { ...inside, split: { ...inside.split, sourceMs: 1501 } })).toBe(
+      false,
+    );
+    expect(sameAnchor(inside, { ...inside, split: { ...inside.split, rightId: 'other' } })).toBe(
+      false,
+    );
+  });
 });
 
 describe('clips added', () => {
+  it('queues the compound split receipt separately from inserted clip ids', () => {
+    const split = {
+      before: { draftId: 'split-d', order: ['a'], rows: [], transcripts: [] },
+      rightId: 'a-right',
+      firstInsertedId: 'x',
+    };
+    expect(noteClipsAdded({ draftId: 'split-d', segmentIds: ['x'], split })).toBe(false);
+    const disarm = expectClipsAdded('split-d');
+    expect(noteClipsAdded({ draftId: 'split-d', segmentIds: ['x'], split })).toBe(true);
+    expect(takeClipsAdded('split-d')).toEqual(['x']);
+    expect(takeClipSplits('split-d')).toEqual([split]);
+    expect(takeClipSplits('split-d')).toEqual([]);
+    disarm();
+  });
+
+  it('discards undelivered split receipts once when the final editor closes', () => {
+    const discard = jest.fn();
+    const split = {
+      before: { draftId: 'discard-d', order: ['a'], rows: [], transcripts: [] },
+      rightId: 'a-right',
+      firstInsertedId: 'x',
+    };
+    const first = expectClipsAdded('discard-d', discard);
+    const last = expectClipsAdded('discard-d');
+    noteClipsAdded({ draftId: 'discard-d', segmentIds: ['x'], split });
+    first();
+    expect(discard).not.toHaveBeenCalled();
+    last();
+    last();
+    expect(discard).toHaveBeenCalledTimes(1);
+    expect(discard).toHaveBeenCalledWith(split);
+    expect(takeClipSplits('discard-d')).toEqual([]);
+  });
+
   it('tells listeners, and keeps an armed draft’s ids until taken', () => {
     const listener = jest.fn();
     const stop = onClipsAdded(listener);

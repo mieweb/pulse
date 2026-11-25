@@ -27,7 +27,7 @@ import { useScreenFocused, useScreenFocusEffect } from '@/core/navigation/focus'
 import Sortable from 'react-native-sortables';
 
 import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
-import { ADD_SIZE, addPositionHint, EditorAddMenu } from '@/features/editor/editor-add-menu';
+import { ADD_SIZE, EditorAddMenu } from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
 import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
 import { useFrameRates } from '@/features/editor/use-frame-rates';
@@ -161,9 +161,9 @@ function usePlaybackSessionOnReturn() {
  * merged at the playhead. Captions show over the preview (drag one to move them all) and on a
  * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
  *
- * A "+" at the right edge of the clips adds clips at the playhead's clip boundary (never splitting a
- * clip): recorded in the recorder, imported, or a screen recording. The playhead then sits after
- * them, and one undo takes the whole addition out.
+ * The "+" beside Play inserts at the exact playhead, splitting only metadata inside a clip.
+ * The right-edge "+" always appends a new beat. Both offer recordings, imports and screen takes;
+ * the playhead then sits after the addition. One undo reverses the split and insertion together.
  *
  * No router: where Close, Export, Record a clip here and the captions model go is the caller's
  * (`EditorScreenProps`), and whether the screen is the one on top comes through the focus port.
@@ -240,7 +240,16 @@ export function EditorScreen({
   // The preview's clips: the draft's, with the clip being trimmed played whole so the handle can
   // show frames past the current trim. Stable while those don't change (a new array rebuilds).
   const previewClips = useMemo(
-    () => clips.map((c) => (c.id === trimmingId ? { ...c.merge, startMs: 0, endMs: 0 } : c.merge)),
+    () =>
+      clips.map((c) =>
+        c.id === trimmingId
+          ? {
+              ...c.merge,
+              startMs: c.edit.baseWindow?.startMs ?? 0,
+              endMs: c.edit.baseWindow?.endMs ?? 0,
+            }
+          : c.merge,
+      ),
     [clips, trimmingId],
   );
 
@@ -465,6 +474,8 @@ export function EditorScreen({
           startMs: sel.edit.startMs,
           endMs: sel.edit.endMs,
           sourceMs: sel.sourceMs,
+          sourceStartMs: sel.edit.baseWindow?.startMs,
+          sourceEndMs: sel.edit.baseWindow?.endMs,
           speed: sel.edit.speed,
           slotStartMs: slotOf(current).start,
           frameMs: 1000 / selFps,
@@ -970,6 +981,15 @@ export function EditorScreen({
             style={styles.play}>
             <Icon name={playing ? 'pause.fill' : 'play.fill'} size={22} tintColor={theme.text} />
           </Pressable>
+          <EditorAddMenu
+            actions={add.actions}
+            busy={add.busy}
+            progress={add.progress}
+            progressText={add.progressText}
+            progressCount={add.progressCount}
+            position="playhead"
+            onOpen={ctl.pause}
+          />
           <View style={styles.switchSlot}>
             <ViewSwitcher
               view={view}
@@ -1025,18 +1045,17 @@ export function EditorScreen({
               onBlankTap={deselect}
             />
           )}
-          {/* The "+": over the clips at the right edge, outside their scroll and gestures, so it
+          {/* Append a beat: over the clips at the right edge, outside their scroll and gestures, so it
               stays put while they scroll under it (each view pads half its width at the end, so
               the last clip scrolls clear of it) and while a clip is selected. */}
           <View style={styles.add} pointerEvents="box-none">
             <EditorAddMenu
-              actions={add.actions}
+              actions={add.appendActions}
               busy={add.busy}
               progress={add.progress}
               progressText={add.progressText}
               progressCount={add.progressCount}
-              hint={addPositionHint(add.slot, clips.length)}
-              // Paused as the "+" is pressed: the position picked is the one the hint just named.
+              position="end"
               onOpen={ctl.pause}
             />
           </View>
@@ -1111,7 +1130,7 @@ export function EditorScreen({
               muted={sel.edit.muted}
               speed={sel.edit.speed}
               editable={sel.editable}
-              edited={sel.editKey !== null || !sel.editable}
+              edited={sel.canReset}
               onFlip={() => edit(null, flippedEdit)}
               onRotate={() => edit('rotate', rotated)}
               onCrop={startCrop}

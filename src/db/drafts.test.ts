@@ -37,7 +37,8 @@ jest.mock('./client', () => {
     return mockChain(() => [{ clipNumber: 1 }], entry);
   };
   const db = {
-    select: () => mockChain(() => mockSelects.shift() ?? []),
+    select: (fields?: Record<string, unknown>) =>
+      mockChain(() => mockSelects.shift() ?? (fields && 'value' in fields ? [{ value: 0 }] : [])),
     update: write('update'),
     insert: write('insert'),
     delete: write('delete'),

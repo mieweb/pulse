@@ -22,6 +22,37 @@ receipts of sent videos and this install's own settings. Those are covered from
 
 The app logs the values it reads back as `[db] durability`.
 
+## Editor operations and session history
+
+The editor has two add controls. The **+ beside Play** captures the exact playhead position when
+an action is chosen. At a clip boundary it inserts there; at the end it appends. Inside clip A, a
+successful addition of X commits **A-left → X → A-right** in one SQLite transaction. A stays
+unsplit until the first new clip commits, so canceling or rejecting media before that leaves it
+unchanged. If A's source or edits change before that commit, the insertion is rejected instead of
+moving to another position. A canceled batch keeps clips already committed.
+
+The sticky **+ at the right edge of the clip row** remains visible in both editor views and while
+a clip is selected. Its actions always append a new clip/beat to the existing Pulse, independent
+of the playhead. This end anchor does not split a clip. The recorder retains its explicit insert
+cursor; opening it from the editor passes the chosen insertion or append position through.
+
+Splitting changes rows and edit settings, with no source-video rewrite or re-encode. The halves
+share the effective source file and retain their trim, speed, transforms, crop, mute and captions.
+Their `editState` includes a `baseWindow` source interval: trim handles and Reset stay inside that
+half. Reset clears transforms and speed while preserving this interval. Splitting a legacy baked
+clip uses its effective baked file as the halves' source; the original row is retained for Undo.
+
+One session history step owns the split and insertion together. Undo takes the inserted clips and
+halves out and restores the unsplit original in one transaction; Redo restores the applied rows,
+including their edits, captions and transcripts. Media needed by either form stays held until the
+history step is discarded or the editor closes. A batch uses one split and keeps its additions in
+order. Removing the last added clips through Undo keeps the editor open for Redo, with export
+disabled while empty.
+
+The Undo/Redo stacks are in memory for the editor session. The saved current rows, including split
+bounds, travel in `.pulse` files; the session stacks and media held only for Redo do not. Persistent
+history and its transfer are deferred to [#325](https://github.com/mieweb/pulse/issues/325).
+
 ## Launch and recovery
 
 `openLibrary` (`src/db/snapshots.ts`) runs as `src/db/client.ts` loads, before migrations. Nothing
@@ -55,9 +86,12 @@ flowchart TD
 paths, derived ones (thumbnails, edited thumbnails, covers, `export.mp4`; see
 `src/utils/media-paths.ts`), and the clip files that transcripts and caption edits were timed against.
 It decides what goes into a `.pulse` file, and protects referenced files from the RNVT leftover
-sweep. Media is only deleted with its draft, or, in PulseKit, once the host's server has the video
-([Retirement](#retirement-receipt-driven-deletion)). Nothing deletes a file for lacking a row,
-because a damaged, empty or restored database would then delete videos.
+sweep. Explicit clip edits/deletions and discarded session history remove obsolete media only
+after checking the live rows and active history holds; split siblings can share a file. Files
+held for an abandoned session are recorded for cleanup on a later launch. Draft deletion and,
+in PulseKit, [retirement](#retirement-receipt-driven-deletion) remove the draft's media. There is
+no general deletion sweep for files lacking a row: a damaged, empty or restored database must not
+cause videos to be deleted.
 
 ## `.pulse` files
 

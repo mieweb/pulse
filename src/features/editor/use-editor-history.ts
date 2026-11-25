@@ -34,11 +34,16 @@ export function useEditorHistory(
   const [store] = useState(() =>
     createEditorHistory({
       flush: flushDraftWrites,
-      takeOut: async (ids) => {
-        const taken = await takeOutSegments(ids);
+      takeOut: async (ids, splits) => {
+        const taken = await takeOutSegments(ids, splits);
         // Out of the draft: their transcriptions stop, as a deleted clip's do. A take-out that
         // failed leaves them running.
-        if (taken) dropClipJobs({ segmentIds: taken.rows.map((r) => r.id) });
+        if (taken) {
+          const restored = new Set((splits ?? []).flatMap((s) => s.before.rows.map((r) => r.id)));
+          dropClipJobs({
+            segmentIds: taken.rows.filter((r) => !restored.has(r.id)).map((r) => r.id),
+          });
+        }
         return taken;
       },
       restore: restoreSegments,

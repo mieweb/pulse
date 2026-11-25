@@ -3,6 +3,7 @@ import { type ClipAnchor, timeAtAnchor } from '@/core/clip-anchor';
 import {
   importImagesAction,
   importVideoAction,
+  fromAnotherPulseAction,
   recordScreenAction,
 } from '@/features/recorder/add-menu-actions';
 
@@ -10,7 +11,7 @@ import {
 // steps. use-editor-additions.ts runs them.
 
 /**
- * The "+" items. Each adds at the playhead's clip boundary, read once, as the item is picked (the
+ * The "+" items. Each adds at its anchor, read once, as the item is picked (the
  * player paused first), and kept: an import's long conversion or a screen take lands there
  * whatever is scrubbed, trimmed or reordered meanwhile. An item whose callback is absent isn't
  * offered (no recorder to open, no screen recording or one already running, no other draft with
@@ -34,8 +35,8 @@ export function editorAddActions({
   importVideo: (anchor: ClipAnchor) => void;
   /** One clip per image, in the order picked. */
   importImages: (anchor: ClipAnchor) => void;
-  /** Copies of another draft's clips, with their edits and captions (it reads its own anchor). */
-  fromAnotherPulse?: MenuAction;
+  /** Copies of another draft's clips, with their edits and captions. */
+  fromAnotherPulse?: (anchor: ClipAnchor) => void;
 }): MenuAction[] {
   const at = (add: (anchor: ClipAnchor) => void) => () => {
     pause();
@@ -48,7 +49,7 @@ export function editorAddActions({
     ...(recordScreen ? [recordScreenAction(at(recordScreen))] : []),
     importVideoAction(at(importVideo)),
     importImagesAction(at(importImages)),
-    ...(fromAnotherPulse ? [fromAnotherPulse] : []),
+    ...(fromAnotherPulse ? [fromAnotherPulseAction(at(fromAnotherPulse))] : []),
   ];
 }
 
