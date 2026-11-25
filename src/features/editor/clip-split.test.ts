@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { canSplitClip, clipSplitAnchor } from './clip-split';
+import { canSplitAtPlayhead, canSplitClip, clipSplitAnchor } from './clip-split';
 
 describe('standalone clip splitting at the playhead', () => {
   const a = { id: 'a', sourceKey: 'a.mp4#trim', edit: { startMs: 1000, endMs: 5000, speed: 2 } };
@@ -42,5 +42,16 @@ describe('standalone clip splitting at the playhead', () => {
     const half = { ...a, edit: { startMs: 2500, endMs: 5000, speed: 2 } };
     expect(canSplitClip(half.edit, 750, 3000, 750)).toBe(false);
     expect(canSplitClip(half.edit, 750, 3000, 1000)).toBe(true);
+  });
+
+  it('follows the playhead across clips without a selection or Edit mode', () => {
+    const edits = clips.map((clip) => clip.edit);
+    for (const ms of [0, 2000, 2999, 3000, NaN]) {
+      expect(canSplitAtPlayhead(edits, layout.starts, layout.totalMs, ms)).toBe(false);
+    }
+    for (const ms of [750, 1999, 2200]) {
+      expect(canSplitAtPlayhead(edits, layout.starts, layout.totalMs, ms)).toBe(true);
+    }
+    expect(canSplitAtPlayhead([], [], 0, 0)).toBe(false);
   });
 });

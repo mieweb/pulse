@@ -54,8 +54,9 @@ history step is discarded or the editor closes. A batch uses one split and keeps
 order. Removing the last added clips through Undo keeps the editor open for Redo, with export
 disabled while empty.
 
-The selected clip's **Split** tool also commits just the two halves at the exact playhead in either
-view, without inserting media. It is unavailable at existing clip boundaries or the end. This uses
+The main toolbar's **Split** tool commits just the two halves at the exact playhead in either
+view, without inserting media or entering Edit. It is also available in the selected clip's toolbar.
+It is unavailable at existing clip boundaries or the end. This uses
 the same metadata transaction and retained original as split-and-insert: one Undo rejoins the
 original and one Redo restores the halves, including their captions, transcripts and settings.
 

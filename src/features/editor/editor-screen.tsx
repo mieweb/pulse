@@ -71,7 +71,7 @@ import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-dr
 import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
 import { keepEmptyEditorOpen } from '@/features/editor/editor-history';
-import { useCanSplitClip, usePlayheadClip } from '@/features/editor/use-playhead-clip';
+import { useCanSplitAtPlayhead, usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { clipSplitAnchor } from '@/features/editor/clip-split';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
@@ -157,7 +157,8 @@ function usePlaybackSessionOnReturn() {
  * clips under a centre playhead, and a bottom bar of tools. Every edit applies at once (no Save),
  * with undo/redo in the header; trims snap to source frames as the engine does.
  *
- * The bottom bar's main tools open a mode until its ✓. Edit (or a tap on a clip) edits the clip
+ * The bottom bar offers Split directly; Edit and Captions open a mode until its ✓.
+ * Edit (or a tap on a clip) edits the clip
  * under the playhead, and moving the playhead onto another clip moves the selection with it
  * (nothing is selected on open). Captions picks and downloads a model (every clip is then
  * transcribed in the background); a tapped word is edited or deleted, and sentences are split or
@@ -168,7 +169,8 @@ function usePlaybackSessionOnReturn() {
  * after), or at the exact playhead in Timeline view, splitting metadata when inside a clip.
  * At the end it appends. It offers recordings, imports and screen takes;
  * the playhead then sits after the addition. One undo reverses the split and insertion together.
- * The selected clip's Split tool cuts at the exact playhead in either view without adding media;
+ * Split, on the main toolbar and in Edit, cuts at the exact playhead in either view without
+ * adding media;
  * one Undo rejoins its halves and Redo restores them.
  *
  * No router: where Close, Export, Record a clip here and the captions model go is the caller's
@@ -473,12 +475,7 @@ export function EditorScreen({
   };
 
   const sel = current >= 0 ? clips[current] : null;
-  const canSplit = useCanSplitClip(
-    sel?.edit ?? null,
-    layout.starts[current] ?? 0,
-    layout.totalMs,
-    values.timeMs,
-  );
+  const canSplit = useCanSplitAtPlayhead(clips, layout, values.timeMs);
   const selFps = sel ? fpsOf(sel.uri) : null;
   const trim: TrimInfo | null =
     sel?.editable && selFps
@@ -1145,7 +1142,9 @@ export function EditorScreen({
             />
           ) : !sel ? (
             <MainToolbar
-              canEdit={clips.length > 0}
+              canEdit={clips.length > 0 && !splitBusy && !history.busy}
+              canSplit={canSplit && !add.busy && !splitBusy && !history.busy}
+              onSplit={split}
               onEdit={() => {
                 haptics.tap();
                 const i = clipIndexAt(layout.starts, ctl.lastMs);
