@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import { randomUUID } from 'expo-crypto';
 import type { SharedValue } from 'react-native-reanimated';
 
@@ -31,6 +31,18 @@ import {
   playheadGoalMs,
 } from './editor-additions';
 
+type ActiveImageBatch = {
+  group: ImageBatch;
+  closed: boolean;
+  end: () => void;
+};
+
+function closeImageBatch(batch: ActiveImageBatch) {
+  if (batch.closed) return;
+  batch.closed = true;
+  batch.end();
+}
+
 /**
  * The editor's "+" (#308): its items (`editorAddActions`), the imports and screen take they run,
  * and the clips they add. Clips added to this draft while the editor is open, from its "+" or a
@@ -50,6 +62,8 @@ export function useEditorAdditions({
   pause,
   seekTo,
   recordAdded,
+  beginBatch,
+  endBatch,
   leaveEditMode,
   openOver,
   onAddClips,
@@ -67,7 +81,10 @@ export function useEditorAdditions({
   pause: () => void;
   seekTo: (ms: number) => void;
   /** One undo step for an addition. */
-  recordAdded: (ids: string[], splits?: readonly SplitReceipt[]) => void;
+  recordAdded: (ids: string[], splits?: readonly SplitReceipt[], batchKey?: string) => void;
+  /** Prevent Undo/Redo while preparing a batch; its first commit creates the history step. */
+  beginBatch: (key: string) => Promise<void>;
+  endBatch: (key: string) => void;
   leaveEditMode: () => void;
   /** Open a screen over the editor, once its pending writes are stored. */
   openOver: (go: () => void) => void;
@@ -91,8 +108,12 @@ export function useEditorAdditions({
   });
 
   // A batch of images' clips, told apart as they're written (`onWriting`), to be one undo step.
-  const imageBatch = useRef<ImageBatch | null>(null);
+  const imageBatch = useRef<ActiveImageBatch | null>(null);
+  const mounted = useRef(false);
+  const [batchActive, setBatchActive] = useState({ draftId, active: false });
+  if (batchActive.draftId !== draftId) setBatchActive({ draftId, active: false });
   const pendingSplits = useRef<SplitReceipt[]>([]);
+  const drainAdded = useRef<(finishBatch?: boolean) => void>(() => {});
   // The items' callbacks run on a press, never during render: the ref is only read then.
   // eslint-disable-next-line react-hooks/refs -- callbacks read refs only when an item is chosen
   const actions = editorAddActions({
@@ -105,11 +126,9 @@ export function useEditorAdditions({
         : undefined,
     importVideo: (anchor) => importer.importVideo(draftId, anchor),
     importImages: (anchor) =>
-      void images.importImages(draftId, () => anchor, {
-        onWriting: (id) => {
-          imageBatch.current = batchWriting(imageBatch.current, id);
-        },
-      }),
+      void importImagesAt(anchor).catch((error) =>
+        console.warn('[editor] image batch failed', error),
+      ),
     fromAnotherPulse: anotherPulse.action
       ? (anchor) => {
           otherAnchor.current = anchor;
@@ -119,8 +138,13 @@ export function useEditorAdditions({
   });
 
   useEffect(() => {
+    mounted.current = true;
     const stop = expectClipsAdded(draftId, (split) => void dropTakenOut(split.before));
     return () => {
+      mounted.current = false;
+      const batch = imageBatch.current;
+      imageBatch.current = null;
+      if (batch) closeImageBatch(batch);
       // Receipts not yet grouped into history (e.g. an image batch still preparing) have no
       // owner once this editor closes. The live half rows keep their own media referenced.
       const remaining = pendingSplits.current;
@@ -135,24 +159,25 @@ export function useEditorAdditions({
   /** The playhead to `goal` (`playheadGoalMs`); false while its clip isn't in the list yet. */
   const placeGoal = (goal: PlayheadGoal) => {
     const at = playheadGoalMs(goal, clipIds, layout.starts, layout.totalMs);
-    if (at == null || !previewReady) return false;
+    if (at == null || !previewReady || !focused) return false;
     // Rows can arrive before the native timeline has rebuilt. Seeking its old item loses this
     // position when it is replaced; retain the goal until this clip list is ready to seek.
     seekTo(at);
     return true;
   };
-  const takeAdded = useEffectEvent(() => {
+  const drainNow = (finishBatch = false) => {
     const added = takeClipsAdded(draftId);
     pendingSplits.current.push(...takeClipSplits(draftId));
-    const grouped = groupAdditions(imageBatch.current, added, images.importing);
-    imageBatch.current = grouped.batch;
-    for (const ids of grouped.steps) {
+    const batch = imageBatch.current;
+    const grouped = groupAdditions(batch?.group ?? null, added, batch !== null && !finishBatch);
+    if (batch && grouped.batch) batch.group = grouped.batch;
+    for (const { ids, batchKey } of grouped.steps) {
       const ours = new Set(ids);
       const splits = pendingSplits.current.filter((s) => ours.has(s.firstInsertedId));
       pendingSplits.current = pendingSplits.current.filter((s) => !ours.has(s.firstInsertedId));
-      recordAdded(ids, splits);
+      recordAdded(ids, splits, batchKey);
     }
-    const goal = playheadGoal(takeEditorReturn(draftId), grouped.placeAfter);
+    const goal = playheadGoal(focused ? takeEditorReturn(draftId) : null, grouped.placeAfter);
     if (!goal) return;
     leaveEditMode();
     const placed = placeGoal(goal);
@@ -161,31 +186,69 @@ export function useEditorAdditions({
     // recorder deleted again, a retake, which never shows up).
     const behind = 'at' in goal && added.some((id) => !clipIds.includes(id));
     pendingGoal.current =
-      !placed || behind ? { goal, until: Date.now() + (behind ? 1500 : 5000) } : null;
+      !placed || behind
+        ? { goal, until: focused ? Date.now() + (behind ? 1500 : 5000) : Infinity }
+        : null;
+  };
+  // Import completion is an event-handler continuation, not an Effect Event. Keep its drain
+  // current after every commit, while the subscription/timer below uses an Effect Event.
+  useLayoutEffect(() => {
+    drainAdded.current = drainNow;
   });
+  const takeAdded = useEffectEvent(() => drainAdded.current());
+
+  async function importImagesAt(anchor: ClipAnchor) {
+    // Own the whole promise, including permission/picker waits: importing state changes later.
+    if (!mounted.current || imageBatch.current) return;
+    const key = randomUUID();
+    const batch: ActiveImageBatch = {
+      group: { key, writing: [], landed: [] },
+      closed: false,
+      end: () => endBatch(key),
+    };
+    imageBatch.current = batch;
+    setBatchActive({ draftId, active: true });
+    try {
+      await beginBatch(key);
+      if (!mounted.current || imageBatch.current !== batch) return;
+      await images.importImages(draftId, () => anchor, {
+        onWriting: (id) => {
+          if (imageBatch.current === batch) batch.group = batchWriting(batch.group, id);
+        },
+      });
+    } finally {
+      try {
+        // Closing/unmounting owns no global journal: another armed editor may be taking it.
+        if (mounted.current && imageBatch.current === batch) drainAdded.current(true);
+      } finally {
+        if (imageBatch.current === batch) {
+          imageBatch.current = null;
+          if (mounted.current) setBatchActive({ draftId, active: false });
+        }
+        closeImageBatch(batch);
+      }
+    }
+  }
+
   useEffect(() => {
     const p = pendingGoal.current;
-    if (!p) return;
+    if (!p || !focused) return;
+    // A batch can complete while covered. Start its placement deadline when this editor returns.
+    if (p.until === Infinity) p.until = Date.now() + 5000;
     if (Date.now() > p.until) pendingGoal.current = null;
     else if (placeGoal(p.goal)) pendingGoal.current = null;
     // Rows and native readiness arrive independently; either can make the goal resolvable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clips, previewReady, layout]);
-  const imagesWere = useRef(false);
+  }, [clips, previewReady, layout, focused]);
   useEffect(() => {
-    const ended = imagesWere.current && !images.importing;
-    imagesWere.current = images.importing;
-    if (ended && focused) takeAdded();
-  }, [focused, images.importing]);
-  useEffect(() => {
-    if (!focused) return;
     // Those added while a recorder covered the editor, just after it's back on top.
-    const back = setTimeout(takeAdded, 0);
+    const back = focused ? setTimeout(takeAdded, 0) : null;
     const stop = onClipsAdded((added) => {
-      if (added.draftId === draftId) takeAdded();
+      // Own an image batch's history from its first commit, even while another screen covers us.
+      if (added.draftId === draftId && (focused || imageBatch.current)) takeAdded();
     });
     return () => {
-      clearTimeout(back);
+      if (back !== null) clearTimeout(back);
       stop();
     };
   }, [focused, draftId]);
@@ -194,7 +257,10 @@ export function useEditorAdditions({
     actions,
     /** An import, a batch or this draft's screen take is adding clips: the "+" is busy. */
     busy:
-      importer.importing || images.importing || (screen.importing && screen.draftId === draftId),
+      importer.importing ||
+      (batchActive.draftId === draftId && batchActive.active) ||
+      images.importing ||
+      (screen.importing && screen.draftId === draftId),
     progress: importer.importing
       ? importer.progress
       : images.importing

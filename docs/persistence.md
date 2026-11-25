@@ -54,6 +54,13 @@ history step is discarded or the editor closes. A batch uses one split and keeps
 order. Removing the last added clips through Undo keeps the editor open for Redo, with export
 disabled while empty.
 
+An image batch creates its history step with the first committed clip and extends that same step
+beneath any intervening edits. Undo and Redo remain unavailable until the batch finishes or is
+canceled. A canceled partial batch keeps one history step for the clips already committed. The
+active step stays retained even if intervening edits exceed the normal 100-step history limit;
+the limit applies again when the batch closes. Addition Undo checks every recorded clip ID against
+storage, so a delayed live-query update cannot discard or partly undo the operation.
+
 The Undo/Redo stacks are in memory for the editor session. The saved current rows, including split
 bounds, travel in `.pulse` files; the session stacks and media held only for Redo do not. Persistent
 history and its transfer are deferred to [#325](https://github.com/mieweb/pulse/issues/325).

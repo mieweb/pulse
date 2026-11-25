@@ -135,13 +135,14 @@ describe('createEditorHistory: split and insert', () => {
     expect(drop).toHaveBeenCalledWith(taken);
   });
 
-  it('releases a skipped split snapshot when all affected clips were deleted', () => {
+  it('releases a split snapshot after storage confirms all affected clips were deleted', async () => {
     const split = splitReceipt();
     const drop = jest.fn<HistoryDeps['drop']>(async () => {});
-    const { deps } = fakes({ drop });
+    const { deps } = fakes({ drop, takeOut: async () => null });
     const h = createEditorHistory(deps);
     h.recordAdded(['x'], [split]);
     h.undo(present([]), apply);
+    await h.settled();
     expect(h.getState().past).toEqual([]);
     expect(drop).toHaveBeenCalledTimes(1);
     expect(drop).toHaveBeenCalledWith(split.before);
@@ -151,6 +152,49 @@ describe('createEditorHistory: split and insert', () => {
 });
 
 describe('createEditorHistory: additions', () => {
+  it('skips a storage-confirmed missing addition and undoes the older edit on the same tap', async () => {
+    const takeOut = jest.fn<HistoryDeps['takeOut']>(async () => null);
+    const { deps } = fakes({ takeOut });
+    const h = createEditorHistory(deps);
+    h.record(present(['a'], { a: 'before' }), null);
+    h.recordAdded(['gone']);
+    const applied = jest.fn();
+    h.undo(present(['a'], { a: 'after' }), applied);
+    await h.settled();
+    expect(takeOut).toHaveBeenCalledWith(['gone']);
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({ edits: [['a', 'before']] }));
+    expect(h.getState().past).toEqual([]);
+    expect(h.getState().future.map((s) => s.kind)).toEqual(['state']);
+    expect(h.getState().busy).toBe(false);
+  });
+
+  it('checks several absent additions in storage before finishing a no-op Undo', async () => {
+    const takeOut = jest.fn<HistoryDeps['takeOut']>(async () => null);
+    const { deps } = fakes({ takeOut });
+    const h = createEditorHistory(deps);
+    h.recordAdded(['one']);
+    h.recordAdded(['two']);
+    h.undo(present([]), apply);
+    await h.settled();
+    expect(takeOut.mock.calls).toEqual([[['two']], [['one']]]);
+    expect(h.getState()).toMatchObject({ past: [], future: [], busy: false, keepEmptyOpen: false });
+  });
+
+  it('does not undo an older edit if a new change arrives while storage checks an absent addition', async () => {
+    const checking = gate<TakenOutClips | null>();
+    const { deps } = fakes({ takeOut: () => checking.promise });
+    const h = createEditorHistory(deps);
+    h.record(present(['a'], { a: 'before' }), null);
+    h.recordAdded(['gone']);
+    const applied = jest.fn();
+    h.undo(present(['a'], { a: 'after' }), applied);
+    h.record(present(['a'], { a: 'newer' }), null);
+    checking.resolve(null);
+    await h.settled();
+    expect(applied).not.toHaveBeenCalled();
+    expect(h.getState().past.map((s) => s.kind)).toEqual(['state', 'state']);
+  });
+
   it('undoes and redoes an edited addition after the original clip is deleted', async () => {
     type Row = TakenOutClips['rows'][number];
     const clip = (id: string, editState: string | null = null): Row => ({
@@ -449,5 +493,119 @@ describe('createEditorHistory: additions', () => {
     expect(h.getState().future).toEqual([]);
     expect(h.getState().keepEmptyOpen).toBe(false);
     expect(log.filter((l) => l.startsWith('drop'))).toEqual([]);
+  });
+});
+
+describe('createEditorHistory: active image batches', () => {
+  it('creates no empty step and preserves redo when the picker is canceled before any commit', async () => {
+    const { log, deps } = fakes();
+    const h = createEditorHistory(deps);
+    h.recordAdded(['x']);
+    h.undo(present(['a', 'x']), apply);
+    await h.settled();
+    await h.beginBatch('batch');
+    h.redo(present(['a']), apply);
+    h.undo(present(['a']), apply);
+    expect(h.getState()).toMatchObject({ past: [], batchOpen: true, keepEmptyOpen: true });
+    expect(h.getState().future).toHaveLength(1);
+    expect(log.some((entry) => entry.startsWith('restore:'))).toBe(false);
+    h.endBatch('batch');
+    h.redo(present(['a']), apply);
+    await h.settled();
+    expect(log).toContain('restore:x');
+  });
+
+  it('extends the first commit below intervening edits and keeps its split receipt', async () => {
+    const split = splitReceipt();
+    const takeOut = jest.fn<HistoryDeps['takeOut']>(async (ids) => takenOf(ids));
+    const drop = jest.fn<HistoryDeps['drop']>(async () => {});
+    const { deps } = fakes({ takeOut, drop });
+    const h = createEditorHistory(deps);
+    await h.beginBatch('batch');
+    h.recordAdded(['x'], [split], 'batch');
+    const first = h.getState().past[0];
+    h.record(present(['a', 'x', 'right'], { a: 'left' }), 'rotate');
+    h.recordAdded(['y'], [], 'batch');
+    expect(h.getState().past[0]).toBe(first);
+    expect(first).toMatchObject({ ids: ['x', 'y'], splits: [split], batchKey: 'batch' });
+    expect(h.getState().past.map((s) => s.kind)).toEqual(['added', 'state']);
+    const applied = jest.fn();
+    h.undo(present(['a', 'x', 'y', 'right'], { a: 'rotated-left' }), applied);
+    expect(applied).not.toHaveBeenCalled();
+    expect(takeOut).not.toHaveBeenCalled();
+    expect(drop).not.toHaveBeenCalled();
+    h.endBatch('batch');
+    h.undo(present(['a', 'x', 'y', 'right'], { a: 'rotated-left' }), applied);
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining({ edits: [['a', 'left']] }));
+    h.undo(present(['a', 'x', 'y', 'right'], { a: 'left' }), applied);
+    await h.settled();
+    expect(takeOut).toHaveBeenCalledWith(['x', 'y'], [split]);
+  });
+
+  it('pins an open batch across history eviction, then releases its snapshot once it ages out', async () => {
+    const split = splitReceipt();
+    const drop = jest.fn<HistoryDeps['drop']>(async () => {});
+    const { deps } = fakes({ drop });
+    const h = createEditorHistory(deps);
+    await h.beginBatch('batch');
+    h.recordAdded(['x'], [split], 'batch');
+    const first = h.getState().past[0];
+    for (let i = 0; i < 110; i++) h.record(present(['a', 'x', 'right']), null);
+    expect(h.getState().past).toHaveLength(101);
+    expect(h.getState().past[0]).toBe(first);
+    expect(drop).not.toHaveBeenCalled();
+    h.recordAdded(['y'], [], 'batch');
+    expect(first).toMatchObject({ ids: ['x', 'y'] });
+    h.endBatch('batch');
+    expect(h.getState().past).toHaveLength(100);
+    expect(drop).toHaveBeenCalledTimes(1);
+    expect(drop).toHaveBeenCalledWith(split.before);
+    h.dispose();
+    expect(drop).toHaveBeenCalledTimes(1);
+  });
+
+  it('seals a partially committed batch as one undoable addition', async () => {
+    const { log, deps } = fakes();
+    const h = createEditorHistory(deps);
+    await h.beginBatch('partial');
+    h.recordAdded(['first'], [], 'partial');
+    h.endBatch('partial');
+    h.undo(present(['a', 'first']), apply);
+    await h.settled();
+    expect(log).toContain('takeOut:first');
+    expect(h.getState().future).toHaveLength(1);
+  });
+
+  it('waits for an existing history write before allowing batch preparation to start', async () => {
+    const taking = gate<TakenOutClips | null>();
+    const { deps } = fakes({ takeOut: () => taking.promise });
+    const h = createEditorHistory(deps);
+    h.recordAdded(['x']);
+    h.undo(present(['a', 'x']), apply);
+    let began = false;
+    const beginning = h.beginBatch('batch').then(() => {
+      began = true;
+    });
+    await Promise.resolve();
+    expect(began).toBe(false);
+    taking.resolve(takenOf(['x']));
+    await beginning;
+    expect(began).toBe(true);
+    expect(h.getState().batchOpen).toBe(true);
+    h.endBatch('batch');
+  });
+
+  it('releases a late unaccepted split receipt after the editor closes', async () => {
+    const split = splitReceipt();
+    const drop = jest.fn<HistoryDeps['drop']>(async () => {});
+    const { deps } = fakes({ drop });
+    const h = createEditorHistory(deps);
+    await h.beginBatch('batch');
+    h.dispose();
+    h.recordAdded(['x'], [split], 'batch');
+    h.endBatch('batch');
+    expect(drop).toHaveBeenCalledWith(split.before);
+    expect(h.getState().past).toEqual([]);
+    expect(h.getState().batchOpen).toBe(false);
   });
 });

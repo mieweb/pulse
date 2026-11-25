@@ -71,6 +71,7 @@ import {
   deleteSegment,
   dropTakenOut,
   insertSegments,
+  reorderSegments,
   resetEdit,
   restoreSegments,
   segmentsForDraft,
@@ -185,6 +186,49 @@ async function setup(legacy = false) {
   return { d, a, b, before, anchor, heard, object, video, cover, baked };
 }
 
+const presentRows = (rows: readonly Segment[]) => ({
+  clips: rows.map((row) => ({ id: row.id, editKey: row.editState })),
+  captions: new Map(rows.map((row) => [row.id, row.captionEdit])),
+  captionY: null,
+});
+
+/** Run actual row mutations for both addition steps and the intervening edit snapshots. */
+function databaseHistory(draftId: string) {
+  const writes: Promise<void>[] = [];
+  const flush = async () => {
+    await Promise.all(writes.splice(0));
+  };
+  const failed = jest.fn();
+  const takeOut = jest.fn<typeof takeOutSegments>(takeOutSegments);
+  const history = createEditorHistory({
+    flush,
+    takeOut,
+    restore: restoreSegments,
+    drop: dropTakenOut,
+    failed,
+  });
+  const apply: Parameters<typeof history.undo>[1] = (diff) => {
+    for (const [id, value] of diff.edits) {
+      writes.push(value == null ? resetEdit(id) : setEditState(id, value));
+    }
+    if (diff.order) writes.push(reorderSegments(diff.order));
+    // These histories change video transforms, so captions never require an independent write.
+    expect(diff.captions.size).toBe(0);
+    expect(diff.captionY).toBeUndefined();
+  };
+  return {
+    history,
+    apply,
+    failed,
+    takeOut,
+    present: async () => presentRows(await segmentsForDraft(draftId)),
+    settled: async () => {
+      await history.settled();
+      await flush();
+    },
+  };
+}
+
 describe('exact split + insert', () => {
   it('commits left/object/right with unchanged source bytes, edits, captions and cloned transcripts', async () => {
     const t = await setup();
@@ -281,6 +325,111 @@ describe('exact split + insert', () => {
     expect(failed).not.toHaveBeenCalled();
     history.dispose();
     expect(t.heard).toHaveLength(1); // Redo isn't a second add/undo step.
+  });
+
+  it.each([
+    ['boundary', 'wholly'],
+    ['boundary', 'partly'],
+    ['end', 'wholly'],
+    ['end', 'partly'],
+  ])(
+    'undoes the whole ordinary %s addition with a %s stale live query, even just after redo',
+    async (position, visible) => {
+      const t = await setup();
+      const base = await segmentsForDraft(t.d);
+      const x = t.object('x');
+      const y = t.object('y');
+      const at: ClipAnchor = position === 'end' ? { at: 'end' } : { before: t.b };
+      await insertSegments(t.d, at, [x, y]);
+      const applied = await segmentsForDraft(t.d);
+      const stale = presentRows(
+        applied.filter((row) => row.id !== y.id && (row.id !== x.id || visible === 'partly')),
+      );
+      const h = databaseHistory(t.d);
+      h.history.recordAdded(takeClipsAdded(t.d), takeClipSplits(t.d));
+      try {
+        for (let cycle = 0; cycle < 2; cycle++) {
+          // Redo commits before React updates: the next Undo still sees only the original clips.
+          h.history.undo(cycle === 0 ? stale : presentRows(base), h.apply);
+          await h.settled();
+          expect(h.takeOut).toHaveBeenLastCalledWith([x.id, y.id]);
+          expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual(
+            base.map((row) => row.id),
+          );
+          expect(h.history.getState().future).toHaveLength(1);
+          h.history.redo(presentRows(base), h.apply);
+          await h.settled();
+          expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(applied));
+        }
+        expect(h.failed).not.toHaveBeenCalled();
+      } finally {
+        h.history.dispose();
+      }
+    },
+  );
+
+  it('extends an image batch below a rotation so Undo rejoins full A and Redo preserves the edit', async () => {
+    const t = await setup();
+    await resetEdit(t.a);
+    const before = (await segmentsForDraft(t.d))[0];
+    const at = t.anchor(before);
+    const x = t.object('photo1');
+    const y = t.object('photo2');
+    const h = databaseHistory(t.d);
+    const key = 'photos';
+    try {
+      await h.history.beginBatch(key);
+      await insertSegments(t.d, at, [x]);
+      h.history.recordAdded(takeClipsAdded(t.d), takeClipSplits(t.d), key);
+      expect(h.history.getState().past.map((step) => step.kind)).toEqual(['added']);
+
+      // The first photo is visible while the second still prepares. Its batch step already
+      // exists when the user rotates A-left, so that later edit must stay above the batch.
+      h.history.record(await h.present(), null);
+      const left = (await segmentsForDraft(t.d))[0];
+      await setClipEdit(t.a, { ...parseEdit(left.editState)!, rotation: 1 });
+      await insertSegments(t.d, at, [y]);
+      h.history.recordAdded(takeClipsAdded(t.d), takeClipSplits(t.d), key);
+      h.history.endBatch(key);
+      expect(h.history.getState().past.map((step) => step.kind)).toEqual(['added', 'state']);
+      const applied = await segmentsForDraft(t.d);
+      expect(applied.map((row) => row.id)).toEqual([t.a, x.id, y.id, `${t.d}-right`, t.b]);
+
+      h.history.undo(await h.present(), h.apply); // Undo the later rotation first.
+      await h.settled();
+      expect(clipRender((await segmentsForDraft(t.d))[0])).toMatchObject({
+        inMs: 0,
+        outMs: 1500,
+        rotation: 0,
+      });
+      h.history.undo(await h.present(), h.apply); // One batch Undo removes both photos and rejoins A.
+      await h.settled();
+      let original = (await segmentsForDraft(t.d))[0];
+      expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a, t.b]);
+      expect(contentRows([original])).toEqual(contentRows([before]));
+      expect(parseEdit(original.editState)?.baseWindow).toBeUndefined();
+      await resetEdit(t.a);
+      original = (await segmentsForDraft(t.d))[0];
+      expect(clipRender(original)).toMatchObject({ inMs: 0, outMs: 4000, rotation: 0, speed: 1 });
+
+      h.history.redo(await h.present(), h.apply); // The batch returns before its later edit.
+      await h.settled();
+      expect(clipRender((await segmentsForDraft(t.d))[0])).toMatchObject({
+        inMs: 0,
+        outMs: 1500,
+        rotation: 0,
+      });
+      h.history.redo(await h.present(), h.apply);
+      await h.settled();
+      const redone = await segmentsForDraft(t.d);
+      expect(contentRows(redone)).toEqual(contentRows(applied));
+      expect(clipRender(redone[0])).toMatchObject({ inMs: 0, outMs: 1500, rotation: 1 });
+      expect(bytes(t.video)).toBe('original video bytes');
+      expect(h.failed).not.toHaveBeenCalled();
+    } finally {
+      h.history.endBatch(key);
+      h.history.dispose();
+    }
   });
 
   it('splits only once for a batch continuing at the same frozen anchor', async () => {

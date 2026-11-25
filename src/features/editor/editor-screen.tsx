@@ -596,6 +596,8 @@ export function EditorScreen({
     pause: ctl.pause,
     seekTo: ctl.seekTo,
     recordAdded: history.recordAdded,
+    beginBatch: history.beginBatch,
+    endBatch: history.endBatch,
     leaveEditMode: () => setMode((m) => (m === 'edit' ? 'main' : m)),
     openOver,
     onAddClips,
@@ -693,11 +695,13 @@ export function EditorScreen({
     letGo();
   }
   const undo = () => {
+    if (!history.canUndo) return;
     letGo();
     keepPlayhead();
     history.undo();
   };
   const redo = () => {
+    if (!history.canRedo) return;
     letGo();
     keepPlayhead();
     history.redo();
@@ -1048,7 +1052,7 @@ export function EditorScreen({
             <EditorAddMenu
               actions={add.actions}
               view={view}
-              busy={add.busy}
+              busy={add.busy || history.busy}
               progress={add.progress}
               progressText={add.progressText}
               progressCount={add.progressCount}

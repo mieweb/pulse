@@ -81,35 +81,51 @@ export function editorAddActions({
  * A batch of images being added: its clips' ids as each is about to be written (`onWriting`), and
  * those that have landed, in order.
  */
-export type ImageBatch = { writing: readonly string[]; landed: readonly string[] };
+export type ImageBatch = { key: string; writing: readonly string[]; landed: readonly string[] };
 
 /** A clip of the batch is about to be written: from then on it's told apart from other adds. */
-export function batchWriting(batch: ImageBatch | null, id: string): ImageBatch {
-  return { writing: [...(batch?.writing ?? []), id], landed: batch?.landed ?? [] };
+export function batchWriting(batch: ImageBatch, id: string): ImageBatch {
+  return { ...batch, writing: [...batch.writing, id] };
 }
+
+export type AddedGroup = { ids: string[]; batchKey?: string };
 
 /**
  * Clips added to the draft while the editor is open (`added`, in the order they landed), from its
  * "+" or a recorder over it, as undo steps: each addition is one step, in the order they're taken,
- * with the playhead to go right after the last clip of the last one. A batch of images lands one
- * clip at a time: its clips are kept in the batch as they land and make one step once it's over
- * (`batchRunning` false); any other clip landing meanwhile (a screen take stopped mid-batch) is
- * its own step, taken at once. A batch that landed nothing (its only image failed) makes none.
+ * with the playhead to go right after the last clip of the last one. A batch lands one image at
+ * a time. Its first committed clip registers the batch's history step immediately;
+ * later clips extend that same step, beneath any intervening edit. Other additions remain their
+ * own steps. A batch that landed nothing (its only image failed) makes none.
  */
 export function groupAdditions(
   batch: ImageBatch | null,
   added: readonly string[],
   batchRunning: boolean,
-): { steps: string[][]; batch: ImageBatch | null; placeAfter: string | null } {
+): { steps: AddedGroup[]; batch: ImageBatch | null; placeAfter: string | null } {
   const ours = new Set(batch?.writing ?? []);
-  const others = added.filter((id) => !ours.has(id));
-  const landed = [...(batch?.landed ?? []), ...added.filter((id) => ours.has(id))];
-  const steps = others.length > 0 ? [others] : [];
-  let next: ImageBatch | null = null;
-  if (batch && batchRunning) next = { writing: batch.writing, landed };
-  else if (landed.length > 0) steps.push(landed);
-  const last = steps[steps.length - 1];
-  return { steps, batch: next, placeAfter: last ? last[last.length - 1] : null };
+  const landed = [...(batch?.landed ?? [])];
+  const seen = new Set(landed);
+  const steps: AddedGroup[] = [];
+  let otherLast: string | null = null;
+  for (const id of added) {
+    const own = ours.has(id);
+    if (own && seen.has(id)) continue;
+    if (own) {
+      landed.push(id);
+      seen.add(id);
+    } else otherLast = id;
+    const batchKey = own ? batch?.key : undefined;
+    const last = steps[steps.length - 1];
+    if (last && last.batchKey === batchKey) last.ids.push(id);
+    else steps.push({ ids: [id], ...(batchKey === undefined ? {} : { batchKey }) });
+  }
+  return {
+    steps,
+    batch: batch && batchRunning ? { ...batch, landed } : null,
+    // Register history as each image commits, but move the playhead only when its batch ends.
+    placeAfter: !batchRunning && landed.length ? landed[landed.length - 1] : otherLast,
+  };
 }
 
 /**

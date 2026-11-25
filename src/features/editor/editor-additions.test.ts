@@ -46,44 +46,80 @@ describe('editorAddAnchor', () => {
 });
 
 describe('groupAdditions', () => {
+  const start = (): ImageBatch => ({ key: 'photos', writing: [], landed: [] });
   it('makes each addition one step, the playhead after its last clip', () => {
     expect(groupAdditions(null, ['x', 'y'], false)).toEqual({
-      steps: [['x', 'y']],
+      steps: [{ ids: ['x', 'y'] }],
       batch: null,
       placeAfter: 'y',
     });
     expect(groupAdditions(null, [], false)).toEqual({ steps: [], batch: null, placeAfter: null });
   });
 
-  it('a screen take landing mid-batch is its own step, before the batch’s', () => {
-    let batch: ImageBatch | null = batchWriting(null, 'i1');
-    // i1 lands: kept in the batch, nothing recorded yet.
+  it('registers the batch at first commit and extends it beneath intervening changes', () => {
+    let batch = batchWriting(start(), 'i1');
     let r = groupAdditions(batch, ['i1'], true);
-    expect(r.steps).toEqual([]);
-    batch = batchWriting(r.batch, 'i2');
+    expect(r.steps).toEqual([{ ids: ['i1'], batchKey: 'photos' }]);
+    expect(r.placeAfter).toBeNull();
+    batch = batchWriting(r.batch!, 'i2');
     // The screen take lands while i2 is being made: a step of its own, now.
     r = groupAdditions(batch, ['s'], true);
-    expect(r).toMatchObject({ steps: [['s']], placeAfter: 's' });
-    // i2 lands and the batch is over: its step, the playhead after its last clip.
-    r = groupAdditions(r.batch, ['i2'], false);
-    expect(r).toEqual({ steps: [['i1', 'i2']], batch: null, placeAfter: 'i2' });
+    expect(r).toMatchObject({ steps: [{ ids: ['s'] }], placeAfter: 's' });
+    // A later photo extends the first step, even if an edit or screen take is above it now.
+    r = groupAdditions(r.batch, ['i2'], true);
+    expect(r.steps).toEqual([{ ids: ['i2'], batchKey: 'photos' }]);
+    expect(r.placeAfter).toBeNull();
+    // The promise ending moves the playhead, without registering the photos a second time.
+    expect(groupAdditions(r.batch, [], false)).toEqual({
+      steps: [],
+      batch: null,
+      placeAfter: 'i2',
+    });
   });
 
   it('a batch that ended while the editor was covered is recorded once, on its return', () => {
     // Nothing was taken while covered: all of it comes in at once, the batch over.
-    const batch = batchWriting(batchWriting(null, 'i1'), 'i2');
+    const batch = batchWriting(batchWriting(start(), 'i1'), 'i2');
     const back = groupAdditions(batch, ['i1', 's', 'i2'], false);
-    expect(back).toEqual({ steps: [['s'], ['i1', 'i2']], batch: null, placeAfter: 'i2' });
+    expect(back).toEqual({
+      steps: [
+        { ids: ['i1'], batchKey: 'photos' },
+        { ids: ['s'] },
+        { ids: ['i2'], batchKey: 'photos' },
+      ],
+      batch: null,
+      placeAfter: 'i2',
+    });
     // The next take (another focus, the batch's end heard too) records nothing again.
     expect(groupAdditions(back.batch, [], false).steps).toEqual([]);
   });
 
   it('a batch whose only image failed records nothing', () => {
     // Its id was told as it was about to be written, but its row never went in.
-    const batch = batchWriting(null, 'i1');
+    const batch = batchWriting(start(), 'i1');
     expect(groupAdditions(batch, [], false)).toEqual({
       steps: [],
       batch: null,
+      placeAfter: null,
+    });
+  });
+
+  it('seals a partially canceled batch using only clips that committed', () => {
+    let batch = batchWriting(start(), 'i1');
+    const first = groupAdditions(batch, ['i1'], true);
+    batch = batchWriting(first.batch!, 'failed-image');
+    expect(groupAdditions(batch, [], false)).toEqual({
+      steps: [],
+      batch: null,
+      placeAfter: 'i1',
+    });
+  });
+
+  it('does not extend history twice if an already-recorded batch id is replayed', () => {
+    const first = groupAdditions(batchWriting(start(), 'i1'), ['i1'], true);
+    expect(groupAdditions(first.batch, ['i1'], true)).toEqual({
+      steps: [],
+      batch: first.batch,
       placeAfter: null,
     });
   });

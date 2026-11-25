@@ -80,20 +80,28 @@ describe('diffSnapshot', () => {
 });
 
 describe('planStep', () => {
-  it('undoes an addition by taking out the clips still in the draft', () => {
+  it('asks storage to undo the entire addition while only some committed clips are rendered', () => {
     const added: Step = { kind: 'added', ids: ['x', 'y'], taken: null };
     const h = push(emptyHistory<Step>(), added);
     const plan = planStep(h, 'undo', present(['a', 'x', 'b']));
-    expect(plan).toMatchObject({ kind: 'takeOut', ids: ['x'], step: added });
+    expect(plan).toMatchObject({ kind: 'takeOut', ids: ['x', 'y'], step: added });
+    expect(plan.history).toBe(h);
   });
 
-  it('drops an addition whose clips have all gone, and goes on to the step before', () => {
+  it('cannot discard an addition based on a wholly stale live query or undo an older edit instead', () => {
     let h = push(emptyHistory<Step>(), state(present(['b', 'a'])));
     h = push(h, { kind: 'added', ids: ['x'], taken: null });
     const plan = planStep(h, 'undo', present(['a', 'b']));
-    expect(plan.kind).toBe('state');
-    if (plan.kind === 'state') expect(plan.diff.order).toEqual(['b', 'a']);
-    expect(plan.history.past).toEqual([]);
+    expect(plan).toMatchObject({ kind: 'takeOut', ids: ['x'] });
+    expect(plan.history).toBe(h);
+  });
+
+  it('still asks storage for a recorded addition when the live query is empty', () => {
+    const added: Step = { kind: 'added', ids: ['x', 'y'], taken: null };
+    const h = push(emptyHistory<Step>(), added);
+    const plan = planStep(h, 'undo', present([]));
+    expect(plan).toMatchObject({ kind: 'takeOut', ids: ['x', 'y'], step: added });
+    expect(plan.history).toBe(h);
   });
 
   it('takes out an addition even when deleting the original leaves only its clips', () => {
@@ -125,6 +133,21 @@ describe('planStep', () => {
     expect(plan.kind).toBe('putBack');
     if (plan.kind === 'putBack') expect(plan.step.taken).toBe(out);
     expect(takenOut(h.future)).toEqual([out]);
+  });
+
+  it('can undo a redone addition before the restored rows reach the live query', () => {
+    const out = taken(['a', 'x', 'y']);
+    const h: History<Step> = {
+      ...emptyHistory<Step>(),
+      future: [{ kind: 'added', ids: ['x', 'y'], taken: out }],
+    };
+    const redo = planStep(h, 'redo', present(['a']));
+    if (redo.kind !== 'putBack') throw new Error(redo.kind);
+    // Storage restored the clips; the history puts its addition back before React publishes them.
+    const redone = { ...redo.history, past: [{ ...redo.step, taken: null }], future: [] };
+    const undo = planStep(redone, 'undo', present(['a']));
+    expect(undo).toMatchObject({ kind: 'takeOut', ids: ['x', 'y'] });
+    expect(undo.history).toBe(redone);
   });
 
   it('undoing a reorder made before an insert keeps the inserted clip in place', () => {
