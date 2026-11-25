@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import type { TakenOutClips } from '@/db/drafts';
+import type { SplitReceipt, TakenOutClips } from '@/db/drafts';
 
 import type { Present } from './editor-history';
 import { createEditorHistory, type HistoryDeps } from './editor-history-store';
@@ -53,6 +53,102 @@ function fakes(overrides: Partial<HistoryDeps> = {}) {
   return { log, deps };
 }
 const apply = () => {};
+
+const splitReceipt = (): SplitReceipt => ({
+  before: {
+    ...takenOf(['a']),
+    order: ['a'],
+    rows: [{ id: 'a' } as TakenOutClips['rows'][number]],
+  },
+  rightId: 'right',
+  firstInsertedId: 'x',
+});
+
+describe('createEditorHistory: split and insert', () => {
+  it('passes the same original snapshot through repeated compound undo and redo', async () => {
+    const split = splitReceipt();
+    const takeOut = jest.fn<HistoryDeps['takeOut']>(async () => takenOf(['a', 'x', 'right']));
+    const { deps } = fakes({ takeOut });
+    const h = createEditorHistory(deps);
+    h.recordAdded(['x'], [split]);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      h.undo(present(['a', 'x', 'right']), apply);
+      await h.settled();
+      expect(takeOut).toHaveBeenLastCalledWith(['x'], [split]);
+      h.redo(present(['a']), apply);
+      await h.settled();
+      expect(h.getState().past).toEqual([
+        { kind: 'added', ids: ['x'], taken: null, splits: [split] },
+      ]);
+    }
+  });
+
+  it('can undo the split after the inserted clip was deleted', async () => {
+    const split = splitReceipt();
+    const takeOut = jest.fn<HistoryDeps['takeOut']>(async () => takenOf(['a', 'right']));
+    const { deps } = fakes({ takeOut });
+    const h = createEditorHistory(deps);
+    h.recordAdded(['x'], [split]);
+    h.undo(present(['a', 'right']), apply);
+    await h.settled();
+    expect(takeOut).toHaveBeenCalledWith(['x'], [split]);
+  });
+
+  it('undoes the entire insertion before the live query has published its new clip ids', async () => {
+    const split = splitReceipt();
+    const takeOut = jest.fn<HistoryDeps['takeOut']>(async () => takenOf(['a', 'x', 'right']));
+    const { deps } = fakes({ takeOut });
+    const h = createEditorHistory(deps);
+    h.recordAdded(['x'], [split]);
+    h.undo(present(['a']), apply);
+    await h.settled();
+    expect(takeOut).toHaveBeenCalledWith(['x'], [split]);
+    expect(h.getState().future).toHaveLength(1);
+  });
+
+  it('releases original snapshot media when its applied history is closed or evicted', () => {
+    for (const close of [false, true]) {
+      const split = splitReceipt();
+      const drop = jest.fn<HistoryDeps['drop']>(async () => {});
+      const { deps } = fakes({ drop });
+      const h = createEditorHistory(deps);
+      h.recordAdded(['x'], [split]);
+      if (close) h.dispose();
+      else for (let i = 0; i < 100; i++) h.record(present(['a', 'x', 'right']), null);
+      expect(drop).toHaveBeenCalledTimes(1);
+      expect(drop).toHaveBeenCalledWith(split.before);
+    }
+  });
+
+  it('releases both original and redo media when closed after compound undo', async () => {
+    const split = splitReceipt();
+    const taken = takenOf(['a', 'x', 'right']);
+    const drop = jest.fn<HistoryDeps['drop']>(async () => {});
+    const { deps } = fakes({ takeOut: async () => taken, drop });
+    const h = createEditorHistory(deps);
+    h.recordAdded(['x'], [split]);
+    h.undo(present(['a', 'x', 'right']), apply);
+    await h.settled();
+    expect(drop).not.toHaveBeenCalled();
+    h.dispose();
+    expect(drop).toHaveBeenCalledWith(split.before);
+    expect(drop).toHaveBeenCalledWith(taken);
+  });
+
+  it('releases a skipped split snapshot when all affected clips were deleted', () => {
+    const split = splitReceipt();
+    const drop = jest.fn<HistoryDeps['drop']>(async () => {});
+    const { deps } = fakes({ drop });
+    const h = createEditorHistory(deps);
+    h.recordAdded(['x'], [split]);
+    h.undo(present([]), apply);
+    expect(h.getState().past).toEqual([]);
+    expect(drop).toHaveBeenCalledTimes(1);
+    expect(drop).toHaveBeenCalledWith(split.before);
+    h.dispose();
+    expect(drop).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('createEditorHistory: additions', () => {
   it('undoes and redoes an edited addition after the original clip is deleted', async () => {

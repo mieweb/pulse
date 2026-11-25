@@ -1,4 +1,4 @@
-import type { TakenOutClips } from '@/db/drafts';
+import type { SplitReceipt, TakenOutClips } from '@/db/drafts';
 import {
   redo as redoStep,
   undo as undoStep,
@@ -21,7 +21,13 @@ export type Snapshot = {
   captionY: number | null;
 };
 
-export type AddedStep = { kind: 'added'; ids: string[]; taken: TakenOutClips | null };
+export type AddedStep = {
+  kind: 'added';
+  ids: string[];
+  taken: TakenOutClips | null;
+  /** Original clips changed by this addition, restored together with taking its clips out. */
+  splits?: readonly SplitReceipt[];
+};
 
 export type Step = { kind: 'state'; snapshot: Snapshot } | AddedStep;
 
@@ -118,9 +124,19 @@ export function planStep(h: History<Step>, direction: 'undo' | 'redo', now: Pres
     if (!top) return { kind: 'none', history: h };
     if (top.kind === 'added') {
       if (direction === 'undo') {
-        const live = top.ids.filter((id) => ids.includes(id));
-        if (live.length > 0) {
-          return { kind: 'takeOut', history: h, step: top, ids: live };
+        const affected = new Set([
+          ...top.ids,
+          ...(top.splits ?? []).flatMap((s) => [s.rightId, ...s.before.rows.map((r) => r.id)]),
+        ]);
+        if ([...affected].some((id) => ids.includes(id))) {
+          return {
+            kind: 'takeOut',
+            history: h,
+            step: top,
+            // The receipt can arrive before the live query publishes the inserted ids. The
+            // database decides which still exist; a stale UI must not leave the object behind.
+            ids: top.splits?.length ? top.ids : top.ids.filter((id) => ids.includes(id)),
+          };
         }
       } else if (top.taken) {
         return { kind: 'putBack', history: h, step: top as AddedStep & { taken: TakenOutClips } };

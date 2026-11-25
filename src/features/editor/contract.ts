@@ -24,7 +24,7 @@ export type EditorScreenProps = {
   onExport: (draftId: string) => void;
   /**
    * "Record a clip here" in the editor's "+": the recorder for this draft, its insert cursor at
-   * `anchor` (the playhead's clip boundary). Without it the "+" offers only what the editor does
+   * `anchor` (the exact playhead, including a pending metadata split). Without it the "+" offers only what the editor does
    * itself (import, screen recording).
    */
   onAddClips?: (draftId: string, anchor: ClipAnchor) => void;

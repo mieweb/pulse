@@ -63,6 +63,7 @@ jest.mock('expo-crypto', () => {
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { anchorAtSlot, type ClipAnchor, onClipsAdded } from '@/core/clip-anchor';
+import { setClipWriteBarrier } from '@/core/draft-write-barrier';
 import { expoDb } from '@/db/client';
 import { addSegment, createDraft, deleteDraft } from '@/db/drafts';
 import { env } from '@/test-support/expo-fs-node';
@@ -328,6 +329,56 @@ describe('a draft deleted before the row is written', () => {
     ).rejects.toThrow(/not found/);
     expect(leftIn(d)).toEqual([]);
     expect(existsSync(src)).toBe(true); // not owned: only read
+  });
+
+  it('canceling while editor writes finish leaves neither split metadata nor imported files', async () => {
+    const d = await abc();
+    const before = ids(d);
+    const abort = new AbortController();
+    let entered!: () => void;
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stop = setClipWriteBarrier(() => {
+      entered();
+      return gate;
+    });
+    const src = join(env.cacheDir, 'canceled-picked.mp4');
+    writeFileSync(src, 'video');
+    try {
+      const adding = storeClip(`file://${src}`, {
+        draftId: d,
+        segmentId: `${d}-canceled`,
+        owned: false,
+        signal: abort.signal,
+        anchor: {
+          before: s(d, 'a'),
+          split: {
+            sourceMs: 500,
+            sourceKey: `drafts/${d}/segments/a.mp4`,
+            rightId: `${d}-right`,
+            offsetMs: 500,
+          },
+        },
+      });
+      await waiting;
+      abort.abort();
+      release();
+      expect(await adding).toBe(false);
+      expect(ids(d)).toEqual(before);
+      expect(conn.getAllSync('SELECT edit_state FROM segments WHERE id = ?', s(d, 'a'))).toEqual([
+        { edit_state: null },
+      ]);
+      expect(leftIn(d)).toEqual([]);
+      expect(existsSync(src)).toBe(true);
+    } finally {
+      release();
+      stop();
+    }
   });
 
   it('addImageClips leaves no clip behind and throws', async () => {

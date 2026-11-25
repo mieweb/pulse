@@ -1,7 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { anchorForPlayhead, type ClipAnchor, END } from '@/core/clip-anchor';
-import { fromAnotherPulseAction } from '@/features/recorder/add-menu-actions';
+import { anchorForExactPlayhead, type ClipAnchor, END } from '@/core/clip-anchor';
 
 import {
   batchWriting,
@@ -60,9 +59,15 @@ describe('editorAddActions', () => {
   // Clips a 0–1000, b 1000–3000, c 3000–4000; the playhead moves during a conversion.
   const ids = ['a', 'b', 'c'];
   let playhead = 0;
-  const anchorNow = () => anchorForPlayhead(ids, [0, 1000, 3000], 4000, playhead);
+  const clips = ids.map((id, i) => ({
+    id,
+    edit: { startMs: 0, endMs: i === 1 ? 2000 : 1000, speed: 1 },
+    sourceKey: `${id}.mp4`,
+  }));
+  const anchorNow = () =>
+    anchorForExactPlayhead(clips, [0, 1000, 3000], 4000, playhead, () => 'right');
 
-  it('Photo adds at the playhead’s boundary as tapped, wherever it moves meanwhile', () => {
+  it('Photo freezes the exact source cut as tapped, wherever the playhead moves meanwhile', () => {
     let readLater: (() => ClipAnchor) | null = null;
     const pause = jest.fn();
     const actions = editorAddActions({
@@ -74,12 +79,16 @@ describe('editorAddActions', () => {
         readLater = () => anchor;
       },
     });
-    playhead = 1200; // in b's first half: before b
+    playhead = 1200; // 200 source ms inside b
     actions.find((a) => a.key === 'images')!.onPress();
     expect(pause).toHaveBeenCalled();
     // Scrubbed (or played) to c while the first image converts.
     playhead = 3200;
-    expect(readLater!()).toEqual({ before: 'b', next: 'c' });
+    expect(readLater!()).toEqual({
+      before: 'b',
+      next: 'c',
+      split: { sourceMs: 200, sourceKey: 'b.mp4', rightId: 'right', offsetMs: 200 },
+    });
   });
 
   it('offers Record, Screen and Other Pulse only when they can run', () => {
@@ -90,12 +99,29 @@ describe('editorAddActions', () => {
       ...base,
       record,
       recordScreen: () => {},
-      fromAnotherPulse: fromAnotherPulseAction(() => {}),
+      fromAnotherPulse: () => {},
     });
     expect(all.map((a) => a.key)).toEqual(['record', 'screen', 'import', 'images', 'another']);
     playhead = 0;
     all[0].onPress();
     expect(record).toHaveBeenCalledWith({ before: 'a', next: 'b' });
+  });
+
+  it('the append menu always passes END to every media action regardless of the playhead', () => {
+    const add = jest.fn();
+    const actions = editorAddActions({
+      anchorNow: () => END,
+      pause: () => {},
+      record: add,
+      recordScreen: add,
+      importVideo: add,
+      importImages: add,
+      fromAnotherPulse: add,
+    });
+    playhead = 1200;
+    for (const action of actions) action.onPress();
+    expect(add).toHaveBeenCalledTimes(5);
+    expect(add.mock.calls.every(([anchor]) => anchor === END)).toBe(true);
   });
 });
 

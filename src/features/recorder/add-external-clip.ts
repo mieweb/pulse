@@ -166,11 +166,17 @@ export async function storeClip(
     await addSegment(
       draftId,
       { id: segmentId, originalFilename, durationMs, thumbnail: ok ? thumbRel : null },
-      anchor,
+      () => {
+        // Insertion can wait for queued editor writes. Recheck at the transaction boundary,
+        // so canceling during that wait never leaves a split or a clip row behind.
+        if (signal.aborted) throw new Error('Import canceled');
+        return typeof anchor === 'function' ? anchor() : anchor;
+      },
     );
     return true;
   } catch (e) {
     discard();
+    if (signal.aborted) return false;
     throw e;
   }
 }

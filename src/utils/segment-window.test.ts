@@ -8,8 +8,13 @@ import {
   effFile,
   effMs,
   indexAtGlobalMs,
+  parseEdit,
+  resetSegmentEdit,
+  segmentDefaults,
+  segmentEditValue,
   segmentOffsets,
   segmentSignature,
+  splitSegmentAt,
 } from './segment-window';
 
 // Minimal Segment factory — only the fields the timeline math reads.
@@ -184,4 +189,152 @@ describe('indexAtGlobalMs', () => {
     const offs = segmentOffsets(withZero); // [0, 1000, 1000]
     expect(indexAtGlobalMs(withZero, offs, 1000)).toBe(2);
   });
+});
+
+describe('split clip source bounds', () => {
+  it('splits the rendered interval while retaining edits, metadata and the same source file', () => {
+    const source = seg({
+      id: 'a',
+      durationMs: 2000,
+      label: '7',
+      captionEdit: '{"file":"orig.mp4","words":[]}',
+      editState: edit({
+        endMs: 1600,
+        speed: 2,
+        rotation: 1,
+        flipped: true,
+        muted: true,
+        crop: { x: 0.1, y: 0.2, w: 0.5, h: 0.4 },
+      }),
+    });
+    const { left, right } = splitSegmentAt(source, 800, 'b');
+    expect(left).toMatchObject({ id: 'a', originalFilename: 'orig.mp4', durationMs: 2000 });
+    expect(right).toMatchObject({ id: 'b', originalFilename: 'orig.mp4', durationMs: 2000 });
+    for (const half of [left, right]) {
+      expect(half.captionEdit).toBe(source.captionEdit);
+      expect(half.label).toBe(source.label);
+      expect(half.editedFilename).toBeNull();
+      expect(clipRender(half)).toMatchObject({
+        speed: 2,
+        rotation: 1,
+        flipped: true,
+        muted: true,
+        crop: { x: 0.1, y: 0.2, w: 0.5, h: 0.4 },
+      });
+    }
+    expect(parseEdit(left.editState)).toMatchObject({
+      startMs: 200,
+      endMs: 800,
+      baseWindow: { startMs: 200, endMs: 800 },
+    });
+    expect(parseEdit(right.editState)).toMatchObject({
+      startMs: 800,
+      endMs: 1600,
+      baseWindow: { startMs: 800, endMs: 1600 },
+    });
+    expect(left.editedDurationMs).toBe(300);
+    expect(right.editedDurationMs).toBe(400);
+    expect(effMs(left) + effMs(right)).toBe(effMs(source));
+    expect(parseEdit(source.editState)?.baseWindow).toBeUndefined();
+  });
+
+  it('keeps reset and raw saves inside each half rather than revealing its sibling', () => {
+    const { right } = splitSegmentAt(seg({ editState: edit({ speed: 2, muted: true }) }), 500, 'b');
+    const reset = resetSegmentEdit(right);
+    expect(parseEdit(reset)).toEqual({
+      startMs: 500,
+      endMs: 800,
+      rotation: 0,
+      flipped: false,
+      crop: null,
+      muted: false,
+      speed: 1,
+      baseWindow: { startMs: 500, endMs: 800 },
+    });
+    expect(segmentEditValue(right, null)).toBe(reset);
+    expect(segmentDefaults(right)).toEqual(parseEdit(reset));
+    expect(parseEdit(segmentEditValue(right, edit({ startMs: 0, endMs: 1000 })))).toMatchObject({
+      startMs: 500,
+      endMs: 800,
+      baseWindow: { startMs: 500, endMs: 800 },
+    });
+    expect(
+      parseEdit(
+        segmentEditValue(
+          right,
+          edit({ startMs: 0, endMs: 1000, baseWindow: { startMs: 0, endMs: 1000 } }),
+        ),
+      ),
+    ).toMatchObject({ startMs: 500, endMs: 800, baseWindow: { startMs: 500, endMs: 800 } });
+    expect(resetSegmentEdit(seg({ editState: edit() }))).toBeNull();
+  });
+
+  it('preserves existing raw editor fields while bounding a split half', () => {
+    const value = JSON.stringify({
+      ...JSON.parse(edit({ startMs: 0, endMs: 1000 })),
+      undo: [{ startMs: 0, endMs: 1000 }],
+      redo: [],
+      editorVersion: 1,
+    });
+    expect(segmentEditValue(seg({}), value)).toBe(value);
+    const { right } = splitSegmentAt(seg({}), 400, 'b');
+    const stored = JSON.parse(segmentEditValue(right, value)!);
+    expect(stored).toMatchObject({
+      startMs: 400,
+      endMs: right.durationMs,
+      baseWindow: { startMs: 400, endMs: right.durationMs },
+      undo: [{ startMs: 0, endMs: 1000 }],
+      redo: [],
+      editorVersion: 1,
+    });
+  });
+
+  it('canonicalizes and renders bounded trims, including a disjoint raw window', () => {
+    const baseWindow = { startMs: 300, endMs: 700 };
+    const outside = edit({ startMs: 0, endMs: 1000, baseWindow });
+    expect(parseEdit(canonicalEdit(outside))).toMatchObject({
+      startMs: 300,
+      endMs: 700,
+      baseWindow,
+    });
+    expect(clipRender(seg({ editState: outside }))).toMatchObject({ inMs: 300, outMs: 700 });
+    expect(parseEdit(edit({ startMs: 800, endMs: 900, baseWindow }))).toMatchObject({
+      startMs: 300,
+      endMs: 700,
+      baseWindow,
+    });
+  });
+
+  it('narrows bounds again when a split half is itself trimmed and split', () => {
+    const { right } = splitSegmentAt(seg({}), 400, 'b');
+    const trimmed = {
+      ...right,
+      editState: segmentEditValue(right, edit({ startMs: 500, endMs: 900 })),
+    };
+    const next = splitSegmentAt(trimmed, 700, 'c');
+    expect(parseEdit(next.left.editState)?.baseWindow).toEqual({ startMs: 500, endMs: 700 });
+    expect(parseEdit(next.right.editState)?.baseWindow).toEqual({ startMs: 700, endMs: 900 });
+  });
+
+  it('normalizes generated legacy halves to the baked effective source without changing the original', () => {
+    const source = seg({ editedFilename: 'baked.mp4', editedDurationMs: 600, editState: edit() });
+    const { left, right } = splitSegmentAt(source, 200, 'b');
+    for (const half of [left, right]) {
+      expect(half.originalFilename).toBe('baked.mp4');
+      expect(half.durationMs).toBe(600);
+      expect(half.editedFilename).toBeNull();
+      expect(clipRender(half)).toMatchObject({ file: 'baked.mp4', speed: 1, rotation: 0 });
+    }
+    expect(left.editedDurationMs).toBe(200);
+    expect(right.editedDurationMs).toBe(400);
+    expect(source.editedFilename).toBe('baked.mp4');
+    expect(source.originalFilename).toBe('orig.mp4');
+  });
+
+  it.each([200, 800, 0, 1000, NaN, Infinity])(
+    'rejects a split outside the active interior: %s',
+    (at) => {
+      expect(() => splitSegmentAt(seg({ editState: edit() }), at, 'b')).toThrow('inside the clip');
+    },
+  );
 });

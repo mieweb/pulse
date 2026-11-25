@@ -1,20 +1,25 @@
 import { useEffect, useEffectEvent, useRef } from 'react';
+import { randomUUID } from 'expo-crypto';
 import type { SharedValue } from 'react-native-reanimated';
 
 import {
-  anchorForPlayhead,
+  anchorForExactPlayhead,
+  END,
+  type ClipAnchor,
   expectClipsAdded,
   onClipsAdded,
   takeClipsAdded,
+  takeClipSplits,
   takeEditorReturn,
 } from '@/core/clip-anchor';
+import { dropTakenOut, type SplitReceipt } from '@/db/drafts';
 import { useFromAnotherPulse } from '@/features/recorder/from-another-pulse';
 import { useScreenTake } from '@/features/recorder/screen-take';
 import { useImportImages } from '@/features/recorder/use-import-images';
 import { useImportVideo } from '@/features/recorder/use-import-video';
 
 import type { EditorScreenProps } from './contract';
-import { usePlayheadSlot } from './editor-add-menu';
+import type { EditorClip } from './use-editor-draft';
 import {
   batchWriting,
   editorAddActions,
@@ -50,7 +55,7 @@ export function useEditorAdditions({
   placeLabels,
 }: {
   draftId: string;
-  clips: readonly { id: string }[];
+  clips: readonly Pick<EditorClip, 'id' | 'edit' | 'sourceKey'>[];
   layout: { starts: readonly number[]; totalMs: number };
   timeMs: SharedValue<number>;
   focused: boolean;
@@ -59,53 +64,74 @@ export function useEditorAdditions({
   /** Once the preview has the new clips (as a trim's end). */
   endTrim: (ms: number) => void;
   /** One undo step for an addition. */
-  recordAdded: (ids: string[]) => void;
+  recordAdded: (ids: string[], splits?: readonly SplitReceipt[]) => void;
   leaveEditMode: () => void;
   /** Open a screen over the editor, once its pending writes are stored. */
   openOver: (go: () => void) => void;
 } & Pick<EditorScreenProps, 'onAddClips' | 'screenCapture' | 'placeLabels'>) {
   // Not compiled by the React Compiler, as the editor screen it came out of isn't.
   'use no memo';
-  // Where the "+" adds: the playhead's clip boundary (`anchorForPlayhead`). Selected clip or not,
-  // the playhead decides. The slot follows the playhead for the hint.
+  // Capture the exact source position when an action is chosen. Media preparation can then take
+  // its time without moving the insertion, and a failed/canceled add never splits the clip.
   const clipIds = clips.map((c) => c.id);
-  const anchorNow = () => anchorForPlayhead(clipIds, layout.starts, layout.totalMs, timeMs.get());
-  const slot = usePlayheadSlot(layout.starts, layout.totalMs, timeMs);
+  const anchorNow = () =>
+    anchorForExactPlayhead(clips, layout.starts, layout.totalMs, timeMs.get(), randomUUID);
   const importer = useImportVideo();
   const images = useImportImages();
   const screen = useScreenTake(screenCapture);
   const screenLive = screen.phase !== 'idle';
+  const otherAnchor = useRef<ClipAnchor>(END);
   const anotherPulse = useFromAnotherPulse({
     draftId,
     target: async () => draftId,
-    anchor: anchorNow,
+    anchor: () => otherAnchor.current,
     onOpen: pause,
     placeLabels,
   });
 
   // A batch of images' clips, told apart as they're written (`onWriting`), to be one undo step.
   const imageBatch = useRef<ImageBatch | null>(null);
+  const pendingSplits = useRef<SplitReceipt[]>([]);
   // The items' callbacks run on a press, never during render: the ref is only read then.
-  // eslint-disable-next-line react-hooks/refs
-  const actions = editorAddActions({
-    anchorNow,
-    pause,
-    record: onAddClips && ((anchor) => openOver(() => onAddClips(draftId, anchor))),
-    recordScreen:
-      screenCapture && !screenLive && !screen.importing
-        ? (anchor) => void screenCapture.start(async () => draftId, true, anchor)
+  const actionsAt = (target: () => ClipAnchor) =>
+    editorAddActions({
+      anchorNow: target,
+      pause,
+      record: onAddClips && ((anchor) => openOver(() => onAddClips(draftId, anchor))),
+      recordScreen:
+        screenCapture && !screenLive && !screen.importing
+          ? (anchor) => void screenCapture.start(async () => draftId, true, anchor)
+          : undefined,
+      importVideo: (anchor) => importer.importVideo(draftId, anchor),
+      importImages: (anchor) =>
+        void images.importImages(draftId, () => anchor, {
+          onWriting: (id) => {
+            imageBatch.current = batchWriting(imageBatch.current, id);
+          },
+        }),
+      fromAnotherPulse: anotherPulse.action
+        ? (anchor) => {
+            otherAnchor.current = anchor;
+            anotherPulse.action?.onPress();
+          }
         : undefined,
-    importVideo: (anchor) => importer.importVideo(draftId, anchor),
-    importImages: (anchor) =>
-      void images.importImages(draftId, () => anchor, {
-        onWriting: (id) => {
-          imageBatch.current = batchWriting(imageBatch.current, id);
-        },
-      }),
-    fromAnotherPulse: anotherPulse.action ?? undefined,
-  });
+    });
+  // eslint-disable-next-line react-hooks/refs -- callbacks read refs only when an item is chosen
+  const actions = actionsAt(anchorNow);
+  // eslint-disable-next-line react-hooks/refs -- callbacks read refs only when an item is chosen
+  const appendActions = actionsAt(() => END);
 
-  useEffect(() => expectClipsAdded(draftId), [draftId]);
+  useEffect(() => {
+    const stop = expectClipsAdded(draftId, (split) => void dropTakenOut(split.before));
+    return () => {
+      // Receipts not yet grouped into history (e.g. an image batch still preparing) have no
+      // owner once this editor closes. The live half rows keep their own media referenced.
+      const remaining = pendingSplits.current;
+      pendingSplits.current = [];
+      for (const split of remaining) void dropTakenOut(split.before);
+      stop();
+    };
+  }, [draftId]);
   // A goal not reached yet: its clip not in the list, or placed by a list a beat behind the clips
   // just added. Tried again as the clips change, until `until`.
   const pendingGoal = useRef<{ goal: PlayheadGoal; until: number } | null>(null);
@@ -120,9 +146,15 @@ export function useEditorAdditions({
   };
   const takeAdded = useEffectEvent(() => {
     const added = takeClipsAdded(draftId);
+    pendingSplits.current.push(...takeClipSplits(draftId));
     const grouped = groupAdditions(imageBatch.current, added, images.importing);
     imageBatch.current = grouped.batch;
-    for (const ids of grouped.steps) recordAdded(ids);
+    for (const ids of grouped.steps) {
+      const ours = new Set(ids);
+      const splits = pendingSplits.current.filter((s) => ours.has(s.firstInsertedId));
+      pendingSplits.current = pendingSplits.current.filter((s) => !ours.has(s.firstInsertedId));
+      recordAdded(ids, splits);
+    }
     const goal = playheadGoal(takeEditorReturn(draftId), grouped.placeAfter);
     if (!goal) return;
     leaveEditMode();
@@ -163,6 +195,7 @@ export function useEditorAdditions({
 
   return {
     actions,
+    appendActions,
     /** An import, a batch or this draft's screen take is adding clips: the "+" is busy. */
     busy:
       importer.importing || images.importing || (screen.importing && screen.draftId === draftId),
@@ -173,8 +206,6 @@ export function useEditorAdditions({
         : screen.progress,
     progressText: images.importing ? images.stepText : undefined,
     progressCount: images.importing ? images.stepCount : undefined,
-    /** The slot the "+" adds at now, for its hint. */
-    slot,
     screen,
     /** A screen take for this draft is starting or live: its Stop shows over the preview. */
     screenHere: screen.draftId === draftId && (screenLive || screen.starting),

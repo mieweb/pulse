@@ -12,6 +12,8 @@ import {
   boundaryOf,
   boundaryX,
   cursorA11yValue,
+  cursorA11yForAnchor,
+  cursorPosition,
   cursorAfterRemoval,
   cursorAfterReorder,
   cursorBeforeDelete,
@@ -19,6 +21,7 @@ import {
   edgeScrollSpeed,
   EDGE_ZONE,
   insertChipText,
+  insertChipForAnchor,
   insertPlace,
   MAX_SCROLL_SPEED,
   nearestBoundary,
@@ -33,6 +36,11 @@ import {
 const ids = ['a', 'b', 'c'];
 // 48 pt tiles 8 pt apart after a 13 pt inset: boundaries at 9, 65, 121, 177.
 const g: StripGeometry = { pad: 13, tileWidth: 48, gap: 8, tileTop: 22, tileHeight: 64 };
+const exact = {
+  before: 'b',
+  next: 'c',
+  split: { sourceMs: 1000, sourceKey: 'b-key', rightId: 'b-right', offsetMs: 1000 },
+};
 
 describe('boundaries and anchors', () => {
   it('reads an anchor as a boundary, a missing clip as the end', () => {
@@ -79,6 +87,35 @@ describe('boundaries and anchors', () => {
     expect(stepBoundary(1, -1, 3)).toBe(0);
     expect(stepBoundary(0, -1, 3)).toBe(0);
     expect(stepBoundary(3, 1, 3)).toBe(3);
+    expect(stepBoundary(1.5, -1, 3)).toBe(1);
+    expect(stepBoundary(1.5, 1, 3)).toBe(2);
+  });
+
+  it('keeps an editor inside point while rows load and until its first split lands', () => {
+    expect(cursorAfterRemoval(exact, [], [])).toBe(exact);
+    expect(cursorAfterRemoval(exact, [], ids)).toBe(exact);
+    expect(cursorAfterRemoval(exact, ids, ids)).toBe(exact);
+    expect(cursorAfterReorder(exact, ids, ['c', 'b', 'a'])).toBe(exact);
+    expect(cursorAfterRemoval(exact, ids, ['a', 'b', 'x', 'b-right', 'c'])).toEqual({
+      before: 'b-right',
+      next: 'c',
+    });
+    // Deleting the original is stale; the take must fail rather than land at another boundary.
+    expect(cursorBeforeDelete(exact, ids, 'b')).toBe(exact);
+  });
+
+  it('shows the pending point inside its thumbnail and announces its exact time', () => {
+    const clips = [
+      { label: '1', durationMs: 1000 },
+      { label: '2', durationMs: 2000 },
+      { label: '3', durationMs: 500 },
+    ];
+    expect(cursorPosition(exact, ids, clips)).toBe(1.5);
+    expect(insertChipForAnchor(exact, ids, clips)).toBe('Adding at 0:02 · inside clip 2');
+    expect(cursorA11yForAnchor(exact, ids, clips)).toBe('inside clip 2, at 0:02');
+    expect(cursorA11yForAnchor(exact, ['a', 'c'], [clips[0], clips[2]])).toBe(
+      'Insertion target unavailable. Move the insert point.',
+    );
   });
 });
 
@@ -87,6 +124,7 @@ describe('Edit, to the editor', () => {
     expect(editAnchor({ clipId: 'b' })).toEqual({ before: 'b' });
     expect(editAnchor({ anchor: { before: 'b', next: 'c' } })).toEqual({ before: 'b', next: 'c' });
     expect(editAnchor({ anchor: END })).toEqual(END);
+    expect(editAnchor({ anchor: exact })).toBe(exact);
   });
 
   it('puts the editor’s playhead where its "+" adds what the cursor would', () => {

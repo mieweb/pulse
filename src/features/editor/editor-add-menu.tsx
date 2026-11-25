@@ -1,13 +1,9 @@
-import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
-import { useAnimatedReaction, type SharedValue } from 'react-native-reanimated';
-import { scheduleOnRN } from 'react-native-worklets';
 
 import type { MenuAction } from '@/components/action-menu';
 import { Icon } from '@/components/icon';
 import { ProgressRing } from '@/components/progress-ring';
 import { Opacity } from '@/constants/theme';
-import { playheadSlot } from '@/core/clip-anchor';
 import { BatchCount } from '@/features/recorder/batch-count';
 import { PlusMenu } from '@/features/recorder/plus-menu';
 import { useTheme } from '@/hooks/use-theme';
@@ -16,35 +12,8 @@ import { useTheme } from '@/hooks/use-theme';
 export const ADD_SIZE = 44;
 
 /**
- * The slot the "+" adds at (0 before the first clip … `starts.length` at the end), following the
- * playhead on the UI thread; React hears only when it changes, for the button's hint.
- */
-export function usePlayheadSlot(
-  starts: readonly number[],
-  totalMs: number,
-  timeMs: SharedValue<number>,
-): number {
-  const [slot, setSlot] = useState(starts.length);
-  useAnimatedReaction(
-    () => playheadSlot(starts, totalMs, timeMs.get()).slot,
-    (s, prev) => {
-      if (s !== prev) scheduleOnRN(setSlot, s);
-    },
-    [starts, totalMs],
-  );
-  return Math.min(slot, starts.length);
-}
-
-/** Where the "+" adds, for VoiceOver and TalkBack: positions, counted from 1. */
-export function addPositionHint(slot: number, clipCount: number): string {
-  if (clipCount === 0 || slot >= clipCount) return 'Adds clips at the end.';
-  if (slot <= 0) return 'Adds clips at the start, before clip 1.';
-  return `Adds clips between clips ${slot} and ${slot + 1}.`;
-}
-
-/**
- * The editor's "+", at the right edge of the clips in both views: the shared add menu
- * (`PlusMenu`) with the editor's items, which add at the playhead's clip boundary. Drawn like the
+ * Both editor "+" controls use the shared add menu: beside Play to insert at the exact
+ * playhead, or at the right edge of the clips to append a new beat. Drawn like the
  * recorder's "+" (a round 44 pt button with a plus), in the theme's inverted colours so it reads
  * over the clips and the background alike. While a video it started is converting it shows a
  * spinner, or a ring once the conversion reports progress, and takes no taps.
@@ -55,7 +24,7 @@ export function EditorAddMenu({
   progress,
   progressText,
   progressCount,
-  hint,
+  position,
   onOpen,
 }: {
   actions: MenuAction[];
@@ -67,11 +36,15 @@ export function EditorAddMenu({
   progressText?: string;
   /** Shown beside the ring during a batch of images ("2/5"). */
   progressCount?: string;
-  hint: string;
+  position: 'playhead' | 'end';
 }) {
   const theme = useTheme();
   const ring = busy ? progress : null;
-  const label = 'Add clips here';
+  const label = position === 'playhead' ? 'Insert at playhead' : 'Append beat';
+  const hint =
+    position === 'playhead'
+      ? 'Adds clips here, splitting the current clip if needed.'
+      : 'Adds a new beat at the end of this Pulse.';
   return (
     <PlusMenu
       actions={actions}
@@ -94,7 +67,7 @@ export function EditorAddMenu({
               ? { min: 0, max: 100, now: Math.round(ring * 100), text: progressText }
               : undefined
           }
-          testID="editor.addClips"
+          testID={position === 'playhead' ? 'editor.insertClips' : 'editor.addClips'}
           style={({ pressed }) => [
             styles.button,
             { backgroundColor: theme.text, borderColor: theme.background },

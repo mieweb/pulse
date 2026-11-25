@@ -27,7 +27,9 @@ export const anchorAtBoundary = anchorAtSlot;
 
 /** One boundary along (an accessibility increment or decrement), held to the strip. */
 export function stepBoundary(k: number, delta: number, count: number): number {
-  return Math.min(count, Math.max(0, k + delta));
+  if (delta === 0) return Math.min(count, Math.max(0, k));
+  const base = delta > 0 ? Math.floor(k) : Math.ceil(k);
+  return Math.min(count, Math.max(0, base + delta));
 }
 
 /**
@@ -52,6 +54,12 @@ export function cursorAfterRemoval(
   after: readonly string[],
 ): ClipAnchor {
   if (isEnd(cursor)) return cursor;
+  if (cursor.split) {
+    // Before the first take, keep the exact source position even while rows first load or the
+    // original is removed. The writer must reject a stale target, not relocate the take.
+    const right = after.indexOf(cursor.split.rightId);
+    return right < 0 ? cursor : anchorAtBoundary(right, after);
+  }
   const k = after.indexOf(cursor.before);
   if (k >= 0) return anchorAtBoundary(k, after);
   const i = before.indexOf(cursor.before);
@@ -93,6 +101,7 @@ export function cursorAfterReorder(
   before: readonly string[],
   after: readonly string[],
 ): ClipAnchor {
+  if (!isEnd(cursor) && cursor.split) return cursorAfterRemoval(cursor, before, after);
   return anchorAtBoundary(boundaryOf(cursor, before), after);
 }
 
@@ -100,6 +109,25 @@ export function cursorAfterReorder(
 
 /** What the copy needs of a clip: its badge label and its length on the timeline. */
 export type CursorClip = { label: string | null; durationMs: number };
+
+/** A pending inside target, while the right half has not been committed yet. */
+function insideCursor(cursor: ClipAnchor, ids: readonly string[]) {
+  if (isEnd(cursor) || !cursor.split || ids.includes(cursor.split.rightId)) return null;
+  return { index: ids.indexOf(cursor.before), offsetMs: cursor.split.offsetMs };
+}
+
+/** Fractional clip position for the exact editor position; drags still snap to boundaries. */
+export function cursorPosition(
+  cursor: ClipAnchor,
+  ids: readonly string[],
+  clips: readonly CursorClip[],
+): number {
+  const inside = insideCursor(cursor, ids);
+  if (!inside || inside.index < 0) return boundaryOf(cursor, ids);
+  const length = clips[inside.index]?.durationMs ?? 0;
+  const fraction = length > 0 ? Math.min(1, Math.max(0, inside.offsetMs / length)) : 0;
+  return inside.index + fraction;
+}
 
 /** A clip's name in copy: its badge label (creation number), else its place (1-based). */
 function clipName(clips: readonly CursorClip[], i: number): string {
@@ -129,6 +157,19 @@ export function insertChipText(k: number, clips: readonly CursorClip[]): string 
   return `Adding at ${formatDuration(timeAtBoundary(k, clips))} · ${insertPlace(k, clips)}`;
 }
 
+/** The recorder keeps and describes the editor's exact point until its first successful add. */
+export function insertChipForAnchor(
+  cursor: ClipAnchor,
+  ids: readonly string[],
+  clips: readonly CursorClip[],
+): string | null {
+  const inside = insideCursor(cursor, ids);
+  if (!inside) return insertChipText(boundaryOf(cursor, ids), clips);
+  if (inside.index < 0) return 'Insertion target unavailable — move the insert point';
+  const time = timeAtBoundary(inside.index, clips) + inside.offsetMs;
+  return `Adding at ${formatDuration(time)} · inside clip ${clipName(clips, inside.index)}`;
+}
+
 /** The cursor's accessibility label; its value is `cursorA11yValue`. */
 export const CURSOR_A11Y_LABEL = 'Insert point';
 
@@ -137,6 +178,18 @@ export function cursorA11yValue(k: number, clips: readonly CursorClip[]): string
   const place = insertPlace(k, clips);
   if (k >= clips.length) return place;
   return `${place}, at ${formatDuration(timeAtBoundary(k, clips))}`;
+}
+
+export function cursorA11yForAnchor(
+  cursor: ClipAnchor,
+  ids: readonly string[],
+  clips: readonly CursorClip[],
+): string {
+  const inside = insideCursor(cursor, ids);
+  if (!inside) return cursorA11yValue(boundaryOf(cursor, ids), clips);
+  if (inside.index < 0) return 'Insertion target unavailable. Move the insert point.';
+  const time = timeAtBoundary(inside.index, clips) + inside.offsetMs;
+  return `inside clip ${clipName(clips, inside.index)}, at ${formatDuration(time)}`;
 }
 
 // --- Geometry -------------------------------------------------------------------------------------

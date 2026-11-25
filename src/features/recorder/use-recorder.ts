@@ -38,7 +38,7 @@ import { describeError, formatBytes, formatSeconds } from '@/features/upload/cor
 import { absolutize, deleteQuietly, persistRecording } from '@/utils/file-store';
 import { importFailureCopy, isOutOfSpace } from '@/utils/import-copy';
 import { userMessage } from '@/utils/user-message';
-import { getDurationMs } from '@/utils/video';
+import { coverFailed, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
 import { addExternalClip } from './add-external-clip';
@@ -419,6 +419,9 @@ export function useRecorder(
     setRecordStartedAt(Date.now());
     setRecordStoppedAt(null);
     setIsRecording(true);
+    // Only the new file successfully moved out of the camera cache belongs to this save.
+    // Once its row commits, the draft owns it and this cleanup must leave it alone.
+    let uncommittedFile: string | null = null;
     try {
       // Codec: VisionCamera defaults to the most efficient codec available (HEVC/h265 on modern
       // iPhones), which is what keeps every clip format-uniform for the merge engine's fast
@@ -469,6 +472,7 @@ export function useRecorder(
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;
       const originalFilename = await persistRecording(uri, id, segmentId);
+      uncommittedFile = originalFilename;
       const durationMs = await getDurationMs(absolutize(originalFilename));
       // The row first, the cover after: the clip shows as soon as it's saved. On Android the
       // cover is the longest step after a stop (150–400 ms: Media3 prepares a player for each new
@@ -479,15 +483,24 @@ export function useRecorder(
         { id: segmentId, originalFilename, durationMs, thumbnail: null },
         () => anchorRef.current,
       );
+      uncommittedFile = null;
       everHadSegments.current = true;
       segmentCount.current = Math.max(segmentCount.current, 1);
       void addSegmentCover(id, segmentId, originalFilename);
       // Imports are conformed to exactly what the recorder writes on this device (so mixed
       // drafts merge without re-encoding) — keep that signature current.
       void learnRecorderFormat(absolutize(originalFilename));
-    } catch {
-      // Recording died with no salvageable file (see the error probe above), or the persist
-      // itself failed — nothing to keep.
+    } catch (e) {
+      if (uncommittedFile) {
+        const uri = absolutize(uncommittedFile);
+        coverFailed(uri);
+        deleteQuietly(uri);
+      }
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t save the recording',
+        message: userMessage(e, 'Try recording again.', 'save recording'),
+      });
     } finally {
       recorderRef.current = null;
       stopRequestedRef.current = false;
