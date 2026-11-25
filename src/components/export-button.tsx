@@ -2,9 +2,9 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { Accent, ButtonHeight, Opacity, Radius } from '@/constants/theme';
 
-const HEIGHT = 32;
+const HEIGHT = 44;
 
-/** The draft's way on to the export screen, top right in the recorder and the editor: the screen's
+/** The draft's way on to the export screen, in the recorder and editor's bottom command row: the screen's
  *  primary action, filled in the accent with the app's button corners scaled to its height. */
 export function ExportButton({
   onPress,
@@ -20,7 +20,6 @@ export function ExportButton({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel="Export"
       accessibilityState={{ disabled }}

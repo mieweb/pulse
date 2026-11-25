@@ -30,7 +30,7 @@ import Sortable from 'react-native-sortables';
 import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
 import { ADD_SIZE, EditorAddMenu } from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
-import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
+import { CommandButton, ViewSwitcher } from '@/features/editor/editor-controls';
 import { useFrameRates } from '@/features/editor/use-frame-rates';
 import { flushDraftWrites, trackDraftWrite } from '@/features/editor/draft-writes';
 import {
@@ -155,7 +155,8 @@ function usePlaybackSessionOnReturn() {
 /**
  * The timeline editor: the draft playing as it will export (<PulsePreview>), a strip of its
  * clips under a centre playhead, and a bottom bar of tools. Every edit applies at once (no Save),
- * with undo/redo in the header; trims snap to source frames as the engine does.
+ * with Close, undo/redo and Export in a bottom command row; trims snap to source frames as the
+ * engine does.
  *
  * The bottom bar offers Split directly; Edit and Captions open a mode until its ✓.
  * Edit (or a tap on a clip) edits the clip
@@ -928,33 +929,6 @@ export function EditorScreen({
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={[styles.root, { paddingTop: insets.top, backgroundColor: theme.background }]}>
-        {/* Off-clip space, like every black area around the controls: a tap lets a selection go. */}
-        <Pressable style={styles.header} onPress={deselect} accessible={false}>
-          <HeaderButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
-          <View style={styles.headerRight}>
-            <HeaderButton
-              icon="arrow.uturn.backward"
-              label="Undo"
-              onPress={undo}
-              disabled={!history.canUndo}
-            />
-            <HeaderButton
-              icon="arrow.uturn.forward"
-              label="Redo"
-              onPress={redo}
-              disabled={!history.canRedo}
-            />
-            {/* Finished editing: on to the export screen (back returns here). */}
-            <View style={styles.export}>
-              <ExportButton
-                onPress={openExport}
-                disabled={clips.length === 0}
-                testID="editor.export"
-              />
-            </View>
-          </View>
-        </Pressable>
-
         <Pressable
           style={[styles.preview, { backgroundColor: theme.background }]}
           onLayout={(e) =>
@@ -1001,17 +975,6 @@ export function EditorScreen({
           />
           {status?.error && (
             <Text style={[styles.error, { color: theme.textSecondary }]}>{status.error}</Text>
-          )}
-          {/* A screen take for this draft (from the "+"): its Stop, over the top of the preview. */}
-          {screenCapture && add.screenHere && (
-            <View style={styles.screenStop} pointerEvents="box-none">
-              <screenCapture.StopPill
-                began={screen.began}
-                starting={screen.starting && !screenLive}
-                stopping={screen.phase === 'stopping'}
-                onStop={() => void screenCapture.stop()}
-              />
-            </View>
           )}
         </Pressable>
 
@@ -1110,16 +1073,22 @@ export function EditorScreen({
           </View>
         </Animated.View>
 
+        {/* The take's Stop has its own lower row, clear of the clip gestures and sticky "+". */}
+        {screenCapture && add.screenHere && (
+          <View style={styles.screenStop}>
+            <screenCapture.StopPill
+              began={screen.began}
+              starting={screen.starting && !screenLive}
+              stopping={screen.phase === 'stopping'}
+              onStop={() => void screenCapture.stop()}
+            />
+          </View>
+        )}
+
         <Pressable
           // One height whether it holds the tools or the hint, so selecting never moves the layout.
-          // Above the keyboard while typing, it needs no room for the home indicator.
-          style={[
-            styles.tools,
-            {
-              height: TOOLBAR_HEIGHT + 8 + (typing ? 8 : insets.bottom + 4),
-              paddingBottom: typing ? 8 : insets.bottom + 4,
-            },
-          ]}
+          // The command row owns the home inset; while typing these tools sit above the keyboard.
+          style={styles.tools}
           onPress={deselect}
           accessible={false}>
           {typing ? (
@@ -1197,6 +1166,36 @@ export function EditorScreen({
           )}
         </Pressable>
 
+        {/* Global commands stay put through tool modes, including an empty draft awaiting Redo.
+            Caption entry uses its own Cancel/Done directly above the keyboard instead. */}
+        {!typing && (
+          <Pressable
+            style={[styles.commands, { paddingBottom: insets.bottom + 4 }]}
+            onPress={deselect}
+            accessible={false}>
+            <CommandButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
+            <CommandButton
+              icon="arrow.uturn.backward"
+              label="Undo"
+              onPress={undo}
+              disabled={!history.canUndo}
+              testID="editor.undo"
+            />
+            <CommandButton
+              icon="arrow.uturn.forward"
+              label="Redo"
+              onPress={redo}
+              disabled={!history.canRedo}
+              testID="editor.redo"
+            />
+            <ExportButton
+              onPress={openExport}
+              disabled={clips.length === 0}
+              testID="editor.export"
+            />
+          </Pressable>
+        )}
+
         {cropping && cropClip && (
           <CropEditor
             uri={cropClip.uri}
@@ -1218,21 +1217,19 @@ export function EditorScreen({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    height: 48,
+  commands: {
     paddingHorizontal: 12,
+    paddingTop: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    gap: 12,
   },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  export: { marginLeft: 8 },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
   track: { height: STRIP_HEIGHT },
   // Centred on the clip tiles, which both views draw under the ruler.
   add: { position: 'absolute', right: 12, top: RULER_HEIGHT + (TILE_HEIGHT - ADD_SIZE) / 2 },
-  screenStop: { position: 'absolute', top: 8, left: 0, right: 0, alignItems: 'center' },
-  dim: { opacity: 0.35 },
+  screenStop: { alignItems: 'center', paddingVertical: 4 },
   preview: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   cover: { position: 'absolute' },
   error: { textAlign: 'center', padding: 16 },
@@ -1256,5 +1253,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tools: { justifyContent: 'center' },
+  tools: { height: TOOLBAR_HEIGHT + 16, paddingBottom: 8, justifyContent: 'center' },
 });

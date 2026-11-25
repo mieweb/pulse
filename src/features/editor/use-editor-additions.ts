@@ -278,7 +278,7 @@ export function useEditorAdditions({
     progressText: images.importing ? images.stepText : undefined,
     progressCount: images.importing ? images.stepCount : undefined,
     screen,
-    /** A screen take for this draft is starting or live: its Stop shows over the preview. */
+    /** A screen take for this draft is starting or live: its Stop shows in the lower controls. */
     screenHere: screen.draftId === draftId && (screenLive || screen.starting),
     screenLive,
     /** "From another Pulse"'s sheet, to render. */

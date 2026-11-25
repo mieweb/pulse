@@ -30,7 +30,7 @@ export type EditorScreenProps = {
   onAddClips?: (draftId: string, anchor: ClipAnchor) => void;
   /**
    * Screen recording, from the Pulse app (src/features/screen-capture), as the recorder gets it:
-   * with it the "+" offers Record screen, and the take's Stop shows over the preview. The embed
+   * with it the "+" offers Record screen, and the take's Stop shows in the lower controls. The embed
    * has none (`npm run check:embed`).
    */
   screenCapture?: ScreenCapturePort;

@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { Paths } from 'expo-file-system';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedReaction, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,6 +20,7 @@ import { useStatusBarStyle } from '@/core/status-bar/status-bar';
 import { captionsOffQuery } from '@/db/captions';
 import { getSetting, setSetting } from '@/db/settings';
 import { GlassPill } from '@/components/glass-pill';
+import { Icon } from '@/components/icon';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
 import { flushDraftWrites } from '@/features/editor/draft-writes';
@@ -277,6 +278,7 @@ export function RecorderScreen({
   // True while a clip is being dragged (reorder / drag-to-trash) — hides the record button so
   // the floating trash above the bar has clear space.
   const [dragging, setDragging] = useState(false);
+  const [showCameraTools, setShowCameraTools] = useState(false);
 
   // A screen take (module state, so in any recorder) owns the mic: the camera records silent and
   // audio focus isn't taken while it runs. The camera, and the rest of Pulse, stay usable; its Stop
@@ -833,14 +835,6 @@ export function RecorderScreen({
               styles.topBar,
               { paddingTop: insets.top + Spacing.two, paddingHorizontal: Spacing.three },
             ]}>
-            <View style={styles.topBarSide}>
-              <CloseButton
-                onClose={handleClose}
-                overVideo
-                label="Close recorder"
-                testID="recorder.close"
-              />
-            </View>
             {/* The running total, on glass over the live camera. */}
             <GlassPill style={styles.timerPill}>
               <RecordingTimer
@@ -851,30 +845,7 @@ export function RecorderScreen({
                 stoppedAt={recordStoppedAt}
               />
             </GlassPill>
-            {/* On to the export screen once there's a clip; the sides share the width equally so
-              the timer stays centred either way. */}
-            <View style={[styles.topBarSide, styles.topBarEnd]}>
-              {draftId && segments.length > 0 && (
-                <ExportButton
-                  onPress={() => open(() => onExport(draftId))}
-                  disabled={isRecording}
-                  testID="recorder.export"
-                />
-              )}
-            </View>
           </View>
-          {/* The screen take's Stop, under the top bar: clear of the rail, the lens pill and the
-              shutter, which stays the camera's. */}
-          {ScreenStopPill && (screenHere || screenStartingHere) && (
-            <View style={styles.screenStop} pointerEvents="box-none">
-              <ScreenStopPill
-                began={screen.began}
-                starting={screenStartingHere}
-                stopping={screen.phase === 'stopping'}
-                onStop={() => void screenCapture?.stop()}
-              />
-            </View>
-          )}
           {/* Embedded: what the recording is for, then anything the person should know first. */}
           {embedded && (
             <View style={styles.notices} pointerEvents="box-none">
@@ -918,20 +889,6 @@ export function RecorderScreen({
             </View>
           )}
         </View>
-
-        <CameraControls
-          facing={facing}
-          torch={torch}
-          stabilization={stabilization}
-          muted={muted}
-          callActive={callActive}
-          screenTake={screenLive}
-          recording={isRecording}
-          onFlip={flipCamera}
-          onToggleTorch={toggleTorch}
-          onCycleStabilization={cycleStabilization}
-          onToggleMute={onToggleMute}
-        />
 
         <View
           style={[styles.bottom, { paddingBottom: insets.bottom + Spacing.three }]}
@@ -1036,6 +993,75 @@ export function RecorderScreen({
               }
             }}
           />
+          {/* Tools expand inline: the shutter and Stop stay available instead of being covered
+              by a modal. Keep this below the strip so drag-to-trash keeps its shutter anchor. */}
+          {showCameraTools && (
+            <View
+              pointerEvents={dragging ? 'none' : 'auto'}
+              accessibilityElementsHidden={dragging}
+              importantForAccessibility={dragging ? 'no-hide-descendants' : 'auto'}
+              style={{ transform: [{ scale: dragging ? 0 : 1 }] }}>
+              <CameraControls
+                facing={facing}
+                torch={torch}
+                stabilization={stabilization}
+                muted={muted}
+                callActive={callActive}
+                screenTake={screenLive}
+                recording={isRecording}
+                onFlip={flipCamera}
+                onToggleTorch={toggleTorch}
+                onCycleStabilization={cycleStabilization}
+                onToggleMute={onToggleMute}
+              />
+            </View>
+          )}
+          {ScreenStopPill && (screenHere || screenStartingHere) && (
+            <ScreenStopPill
+              began={screen.began}
+              starting={screenStartingHere}
+              stopping={screen.phase === 'stopping'}
+              onStop={() => void screenCapture?.stop()}
+            />
+          )}
+          <View style={styles.commands}>
+            <CloseButton
+              onClose={handleClose}
+              overVideo
+              label="Close recorder"
+              testID="recorder.close"
+            />
+            <Pressable
+              onPress={() => setShowCameraTools((shown) => !shown)}
+              disabled={dragging}
+              accessibilityRole="button"
+              accessibilityLabel="Camera tools"
+              accessibilityState={{ expanded: showCameraTools, disabled: dragging }}
+              testID="recorder.tools">
+              {({ pressed }) => (
+                <GlassPill style={styles.toolsToggle}>
+                  <View
+                    collapsable={false}
+                    style={[styles.toolsLabel, pressed && { opacity: 0.6 }]}>
+                    <Icon name="slider.horizontal.3" size={20} tintColor="#fff" />
+                    <Text style={styles.toolsText} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                      Tools
+                    </Text>
+                  </View>
+                </GlassPill>
+              )}
+            </Pressable>
+            {/* Reserve the slot before the first clip, keeping the other commands still. */}
+            <View style={styles.exportSlot}>
+              {draftId && segments.length > 0 && (
+                <ExportButton
+                  onPress={() => open(() => onExport(draftId))}
+                  disabled={isRecording || dragging}
+                  testID="recorder.export"
+                />
+              )}
+            </View>
+          </View>
         </View>
       </View>
 
@@ -1071,7 +1097,7 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
   },
   // Shape only — GlassPill owns the surface; ties the top bar to the glass close button.
   timerPill: {
@@ -1086,10 +1112,24 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
   },
-  topBarSide: { flex: 1, flexDirection: 'row' },
-  screenStop: { alignItems: 'center', marginTop: Spacing.two },
-  topBarEnd: { justifyContent: 'flex-end' },
   bottom: { alignItems: 'center', gap: Spacing.three },
+  commands: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.three,
+    gap: Spacing.two,
+  },
+  exportSlot: { minWidth: 80, minHeight: 44, alignItems: 'flex-end' },
+  toolsToggle: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.three,
+    borderRadius: 22,
+  },
+  toolsLabel: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  toolsText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   // Full-width row; the record button is centered by the row itself, so its position can't
   // be disturbed by the + control.
   buttonRow: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },

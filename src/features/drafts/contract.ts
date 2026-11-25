@@ -5,7 +5,7 @@
 export type DraftsScreenProps = {
   /** + : choose a blank project or gather beats into a summary. */
   onRecord: () => void;
-  /** A draft's card was tapped (never while it uploads): open it in the recorder. */
+  /** A draft's card was tapped (never while it uploads): open it for editing. */
   onOpenDraft: (draftId: string) => void;
   /** The About button. */
   onAbout: () => void;

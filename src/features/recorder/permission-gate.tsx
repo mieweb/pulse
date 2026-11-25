@@ -1,5 +1,5 @@
 import { Icon } from '@/components/icon';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/primary-button';
@@ -20,24 +20,29 @@ export function PermissionGate({
   const theme = useTheme();
 
   return (
-    <ThemedView style={styles.container}>
-      <CloseButton
-        // Same spot as the recorder's ✕ (insets.top + two, three in), so it doesn't hop when
-        // access is granted and the camera takes over.
-        style={{ position: 'absolute', top: insets.top + Spacing.two, left: Spacing.three }}
-      />
-      <Icon name="camera.fill" size={48} tintColor={theme.accent} scalesWithText />
-      <ThemedText type="title3" style={styles.title}>
-        Camera access needed
-      </ThemedText>
-      <ThemedText themeColor="textSecondary" style={styles.body}>
-        Pulse records video with your camera and microphone.
-      </ThemedText>
-      <PrimaryButton
-        label={blocked ? 'Open Settings' : 'Allow access'}
-        onPress={onRequest}
-        style={styles.button}
-      />
+    <ThemedView
+      style={[
+        styles.container,
+        { paddingTop: insets.top, paddingBottom: insets.bottom + Spacing.three },
+      ]}>
+      <View style={styles.message}>
+        <Icon name="camera.fill" size={48} tintColor={theme.accent} scalesWithText />
+        <ThemedText type="title3" style={styles.title}>
+          Camera access needed
+        </ThemedText>
+        <ThemedText themeColor="textSecondary" style={styles.body}>
+          Pulse records video with your camera and microphone.
+        </ThemedText>
+      </View>
+      <View style={styles.footer}>
+        <CloseButton label="Close recorder" testID="permission.close" />
+        <PrimaryButton
+          label={blocked ? 'Open Settings' : 'Allow access'}
+          onPress={onRequest}
+          style={styles.button}
+          testID="permission.request"
+        />
+      </View>
     </ThemedView>
   );
 }
@@ -45,14 +50,13 @@ export function PermissionGate({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.three,
-    paddingHorizontal: Spacing.five,
+    paddingHorizontal: Spacing.three,
   },
+  message: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.three },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   // Same heading as the home empty state.
   title: { fontWeight: '600' },
   body: { textAlign: 'center' },
   // Full width, like the app's other primary actions (export, captions, About).
-  button: { marginTop: Spacing.two, alignSelf: 'stretch' },
+  button: { flex: 1 },
 });

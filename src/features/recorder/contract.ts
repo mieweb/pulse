@@ -105,7 +105,7 @@ export type ScreenCapturePort = {
    */
   start: (draft: () => Promise<string>, enableMic: boolean, anchor: ClipAnchor) => Promise<void>;
   stop: () => Promise<void>;
-  /** The take's Stop, under the recorder's top bar. */
+  /** The take's Stop, in the recorder's lower controls. */
   StopPill: ComponentType<{
     began: number | null;
     starting: boolean;
