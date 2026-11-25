@@ -864,6 +864,56 @@ describe('the job loop', () => {
       expectOneUpload(vault, 'd-back', sent.clientKey);
     });
 
+    it.each(['direct', 'drain'] as const)(
+      'idle waits for a paused %s pass still awaiting its host target',
+      async (mode) => {
+        const id = `d-pause-target-${mode}`;
+        const vault = new Vault();
+        await queued(id);
+        const p = makeProcess(vault);
+        const askTarget = p.host.getUploadTarget.bind(p.host);
+        let targetReady!: () => void;
+        let targetRequested!: () => void;
+        const target = new Promise<void>((resolve) => {
+          targetReady = resolve;
+        });
+        const requested = new Promise<void>((resolve) => {
+          targetRequested = resolve;
+        });
+        let requests = 0;
+        p.host.getUploadTarget = async (request) => {
+          requests++;
+          targetRequested();
+          await target;
+          return askTarget(request);
+        };
+        const pass = mode === 'direct' ? p.runner.runJob(id) : p.runner.drain();
+        await requested;
+        // A second pass for the same draft still does not duplicate the host request.
+        await p.runner.runJob(id);
+        expect(requests).toBe(1);
+        p.runner.setAccountActive(false);
+        let settled = false;
+        const idle = p.runner.idle().then(() => {
+          settled = true;
+        });
+        for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+        expect(settled).toBe(false);
+        expect(getUploadJob(id)?.state).toBe('queued');
+
+        targetReady();
+        await Promise.all([pass, idle]);
+        expect(settled).toBe(true);
+        // The delayed target can still commit a row after pause. idle must include that write,
+        // while the inactive runner never starts uploading it against a released namespace.
+        expect(getUploadJob(id)?.state).toBe('uploading');
+        expect(vault.patches).toHaveLength(0);
+        p.runner.setAccountActive(true);
+        await p.runner.drain();
+        expectOneUpload(vault, id, p.targetCalls[0].clientKey);
+      },
+    );
+
     it('jobs of an inactive namespace never run', async () => {
       const vault = new Vault();
       await queued('d-inactive');

@@ -272,8 +272,74 @@ export function createEditorHistory(deps: HistoryDeps) {
         dropOriginals([step]);
         return;
       }
+      // The row transaction already recorded this addition. The UI journal still groups a
+      // recorder's committed clips and places the playhead, but must not create another step.
+      const idsWanted = new Set(ids);
+      const splitWanted = new Set(splits.map((split) => split.rightId));
+      const matching = history.past.filter(
+        (candidate): candidate is AddedStep =>
+          candidate.kind === 'added' &&
+          ((batchKey !== undefined && candidate.batchKey === batchKey) ||
+            candidate.ids.some((id) => idsWanted.has(id)) ||
+            (candidate.splits ?? []).some((split) => splitWanted.has(split.rightId))),
+      );
+      const knownIds = new Set(matching.flatMap((candidate) => candidate.ids));
+      const knownSplits = new Set(
+        matching.flatMap((candidate) => (candidate.splits ?? []).map((split) => split.rightId)),
+      );
+      const undone = history.future.filter(
+        (candidate): candidate is AddedStep => candidate.kind === 'added',
+      );
+      const undoneIds = new Set(undone.flatMap((candidate) => candidate.ids));
+      const undoneSplits = new Set(
+        undone.flatMap((candidate) => (candidate.splits ?? []).map((split) => split.rightId)),
+      );
+      // A delayed journal delivery can follow an Undo of the already committed addition.
+      // It must not turn that old event into a new edit that clears the retained Redo.
+      if (
+        (ids.some((id) => undoneIds.has(id)) ||
+          splits.some((split) => undoneSplits.has(split.rightId))) &&
+        ids.every((id) => knownIds.has(id) || undoneIds.has(id)) &&
+        splits.every((split) => knownSplits.has(split.rightId) || undoneSplits.has(split.rightId))
+      )
+        return;
+      if (batchKey) openBatches.add(batchKey);
+      if (
+        matching.length &&
+        ids.every((id) => knownIds.has(id)) &&
+        splits.every((split) => knownSplits.has(split.rightId))
+      ) {
+        if (matching.length === 1 && (!batchKey || matching[0].batchKey === batchKey)) return;
+        const first = matching[0];
+        const allSplits = [
+          ...new Map(
+            matching.flatMap((candidate) =>
+              (candidate.splits ?? []).map((split) => [split.rightId, split] as const),
+            ),
+          ).values(),
+        ];
+        const grouped: AddedStep = {
+          ...first,
+          ids: [...knownIds],
+          ...(allSplits.length ? { splits: allSplits } : {}),
+          ...(batchKey ? { batchKey } : {}),
+        };
+        const combined = new Set(matching);
+        changes++;
+        set({
+          ...history,
+          past: history.past.flatMap((candidate) =>
+            candidate === first
+              ? [grouped]
+              : combined.has(candidate as AddedStep)
+                ? []
+                : [candidate],
+          ),
+          lastOp: null,
+        });
+        return;
+      }
       if (batchKey) {
-        openBatches.add(batchKey);
         const existing = history.past.find(
           (s): s is AddedStep => s.kind === 'added' && s.batchKey === batchKey,
         );
@@ -308,6 +374,14 @@ export function createEditorHistory(deps: HistoryDeps) {
     redo: (now: Present, apply: (diff: SnapshotDiff) => void) => step('redo', now, apply),
     /** The undo or redo of an addition still running, if any (for tests). */
     settled: () => running ?? Promise.resolve(),
+    /** Adopt stacks whose addition and rows just committed atomically, before UI journal drain. */
+    acceptAddition(next: { past: Step[]; future: Step[] }) {
+      changes++;
+      const past = keepOpenBatches(next.past, next.past.slice(-100));
+      const retained = new Set([...past, ...next.future]);
+      dropAll([...history.past, ...history.future].filter((candidate) => !retained.has(candidate)));
+      set({ past, future: next.future, lastOp: null });
+    },
     /** Apply storage retention, after its replacement checkpoint has committed. */
     retain(next: History<Step>) {
       const kept = new Set([...next.past, ...next.future]);

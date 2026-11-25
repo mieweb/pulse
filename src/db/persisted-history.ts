@@ -2,7 +2,7 @@ import type { SplitReceipt, TakenOutClips } from '@/db/drafts';
 import type { ClipTranscript, Segment } from '@/db/schema';
 import { editedThumbRelPath, thumbRelPath } from '@/utils/media-paths';
 
-import type { Snapshot, Step } from '@/core/types/editor-history';
+import type { AddedStep, Snapshot, Step } from '@/core/types/editor-history';
 
 /** Versioned data only: coalescing windows and in-flight operations never survive a checkpoint. */
 export type PersistedHistory = {
@@ -178,7 +178,7 @@ function validStep(value: unknown, draftId: string, direction: 'past' | 'future'
   if (!object(value)) return false;
   if (value.kind === 'state')
     return keys(value, ['kind', 'snapshot']) && validSnapshot(value.snapshot);
-  return (
+  if (!(
     value.kind === 'added' &&
     keys(value, ['kind', 'ids', 'taken', 'splits', 'batchKey']) &&
     ids(value.ids) &&
@@ -186,6 +186,26 @@ function validStep(value: unknown, draftId: string, direction: 'past' | 'future'
     (value.splits === undefined ||
       (Array.isArray(value.splits) && value.splits.every((split) => validSplit(split, draftId)))) &&
     (value.batchKey === undefined || typeof value.batchKey === 'string')
+  ))
+    return false;
+  return validReplayRows(value as AddedStep);
+}
+
+/** A Redo can only restore rows that the same step's next Undo is able to take out. */
+function validReplayRows(step: AddedStep): boolean {
+  const additions = new Set(step.ids);
+  const generated = new Set(step.ids);
+  const originals = new Set<string>();
+  for (const split of step.splits ?? []) {
+    if (split.firstInsertedId !== undefined && !additions.has(split.firstInsertedId)) return false;
+    generated.add(split.rightId);
+    for (const row of split.before.rows) originals.add(row.id);
+  }
+  if (!step.taken) return true;
+  const replayable = new Set([...generated, ...originals]);
+  return (
+    step.taken.rows.every((row) => replayable.has(row.id)) &&
+    (step.taken.replaced ?? []).every((row) => originals.has(row.id) && !generated.has(row.id))
   );
 }
 

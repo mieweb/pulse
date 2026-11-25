@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 jest.mock('./client', () => ({ db: {} }));
 jest.mock('@/utils/file-store', () => ({ deleteSegmentFile: jest.fn() }));
+jest.mock('./drafts', () => ({ dropHistoryFiles: jest.fn(async () => {}) }));
 
 /* eslint-disable import/first -- the mocks above must be registered before this loads */
 import { planBakedEditDrops } from './baked-edits-migration';

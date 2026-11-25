@@ -2,6 +2,7 @@ import { Directory, File } from 'expo-file-system';
 
 import { editedSegmentRelPath, exportRelPath, segmentRelPath } from './media-paths';
 import { documentDir } from '@/utils/storage-root';
+import { heldMediaPaths, isMediaHeld } from '@/core/media-holds';
 
 export {
   editCoverRelPath,
@@ -88,15 +89,20 @@ function uploadCopyRelPath(relPath: string): string {
   return relPath.replace(/\.[^./]+$/, '') + '.upload.mp4';
 }
 
-/** Delete a clip file. Caller must ensure no other segment references it (splits can share a file). */
-export function deleteSegmentFile(relPath: string): void {
-  const file = new File(absolutize(relPath));
-  if (file.exists) file.delete();
-  // Sweep a legacy `.upload.mp4` sibling with its source — every lifecycle op
-  // (delete/re-edit/reset) routes through here, so the copy can never outlive the clip.
-  if (!relPath.endsWith('.upload.mp4')) {
-    const sibling = new File(absolutize(uploadCopyRelPath(relPath)));
-    if (sibling.exists) sibling.delete();
+/** The explicitly removed file and its legacy conformed upload copy, when it has one. */
+export function segmentFileDeletionPaths(relPath: string): readonly string[] {
+  return relPath.endsWith('.upload.mp4') ? [relPath] : [relPath, uploadCopyRelPath(relPath)];
+}
+
+/** Remove only unprotected candidates; a legacy sibling can be another clip's actual source. */
+export function deleteSegmentFile(
+  relPath: string,
+  protectedPaths: ReadonlySet<string> = new Set(),
+): void {
+  for (const path of segmentFileDeletionPaths(relPath)) {
+    if (protectedPaths.has(path) || isMediaHeld(path)) continue;
+    const file = new File(absolutize(path));
+    if (file.exists) file.delete();
   }
 }
 
@@ -118,16 +124,39 @@ export async function persistExportFile(draftId: string, mergeOutputPath: string
 }
 
 /**
- * Delete the draft's folder (`drafts/{draftId}`) and everything in it. Refuses an id that isn't one
+ * Delete unprotected files in the draft's folder (`drafts/{draftId}`), returning whether the
+ * folder is completely gone. Callers supply live/durable references; active media holds always
+ * apply. Refuses an id that isn't one
  * plain path segment: `..`, `.`, an empty id or one with a separator would name a folder above or
  * beside the draft's (`drafts/..` is the whole documents folder), and so would a percent-encoded
  * one (`%2e%2e`) wherever the path is decoded as a file URI.
  */
-export function deleteDraftDir(draftId: string): void {
+export function deleteDraftDir(
+  draftId: string,
+  protectedPaths: ReadonlySet<string> = new Set(),
+): boolean {
   if (!isPathSegment(draftId))
     throw new Error(`Refusing to delete the folder of draft "${draftId}"`);
   const dir = new Directory(documentDir(), 'drafts', draftId);
-  if (dir.exists) dir.delete();
+  if (!dir.exists) return true;
+  const prefix = `drafts/${draftId}/`;
+  const kept = new Set(
+    [...protectedPaths, ...heldMediaPaths()].filter((path) => path.startsWith(prefix)),
+  );
+  if (kept.size === 0) {
+    dir.delete();
+    return true;
+  }
+  const remove = (folder: Directory, rel: string): void => {
+    for (const child of folder.list()) {
+      const path = `${rel}/${child.name}`;
+      if (child instanceof Directory) remove(child, path);
+      else if (!kept.has(path)) child.delete();
+    }
+    if (folder.list().length === 0) folder.delete();
+  };
+  remove(dir, `drafts/${draftId}`);
+  return !dir.exists;
 }
 
 /** One file or folder name: not empty, not `.` or `..`, and no `/`, backslash, NUL or `%`. */

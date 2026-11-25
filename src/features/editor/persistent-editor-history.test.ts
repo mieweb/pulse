@@ -43,6 +43,8 @@ jest.mock('expo-crypto', () => {
 
 /* eslint-disable import/first -- Register native stand-ins before loading the real persistence. */
 import { waitForUndoHistory } from '@/core/undo-write-barrier';
+import { expectClipsAdded } from '@/core/clip-anchor';
+import { clearUndoAdditionBatch, markUndoAdditionBatch } from '@/core/undo-additions';
 import { trackDraftWrite, writeEdit, writeOrder } from '@/features/editor/draft-writes';
 import type { Present, SnapshotDiff } from '@/features/editor/editor-history';
 import { HISTORY_MAX_MEDIA_BYTES, parsePersistedHistory } from '@/db/persisted-history';
@@ -51,6 +53,8 @@ import { setCaptionEdits, setCaptionY } from '@/db/captions';
 import { expoDb } from '@/db/client';
 import { addSegment, createDraft, deleteSegment } from '@/db/drafts';
 import * as draftFunctions from '@/db/drafts';
+import * as fileStore from '@/utils/file-store';
+import { renderKey } from '@/utils/segment-window';
 import { dropHeldFiles } from '@/db/held-files';
 import { referencedMediaPaths } from '@/db/media-refs';
 import { historyCheckpoint } from '@/db/undo-history';
@@ -154,6 +158,133 @@ afterEach(async () => {
 });
 
 describe('persistent editor Undo on a migrated library', () => {
+  it('keeps earlier edits and invalidates Redo when a recorder adds clips after the editor retires', async () => {
+    const draftId = await createDraft();
+    const a = await add(draftId, 'a');
+    const first = open(draftId);
+    first.store.record(present(draftId), null);
+    writeEdit(a.id, speedEdit, draftId);
+    await waitForUndoHistory();
+    const x = await add(draftId, 'x');
+    first.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    const before = saved(draftId)!;
+    expect(before.future).toHaveLength(1);
+    await first.close();
+
+    const y = await add(draftId, 'y');
+    const after = saved(draftId)!;
+    expect(after.past.slice(0, -1)).toEqual(before.past);
+    expect(after.past.at(-1)).toMatchObject({ kind: 'added', ids: [y.id] });
+    expect(after.future).toEqual([]);
+    expect(existsSync(x.absolute)).toBe(false);
+    const reopened = open(draftId);
+    reopened.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId).map((row) => row.id)).toEqual([a.id]);
+    reopened.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId)[0].editState).toBeNull();
+  });
+
+  it('commits an armed editor’s addition before its UI journal drains or the editor closes', async () => {
+    const draftId = await createDraft();
+    const a = await add(draftId, 'a');
+    const first = open(draftId);
+    const stop = expectClipsAdded(draftId);
+    const x = await add(draftId, 'x');
+    // No recordAdded/takeClipsAdded call: the database owns durability before UI effects run.
+    expect(saved(draftId)?.past.at(-1)).toMatchObject({ kind: 'added', ids: [x.id] });
+    await first.close();
+    stop();
+
+    const reopened = open(draftId);
+    reopened.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId).map((row) => row.id)).toEqual([a.id]);
+    expect(existsSync(x.absolute)).toBe(true);
+  });
+
+  it('rolls back new clip rows and counters when their addition checkpoint cannot commit', async () => {
+    const draftId = await createDraft();
+    await add(draftId, 'a');
+    const beforeRows = clipRows(draftId);
+    const beforeHistory = saved(draftId);
+    const beforeCounter = conn.getFirstSync(
+      'SELECT last_clip_number FROM drafts WHERE id = ?',
+      draftId,
+    );
+    conn.execSync(
+      `CREATE TRIGGER reject_undo_checkpoint BEFORE UPDATE OF undo_history ON drafts BEGIN SELECT RAISE(ABORT, 'addition checkpoint failed'); END`,
+    );
+
+    await expect(add(draftId, 'failed')).rejects.toThrow();
+    expect(clipRows(draftId)).toEqual(beforeRows);
+    expect(saved(draftId)).toEqual(beforeHistory);
+    expect(conn.getFirstSync('SELECT last_clip_number FROM drafts WHERE id = ?', draftId)).toEqual(
+      beforeCounter,
+    );
+  });
+
+  it('extends an image batch below intervening edits before its journal drains, without duplicating steps', async () => {
+    const draftId = await createDraft();
+    const a = await add(draftId, 'a');
+    const first = open(draftId);
+    const key = 'atomic-images';
+    await first.store.beginBatch(key);
+    markUndoAdditionBatch(draftId, `${draftId}-x`, key);
+    const x = await add(draftId, 'x');
+    first.store.record(present(draftId), null);
+    writeEdit(a.id, speedEdit, draftId);
+    await waitForUndoHistory();
+    markUndoAdditionBatch(draftId, `${draftId}-y`, key);
+    const y = await add(draftId, 'y');
+
+    expect(saved(draftId)?.past.map((step) => step.kind)).toEqual(['added', 'added', 'state']);
+    expect(saved(draftId)?.past[1]).toMatchObject({ ids: [x.id, y.id], batchKey: key });
+    first.store.recordAdded([x.id, y.id], [], key);
+    expect(first.store.getState().past).toHaveLength(3);
+    first.store.endBatch(key);
+    clearUndoAdditionBatch(draftId, key);
+    await waitForUndoHistory();
+    first.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId)[0].editState).toBeNull();
+    first.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId).map((row) => row.id)).toEqual([a.id]);
+  });
+
+  it('keeps recorder grouping and standalone split journal delivery idempotent', async () => {
+    const draftId = await createDraft();
+    const a = await add(draftId, 'a');
+    const first = open(draftId);
+    const x = await add(draftId, 'x');
+    const y = await add(draftId, 'y');
+    first.store.recordAdded([x.id, y.id]);
+    await waitForUndoHistory();
+    expect(saved(draftId)?.past).toHaveLength(2);
+    first.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId).map((row) => row.id)).toEqual([a.id]);
+    const [row] = await draftFunctions.segmentsForDraft(draftId);
+    const receipt = await draftFunctions.splitSegment(draftId, {
+      before: a.id,
+      split: {
+        sourceMs: 500,
+        offsetMs: 500,
+        rightId: `${draftId}-right`,
+        sourceKey: renderKey(row),
+      },
+    });
+    expect(saved(draftId)?.past).toHaveLength(2);
+    first.store.recordAdded([], [receipt]);
+    expect(first.store.getState().past).toHaveLength(2);
+    first.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId).map((row) => row.id)).toEqual([a.id]);
+  });
+
   it('rejects a matching saved checkpoint whose addition names another draft’s live clip', async () => {
     const draftA = await createDraft();
     const a = await add(draftA, 'a');
@@ -220,7 +351,7 @@ describe('persistent editor Undo on a migrated library', () => {
     first.store.record(present(draftId), null);
     writeEdit(a.id, speedEdit, draftId);
     await waitForUndoHistory();
-    expect(saved(draftId)?.past).toHaveLength(1);
+    expect(saved(draftId)?.past).toHaveLength(2);
     await first.close();
 
     const reopened = open(draftId);
@@ -235,7 +366,7 @@ describe('persistent editor Undo on a migrated library', () => {
     restarted.store.redo(present(draftId), (diff) => apply(draftId, diff));
     await waitForUndoHistory();
     expect(JSON.parse(clipRows(draftId)[0].editState!).speed).toBe(2);
-    expect(saved(draftId)?.past).toHaveLength(1);
+    expect(saved(draftId)?.past).toHaveLength(2);
     expect(saved(draftId)?.future).toHaveLength(0);
   });
 
@@ -499,6 +630,7 @@ describe('persistent editor Undo on a migrated library', () => {
     // Simulate stopping after the replacement checkpoint and before either cleanup runs.
     const dropTaken = jest.spyOn(draftFunctions, 'dropTakenOut').mockResolvedValue();
     const dropFiles = jest.spyOn(draftFunctions, 'dropHistoryFiles').mockResolvedValue();
+    const deleteFile = jest.spyOn(fileStore, 'deleteSegmentFile').mockImplementation(() => {});
     const y = await add(draftId, 'y');
     reopened.store.recordAdded([y.id]);
     await waitForUndoHistory();
@@ -512,6 +644,7 @@ describe('persistent editor Undo on a migrated library', () => {
     expect(JSON.parse(journal?.value ?? '[]')).toContain(x.relative);
     dropTaken.mockRestore();
     dropFiles.mockRestore();
+    deleteFile.mockRestore();
 
     dropHeldFiles(referencedMediaPaths(expoDb));
     expect(existsSync(x.absolute)).toBe(false);

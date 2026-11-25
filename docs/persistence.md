@@ -95,6 +95,12 @@ checkpoint in [`src/db/undo-history.ts`](../src/db/undo-history.ts), and the per
   original rows needed to reverse the compound insertion. If another optimistic edit is still
   queued, the row transaction clears the older checkpoint instead of binding the new stacks to
   uncommitted changes; the session saves the resulting stacks once all queued writes settle.
+- **Creating additions:** inserting clips or splitting a clip also records its Undo step in the
+  row transaction, including recording into an existing draft while its editor is closed. Earlier
+  Undo steps survive and the new addition clears Redo. An open editor adopts the committed stacks
+  before its UI journal arrives; that journal groups recorder/image additions without recording
+  them twice. The database-side writer is in
+  [`src/db/addition-history.ts`](../src/db/addition-history.ts).
 - **Ordinary edits:** edits, reorder and caption writes finish before the stacks are checkpointed.
   A failed queued write invalidates that draft's optimistic stacks. If Pulse is interrupted after a row
   changes but before the checkpoint commits, the stored checkpoint no longer matches the draft:
@@ -109,6 +115,9 @@ checkpoint in [`src/db/undo-history.ts`](../src/db/undo-history.ts), and the per
 The parser rejects unsupported history versions, malformed steps, unsafe paths and dormant rows
 owned by another draft. History references are also checked against the owners of live and dormant
 clip IDs, so a valid checkpoint for one draft cannot authorize Undo against another draft's clips.
+An addition's dormant replay rows must belong to its recorded additions or split receipts;
+unrelated rows cannot be replayed under another clip's identity. Recorded additions may already
+have been deleted, so a valid replay can contain fewer rows than its original ID list.
 A draft transfer with history but missing required video, caption or
 transcript source media is refused. Optional thumbnails may be regenerated. When loading or saving
 local history, a missing required source removes its step and the farther steps on that stack,
@@ -169,7 +178,11 @@ It decides what goes into a `.pulse` file, and protects referenced files from th
 sweep. Explicit clip edits/deletions and discarded Undo/Redo steps remove obsolete media only
 after checking the live rows, saved Undo/Redo stacks and active history holds; split siblings can
 share a file. Files explicitly retained for history are recorded for cleanup on a later launch,
-which preserves those still referenced by a saved stack. Draft deletion and, in PulseKit, [retirement](#retirement-receipt-driven-deletion) remove the draft's media. There is
+which preserves those still referenced by a saved stack. Draft deletion and, in PulseKit,
+[retirement](#retirement-receipt-driven-deletion) remove only unreferenced files in that draft's
+folder: another draft can still use its sources in live rows or saved Redo. Active Undo operations
+and archives also hold their captured paths. A named deletion journals protected files for a
+precise cleanup retry after their last owner releases them. There is
 no general deletion sweep for files lacking a row: a damaged, empty or restored database must not
 cause videos to be deleted.
 
@@ -200,6 +213,12 @@ if a schema column is missing from the export.
 - library backups leave it out and clear the copy's export signatures, so a restored draft merges
   its export again;
 - going back to a snapshot also clears the signatures, since a newer export may be on disk.
+
+Draft and library archives hold their exact captured source set before hashing yields to the UI,
+through completion of native ZIP creation. Concurrent history eviction or draft deletion cannot
+remove those files. Cover generation, including Reset, writes a fresh revision rather than
+overwriting a thumbnail already captured by an archive. Deferred explicit deletion candidates
+are retried by the launch cleanup journal; unrelated recovery files are never swept.
 
 **Restore order:**
 1. The current library is snapshotted. From the recovery screen, where there's no sound library,
@@ -243,7 +262,10 @@ Library/PulseKit/.shared/models/  captions models, shared by every namespace
   Pulse's JavaScript writes, and `npm run check:embed` fails on `sqlite3_open` in native code.
 - **Purge** (`purge({ namespace })`) deletes a namespace's two folders. If the runtime has that
   library open, the facade first asks Pulse's JavaScript to close it (`releaseLibrary`) and starts a
-  fresh runtime for whatever comes next. The shared models go only with the last namespace.
+  fresh runtime for whatever comes next. Release pauses uploads, waits for every upload pass
+  (including one awaiting a host reply), then flushes edits and Undo checkpoints before closing
+  SQLite. A failed checkpoint leaves the library open for retry. The shared models go only with
+  the last namespace.
 - **PR1's `<hostId>-local`** (the single namespace before accounts) is never adopted into an
   account. It is deleted when empty, and otherwise listed by `listNamespaces` for the host to purge.
 
@@ -348,15 +370,17 @@ A sent draft's media is deleted only after PulseVault's status route reports the
 ```mermaid
 flowchart TD
   outcome[Status route reports done or kept] --> tx[One transaction: insert the receipt, delete the draft; the cascade takes its clips, transcripts and job]
-  tx --> folder[Delete drafts/id/]
+  tx --> folder[Delete unreferenced files in drafts/id/]
   folder -- deleted --> mark[Receipt records media_deleted_at]
-  folder -- fails or the app is killed --> launch[Next launch: delete the folder of every receipt without media_deleted_at, then record it]
-  launch --> mark
+  folder -- shared files remain, deletion fails or app is killed --> launch[Next launch: retry every receipt without media_deleted_at]
+  launch --> folder
   mark --> expire[After 7 days the receipt is deleted]
 ```
 
 - Nothing deletes a folder that no receipt names, and nothing retires a draft before the host has
   the video. A kill between the transaction and the folder is finished at the next launch.
+  Shared sources and active archive/Undo holds keep cleanup pending until those references are
+  gone; `media_deleted_at` is recorded only when the folder is completely removed.
 - In `uploadMode: 'file'`, the host's `retireDraft` retires the draft the same way, with outcome
   `done`, as soon as it asks; in `'pulse'` mode it is only a hint, and the status route decides.
 - `dismissReceipt` stops a `kept` receipt counting for attention; it doesn't shorten its 7 days.

@@ -5,7 +5,8 @@ import { join } from 'node:path';
 
 import { env } from '@/test-support/expo-fs-node';
 
-import { deleteDraftDir } from './file-store';
+import { deleteDraftDir, deleteSegmentFile } from './file-store';
+import { holdMediaPaths } from '@/core/media-holds';
 
 jest.mock('expo-file-system', () => jest.requireActual('@/test-support/expo-fs-node'));
 
@@ -29,6 +30,41 @@ function seed() {
 }
 
 describe('deleteDraftDir', () => {
+  it('keeps a protected legacy upload sibling and later removes it when unreferenced', () => {
+    seed();
+    const source = 'drafts/d1/segments/c1.mp4';
+    const sibling = 'drafts/d1/segments/c1.upload.mp4';
+    writeFileSync(join(DOCS, sibling), 'referenced legacy source');
+    deleteSegmentFile(source, new Set([sibling]));
+    expect(existsSync(join(DOCS, source))).toBe(false);
+    expect(existsSync(join(DOCS, sibling))).toBe(true);
+    deleteSegmentFile(source);
+    expect(existsSync(join(DOCS, sibling))).toBe(false);
+  });
+
+  it('keeps held or referenced files while removing only the rest of a deleted folder', () => {
+    seed();
+    const clip = 'drafts/d1/segments/c1.mp4';
+    writeFileSync(join(DOCS, 'drafts', 'd1', 'discard.mp4'), 'unused');
+    const releaseOne = holdMediaPaths([clip]);
+    const releaseTwo = holdMediaPaths([clip]);
+    try {
+      deleteSegmentFile(clip);
+      expect(deleteDraftDir('d1')).toBe(false);
+      expect(existsSync(join(DOCS, clip))).toBe(true);
+      expect(existsSync(join(DOCS, 'drafts/d1/discard.mp4'))).toBe(false);
+      releaseOne();
+      expect(deleteDraftDir('d1')).toBe(false);
+      releaseTwo();
+      expect(deleteDraftDir('d1', new Set([clip]))).toBe(false);
+      expect(deleteDraftDir('d1')).toBe(true);
+      expect(existsSync(join(DOCS, 'drafts/d1'))).toBe(false);
+    } finally {
+      releaseOne();
+      releaseTwo();
+    }
+  });
+
   it("deletes the draft's folder and nothing else", () => {
     seed();
     deleteDraftDir('d1');

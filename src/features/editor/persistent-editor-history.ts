@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { File } from 'expo-file-system';
 
 import { registerUndoWriter } from '@/core/undo-write-barrier';
+import { registerUndoAdditionOwner } from '@/core/undo-additions';
 import {
   draftWriteFailureVersion,
   flushDraftWrites,
@@ -236,6 +237,19 @@ function createSession(draftId: string) {
     void flush().catch((error: unknown) => report('save', error));
   });
   const unregister = registerUndoWriter(flush);
+  const unregisterAdditions = registerUndoAdditionOwner(draftId, {
+    snapshot: store.getState,
+    committed(history) {
+      retaining = true;
+      try {
+        store.acceptAddition(history);
+      } finally {
+        retaining = false;
+      }
+      revision++;
+      void flush().catch((error: unknown) => report('save', error));
+    },
+  });
   const retire = () => {
     const state = store.getState();
     if (work || readers || state.busy || state.batchOpen || sessions.get(draftId)?.store !== store)
@@ -247,6 +261,7 @@ function createSession(draftId: string) {
     }
     unsubscribe();
     unregister();
+    unregisterAdditions();
     sessions.delete(draftId);
   };
   return {

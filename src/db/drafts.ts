@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -10,11 +10,14 @@ import {
   editCoverRelPath,
   editedThumbRelPath,
   relFileExists,
+  segmentFileDeletionPaths,
   thumbRelPath,
 } from '@/utils/file-store';
 import { type ClipAnchor, END, noteClipsAdded, resolveAnchor } from '@/core/clip-anchor';
 import { waitForClipWrites } from '@/core/draft-write-barrier';
-import { historyMediaPaths, parsePersistedHistory } from '@/db/persisted-history';
+import { waitForUndoHistory } from '@/core/undo-write-barrier';
+import { acceptUndoAddition } from '@/core/undo-additions';
+import { heldMediaPaths, holdMediaPaths, isMediaHeld } from '@/core/media-holds';
 import {
   canonicalEdit,
   editTimelineMs,
@@ -27,7 +30,13 @@ import {
 } from '@/utils/segment-window';
 import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
 import { isCaptionsOff, parseCaptionEdit, setCaptionsOff } from './captions';
-import { db } from './client';
+import { db, expoDb } from './client';
+import {
+  additionHistoryBefore,
+  checkpointInsertedClips,
+  type AdditionHistory,
+} from './addition-history';
+import { referencedMediaPaths } from './media-refs';
 import type { PairedDestination } from './destinations';
 import {
   assertEditable,
@@ -397,9 +406,12 @@ async function commitSegments(
 ): Promise<SplitReceipt | undefined> {
   await beginClipMutation(draftId);
   await waitForClipWrites();
+  await waitForUndoHistory();
   const anchor = typeof anchorOrGet === 'function' ? anchorOrGet() : anchorOrGet;
   const k = newSegments.length;
+  let additionHistory: AdditionHistory | undefined;
   const split = db.transaction((tx): SplitReceipt | undefined => {
+    const beforeHistory = additionHistoryBefore(expoDb, draftId);
     let receipt: SplitReceipt | undefined;
     let halves: { left: Segment; right: Segment } | undefined;
     let at: { order: number; shift: boolean };
@@ -509,6 +521,16 @@ async function commitSegments(
         .values([...transcripts])
         .run();
     if (receipt) noteHeldFiles(tx, takenFiles(receipt.before));
+    if (k > 0 || receipt) {
+      additionHistory = checkpointInsertedClips(
+        expoDb,
+        tx,
+        draftId,
+        beforeHistory,
+        newSegments.map((row) => row.id),
+        receipt ? [receipt] : [],
+      );
+    }
     return receipt;
   });
   if (split) {
@@ -517,6 +539,12 @@ async function commitSegments(
     invalidateEditWrites(split.before.rows.map((row) => row.id));
     hold(split.before);
     void afterCommit('split cover', () => refreshSplitCover(split.rightId));
+  }
+  if (additionHistory) {
+    acceptUndoAddition(draftId, additionHistory.stacks);
+    await afterCommit('drop invalidated undo media', () =>
+      dropHistoryFiles(additionHistory!.removed),
+    );
   }
   return split;
 }
@@ -767,8 +795,7 @@ export async function deleteSegment(segmentId: string): Promise<void> {
 async function deleteRowFiles(seg: Segment, current?: Segment): Promise<void> {
   const kept = new Set(current ? rowFiles(current) : []);
   for (const rel of rowFiles(seg)) {
-    if (kept.has(rel) || heldFiles.has(rel) || (await fileInUse(rel))) continue;
-    deleteSegmentFile(rel);
+    if (!kept.has(rel)) deleteUnreferencedFile(rel);
   }
 }
 
@@ -783,45 +810,21 @@ function rowFiles(seg: Segment): string[] {
   return [...new Set(files)];
 }
 
-/** Whether any row (in any draft) still plays or shows `rel`. */
-async function fileInUse(rel: string): Promise<boolean> {
-  const [{ value }] = await db
-    .select({ value: count() })
-    .from(segments)
-    .where(
-      or(
-        eq(segments.originalFilename, rel),
-        eq(segments.editedFilename, rel),
-        eq(segments.thumbnail, rel),
-      ),
-    );
-  if (value > 0) return true;
-  if (
-    db.select({ value: count() }).from(clipTranscripts).where(eq(clipTranscripts.file, rel)).get()
-      ?.value
-  )
-    return true;
-  for (const row of db.select({ captionEdit: segments.captionEdit }).from(segments).all()) {
-    if (parseCaptionEdit(row.captionEdit)?.file === rel) return true;
-  }
-  for (const row of db
-    .select({ id: drafts.id, undoHistory: drafts.undoHistory })
-    .from(drafts)
-    .all()) {
-    try {
-      const history = parsePersistedHistory(row.undoHistory, row.id);
-      if (history && historyMediaPaths(history).has(rel)) return true;
-    } catch {
-      // Unreadable recovery inputs must never authorize file deletion.
-      return true;
-    }
-  }
-  return false;
+/** An explicit cleanup candidate survives active work, with a precise retry after a restart. */
+function deleteUnreferencedFile(rel: string): void {
+  let referenced: Set<string>;
+  try { referenced = referencedMediaPaths(expoDb); }
+  catch { return; } // Unreadable recovery inputs never authorize deletion.
+  if (referenced.has(rel)) return;
+  const held = segmentFileDeletionPaths(rel).filter(isMediaHeld);
+  if (held.length) db.transaction((tx) => noteHeldFiles(tx, held));
+  // Keep the reference check and deletion synchronous so a newly committed reference cannot
+  // land in an await gap. The same list protects live, derived, caption and saved-history files.
+  deleteSegmentFile(rel, referenced);
 }
 
 /** Files of clips taken out and not yet put back or dropped, with how many take-outs hold each. */
-const heldFiles = new Map<string, number>();
-const holding = new Set<TakenOutClips>();
+const holding = new Map<TakenOutClips, () => void>();
 function takenFiles(taken: TakenOutClips): string[] {
   return [
     ...new Set([
@@ -832,16 +835,11 @@ function takenFiles(taken: TakenOutClips): string[] {
 }
 function hold(taken: TakenOutClips): void {
   if (holding.has(taken)) return;
-  holding.add(taken);
-  for (const rel of takenFiles(taken)) heldFiles.set(rel, (heldFiles.get(rel) ?? 0) + 1);
+  holding.set(taken, holdMediaPaths(takenFiles(taken)));
 }
 function release(taken: TakenOutClips): void {
-  if (!holding.delete(taken)) return;
-  for (const rel of takenFiles(taken)) {
-    const left = (heldFiles.get(rel) ?? 0) - 1;
-    if (left > 0) heldFiles.set(rel, left);
-    else heldFiles.delete(rel);
-  }
+  holding.get(taken)?.();
+  holding.delete(taken);
 }
 
 /** Durable rows now protect these files; release only the editor session's transient hold. */
@@ -1106,8 +1104,7 @@ export async function dropTakenOut(taken: TakenOutClips): Promise<void> {
 /** Reclaim only explicitly evicted history files, after its replacement checkpoint commits. */
 export async function dropHistoryFiles(paths: readonly string[]): Promise<void> {
   for (const path of paths) {
-    if (heldFiles.has(path) || (await fileInUse(path))) continue;
-    await afterCommit('drop undo media', async () => deleteSegmentFile(path));
+    await afterCommit('drop undo media', async () => deleteUnreferencedFile(path));
   }
 }
 
@@ -1225,21 +1222,11 @@ async function saveEdit(segmentId: string, value: string): Promise<void> {
       if (ok) deleteSegmentFile(coverRel);
       return;
     }
-    if (
-      previous.editedFilename &&
-      !heldFiles.has(previous.editedFilename) &&
-      !(await fileInUse(previous.editedFilename))
-    )
-      deleteSegmentFile(previous.editedFilename);
+    if (previous.editedFilename) deleteUnreferencedFile(previous.editedFilename);
     // Drop the replaced cover only now that the row points away from it; the pristine thumb
     // stays for a reset.
-    if (
-      previous.thumbnail &&
-      previous.thumbnail !== thumbRelPath(seg.draftId, segmentId) &&
-      !heldFiles.has(previous.thumbnail) &&
-      !(await fileInUse(previous.thumbnail))
-    ) {
-      deleteSegmentFile(previous.thumbnail);
+    if (previous.thumbnail && previous.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
+      deleteUnreferencedFile(previous.thumbnail);
     }
   });
 }
@@ -1262,7 +1249,9 @@ export async function resetEdit(segmentId: string): Promise<void> {
   if (latestEditRev.get(segmentId) !== rev) return;
   // As in `saveEdit`: the pristine cover first, then the cleared edit and that cover in one write,
   // unless a newer edit was asked for meanwhile.
-  const thumbRel = thumbRelPath(seg.draftId, segmentId);
+  // Reset can finish rendering after an archive starts. Its own revision never replaces the
+  // pristine thumbnail an earlier snapshot may already have captured.
+  const thumbRel = editCoverRelPath(seg.draftId, segmentId, rev);
   const ok = await generateThumbnailFile(
     absolutize(seg.originalFilename),
     absolutize(thumbRel),
@@ -1289,19 +1278,13 @@ export async function resetEdit(segmentId: string): Promise<void> {
   await afterCommit('revert edits', async () => {
     // Drop the now-orphaned edited file and thumb only after the row no longer references them.
     const edited = previous?.editedFilename ?? seg.editedFilename;
-    if (edited && !heldFiles.has(edited) && !(await fileInUse(edited))) {
-      deleteSegmentFile(edited);
-      const thumb = editedThumbRelPath(edited);
-      if (!heldFiles.has(thumb) && !(await fileInUse(thumb))) deleteSegmentFile(thumb);
+    if (edited) {
+      deleteUnreferencedFile(edited);
+      deleteUnreferencedFile(editedThumbRelPath(edited));
     }
     // The prior cover, read as it was replaced — never the fresh `thumbRel`.
-    if (
-      previous?.thumbnail &&
-      previous.thumbnail !== thumbRel &&
-      !heldFiles.has(previous.thumbnail) &&
-      !(await fileInUse(previous.thumbnail))
-    ) {
-      deleteSegmentFile(previous.thumbnail);
+    if (previous?.thumbnail && previous.thumbnail !== thumbRel) {
+      deleteUnreferencedFile(previous.thumbnail);
     }
   });
 }
@@ -1646,8 +1629,27 @@ export async function deleteDraft(draftId: string): Promise<void> {
   // (the FK cascade would drop the row without either).
   await takeOutForChange(draftId, 'deleted');
   await db.delete(drafts).where(eq(drafts.id, draftId));
-  deleteDraftDir(draftId);
+  deleteDraftMedia(draftId);
   await deleteSavedLink(draftId);
+}
+
+/** Delete only this explicitly removed draft's unreferenced files, preserving shared sources. */
+export function deleteDraftMedia(draftId: string): boolean {
+  let referenced: Set<string>;
+  try {
+    referenced = referencedMediaPaths(expoDb);
+  } catch (error) {
+    console.warn('[drafts] retained recovery data prevented folder cleanup', error);
+    return false;
+  }
+  const prefix = `drafts/${draftId}/`;
+  const kept = [...new Set([...referenced, ...heldMediaPaths()])].filter((path) =>
+    path.startsWith(prefix),
+  );
+  // Only a named deletion creates this retry input. Once its last owner/active operation lets
+  // go, the existing launch journal reclaims it without sweeping unrelated recovery files.
+  if (kept.length) db.transaction((tx) => noteHeldFiles(tx, kept));
+  return (kept.length ? deleteDraftDir(draftId, new Set(kept)) : deleteDraftDir(draftId)) !== false;
 }
 
 // Upload pairing -------------------------------------------------------------------------------

@@ -243,6 +243,9 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
       // SQLite underneath its writer. Flow unmount cancels imports before this idle-only release.
       runner?.setAccountActive(false);
       try {
+        // Pausing aborts active uploads, but a pass awaiting a host reply can still finish a
+        // database write. Let that pass settle before checkpointing editors or closing SQLite.
+        await runner?.idle();
         await flushDraftWrites();
         await waitForUndoHistory();
       } catch (error) {

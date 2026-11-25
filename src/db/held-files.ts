@@ -50,7 +50,7 @@ export function dropHeldFiles(referenced: ReadonlySet<string> | null): number {
   for (const rel of referenced ? read(row.value) : []) {
     if (referenced?.has(rel)) continue;
     try {
-      deleteSegmentFile(rel);
+      deleteSegmentFile(rel, referenced ?? undefined);
       removed++;
     } catch {}
   }

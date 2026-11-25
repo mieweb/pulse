@@ -68,7 +68,7 @@ jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 jest.mock('react-native-zip-archive', () => jest.requireActual('@/test-support/zip-archive-node'));
 // Only for the library as the app opens it (`@/db/client`, `@/db/drafts`): drafts.ts imports
 // these native modules, none of which the tests here reach.
-jest.mock('@/utils/video', () => ({}));
+jest.mock('@/utils/video', () => ({ generateThumbnailFile: jest.fn(async () => false) }));
 jest.mock('@/features/transcription/clip-queue', () => ({ dropClipJobs: () => {} }));
 jest.mock('./secure-token', () => ({ deleteSavedLink: async () => {} }));
 jest.mock('expo-crypto', () => ({
@@ -1038,6 +1038,248 @@ describe('undo history in .pulse files', () => {
     }
   });
 
+  it('keeps a saved Redo source when its containing draft is explicitly deleted', async () => {
+    const conn = await openMigrated();
+    const history = seedUndoFixture(conn);
+    const shared = P(S4, '.mp4', D2);
+    const step = history.future[0];
+    if (step.kind !== 'added' || !step.taken) throw new Error('Expected addition');
+    step.taken.rows[0].originalFilename = shared;
+    conn.runSync('UPDATE drafts SET undo_history = ? WHERE id = ?', JSON.stringify(history), D);
+    const app = appLibrary();
+    try {
+      await app.drafts.deleteDraft(D2);
+      expect(conn.getFirstSync('SELECT id FROM drafts WHERE id = ?', D2)).toBeNull();
+      expect(readMedia(shared)).toBe(`bytes of ${shared}`);
+      expect(savedUndo(conn, D)).toEqual(history);
+      expect(existsSync(join(env.docDir, `drafts/${D2}/export.mp4`))).toBe(false);
+      conn.runSync('UPDATE drafts SET undo_history = NULL WHERE id = ?', D);
+      expect(app.drafts.deleteDraftMedia(D2)).toBe(true);
+      expect(existsSync(join(env.docDir, `drafts/${D2}`))).toBe(false);
+    } finally {
+      app.client.expoDb.closeSync();
+    }
+  });
+
+  it.each(['draft', 'library'] as const)(
+    'keeps the captured %s archive usable while Redo is invalidated and its draft is deleted',
+    async (kind) => {
+      const conn = await openMigrated();
+      const history = seedUndoFixture(conn);
+      conn.runSync('DELETE FROM upload_jobs WHERE draft_id = ?', D);
+      const source = P(S2, '.mp4');
+      const originalBytes = readMedia(source);
+      const app = appLibrary(true);
+      try {
+        const pending =
+          kind === 'draft' ? app.exportDrafts!(conn, [D], 4455) : app.backup!(conn, 4455);
+        // The archive has captured its document/database and yielded between media hashes.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        conn.runSync('UPDATE drafts SET undo_history = NULL WHERE id = ?', D);
+        await app.drafts.dropHistoryFiles([...historyMediaPaths(history)]);
+        await app.drafts.deleteDraft(D);
+        expect(conn.getFirstSync('SELECT id FROM drafts WHERE id = ?', D)).toBeNull();
+        expect(readMedia(source)).toBe(originalBytes);
+        const uri = await pending;
+        const archive = unzipSync(readFileSync(new File(uri).path));
+        const metadata = JSON.parse(
+          strFromU8(archive[kind === 'draft' ? 'project.json' : 'manifest.json']),
+        );
+        const listed = kind === 'draft' ? metadata.media : metadata.files;
+        const captured = listed.find((entry: { path: string }) => entry.path === source);
+        expect(strFromU8(archive[captured.entry])).toBe(originalBytes);
+        expect(app.drafts.deleteDraftMedia(D)).toBe(true); // the archive released its hold
+        expect(existsSync(join(env.docDir, `drafts/${D}`))).toBe(false);
+        if (kind === 'draft') {
+          let id = 0;
+          const [copy] = await importProjectFile(conn, uri, () => `during-export-${++id}`);
+          expect(savedUndo(conn, copy).future).toHaveLength(1);
+        } else {
+          Object.assign(env, newDevice());
+          const target = await openMigrated();
+          await restoreLibraryBackup(target, uri, 9000);
+          target.closeSync();
+          const launched = openLibrary(10000);
+          expect(launched.restored).toBe(true);
+          expect(savedUndo(launched.conn, D).future).toHaveLength(1);
+          expect(readMedia(source)).toBe(originalBytes);
+          launched.conn.closeSync();
+        }
+      } finally {
+        app.client.expoDb.closeSync();
+      }
+    },
+  );
+
+  it.each(['capture first', 'render first'] as const)(
+    'keeps pristine archive thumbnail bytes stable when Reset starts %s',
+    async (order) => {
+      const conn = await openMigrated();
+      seedFixture(conn);
+      const thumb = P(S4, '.thumb.jpg', D2);
+      const original = readMedia(thumb);
+      const app = appLibrary(true);
+      let rendering!: () => void;
+      let finish!: () => void;
+      const started = new Promise<void>((resolve) => {
+        rendering = resolve;
+      });
+      const prepared = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const render = jest
+        .spyOn(app.video!, 'generateThumbnailFile')
+        .mockImplementation(async (_source, destination) => {
+          rendering();
+          if (order === 'render first') await prepared;
+          new File(destination).write('new pristine frame');
+          return true;
+        });
+      let resetting: Promise<void> | null = null;
+      let pending: Promise<string> | null = null;
+      try {
+        if (order === 'render first') {
+          resetting = app.drafts.resetEdit(S4);
+          await started;
+        }
+        pending = app.exportDrafts!(conn, [D2], 5511);
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (resetting) {
+          finish();
+          await resetting;
+        } else await app.drafts.resetEdit(S4);
+        const current = conn.getFirstSync<{ thumbnail: string }>(
+          'SELECT thumbnail FROM segments WHERE id = ?',
+          S4,
+        )!.thumbnail;
+        expect(current).not.toBe(thumb);
+        expect(current).toMatch(/\.cover\.\d+\.jpg$/);
+        expect(readMedia(current)).toBe('new pristine frame');
+        expect(readMedia(thumb)).toBe(original);
+        const archive = unzipSync(readFileSync(new File(await pending).path));
+        const doc = checkProject(JSON.parse(strFromU8(archive['project.json'])));
+        const captured = doc.media.find((file) => file.path === thumb)!;
+        expect(strFromU8(archive[captured.entry!])).toBe(original);
+      } finally {
+        finish();
+        await resetting?.catch(() => {});
+        await pending?.catch(() => {});
+        render.mockRestore();
+        app.client.expoDb.closeSync();
+      }
+    },
+  );
+
+  it('journals a legacy video cleanup deferred by an archive and retries only those named files', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    const legacy = P(S4, '.edited.pending.mp4', D2);
+    const legacyThumb = P(S4, '.edited.pending.thumb.jpg', D2);
+    const recovery = P('unreferenced-recovery', '.mp4', D2);
+    media(legacy, 'legacy edited video');
+    media(legacyThumb, 'legacy thumb');
+    media(recovery, 'keep recovery bytes');
+    conn.runSync(
+      'UPDATE segments SET edited_filename = ?, edited_duration_ms = ? WHERE id = ?',
+      legacy,
+      500,
+      S4,
+    );
+    const app = appLibrary(true);
+    try {
+      const pending = app.exportDrafts!(conn, [D2], 7722);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await app.drafts.resetEdit(S4);
+      expect(existsSync(join(env.docDir, legacy))).toBe(true);
+      const journal = JSON.parse(
+        conn.getFirstSync<{ value: string }>(
+          'SELECT value FROM settings WHERE key = ?',
+          'drafts.heldForRedo',
+        )!.value,
+      );
+      expect(journal).toEqual(expect.arrayContaining([legacy, legacyThumb]));
+      await pending;
+      expect(app.dropHeld!(referencedMediaPaths(conn))).toBeGreaterThanOrEqual(2);
+      expect(existsSync(join(env.docDir, legacy))).toBe(false);
+      expect(existsSync(join(env.docDir, legacyThumb))).toBe(false);
+      expect(readMedia(recovery)).toBe('keep recovery bytes');
+      expect(existsSync(join(env.docDir, P(S4, '.mp4', D2)))).toBe(true);
+    } finally {
+      app.client.expoDb.closeSync();
+    }
+  });
+
+  it.each(['live', 'saved Redo'] as const)(
+    'preserves a legacy upload sibling referenced by %s during cleanup and launch retry',
+    async (owner) => {
+      const conn = await openMigrated();
+      const history = seedUndoFixture(conn);
+      const source = P('legacy-base', '.mp4', D2);
+      const sibling = P('legacy-base', '.upload.mp4', D2);
+      const recovery = P('unreferenced-recovery', '.mp4', D2);
+      media(source);
+      media(sibling, 'keep shared legacy source');
+      media(recovery, 'keep recovery input');
+      if (owner === 'live') {
+        conn.runSync('UPDATE segments SET original_filename = ? WHERE id = ?', sibling, S4);
+      } else {
+        const step = history.future[0];
+        if (step.kind !== 'added' || !step.taken) throw new Error('Expected addition');
+        step.taken.rows[0].originalFilename = sibling;
+        conn.runSync('UPDATE drafts SET undo_history = ? WHERE id = ?', JSON.stringify(history), D);
+      }
+      const app = appLibrary(true);
+      try {
+        await app.drafts.dropHistoryFiles([source]);
+        expect(existsSync(join(env.docDir, source))).toBe(false);
+        expect(readMedia(sibling)).toBe('keep shared legacy source');
+        conn.runSync(
+          "INSERT INTO settings (key, value) VALUES ('drafts.heldForRedo', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          JSON.stringify([source]),
+        );
+        app.dropHeld!(referencedMediaPaths(conn));
+        expect(readMedia(sibling)).toBe('keep shared legacy source');
+        if (owner === 'live')
+          conn.runSync(
+            'UPDATE segments SET original_filename = ? WHERE id = ?',
+            P(S4, '.mp4', D2),
+            S4,
+          );
+        else conn.runSync('UPDATE drafts SET undo_history = NULL WHERE id = ?', D);
+        await app.drafts.dropHistoryFiles([source]);
+        expect(existsSync(join(env.docDir, sibling))).toBe(false);
+        expect(readMedia(recovery)).toBe('keep recovery input');
+      } finally {
+        app.client.expoDb.closeSync();
+      }
+    },
+  );
+
+  it('rejects an archive whose dormant replay rows disagree with its recorded addition IDs', async () => {
+    const conn = await openMigrated();
+    seedUndoFixture(conn);
+    const before = dump(conn);
+    const uri = await exportDrafts(conn, [D], 8811);
+    const archive = unzipSync(readFileSync(new File(uri).path));
+    const doc = JSON.parse(strFromU8(archive['project.json'])) as ProjectDocument;
+    const history = parsePersistedHistory(doc.tables.drafts[0].undoHistory as string, D)!;
+    const step = history.future[0];
+    if (step.kind !== 'added') throw new Error('Expected addition');
+    step.ids = ['unrelated'];
+    doc.tables.drafts[0].undoHistory = JSON.stringify(history);
+    const tampered = join(env.cacheDir, 'wrong-replay-rows.pulse');
+    writeFileSync(
+      tampered,
+      zipSync({ ...archive, 'project.json': strToU8(JSON.stringify(doc)) }, { level: 0 }),
+    );
+    const fresh = jest.fn(() => 'must-not-copy');
+    await expect(importProjectFile(conn, `file://${tampered}`, fresh)).rejects.toThrow(
+      'This .pulse file is damaged.',
+    );
+    expect(fresh).not.toHaveBeenCalled();
+    expect(dump(conn)).toEqual(before);
+  });
+
   it('preserves split originals, replaced rows and snapshot caption paths when copying', async () => {
     const conn = await openMigrated();
     const history = seedUndoFixture(conn);
@@ -1971,6 +2213,10 @@ function appLibrary(withUndo = false) {
     gate: typeof import('./migrate');
     undo?: typeof import('@/features/editor/persistent-editor-history');
     flushUndo?: () => Promise<void>;
+    exportDrafts?: (typeof import('@/features/draft-transfer/pack'))['exportDrafts'];
+    backup?: (typeof import('@/features/draft-transfer/library-backup'))['createLibraryBackup'];
+    video?: typeof import('@/utils/video');
+    dropHeld?: (typeof import('@/db/held-files'))['dropHeldFiles'];
   };
   jest.isolateModules(() => {
     mods = {
@@ -1987,6 +2233,15 @@ function appLibrary(withUndo = false) {
       mods.flushUndo = jest.requireActual<typeof import('@/core/undo-write-barrier')>(
         '@/core/undo-write-barrier',
       ).waitForUndoHistory;
+      mods.exportDrafts = jest.requireActual<typeof import('@/features/draft-transfer/pack')>(
+        '@/features/draft-transfer/pack',
+      ).exportDrafts;
+      mods.backup = jest.requireActual<typeof import('@/features/draft-transfer/library-backup')>(
+        '@/features/draft-transfer/library-backup',
+      ).createLibraryBackup;
+      mods.video = jest.requireMock<typeof import('@/utils/video')>('@/utils/video');
+      mods.dropHeld =
+        jest.requireActual<typeof import('@/db/held-files')>('@/db/held-files').dropHeldFiles;
     }
   });
   return mods;

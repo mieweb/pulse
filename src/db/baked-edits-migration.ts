@@ -1,6 +1,6 @@
 import { and, eq, isNotNull } from 'drizzle-orm';
 
-import { deleteSegmentFile } from '@/utils/file-store';
+import { dropHistoryFiles } from './drafts';
 import { editTimelineMs } from '@/utils/segment-window';
 import { db } from './client';
 import type { DataMigration } from './data-migrations';
@@ -63,7 +63,7 @@ export const dropBakedEdits: DataMigration = {
         .update(segments)
         .set({ editedFilename: null, editedDurationMs: drop.editedDurationMs })
         .where(eq(segments.id, drop.id));
-      deleteSegmentFile(drop.editedFilename);
+      await dropHistoryFiles([drop.editedFilename]);
     }
     if (deferred > 0) {
       throw new Error(`${deferred} edited clip(s) are in a draft that is uploading`);

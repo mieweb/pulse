@@ -67,6 +67,7 @@ jest.mock('@/features/upload/core/runner', () => {
     subscribeProgress: jest.fn(() => () => {}),
     start: jest.fn(() => () => {}),
     boot: jest.fn(async () => {}),
+    idle: jest.fn<() => Promise<void>>(async () => {}),
     runJob: jest.fn(async () => {}),
     resumeOutbox: jest.fn(async () => {}),
   };
@@ -95,7 +96,7 @@ jest.mock('./library', () => ({
 }));
 
 type Bus = { sent: Message[]; deliver(m: Message): void };
-type RunnerFake = { setAccountActive: jest.Mock };
+type RunnerFake = { setAccountActive: jest.Mock; idle: jest.Mock<() => Promise<void>> };
 
 /** A fresh runtime module (its services are once per runtime), and its fakes. */
 function boot(props: { config?: unknown; jobs?: JobState[] } = {}) {
@@ -210,6 +211,56 @@ describe('the embedded runtime (commands/runtime.ts)', () => {
     expect(bus.sent).toContainEqual({ type: 'pulse.released', namespace: 'acct' });
     // Its commands are gone: PulseKit sends it nothing more after pulse.released.
     expect(errorCode(await cmd('upload', { id: 'd1' }))).toBe('method.unsupported');
+  });
+
+  it('waits for a paused upload pass before editor barriers, close and release acknowledgement', async () => {
+    const { cmd, bus, fakes } = boot();
+    await cmd('resumeOutbox');
+    let settled!: () => void;
+    fakes.runner.idle.mockImplementationOnce(() => {
+      expect(fakes.runner.setAccountActive).toHaveBeenLastCalledWith(false);
+      return new Promise<void>((resolve) => {
+        settled = resolve;
+      });
+    });
+    const first = cmd('releaseLibrary');
+    const second = cmd('releaseLibrary');
+    for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+    expect(fakes.runner.idle).toHaveBeenCalledTimes(1);
+    expect(mockFlushDraftWrites).not.toHaveBeenCalled();
+    expect(mockWaitForUndoHistory).not.toHaveBeenCalled();
+    expect(fakes.closeSync).not.toHaveBeenCalled();
+    expect(bus.sent.some((message) => message.type === 'pulse.released')).toBe(false);
+    expect(errorCode(await cmd('renameDraft', { id: 'd1', name: 'late' }))).toBe('busy');
+    expect(mockRename).not.toHaveBeenCalled();
+    // An account-active notification must not wake another pass while release is draining.
+    await cmd('accountActive', { active: true });
+    expect(fakes.runner.setAccountActive).toHaveBeenLastCalledWith(false);
+
+    settled();
+    expect(await first).toMatchObject({ ok: true });
+    expect(await second).toMatchObject({ ok: true });
+    expect(mockFlushDraftWrites).toHaveBeenCalledTimes(1);
+    expect(mockWaitForUndoHistory).toHaveBeenCalledTimes(1);
+    expect(fakes.closeSync).toHaveBeenCalledTimes(1);
+    expect(bus.sent.filter((message) => message.type === 'pulse.released')).toHaveLength(1);
+  });
+
+  it('keeps command admission and upload pause retryable when waiting for the runner fails', async () => {
+    const { cmd, bus, fakes } = boot();
+    await cmd('resumeOutbox');
+    fakes.runner.idle.mockRejectedValueOnce(new Error('upload pass did not settle'));
+    expect(await cmd('releaseLibrary')).toMatchObject({ ok: false });
+    expect(mockFlushDraftWrites).not.toHaveBeenCalled();
+    expect(mockWaitForUndoHistory).not.toHaveBeenCalled();
+    expect(fakes.closeSync).not.toHaveBeenCalled();
+    expect(fakes.runner.setAccountActive).toHaveBeenLastCalledWith(true);
+    expect(bus.sent.some((message) => message.type === 'pulse.released')).toBe(false);
+    expect(await cmd('renameDraft', { id: 'd1', name: 'still open' })).toMatchObject({ ok: true });
+
+    expect(await cmd('releaseLibrary')).toMatchObject({ ok: true });
+    expect(fakes.runner.idle).toHaveBeenCalledTimes(2);
+    expect(fakes.closeSync).toHaveBeenCalledTimes(1);
   });
 
   it('keeps SQLite open until dismissed editor writes and Undo checkpoints finish', async () => {

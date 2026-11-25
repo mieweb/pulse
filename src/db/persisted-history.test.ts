@@ -108,6 +108,57 @@ describe('saved Undo data validation', () => {
     expect(() => parse({ ...history(), checkpoint: 'a'.repeat(HISTORY_MAX_JSON_BYTES) })).toThrow();
   });
 
+  it('rejects dormant rows that the recorded addition cannot undo', () => {
+    expect(() => parse(history([], [{ kind: 'added', ids: ['a'], taken: taken('b') }]))).toThrow();
+    const unrelatedReplacement = taken('a');
+    unrelatedReplacement.replaced = [row('b')];
+    expect(() =>
+      parse(history([], [{ kind: 'added', ids: ['a'], taken: unrelatedReplacement }])),
+    ).toThrow();
+  });
+
+  it('allows additions deleted before Undo while retaining only the clips still available', () => {
+    const partial = history(
+      [],
+      [{ kind: 'added', ids: ['deleted-addition', 'b'], taken: taken('b') }],
+    );
+    expect(parse(partial)).toEqual(partial);
+  });
+
+  it('validates compound and standalone split rows against their replay IDs', () => {
+    const compound = compoundHistory();
+    const step = compound.future[0];
+    if (step.kind !== 'added' || !step.taken || !step.splits) throw new Error('fixture');
+    step.taken.rows = [row('a'), row('x'), row('right')];
+    step.taken.order = ['a', 'x', 'right'];
+    expect(parse(compound)).toEqual(compound);
+    step.taken.rows.push(row('unrelated'));
+    step.taken.order.push('unrelated');
+    expect(() => parse(compound)).toThrow();
+    step.taken.rows.pop();
+    step.taken.order.pop();
+    step.splits[0].firstInsertedId = 'unrecorded-addition';
+    expect(() => parse(compound)).toThrow();
+
+    const standalone = history(
+      [],
+      [
+        {
+          kind: 'added',
+          ids: [],
+          taken: {
+            ...taken('right'),
+            order: ['a', 'right'],
+            rows: [row('a'), row('right')],
+            replaced: [row('a')],
+          },
+          splits: [{ before: taken('a'), rightId: 'right' }],
+        },
+      ],
+    );
+    expect(parse(standalone)).toEqual(standalone);
+  });
+
   it('rejects cross-draft dormant rows and unsafe references at every nesting level', () => {
     const crossDraft = taken('x');
     crossDraft.rows[0].draftId = 'source';

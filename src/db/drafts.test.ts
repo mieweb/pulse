@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+jest.mock('./addition-history', () => ({
+  additionHistoryBefore: () => null,
+  checkpointInsertedClips: () => ({ stacks: { past: [], future: [] }, removed: [] }),
+}));
 
 // A stand-in for the drizzle client: every query builder chain is awaitable, or runs at once with
 // `.all()` / `.get()` / `.run()` as in a sync transaction. Selects resolve to the next queued
@@ -54,6 +58,7 @@ jest.mock('@/utils/file-store', () => ({
   copyRelFile: jest.fn(async () => true),
   deleteDraftDir: jest.fn(),
   deleteSegmentFile: jest.fn(),
+  segmentFileDeletionPaths: (path: string) => [path],
   editCoverRelPath: (d: string, s: string, rev: number) =>
     `drafts/${d}/segments/${s}.cover.${rev}.jpg`,
   editedThumbRelPath: (p: string) => p.replace(/\.mp4$/, '.thumb.jpg'),
@@ -62,9 +67,11 @@ jest.mock('@/utils/file-store', () => ({
 jest.mock('@/utils/video', () => ({ generateThumbnailFile: jest.fn(async () => true) }));
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'uuid' }));
 jest.mock('./secure-token', () => ({ deleteSavedLink: jest.fn(async () => {}) }));
+jest.mock('./media-refs', () => ({ referencedMediaPaths: () => new Set<string>() }));
 
 /* eslint-disable import/first -- the mocks above must be registered before these load */
 import { deleteDraftDir, deleteSegmentFile } from '@/utils/file-store';
+import { holdMediaPaths } from '@/core/media-holds';
 import { deleteSavedLink } from './secure-token';
 import { generateThumbnailFile } from '@/utils/video';
 
@@ -160,6 +167,20 @@ describe('persisted export', () => {
 });
 
 describe('edit state', () => {
+  it('resets into a new cover revision when an archive holds the pristine thumbnail', async () => {
+    const release = holdMediaPaths(['drafts/d1/segments/s1.thumb.jpg']);
+    try {
+      mockSelects.push([SEG], idle);
+      await resetEdit('s1');
+      expect(generateThumbnailFile).toHaveBeenCalledWith(
+        'file:///docs/o.mp4',
+        expect.stringMatching(/segments\/s1\.cover\.\d+\.jpg$/),
+      );
+    } finally {
+      release();
+    }
+  });
+
   const segmentUpdate = () =>
     mockWrites.find((w) => typeof w.set === 'object' && w.set !== null && 'editedFilename' in w.set)
       ?.set;
@@ -184,8 +205,8 @@ describe('edit state', () => {
     const seg = { ...SEG, editedFilename: 'e.mp4', thumbnail: 'e.thumb.jpg' };
     mockSelects.push([seg], idle, [seg]);
     await setEditState('s1', EDIT);
-    expect(deleteSegmentFile).toHaveBeenCalledWith('e.mp4');
-    expect(deleteSegmentFile).toHaveBeenCalledWith('e.thumb.jpg');
+    expect(deleteSegmentFile).toHaveBeenCalledWith('e.mp4', expect.any(Set));
+    expect(deleteSegmentFile).toHaveBeenCalledWith('e.thumb.jpg', expect.any(Set));
   });
 
   it('setEditState rejects an unusable state without writing', async () => {
