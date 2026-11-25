@@ -79,9 +79,10 @@ flowchart TB
 
 ### Editing & export
 
-- Open an existing library draft directly in the editor; New recording opens the camera. Use the
-  editor's Add menu to record more into the same draft. An empty existing draft stays in Edit so
-  you can add media.
+- Existing library cards and **View last summary** open the editor. Home’s **+** opens **New
+  project**: **Blank project** opens the camera, while creating a new **Summary** opens its
+  collected beats in the recorder. Use the editor’s Add menu to record more into the same draft.
+  An empty existing draft stays in Edit so you can add media.
 - Editor Close, contextual tools (including Split), Undo/Redo and compact Export share one lower toolbar.
   Recorder Close/Export and export Close are lower too. See the
   [one-handed navigation audit](docs/one-handed-navigation.md) for scope, remaining gesture/sheet

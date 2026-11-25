@@ -19,9 +19,10 @@ The first PR is one cohesive change with guidance, implementation and verificati
    available. Preserve the existing callbacks and operation guards; Export has at least a
    44-point target, including the editor's compact icon. This PR does not introduce a shared
    footer architecture or redesign destination logic.
-3. Open an existing library draft in the editor; New recording opens the camera. Recording more
-   from the editor remains part of the same draft. Preserve explicit host/deep-link recording
-   requests instead of treating every existing identifier as a library-open request.
+3. Open existing library cards and View last summary in the editor. Home's + opens the inherited
+   New project chooser: Blank project opens the camera, and creating a new Summary opens its
+   collected beats in the recorder. Recording more from the editor remains part of the same
+   draft. Preserve explicit host/deep-link recording requests.
 4. Record source findings, exceptions and remaining validation below.
 
 This is the first improvement toward #310, not a claim that every operation is now reachable.
@@ -38,16 +39,21 @@ the current PR base. File links point to the maintained implementation. This inv
 evidence, not a device usability result.
 
 PR #327 is rebased onto main
-[`2aad841`](https://github.com/mieweb/pulse/commit/2aad841f137755965160d8acda00096261d1a0c1).
-The final application revision is `87c600a`, including the empty-project, keyboard and contrast corrections below.
-Toolbar validation began at `9710463` on main `2467627`; the subsequent scene-lifecycle rebuild
-used `b7ab422` / `4e8abc1` on the current base. Current-base additions are recorded after the
-original inventory. The earlier `dce8303` and `3c52200` builds, phone installations and captures
-predate that rebase and must not be counted as validation of the rebased application.
+[`f3c93ce`](https://github.com/mieweb/pulse/commit/f3c93ce9bb85b3238c14869c8f38cec4ca2e504a),
+which includes Summary collection from #332. The current application source is `d61f31d`:
+Home's New project entry is preserved, existing library cards open Edit, and View last summary
+pushes Edit while retaining its form underneath. Blank and newly-created Summary still open the
+recorder. Current-base additions are recorded after the original inventory.
+
+The preceding application checkpoint `87c600a` was based on main `2aad841` and included the
+empty-project, keyboard and contrast corrections below. Toolbar validation began at `9710463`
+on main `2467627`; the scene-lifecycle rebuild used `b7ab422` / `4e8abc1` on `2aad841`. Those
+results, earlier `dce8303` / `3c52200` phone installations and all captures labeled with their
+original revisions are historical evidence, not validation of the Summary rebase.
 
 | Screen/state                        | Baseline finding and source                                                                                                                                                                                                                                                                                                                                                 | Decision / priority                                                                                                                                                                                                                                 |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| New recording and existing drafts   | [Home route](../src/app/index.tsx) sends both New and a tapped draft to the recorder. [Recorder permissions](../src/features/recorder/use-recorder-permissions.ts) requests camera/mic when recorder mounts.                                                                                                                                                                | First PR: existing library draft → editor; New → recorder. Avoid a camera/permission detour when editing. Keep explicit recording entry points distinct.                                                                                            |
+| New recording and existing drafts   | [Home route](../src/app/index.tsx) sends both New and a tapped draft to the recorder. [Recorder permissions](../src/features/recorder/use-recorder-permissions.ts) requests camera/mic when recorder mounts.                                                                                                                                                                | First PR: existing library draft → editor; Home + → chooser → Blank → recorder. Avoid a camera/permission detour when editing. Keep explicit recording entry points distinct.                                                                       |
 | Recorder commands                   | [RecorderScreen](../src/features/recorder/recorder-screen.tsx) places Close and Export in `topBar`. Record, Edit, Add, lens chips and clip strip are already lower.                                                                                                                                                                                                         | First PR: lower Close/Export without covering or moving the shutter's gestures. Test single and multiple clips.                                                                                                                                     |
 | Editor commands                     | [EditorScreen](../src/features/editor/editor-screen.tsx) places Close, Undo, Redo and Export in its header. Main/clip/caption tools, transport and Add are lower. The editor can remain empty for Redo.                                                                                                                                                                     | First PR: lower normal commands; keep history disabled states, empty-draft Redo and Export availability intact.                                                                                                                                     |
 | Export, merge, send and errors      | [ExportScreen](../src/features/export/export-screen.tsx) keeps Close above a non-scrolling content column. Destination chips and send/upload/share/Photos actions sit below preview; Retry can be centered. A required-name field opens the keyboard.                                                                                                                       | First PR: lower return/dismiss command and preserve the primary flow. P1: audit every compact/large-text/keyboard/progress/error combination against [#104](https://github.com/mieweb/pulse/issues/104); scrolling and stable footer may be needed. |
@@ -75,6 +81,22 @@ survive repositioning; controls that already have sufficient target size can sti
 
 ### Additions inherited from the refreshed main
 
+- [PR #332](https://github.com/mieweb/pulse/pull/332) adds the
+  [New project route](../src/app/new-project.tsx) and
+  [chooser/Summary form](../src/features/project-summary/new-project-screen.tsx). Home's + now
+  reaches that chooser; Blank project and newly-created Summary open the recorder. This PR's
+  small route integration sends View last summary to Edit using the existing push, preserving
+  the form underneath. Summary selection, copying, timestamps and data queries remain main's
+  implementation; see [persistence](persistence.md#summary-projects).
+  **P1 under #310:** the chooser's Close is at the top with no lower Cancel; Blank/Summary,
+  name entry, last-summary review, mode selection and Select all occupy scrolling content.
+  The Summary count/error/Create footer is lower, but appears only with the Summary form open.
+  The [inline date calendar](../src/features/project-summary/summary-date-range.tsx) is app-owned,
+  including month arrows, day cells and Today/Yesterday shortcuts; it is not an OS-picker
+  exception. Review lower reach, keyboard states, selection and date/month controls while
+  preserving the busy-copy dismissal lock. The route disables swipe-dismiss, so a reachable
+  button alternative is needed in that follow-up. The new chooser is not counted as a completed
+  one-handed flow merely because Blank eventually reaches the lower recorder controls.
 - [PR #326](https://github.com/mieweb/pulse/pull/326) adds direct **Split at playhead** to both
   [MainToolbar and ClipToolbar](../src/features/editor/clip-toolbar.tsx), with availability and
   busy guards in the [editor](../src/features/editor/editor-screen.tsx). The integrated lower
@@ -119,8 +141,10 @@ must preserve drafts, respect active operations and avoid changing edits before 
 
 - **P0 / this PR:** guidance and PR review rule, lower normal core header commands and screen Stop,
   inline lower recorder tools and permission actions, library-open → editor behavior, focused
-  regressions and honest validation evidence for the #310 primary flow. New remains camera;
-  explicit Record more, place links and embedded record requests retain their recording intent.
+  regressions and honest validation evidence for the #310 primary flow. On the Summary base,
+  New project offers Blank → camera or new Summary → recorder; existing library cards and
+  last-summary review → Edit. Explicit Record more, place links and embedded record requests
+  retain their recording intent.
 - **P1 / follow-ups under #310:** crop/gesture alternatives; full library and secondary-sheet
   action relocation; remaining notices/recovery/error states; and safe swipe
   return with explicit button alternatives. Create focused tickets as these scopes are agreed;
@@ -140,6 +164,11 @@ must preserve drafts, respect active operations and avoid changing edits before 
 
 These are review gates, not completed test results. The PR records actual commands, captures and
 remaining gaps. Source inspection and unit tests cannot establish physical thumb reach.
+
+On the current base, the recording story begins **Home + → New project → Blank project**. Also
+check new Summary creation and View last summary → Edit → return to the retained form. The
+chooser's remaining reach/dismiss gaps above stay under #310; earlier direct-New-to-camera native
+results do not cover this additional screen.
 
 | #310 requirement                                | Required checks for the affected change                                                                                                                                            | Remaining broader work                                                                                |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -173,9 +202,56 @@ an exception for review under #310, alongside precision gesture alternatives; a 
 step controls are possible follow-ups. Verify access to every tool, including Done, at narrow
 widths, supported text sizes and in RTL, without a scroll activating an adjacent command.
 
+### Summary-base source validation (`d61f31d`)
+
+All seven full source checks passed on the actual Summary base `f3c93ce`, application source
+`d61f31d`, using Node 24.9.0. This checkpoint preserves Home's New project chooser and new
+Summary creation while sending both existing library cards and View last summary to Edit.
+
+| Command                                          | Result                                                                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `npx tsc --noEmit`                               | Passed.                                                                                                              |
+| `npm run lint`                                   | Passed full lint.                                                                                                    |
+| `npm test -- --runInBand`                        | 153 suites / 2,184 tests passed; one opt-in PulseVault integration suite / eight tests skipped locally. No failures. |
+| `node scripts/gen-protocol-types.mjs --check`    | Generated protocol types are current.                                                                                |
+| `npx tsc --noEmit -p embed`                      | Passed.                                                                                                              |
+| `npx tsc --noEmit -p embed/packages/pulse-embed` | Passed.                                                                                                              |
+| `npm run check:embed`                            | Passed dependency/facade checks and iOS/Android bundle checks (4,236 / 4,145 sources).                               |
+
+The full test run includes main's Summary database/date tests as well as the earlier navigation,
+empty-project, export sizing, Split and release-note regressions. Documentation formatting,
+local links and whitespace checks pass. These are source/bundle results; current-base native
+chooser, Blank, Summary creation and last-summary review results must be recorded separately.
+Earlier phone builds and captures below retain their original revision labels.
+
+### Summary-base native entry validation (`d61f31d`)
+
+A fresh Release build embedded `d61f31d` (dirty flag from concurrent docs only); app-source hashes
+stayed unchanged. Native accessibility checks on the task-owned 375 × 667 iOS 26 simulator at
+normal text passed:
+
+- An existing library card opened Edit with the four fixed 44 × 44 commands at `y = 615`.
+- Home + opened New project; Blank project opened the recorder, whose lower Close returned Home.
+- Summary source selection copied one synthetic beat into a new Summary and opened the recorder.
+- The new Summary's library card opened Edit.
+- View last summary opened Edit. Lower Close returned to the same Summary form with Choose
+  projects mode and its source checkbox preserved.
+
+Migration 21 preserved the three-project / four-beat test library, backfilled `added_at` and
+passed SQLite integrity checks. Summary creation left its source rows unchanged. The owned
+fixture/media/text settings were restored with migration retained; WDA sessions/runners ended,
+the port was released and the simulator returned to Shutdown. This checkpoint tests entry paths,
+not real camera capture or either-hand grip reach; Summary expanded-text/calendar/RTL interactions
+and the deferred controls above remain separate acceptance work. No physical device was used.
+
+| New-project chooser retained from main                                                         | Existing Summary review opens Edit                                                                |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| ![New-project Blank and Summary choices](images/one-handed-navigation/summary-new-project.png) | ![Existing Summary in the compact editor](images/one-handed-navigation/summary-review-editor.png) |
+
 ### Rebased validation
 
-All seven source checks passed at application revision `87c600a`, based on main `2aad841`.
+This section records the earlier `2aad841` base, before Summary collection entered main.
+All seven source checks passed at application revision `87c600a`, based on that earlier main.
 The correction includes four regressions covering reopened empty projects, parent-query
 loading/failure/missing states, parent deletion and default embedded/history behavior.
 
@@ -233,13 +309,13 @@ native timeline boundary and the preserved exact playhead. The source tests pass
 this native rebuild interaction. A separate Split/preview timing repair and native retest are
 needed. The native boundary-state check failed.
 
-The capture below is the first rebase checkpoint `9710463`; its toolbar layout is retained in
-the final application.
+The capture below is the first rebase checkpoint `9710463`; it records the compact toolbar,
+not the new-project chooser or Summary flows inherited later.
 
 ![Rebased compact toolbar including Split](images/one-handed-navigation/editor-after-rebase.png)
 
 The earlier phone handoffs and captures below continue to describe their named pre-rebase builds.
-The phone has not been updated or exercised during this rebase; real camera/Record/Stop, either-hand
+This task used no physical device during the later rebases; real camera/Record/Stop, either-hand
 reach, RTL, Android and the broader audit acceptance work remain unverified.
 
 ### Empty-project review correction (`800d16e`)
