@@ -15,8 +15,8 @@ export async function mergeForSend(draftId: string): Promise<{ durationMs: numbe
   const segments = await segmentsForDraft(draftId);
   const recorder = await getRecorderFormat();
   const audio = exportAudio(recorder);
-  await resolveMergedExport(draftId, segments, audio, () =>
-    mergeWithEditor(segments, recorder, new AbortController().signal, () => {}),
+  await resolveMergedExport(draftId, segments, audio, (voiceover) =>
+    mergeWithEditor(segments, recorder, new AbortController().signal, () => {}, voiceover),
   );
   const saved = await loadMergedExport(draftId, segments, audio);
   if (!saved) throw new Error(`Draft ${draftId}: the merged video couldn't be saved for sending.`);

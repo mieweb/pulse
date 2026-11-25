@@ -52,6 +52,9 @@ export const drafts = sqliteTable(
     // Where the captions sit on the video: the caption's vertical centre, as a fraction of the
     // picture's height (0 top, 1 bottom), dragged on the editor's preview. Null = the default place.
     captionY: real('caption_y'),
+    // Draft-level audio channels. Capture monitoring never writes these saved mix choices.
+    sourceAudioMuted: integer('source_audio_muted', { mode: 'boolean' }).notNull().default(false),
+    voiceoverMuted: integer('voiceover_muted', { mode: 'boolean' }).notNull().default(false),
     // Versioned editor undo/redo checkpoint, including dormant addition rows. Null on old drafts.
     undoHistory: text('undo_history'),
     // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
@@ -133,6 +136,26 @@ export const segments = sqliteTable(
   // (insertSegments computes order and shifts later clips inside a transaction; it and reorder
   // move rows in two passes, via distinct negatives).
   (t) => [uniqueIndex('segments_draft_order_unique').on(t.draftId, t.order)],
+);
+
+/** Narration is anchored to the draft timeline, independently of clip boundaries and edits. */
+export const voiceoverTakes = sqliteTable(
+  'voiceover_takes',
+  {
+    id: text('id').primaryKey(),
+    draftId: text('draft_id')
+      .notNull()
+      .references(() => drafts.id, { onDelete: 'cascade' }),
+    filename: text('filename').notNull(),
+    startMs: real('start_ms').notNull(),
+    durationMs: real('duration_ms').notNull(),
+    trimStartMs: real('trim_start_ms').notNull(),
+    trimEndMs: real('trim_end_ms').notNull(),
+    // Addition order, rather than timeline order: Undo removes the most recently recorded take.
+    sequence: integer('sequence').notNull(),
+    createdAt: integer('created_at').notNull().default(now),
+  },
+  (t) => [uniqueIndex('voiceover_takes_draft_sequence_unique').on(t.draftId, t.sequence)],
 );
 
 /**
@@ -318,6 +341,7 @@ export const localSettings = sqliteTable('local_settings', {
 
 export type Draft = typeof drafts.$inferSelect;
 export type Segment = typeof segments.$inferSelect;
+export type VoiceoverTake = typeof voiceoverTakes.$inferSelect;
 export type DraftTranscript = typeof draftTranscripts.$inferSelect;
 export type ClipTranscript = typeof clipTranscripts.$inferSelect;
 export type UploadDestination = typeof uploadDestinations.$inferSelect;

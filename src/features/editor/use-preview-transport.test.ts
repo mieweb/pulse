@@ -66,6 +66,12 @@ function preview(...landings: ReturnType<typeof gate>[]) {
     },
     onTime: () => {},
     onStatus: () => {},
+    prepareVoiceover: async () => {},
+    startVoiceover: async () => 0,
+    stopVoiceover: async () => {
+      throw new Error('No microphone take in transport tests');
+    },
+    cancelVoiceover: () => {},
     seek,
     play: jest.fn(),
     pause: jest.fn(),
@@ -225,6 +231,35 @@ describe('preview initial placement', () => {
 });
 
 describe('preview seek reconciliation', () => {
+  it('holds the next take behind a saved audio rebuild and its return-position seek', async () => {
+    const returned = gate();
+    const native = preview(returned);
+    const { ctl, values } = usePreviewTransport();
+    ctl.onReady(native.ref);
+    ctl.setTotal(75000);
+    ctl.onTime(5300, false);
+    ctl.endTrim(4352.69);
+    let settled = false;
+    const barrier = ctl.waitUntilSettled().then((ready) => {
+      settled = ready;
+    });
+    jest.advanceTimersByTime(32);
+    await drain();
+    expect(settled).toBe(false);
+    expect(native.seek).not.toHaveBeenCalled();
+    ctl.onStatus(ready(75000));
+    ctl.onTime(5300, false); // old swap position cannot displace the return target
+    expect(values.timeMs.get()).toBe(4352.69);
+    expect(native.seek).toHaveBeenCalledWith(4352.69);
+    expect(settled).toBe(false);
+    returned.resolve(4352.69);
+    await drain();
+    jest.advanceTimersByTime(32);
+    await barrier;
+    expect(settled).toBe(true);
+    expect(ctl.lastMs).toBe(4352.69);
+  });
+
   it('retries the current append target when a rebuild lands at the old position', async () => {
     const swap = gate();
     const corrected = gate();

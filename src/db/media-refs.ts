@@ -4,7 +4,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { historyMediaPaths, parsePersistedHistory } from '@/db/persisted-history';
 import { editedThumbRelPath, exportRelPath, thumbRelPath } from '@/utils/media-paths';
-import { clipTranscripts, drafts, segments } from './schema';
+import { clipTranscripts, drafts, segments, voiceoverTakes } from './schema';
 import { assertLibraryHistoryOwnership } from './undo-history';
 
 /** The `file` a `caption_edit` value is timed against, if it has one. */
@@ -75,6 +75,13 @@ export function referencedMediaPaths(conn: SQLiteDatabase, draftIds?: string[]):
     rows,
     files.map((r) => r.file),
   );
+  for (const take of d
+    .select({ filename: voiceoverTakes.filename })
+    .from(voiceoverTakes)
+    .where(draftIds ? inArray(voiceoverTakes.draftId, draftIds) : undefined)
+    .all()) {
+    paths.add(take.filename);
+  }
   const ids = d
     .select({ id: drafts.id, undoHistory: drafts.undoHistory })
     .from(drafts)
@@ -117,9 +124,17 @@ export function assertSafeLibrary(conn: SQLiteDatabase): void {
           .map((r) => r.v)
           .filter((v): v is string => typeof v === 'string')
       : [];
-  const ids = [...strings('drafts', 'id'), ...strings('segments', 'id')];
+  const ids = [
+    ...strings('drafts', 'id'),
+    ...strings('segments', 'id'),
+    ...strings('voiceover_takes', 'id'),
+  ];
   if (ids.some((id) => !SAFE_ID.test(id))) throw new Error('Unsafe draft or clip id.');
-  if (strings('segments', 'draft_id').some((id) => !SAFE_ID.test(id))) {
+  if (
+    [...strings('segments', 'draft_id'), ...strings('voiceover_takes', 'draft_id')].some(
+      (id) => !SAFE_ID.test(id),
+    )
+  ) {
     throw new Error('Unsafe draft or clip id.');
   }
   const paths = [
@@ -128,6 +143,7 @@ export function assertSafeLibrary(conn: SQLiteDatabase): void {
     ...strings('segments', 'thumbnail'),
     ...strings('clip_transcripts', 'file'),
     ...strings('segments', 'caption_edit').map(captionFile),
+    ...strings('voiceover_takes', 'filename'),
   ];
   for (const path of paths) {
     if (path != null && !isSafeMediaPath(path)) throw new Error('Unsafe media path.');
