@@ -1,5 +1,10 @@
 # Transcript-driven video cut: first pass
 
+This records the original single-word baseline. The editor now also provides **Transcript** for
+multiple-word/range selection and reviewed filler/quiet-pause cleanup; see
+[the bulk validation](bulk-transcript-validation.md) and
+[the current behavior](../persistence.md#editor-operations-and-undo).
+
 Verified 2026-11-25 on application source `a46cfce`, including main `2cfe6fb` and native
 `pulse-editor` `306ff1d`. The test used an isolated iPhone 17 Pro / iOS 26 Simulator, with a
 compatible Release native shell and the freshly bundled application JavaScript. No native

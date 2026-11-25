@@ -51,7 +51,13 @@ import { HISTORY_MAX_MEDIA_BYTES, parsePersistedHistory } from '@/db/persisted-h
 import { env } from '@/test-support/expo-fs-node';
 import { setCaptionEdits, setCaptionY } from '@/db/captions';
 import { expoDb } from '@/db/client';
-import { addSegment, createDraft, deleteSegment } from '@/db/drafts';
+import {
+  addSegment,
+  createDraft,
+  cutTranscriptRanges,
+  deleteSegment,
+  segmentsForDraft,
+} from '@/db/drafts';
 import * as draftFunctions from '@/db/drafts';
 import * as fileStore from '@/utils/file-store';
 import { renderKey } from '@/utils/segment-window';
@@ -368,6 +374,39 @@ describe('persistent editor Undo on a migrated library', () => {
     expect(JSON.parse(clipRows(draftId)[0].editState!).speed).toBe(2);
     expect(saved(draftId)?.past).toHaveLength(2);
     expect(saved(draftId)?.future).toHaveLength(0);
+  });
+
+  it('retains a completely cleaned project and its source after close/reopen and media sweep', async () => {
+    const draftId = await createDraft();
+    const a = await add(draftId, 'cleaned');
+    const first = open(draftId);
+    const row = (await segmentsForDraft(draftId))[0];
+    await cutTranscriptRanges(draftId, [
+      {
+        clipId: row.id,
+        sourceKey: renderKey(row),
+        captionKey: row.captionEdit,
+        fps: 30,
+        ranges: [{ startMs: 0, endMs: row.durationMs }],
+      },
+    ]);
+    await waitForUndoHistory();
+    expect(clipRows(draftId)).toEqual([]);
+    expect(first.store.getState().keepEmptyOpen).toBe(true);
+    expect(hasRetainedUndo(draftId)).toBe(true);
+    await first.close();
+    dropHeldFiles(referencedMediaPaths(expoDb));
+    expect(existsSync(a.absolute)).toBe(true);
+    expect(hasRetainedUndo(draftId)).toBe(true);
+    const reopened = open(draftId);
+    expect(reopened.store.getState().keepEmptyOpen).toBe(true);
+    reopened.store.undo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId).map((row) => row.id)).toEqual([a.id]);
+    reopened.store.redo(present(draftId), (diff) => apply(draftId, diff));
+    await waitForUndoHistory();
+    expect(clipRows(draftId)).toEqual([]);
+    await reopened.close();
   });
 
   it('keeps an undone addition recoverable after deleting A and reopening an empty draft', async () => {

@@ -230,6 +230,7 @@ export function MainToolbar({
   onSplit,
   captionsBusy,
   onCaptions,
+  onTranscript,
   tip,
 }: {
   /** Some clip can be edited (the draft has clips). */
@@ -242,10 +243,18 @@ export function MainToolbar({
   /** The model downloading, or clips being transcribed. */
   captionsBusy: boolean;
   onCaptions: () => void;
+  onTranscript: () => void;
   tip?: ReactNode;
 }) {
   const tools: Tool[] = [
     { key: 'edit', label: 'Edit', icon: 'pencil', onPress: onEdit, disabled: !canEdit },
+    {
+      key: 'transcript',
+      label: 'Transcript',
+      icon: 'text.alignleft',
+      onPress: onTranscript,
+      disabled: !canEdit,
+    },
     splitTool(canSplit, onSplit),
     {
       key: 'captions',

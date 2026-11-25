@@ -10,6 +10,7 @@ import {
   planStep,
   snapshotOf,
   takenOut,
+  hasRestorableClips,
   type AddedStep,
   type Present,
   type SnapshotDiff,
@@ -65,7 +66,7 @@ export function createEditorHistory(deps: HistoryDeps) {
   const openBatches = new Set<string>();
   let snapshot = {
     ...history,
-    keepEmptyOpen: takenOut(history.future).length > 0,
+    keepEmptyOpen: hasRestorableClips(history),
     batchOpen: false,
     busy: false,
   };
@@ -77,7 +78,7 @@ export function createEditorHistory(deps: HistoryDeps) {
     history = next;
     snapshot = {
       ...history,
-      keepEmptyOpen: pendingAddition || openBatches.size > 0 || takenOut(history.future).length > 0,
+      keepEmptyOpen: pendingAddition || openBatches.size > 0 || hasRestorableClips(history),
       batchOpen: openBatches.size > 0,
       busy: pendingAddition,
     };

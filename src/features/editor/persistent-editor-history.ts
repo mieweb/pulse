@@ -12,7 +12,7 @@ import {
   createEditorHistory,
   type EditorHistoryStore,
 } from '@/features/editor/editor-history-store';
-import type { Step } from '@/features/editor/editor-history';
+import { hasRestorableClips, type Step } from '@/features/editor/editor-history';
 import { emptyHistory, type History } from '@/features/transcription/edit-history';
 import {
   historyMediaPaths,
@@ -60,7 +60,8 @@ export function hasRetainedUndo(draftId: string): boolean {
   const active = sessions.get(draftId)?.store.getState();
   if (active?.keepEmptyOpen) return true;
   try {
-    return read(draftId)?.future.some((step) => step.kind === 'added' && step.taken) ?? false;
+    const stored = read(draftId);
+    return stored ? hasRestorableClips(stored) : false;
   } catch {
     return true; // unreadable saved state is a recovery input, not permission to delete a draft
   }

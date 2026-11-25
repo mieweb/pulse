@@ -874,6 +874,46 @@ function savedUndo(conn: SQLiteDatabase, draftId: string) {
 }
 
 describe('undo history in .pulse files', () => {
+  it('transfers a completely cleaned draft and replays its original under fresh identities', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    const app = appLibrary();
+    try {
+      const [original] = await app.drafts.segmentsForDraft(D2);
+      await app.drafts.cutTranscriptRanges(D2, [
+        {
+          clipId: original.id,
+          sourceKey: renderKey(original),
+          captionKey: original.captionEdit,
+          fps: 30,
+          ranges: [{ startMs: 0, endMs: original.durationMs }],
+        },
+      ]);
+      expect(await app.drafts.segmentsForDraft(D2)).toEqual([]);
+      const sourceHistory = JSON.stringify(savedUndo(conn, D2));
+      const uri = await exportDrafts(conn, [D2], 7700);
+      let id = 0;
+      const [copy] = await importProjectFile(conn, uri, () => `cleanup-copy-${++id}`);
+      const history = savedUndo(conn, copy);
+      const step = history.past.at(-1);
+      if (step?.kind !== 'added' || !step.splits?.length) throw new Error('Expected cleanup.');
+      expect(step.ids).toEqual([]);
+      expect([...historyClipIds(history)]).not.toContain(original.id);
+      const taken = await app.drafts.takeOutSegments(step.ids, step.splits, undefined, copy);
+      expect(taken).not.toBeNull();
+      const [restored] = await app.drafts.segmentsForDraft(copy);
+      expect(restored.id).not.toBe(original.id);
+      expect(restored.originalFilename.startsWith(`drafts/${copy}/`)).toBe(true);
+      expect(readMedia(restored.originalFilename)).toBe(readMedia(original.originalFilename));
+      await app.drafts.restoreSegments(taken!, undefined, copy);
+      expect(await app.drafts.segmentsForDraft(copy)).toEqual([]);
+      expect(await app.drafts.segmentsForDraft(D2)).toEqual([]);
+      expect(JSON.stringify(savedUndo(conn, D2))).toBe(sourceHistory);
+    } finally {
+      app.client.expoDb.closeSync();
+    }
+  });
+
   it('round trips an empty draft with dormant Redo clips under fresh IDs, without touching the source', async () => {
     const conn = await openMigrated();
     const original = seedUndoFixture(conn);

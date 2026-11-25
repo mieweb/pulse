@@ -83,6 +83,7 @@ export function CaptionWordPicker({
   canCutSpeech,
   onPick,
   onCutSpeech,
+  onOpenTranscript,
 }: {
   lines: readonly CaptionLine[];
   picked: { clipId: string; i: number } | null;
@@ -91,6 +92,7 @@ export function CaptionWordPicker({
   canCutSpeech: boolean;
   onPick: (line: number, word: number) => void;
   onCutSpeech: () => void;
+  onOpenTranscript: () => void;
 }) {
   const theme = useTheme();
   const words = lines.flatMap((line, l) =>
@@ -127,32 +129,51 @@ export function CaptionWordPicker({
           numberOfLines={2}>
           {label}
         </Text>
-        <Pressable
-          onPress={onCutSpeech}
-          disabled={busy || !canCutSpeech}
-          accessibilityRole="button"
-          accessibilityLabel="Cut selected word from video"
-          accessibilityHint={
-            canCutSpeech
-              ? 'Removes its audio and video. Undo restores the word.'
-              : 'Select a word with video before and after it.'
-          }
-          accessibilityState={{ disabled: busy || !canCutSpeech, busy }}
-          testID="editor.cutSpeech"
-          style={({ pressed }) => [
-            styles.cutSpeech,
-            { backgroundColor: theme.backgroundElement },
-            (busy || !canCutSpeech || pressed) && styles.dim,
-          ]}>
-          {busy ? (
-            <ActivityIndicator size="small" color={theme.text} />
-          ) : (
-            <Icon name="scissors" size={16} tintColor={theme.text} />
-          )}
-          <Text style={[styles.cutLabel, { color: theme.text }]} maxFontSizeMultiplier={1.3}>
-            Cut speech
-          </Text>
-        </Pressable>
+        <View style={styles.wordButtons}>
+          <Pressable
+            onPress={onOpenTranscript}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="Edit transcript and clean up speech"
+            accessibilityState={{ disabled: busy }}
+            testID="editor.openTranscript"
+            style={[
+              styles.cutSpeech,
+              { backgroundColor: theme.backgroundElement },
+              busy && styles.dim,
+            ]}>
+            <Icon name="pencil" size={16} tintColor={theme.text} />
+            <Text style={[styles.cutLabel, { color: theme.text }]} maxFontSizeMultiplier={1.3}>
+              Transcript
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={onCutSpeech}
+            disabled={busy || !canCutSpeech}
+            accessibilityRole="button"
+            accessibilityLabel="Cut selected word from video"
+            accessibilityHint={
+              canCutSpeech
+                ? 'Removes its audio and video. Undo restores the word.'
+                : 'Select a word with video before and after it.'
+            }
+            accessibilityState={{ disabled: busy || !canCutSpeech, busy }}
+            testID="editor.cutSpeech"
+            style={({ pressed }) => [
+              styles.cutSpeech,
+              { backgroundColor: theme.backgroundElement },
+              (busy || !canCutSpeech || pressed) && styles.dim,
+            ]}>
+            {busy ? (
+              <ActivityIndicator size="small" color={theme.text} />
+            ) : (
+              <Icon name="scissors" size={16} tintColor={theme.text} />
+            )}
+            <Text style={[styles.cutLabel, { color: theme.text }]} maxFontSizeMultiplier={1.3}>
+              Cut speech
+            </Text>
+          </Pressable>
+        </View>
       </View>
       <CommandButton
         icon={I18nManager.isRTL ? 'chevron.left' : 'chevron.right'}
@@ -222,6 +243,7 @@ export function CaptionStatus({
 const styles = StyleSheet.create({
   wordPicker: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, gap: 4 },
   wordActions: { flex: 1, alignItems: 'center', paddingVertical: 4 },
+  wordButtons: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 },
   selectedWord: { fontSize: 13, textAlign: 'center', paddingBottom: 4 },
   cutSpeech: {
     minHeight: 44,

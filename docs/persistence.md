@@ -52,11 +52,27 @@ word's source interval. Previous/Next word buttons provide a native accessible s
 The kept ranges share the unchanged media file, retain effects and caption corrections, and have
 separate `baseWindow` bounds so Reset cannot reveal the removed speech. Source word timing is
 converted from centiseconds to milliseconds and snapped to the probed source frame rate. This
-first pass requires at least one frame on each side of the cut; edge/whole-beat cuts are disabled.
+quick action requires at least one frame on each side of the cut; use **Transcript** for larger
+selections, edge cuts and whole-beat removal.
 Caption **Edit** and **Hide word** continue to change captions only. Preview and export consume
 the saved kept ranges, and one Undo/Redo restores/reapplies the cut across reopening and transfer.
 Separate draft narration keeps its timeline placement, following the existing voiceover contract;
 the speech cut affects the selected source video's picture and sound.
+
+**Transcript** opens a frozen review of the current source words. Select multiple words or use
+**Range** to select a passage, in **This beat** or **Whole Pulse**. **Clean up → Analyze** proposes
+conservative transcript fillers and actual low-energy audio pauses, with adjustable minimum pause
+length and retained breathing space. Transcription models may omit fillers; meaningful words such
+as “like” and “so” are not selected by default. Muted/no-audio beats are skipped, and entirely quiet
+sources require explicit review. Each candidate can be excluded or auditioned before applying.
+
+Applying unions overlapping, frame-snapped source cuts and stores every retained range in one
+SQLite transaction and one persistent Undo step. Source/render, caption-edit and model-transcript
+snapshots are checked before any write. A changed review input rejects the whole operation.
+Original rows and media remain retained even when every live clip is removed, so Undo still works
+after reopening or `.pulse` transfer. Reset cannot expand a retained range through a removed gap.
+Separate draft narration remains anchored as above. Quiet-audio detection is not a semantic speech
+classifier; review very quiet speech and music-backed recordings before applying its proposals.
 
 One Undo step owns a Timeline split and insertion together. Undo takes the inserted clips and
 halves out and restores the unsplit original in one transaction; Redo restores the applied rows,

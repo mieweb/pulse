@@ -65,6 +65,21 @@ const splitReceipt = (): SplitReceipt => ({
 });
 
 describe('createEditorHistory: split and insert', () => {
+  it('keeps an emptied cleanup editable when its originals are only on the Undo stack', () => {
+    const split = splitReceipt();
+    delete split.firstInsertedId;
+    const { deps } = fakes({
+      initial: {
+        past: [{ kind: 'added', ids: [], taken: null, splits: [split] }],
+        future: [],
+        lastOp: null,
+      },
+    });
+    const h = createEditorHistory(deps);
+    expect(h.getState().keepEmptyOpen).toBe(true);
+    h.dispose();
+  });
+
   it('passes the same original snapshot through repeated compound undo and redo', async () => {
     const split = splitReceipt();
     const takeOut = jest.fn<HistoryDeps['takeOut']>(async () => takenOf(['a', 'x', 'right']));
