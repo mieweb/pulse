@@ -48,6 +48,8 @@ export const drafts = sqliteTable(
     // Where the captions sit on the video: the caption's vertical centre, as a fraction of the
     // picture's height (0 top, 1 bottom), dragged on the editor's preview. Null = the default place.
     captionY: real('caption_y'),
+    // Versioned editor undo/redo checkpoint, including dormant addition rows. Null on old drafts.
+    undoHistory: text('undo_history'),
     // Monotonic badge counter: the highest clip number ever minted for this draft. Bumped on
     // every clip added, never decremented — so deleting (or renaming) a clip can never cause
     // its number to be reused.

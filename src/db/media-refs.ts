@@ -2,6 +2,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { historyMediaPaths, parsePersistedHistory } from '@/db/persisted-history';
 import { editedThumbRelPath, exportRelPath, thumbRelPath } from '@/utils/media-paths';
 import { clipTranscripts, drafts, segments } from './schema';
 
@@ -15,6 +16,43 @@ function captionFile(json: string | null): string | null {
   }
 }
 
+/** Live row references, without durable undo: used consistently for retention and transfer. */
+export function liveSegmentMediaPaths(
+  rows: readonly Record<string, unknown>[],
+  transcriptFiles: readonly string[] = [],
+): Set<string> {
+  const paths = new Set<string>(transcriptFiles);
+  const add = (path: unknown) => {
+    if (typeof path === 'string' && path) paths.add(path);
+  };
+  for (const row of rows) {
+    add(row.originalFilename);
+    add(row.editedFilename);
+    if (typeof row.editedFilename === 'string') add(editedThumbRelPath(row.editedFilename));
+    add(row.thumbnail);
+    if (typeof row.draftId === 'string' && typeof row.id === 'string')
+      add(thumbRelPath(row.draftId, row.id));
+    add(captionFile(typeof row.captionEdit === 'string' ? row.captionEdit : null));
+  }
+  return paths;
+}
+
+/** Current clips and transcript files for one draft, excluding history-only retained media. */
+export function liveDraftMediaPaths(conn: SQLiteDatabase, draftId: string): Set<string> {
+  const d = drizzle(conn);
+  const rows = d.select().from(segments).where(eq(segments.draftId, draftId)).all();
+  const files = d
+    .select({ file: clipTranscripts.file })
+    .from(clipTranscripts)
+    .innerJoin(segments, eq(segments.id, clipTranscripts.segmentId))
+    .where(eq(segments.draftId, draftId))
+    .all();
+  return liveSegmentMediaPaths(
+    rows,
+    files.map((r) => r.file),
+  );
+}
+
 /**
  * Every file (relative to the documents folder) the library needs: what rows store and what is
  * derived from them. Stored: clip originals, legacy baked edits, covers. Derived: the pristine
@@ -25,32 +63,27 @@ function captionFile(json: string | null): string | null {
 export function referencedMediaPaths(conn: SQLiteDatabase, draftIds?: string[]): Set<string> {
   const d = drizzle(conn);
   const inDrafts = draftIds ? inArray(segments.draftId, draftIds) : undefined;
-  const paths = new Set<string>();
-  const add = (p: string | null) => {
-    if (p) paths.add(p);
-  };
   const rows = d.select().from(segments).where(inDrafts).all();
-  for (const s of rows) {
-    add(s.originalFilename);
-    add(s.editedFilename);
-    if (s.editedFilename) add(editedThumbRelPath(s.editedFilename));
-    add(s.thumbnail);
-    add(thumbRelPath(s.draftId, s.id));
-    add(captionFile(s.captionEdit));
-  }
   const files = d
     .select({ file: clipTranscripts.file })
     .from(clipTranscripts)
     .innerJoin(segments, eq(segments.id, clipTranscripts.segmentId))
     .where(inDrafts)
     .all();
-  for (const { file } of files) add(file);
+  const paths = liveSegmentMediaPaths(
+    rows,
+    files.map((r) => r.file),
+  );
   const ids = d
-    .select({ id: drafts.id })
+    .select({ id: drafts.id, undoHistory: drafts.undoHistory })
     .from(drafts)
     .where(draftIds ? inArray(drafts.id, draftIds) : undefined)
     .all();
-  for (const { id } of ids) add(exportRelPath(id));
+  for (const { id, undoHistory } of ids) {
+    paths.add(exportRelPath(id));
+    const history = parsePersistedHistory(undoHistory, id);
+    if (history) for (const path of historyMediaPaths(history)) paths.add(path);
+  }
   return paths;
 }
 
@@ -97,5 +130,14 @@ export function assertSafeLibrary(conn: SQLiteDatabase): void {
   ];
   for (const path of paths) {
     if (path != null && !isSafeMediaPath(path)) throw new Error('Unsafe media path.');
+  }
+  if (has('drafts').has('undo_history')) {
+    for (const row of conn.getAllSync<{ id: string; history: string | null }>(
+      'SELECT id, undo_history AS history FROM drafts',
+    )) {
+      // Nested dormant rows and snapshot caption files need the same path/ownership checks as
+      // live rows before a backup's database can replace the library.
+      parsePersistedHistory(row.history, row.id);
+    }
   }
 }

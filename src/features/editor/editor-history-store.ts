@@ -18,6 +18,16 @@ import {
 
 /** What the history does to the draft, so it runs (and is tested) without the database. */
 export type HistoryDeps = {
+  initial?: History<Step>;
+  /** Durable sessions retain redo when React closes; completed operations still checkpoint. */
+  retainOnClose?: boolean;
+  /** Save the resulting stacks in the same transaction as moving addition rows. */
+  takeOutAndCheckpoint?: (
+    ids: string[],
+    splits: readonly SplitReceipt[],
+    next: (taken: TakenOutClips | null) => History<Step>,
+  ) => Promise<TakenOutClips | null>;
+  restoreAndCheckpoint?: (taken: TakenOutClips, next: () => History<Step>) => Promise<void>;
   /** Every edit asked for is stored (draft-writes.ts): an addition's rows are read after them. */
   flush: () => Promise<void>;
   /** Take an addition's clips out (`takeOutSegments`, then their transcription jobs dropped). */
@@ -43,18 +53,24 @@ export type HistoryDeps = {
  * - A change recorded meanwhile clears the redo stack as any change does: an undo finishing then
  *   drops what it took out (its files go); a redo finishing, or an undo failing (its clips still
  *   in), puts its step back under that change.
- * - Closed (`dispose`): the redo stack's files go, and those of an undo still running once it
- *   has finished.
+ * - Closed (`dispose`): durable sessions retain both stacks and finish pending operations.
+ *   Session-only callers discard redo files once pending operations finish.
  */
 export function createEditorHistory(deps: HistoryDeps) {
-  let history: History<Step> = emptyHistory<Step>();
+  let history: History<Step> = deps.initial ?? emptyHistory<Step>();
   /** Counts recorded changes, so a step finishing knows whether one came in meanwhile. */
   let changes = 0;
   let running: Promise<void> | null = null;
   let pendingAddition = false;
   const openBatches = new Set<string>();
-  let snapshot = { ...history, keepEmptyOpen: false, batchOpen: false, busy: false };
+  let snapshot = {
+    ...history,
+    keepEmptyOpen: takenOut(history.future).length > 0,
+    batchOpen: false,
+    busy: false,
+  };
   let disposed = false;
+  const discarded = () => disposed && !deps.retainOnClose;
   const listeners = new Set<() => void>();
 
   const set = (next: History<Step>) => {
@@ -101,7 +117,7 @@ export function createEditorHistory(deps: HistoryDeps) {
   ];
 
   const push = (step: Step, opKey: string | null) => {
-    if (disposed) return;
+    if (discarded()) return;
     changes++;
     dropAll(history.future);
     const recorded = recordStep(history, step, opKey, Date.now());
@@ -124,12 +140,18 @@ export function createEditorHistory(deps: HistoryDeps) {
       let taken: TakenOutClips | null = null;
       try {
         await deps.flush();
-        taken = step.splits?.length
-          ? await deps.takeOut(ids, step.splits)
-          : await deps.takeOut(ids);
+        taken = deps.takeOutAndCheckpoint
+          ? await deps.takeOutAndCheckpoint(ids, step.splits ?? [], (value) =>
+              value && !discarded() && changes === at
+                ? { ...history, future: [...history.future, { ...step, taken: value }] }
+                : history,
+            )
+          : step.splits?.length
+            ? await deps.takeOut(ids, step.splits)
+            : await deps.takeOut(ids);
       } catch (e) {
         // Nothing came out: the step goes back where it was, under any change recorded meanwhile.
-        if (!disposed) putUnderChanges(step, below);
+        if (!discarded()) putUnderChanges(step, below);
         else dropOriginals([step]);
         deps.failed('undo', e);
         return;
@@ -139,10 +161,10 @@ export function createEditorHistory(deps: HistoryDeps) {
         dropOriginals([step]);
         // Only storage can confirm that an addition disappeared. Skip it on this Undo tap,
         // unless a newer change or an open image batch has superseded the request.
-        if (!disposed && changes === at && openBatches.size === 0) await nextUndo();
+        if (!discarded() && changes === at && openBatches.size === 0) await nextUndo();
         return;
       }
-      if (disposed || changes !== at) {
+      if (discarded() || changes !== at) {
         void deps.drop(taken);
         dropOriginals([step]);
         return;
@@ -159,10 +181,16 @@ export function createEditorHistory(deps: HistoryDeps) {
     return (async () => {
       try {
         await deps.flush();
-        await deps.restore(step.taken);
+        if (deps.restoreAndCheckpoint) {
+          await deps.restoreAndCheckpoint(step.taken, () => {
+            const past = [...history.past];
+            past.splice(below ? past.lastIndexOf(below) + 1 : 0, 0, { ...step, taken: null });
+            return { ...history, past };
+          });
+        } else await deps.restore(step.taken);
       } catch (e) {
         // Not back: still redoable, unless a change came in (then its files go).
-        if (!disposed && changes === at) {
+        if (!discarded() && changes === at) {
           set({ ...history, future: [...history.future, step] });
         } else {
           void deps.drop(step.taken);
@@ -171,7 +199,7 @@ export function createEditorHistory(deps: HistoryDeps) {
         deps.failed('redo', e);
         return;
       }
-      if (disposed) {
+      if (discarded()) {
         dropOriginals([step]);
         return;
       }
@@ -240,7 +268,7 @@ export function createEditorHistory(deps: HistoryDeps) {
         ...(splits.length ? { splits } : {}),
         ...(batchKey ? { batchKey } : {}),
       };
-      if (disposed) {
+      if (discarded()) {
         dropOriginals([step]);
         return;
       }
@@ -280,14 +308,30 @@ export function createEditorHistory(deps: HistoryDeps) {
     redo: (now: Present, apply: (diff: SnapshotDiff) => void) => step('redo', now, apply),
     /** The undo or redo of an addition still running, if any (for tests). */
     settled: () => running ?? Promise.resolve(),
+    /** Apply storage retention, after its replacement checkpoint has committed. */
+    retain(next: History<Step>) {
+      const kept = new Set([...next.past, ...next.future]);
+      dropAll([...history.past, ...history.future].filter((s) => !kept.has(s)));
+      set(next);
+    },
+    /** A failed queued edit cannot bind the optimistic stacks to different stored values. */
+    reset() {
+      dropAll([...history.past, ...history.future]);
+      changes++;
+      set(emptyHistory<Step>());
+    },
     /** The editor is open (again: React may close and reopen an effect in development). */
     open() {
       disposed = false;
     },
-    /** The editor closed: nothing can be redone, so the clips undone out lose their files. */
+    /** The editor closed; durable sessions retain their stacks and any pending batch. */
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (deps.retainOnClose) {
+        set(closeCoalescing(history));
+        return;
+      }
       openBatches.clear();
       dropAll(history.future);
       dropOriginals(history.past);

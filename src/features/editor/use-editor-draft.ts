@@ -29,6 +29,7 @@ import {
   getWrites,
   onWriteFailure,
   subscribeWrites,
+  trackDraftWrite,
   writeEdit,
   writeOrder,
   type EditValue,
@@ -281,7 +282,7 @@ export function useEditorDraft(draftId: string) {
   const setCaptions = (values: ReadonlyMap<string, string | null>) => {
     setPendingCaptions((p) => new Map([...p, ...values]));
     countCaptionWrites(values.keys(), 1);
-    setCaptionEdits(values)
+    trackDraftWrite(setCaptionEdits(values))
       .catch((e: unknown) => {
         // The rows are the truth: what this write would have set drops (unless newer replaced it).
         setPendingCaptions((p) => {
@@ -302,7 +303,7 @@ export function useEditorDraft(draftId: string) {
   const remove = async (id: string): Promise<boolean> => {
     try {
       dropClipJobs({ segmentIds: [id] });
-      await deleteSegment(id);
+      await trackDraftWrite(deleteSegment(id));
       return true;
     } catch (e) {
       showToast({
@@ -317,6 +318,8 @@ export function useEditorDraft(draftId: string) {
   return {
     /** False until the rows are first read (or the read failed). */
     loaded: updatedAt !== undefined || error !== undefined,
+    /** Saved stacks cannot be consumed until the initial clip rows have loaded successfully. */
+    ready: updatedAt !== undefined && error === undefined,
     clips,
     /** The clips' rows as they play now (pending edits applied), for the captions. */
     segments,

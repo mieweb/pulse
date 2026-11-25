@@ -9,6 +9,7 @@ import { useRecorder } from './use-recorder';
 // absent; these tests cover file ownership and insertion failures, not camera capture.
 let mockSlots: unknown[] = [];
 let mockSlot = 0;
+let mockEffects: (() => void | (() => void))[] = [];
 function mockUseState<T>(initial: T | (() => T)) {
   const index = mockSlot++;
   if (!(index in mockSlots)) {
@@ -30,9 +31,12 @@ function mockUseRef<T>(initial: T) {
 jest.mock('react', () => ({
   useState: mockUseState,
   useRef: mockUseRef,
-  useEffect: () => {},
+  useEffect: (effect: () => void | (() => void)) => mockEffects.push(effect),
 }));
-jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+jest.mock('react-native', () => ({
+  Platform: { OS: 'ios' },
+  AppState: { addEventListener: () => ({ remove: () => {} }) },
+}));
 jest.mock('drizzle-orm/expo-sqlite', () => ({ useLiveQuery: () => ({ data: [] }) }));
 jest.mock('expo-image-picker', () => ({}));
 jest.mock('@mieweb/pulse-editor', () => ({}), { virtual: true });
@@ -40,23 +44,38 @@ jest.mock('@mieweb/pulse-editor', () => ({}), { virtual: true });
 const mockCreateRecorder = jest.fn<() => Promise<unknown>>();
 jest.mock('react-native-vision-camera', () => ({
   CommonResolutions: { FHD_16_9: {} },
-  useVideoOutput: () => ({ createRecorder: mockCreateRecorder }),
+  useVideoOutput: () => ({
+    createRecorder: mockCreateRecorder,
+    setOutputSettings: async () => {},
+  }),
 }));
 const mockAddSegment = jest.fn<(...args: unknown[]) => Promise<void>>();
 const mockAddSegmentCover = jest.fn<() => Promise<void>>();
 const mockExpectCover = jest.fn();
+const mockDeleteDraft = jest.fn<() => Promise<void>>();
 jest.mock('@/db/drafts', () => ({
   addSegment: (...args: unknown[]) => mockAddSegment(...args),
   addSegmentCover: () => mockAddSegmentCover(),
   expectSegmentCover: (...args: unknown[]) => mockExpectCover(...args),
   segmentsForDraft: () => [],
+  deleteDraft: () => mockDeleteDraft(),
 }));
-jest.mock('@/db/settings', () => ({}));
+jest.mock('@/db/settings', () => ({
+  getRecorderPrefs: async () => ({ facing: 'back', stabilization: 'off', muted: false }),
+}));
+const mockHasRetainedUndo = jest.fn<() => boolean>();
+jest.mock('@/features/editor/persistent-editor-history', () => ({
+  hasRetainedUndo: () => mockHasRetainedUndo(),
+}));
+const mockWaitForUndoHistory = jest.fn<() => Promise<void>>();
+jest.mock('@/core/undo-write-barrier', () => ({
+  waitForUndoHistory: () => mockWaitForUndoHistory(),
+}));
 const mockShowToast = jest.fn();
 jest.mock('@/features/toast/toast-provider', () => ({
   useToast: () => ({ showToast: mockShowToast }),
 }));
-jest.mock('@/features/transcription/clip-queue', () => ({}));
+jest.mock('@/features/transcription/clip-queue', () => ({ dropClipJobs: () => {} }));
 const mockPersistRecording =
   jest.fn<(uri: string, draftId: string, segmentId: string) => Promise<string>>();
 const mockDeleteQuietly = jest.fn();
@@ -91,6 +110,7 @@ const anchor: ClipAnchor = {
 
 function renderRecorder() {
   mockSlot = 0;
+  mockEffects = [];
   // eslint-disable-next-line react-hooks/rules-of-hooks -- Controlled hook harness, without a native renderer.
   return useRecorder('draft', undefined, undefined, { insertAnchor: anchor });
 }
@@ -119,6 +139,49 @@ beforeEach(() => {
   mockDuration.mockResolvedValue(1000);
   mockAddSegment.mockResolvedValue();
   mockAddSegmentCover.mockResolvedValue();
+  mockDeleteDraft.mockResolvedValue();
+  mockHasRetainedUndo.mockReturnValue(false);
+  mockWaitForUndoHistory.mockResolvedValue();
+});
+
+describe('leaving a recorder whose last clip was taken out', () => {
+  // Run the lifecycle effects only for cleanup checks; capture the native-free latest render.
+  function unmount() {
+    const cleanup = mockEffects.map((effect) => effect());
+    for (const dispose of cleanup) if (typeof dispose === 'function') dispose();
+  }
+  async function finishCleanup() {
+    for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+  }
+
+  it('waits for the editor checkpoint and retains an empty draft with Redo', async () => {
+    await recordTake();
+    let complete!: () => void;
+    mockWaitForUndoHistory.mockReturnValue(
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+    );
+    mockHasRetainedUndo.mockReturnValue(true);
+
+    unmount();
+    expect(mockDeleteDraft).not.toHaveBeenCalled();
+    expect(mockHasRetainedUndo).not.toHaveBeenCalled();
+    complete();
+    await finishCleanup();
+
+    expect(mockHasRetainedUndo).toHaveBeenCalledTimes(1);
+    expect(mockDeleteDraft).not.toHaveBeenCalled();
+  });
+
+  it('still removes an empty draft without retained Redo', async () => {
+    await recordTake();
+    unmount();
+    await finishCleanup();
+
+    expect(mockHasRetainedUndo).toHaveBeenCalledTimes(1);
+    expect(mockDeleteDraft).toHaveBeenCalledTimes(1);
+  });
 });
 afterEach(() => {
   jest.clearAllTimers();

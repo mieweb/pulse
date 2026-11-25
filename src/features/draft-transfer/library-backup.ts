@@ -4,8 +4,14 @@ import { drizzle } from 'drizzle-orm/expo-sqlite';
 import { migrate } from 'drizzle-orm/expo-sqlite/migrator';
 import { listContents, unzip } from 'react-native-zip-archive';
 
+import { waitForUndoHistory } from '@/core/undo-write-barrier';
 import { quickCheckOk } from '@/db/durability';
-import { assertSafeLibrary, isSafeMediaPath, referencedMediaPaths } from '@/db/media-refs';
+import {
+  assertSafeLibrary,
+  isSafeMediaPath,
+  liveDraftMediaPaths,
+  referencedMediaPaths,
+} from '@/db/media-refs';
 import {
   APP_SCHEMA_VERSION,
   assertCurrentSchema,
@@ -27,6 +33,12 @@ import { plainPath, yieldToUi, zipFlat } from './native-zip';
 import { exportWorkspace } from './workspace';
 import { documentDir } from '@/utils/storage-root';
 import { databaseDir } from '@/db/database-dir';
+import { historyCheckpoint } from '@/db/undo-history';
+import {
+  parsePersistedHistory,
+  requiredHistoryMediaPaths,
+  trimPersistedHistory,
+} from '@/db/persisted-history';
 
 // A library backup: the database as a SQLite file (copied with the online backup API), exactly the
 // files its rows need, and a manifest listing each with its library path, size and native MD5.
@@ -77,8 +89,47 @@ function databaseBytes(): number {
   }, 0);
 }
 
+/** Older backups have no undo column. New ones must carry every retained replay source. */
+function checkUndoMedia(
+  conn: SQLiteDatabase,
+  available: ReadonlyMap<string, number>,
+  omitStale = false,
+): void {
+  if (
+    !conn
+      .getAllSync<{ name: string }>('PRAGMA table_info(drafts)')
+      .some((c) => c.name === 'undo_history')
+  )
+    return;
+  for (const row of conn.getAllSync<{ id: string; history: string | null }>(
+    'SELECT id, undo_history AS history FROM drafts',
+  )) {
+    const history = parsePersistedHistory(row.history, row.id);
+    if (!history) continue;
+    if (history.checkpoint !== historyCheckpoint(conn, row.id)) {
+      if (!omitStale) throw new Error('Undo history does not match its draft.');
+      conn.runSync('UPDATE drafts SET undo_history = NULL WHERE id = ?', row.id);
+    } else if ([...requiredHistoryMediaPaths(history)].some((path) => !available.has(path))) {
+      throw new Error('Undo history media is missing.');
+    } else {
+      const retained = trimPersistedHistory(
+        history,
+        (path) => available.get(path) ?? null,
+        liveDraftMediaPaths(conn, row.id),
+      );
+      if (
+        retained.past.length !== history.past.length ||
+        retained.future.length !== history.future.length
+      ) {
+        throw new Error('Undo history exceeds its retention limit.');
+      }
+    }
+  }
+}
+
 /** Write the whole library to a `.pulse` backup in the cache and return its URI for sharing. */
 export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Promise<string> {
+  await waitForUndoHistory();
   // The database copy is written first; the room for the media is checked once it's listed.
   ensureFreeSpace(2 * databaseBytes());
   const dir = exportWorkspace('library', now);
@@ -101,6 +152,11 @@ export async function createLibraryBackup(conn: SQLiteDatabase, now: number): Pr
       media = [...referencedMediaPaths(copy)]
         .filter((p) => !isExport(p) && new File(absolutize(p)).exists)
         .sort();
+      checkUndoMedia(
+        copy,
+        new Map(media.map((path) => [path, new File(absolutize(path)).size ?? 0])),
+        true,
+      );
     } finally {
       copy.closeSync();
     }
@@ -179,7 +235,8 @@ function readManifest(stage: Directory): BackupManifest {
       typeof f?.path === 'string' &&
       typeof f.entry === 'string' &&
       typeof f.md5 === 'string' &&
-      typeof f.size === 'number' &&
+      Number.isSafeInteger(f.size) &&
+      f.size >= 0 &&
       /^[^/\\]+$/.test(f.entry) && // a plain name in the flat archive, never a path
       !['.', '..'].includes(f.entry) &&
       (f.path === DATABASE ? f.entry === DATABASE : isSafeMediaPath(f.path));
@@ -256,6 +313,7 @@ export async function restoreLibraryBackup(
         throw new Error(DAMAGED);
       }
       assertSafeLibrary(db);
+      checkUndoMedia(db, new Map(manifest.files.map((file) => [file.path, file.size])));
       await assertCompleteOnceMigrated(db, stage);
       const tables = db.getAllSync<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'upload_destinations'",

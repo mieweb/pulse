@@ -7,8 +7,8 @@ import { settings } from './schema';
 
 /**
  * The files of clips the editor's undo took out (`takeOutSegments`), kept on disk for a redo. The
- * redo history lives in memory, so a Pulse that dies with one pending would leave them forever:
- * they're noted here as they're taken out, and the next launch deletes those no row uses
+ * history checkpoint can be interrupted or evicted, so they're noted here as they're taken out,
+ * and the next launch deletes those no live row or saved undo checkpoint uses
  * (`dropHeldFiles`). Only these: a file is never deleted just for lacking a row (a library
  * recovered from an older copy has files of clips its rows lost).
  */
@@ -37,7 +37,8 @@ export function noteHeldFiles(tx: Tx, files: readonly string[]): void {
 
 /**
  * At launch, before anything can hold a file again: delete the files noted as held that no row
- * uses (`referenced`, `referencedMediaPaths`: a clip put back, or sharing its file, keeps it), and
+ * uses (`referenced`, `referencedMediaPaths`: a saved history, a clip put back, or a shared file
+ * keeps it), and
  * forget the list. `referenced` null forgets it without deleting (a library recovered or restored
  * this launch: its rows may not be the ones the list was written against). Returns how many noted
  * files no row used.

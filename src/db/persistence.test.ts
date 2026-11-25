@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  truncateSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,7 +30,15 @@ import {
 import { exportDrafts } from '@/features/draft-transfer/pack';
 import { importProjectFile, pulseFileKind } from '@/features/draft-transfer/unpack-project';
 import { applyDurability, readDurability } from './durability';
+import {
+  historyClipIds,
+  historyMediaPaths,
+  HISTORY_MAX_MEDIA_BYTES,
+  parsePersistedHistory,
+  type PersistedHistory,
+} from '@/db/persisted-history';
 import { assertSafeLibrary, referencedMediaPaths } from './media-refs';
+import { checkpointForRows, historyCheckpoint } from './undo-history';
 import {
   APP_SCHEMA_VERSION,
   assertSchemaCoverage,
@@ -284,6 +293,16 @@ function seedFixture(conn: SQLiteDatabase) {
     })
     .run();
   seedLocal(conn, 'src');
+  conn.runSync(
+    'UPDATE drafts SET undo_history = ? WHERE id = ?',
+    JSON.stringify({
+      version: 1,
+      checkpoint: historyCheckpoint(conn, D2),
+      past: [],
+      future: [],
+    }),
+    D2,
+  );
   // The files: everything referenced, stored or derived.
   for (const rel of FIXTURE_MEDIA) media(rel);
 }
@@ -674,7 +693,9 @@ describe('schema-driven project document', () => {
 
     use(newDevice());
     const dst = await openMigrated();
-    const draftIds = await importProjectFile(dst, uri, () => `x${Math.random()}`.slice(0, 10));
+    const draftIds = await importProjectFile(dst, uri, () =>
+      `x${Math.random()}`.replace('.', '').slice(0, 10),
+    );
     expect(draftIds).toHaveLength(2);
     const originals = dst.getAllSync<{ f: string }>('SELECT original_filename AS f FROM segments');
     for (const { f } of originals) expect(existsSync(join(env.docDir, f))).toBe(true);
@@ -768,6 +789,333 @@ describe('schema-driven project document', () => {
     expect(() => checkProject({ ...doc, tables: { ...doc.tables, drafts: [] } })).toThrow(
       'This .pulse file is damaged.',
     );
+  });
+});
+
+/** A closed editor whose last addition is held only for Redo, including all of its metadata. */
+function seedUndoFixture(conn: SQLiteDatabase): PersistedHistory {
+  seedFixture(conn);
+  const rows = drizzle(conn).select().from(schema.segments).all();
+  const added = rows.find((r) => r.id === S2)!;
+  const transcripts = drizzle(conn)
+    .select()
+    .from(schema.clipTranscripts)
+    .all()
+    .filter((r) => r.segmentId === S2);
+  conn.runSync('DELETE FROM segments WHERE draft_id = ?', D);
+  const history: PersistedHistory = {
+    version: 1,
+    checkpoint: historyCheckpoint(conn, D),
+    past: [
+      {
+        kind: 'state',
+        snapshot: {
+          order: [S1, S2],
+          edits: { [S1]: null, [S2]: EDIT_JSON },
+          captions: { [S1]: null, [S2]: added.captionEdit },
+          captionY: 0.2,
+        },
+      },
+    ],
+    future: [
+      {
+        kind: 'added',
+        ids: [S2],
+        taken: {
+          draftId: D,
+          order: [S1, S2],
+          rows: [added],
+          transcripts,
+        },
+      },
+    ],
+  };
+  conn.runSync('UPDATE drafts SET undo_history = ? WHERE id = ?', JSON.stringify(history), D);
+  return history;
+}
+
+function savedUndo(conn: SQLiteDatabase, draftId: string) {
+  const row = conn.getFirstSync<{ history: string | null }>(
+    'SELECT undo_history AS history FROM drafts WHERE id = ?',
+    draftId,
+  );
+  return parsePersistedHistory(row?.history, draftId)!;
+}
+
+describe('undo history in .pulse files', () => {
+  it('round trips an empty draft with dormant Redo clips under fresh IDs, without touching the source', async () => {
+    const conn = await openMigrated();
+    const original = seedUndoFixture(conn);
+    const sourceSaved = JSON.stringify(original);
+    const uri = await exportDrafts(conn, [D], 12345);
+    const archive = unzipSync(readFileSync(new File(uri).path));
+    const doc = checkProject(JSON.parse(strFromU8(archive['project.json'])));
+    expect(doc.tables.segments).toEqual([]);
+    const archived = parsePersistedHistory(doc.tables.drafts[0].undoHistory as string, D)!;
+    expect(archived).toEqual(original);
+    expect(new Set(doc.media.map((m) => m.path))).toEqual(
+      new Set([...historyMediaPaths(original)].filter((p) => byteLength(p) !== null)),
+    );
+    let id = 0;
+    const [copy] = await importProjectFile(conn, uri, () => `copy-${++id}`);
+    const history = savedUndo(conn, copy);
+    const sourceIds = historyClipIds(original);
+    expect([...historyClipIds(history)].every((x) => !sourceIds.has(x))).toBe(true);
+    expect(history.checkpoint).toBe(historyCheckpoint(conn, copy));
+    expect(history.past).toHaveLength(1);
+    expect(history.future).toHaveLength(1);
+    const addition = history.future[0];
+    if (addition.kind !== 'added' || !addition.taken) throw new Error('Expected dormant addition');
+    const [row] = addition.taken.rows;
+    expect(row.draftId).toBe(copy);
+    expect(row.editState).toBe(EDIT_JSON);
+    expect(row.label).toBe('2');
+    expect(addition.taken.transcripts[0]).toEqual(
+      expect.objectContaining({
+        segmentId: row.id,
+        file: row.originalFilename,
+        model: 'parakeet',
+        words: 'legacy',
+      }),
+    );
+    const caption = JSON.parse(row.captionEdit!);
+    expect(caption.file.startsWith(`drafts/${copy}/`)).toBe(true);
+    expect([...historyMediaPaths(history)].every((p) => p.startsWith(`drafts/${copy}/`))).toBe(
+      true,
+    );
+    // Exercise the imported addition in storage, not just the serialized map. The originals
+    // retain their rows and files while the imported copy goes through Redo then Undo.
+    const app = appLibrary();
+    try {
+      await app.drafts.restoreSegments(addition.taken);
+      expect(
+        conn.getFirstSync<{ n: number }>(
+          'SELECT count(*) AS n FROM segments WHERE draft_id = ?',
+          copy,
+        )?.n,
+      ).toBe(1);
+      expect(
+        conn.getFirstSync<{ words: string }>(
+          'SELECT words FROM clip_transcripts WHERE segment_id = ?',
+          row.id,
+        )?.words,
+      ).toBe('legacy');
+      const taken = await app.drafts.takeOutSegments(addition.ids);
+      expect(taken?.rows[0].id).toBe(row.id);
+      expect(
+        conn.getFirstSync<{ n: number }>(
+          'SELECT count(*) AS n FROM segments WHERE draft_id = ?',
+          copy,
+        )?.n,
+      ).toBe(0);
+    } finally {
+      app.client.expoDb.closeSync();
+    }
+    expect(
+      conn.getFirstSync<{ history: string }>(
+        'SELECT undo_history AS history FROM drafts WHERE id = ?',
+        D,
+      )?.history,
+    ).toBe(sourceSaved);
+    expect(readMedia(P(S2, '.mp4'))).toBe(`bytes of ${P(S2, '.mp4')}`);
+    expect(existsSync(join(env.docDir, row.originalFilename))).toBe(true);
+  });
+
+  it('preserves split originals, replaced rows and snapshot caption paths when copying', async () => {
+    const conn = await openMigrated();
+    const history = seedUndoFixture(conn);
+    const step = history.future[0];
+    if (step.kind !== 'added' || !step.taken) throw new Error('Expected addition');
+    const before = { ...step.taken, rows: [{ ...step.taken.rows[0], id: S1 }], transcripts: [] };
+    step.splits = [{ before, rightId: 'right-half', firstInsertedId: S2 }];
+    step.taken.replaced = before.rows;
+    const doc = buildProject(conn, { draftIds: [D], now: 0, byteLength });
+    doc.tables.drafts[0].undoHistory = JSON.stringify(history);
+    let n = 0;
+    const plan = planCopy(checkProject(doc), () => `split-copy-${++n}`);
+    const copied = parsePersistedHistory(
+      plan.rows.drafts[0].undoHistory as string,
+      plan.draftIds[0],
+    )!;
+    expect([...historyClipIds(copied)].every((id) => !historyClipIds(history).has(id))).toBe(true);
+    expect(JSON.stringify(copied.past)).not.toContain(`drafts/${D}/`);
+    expect(JSON.stringify(copied.future)).not.toContain(`drafts/${D}/`);
+    const added = copied.future[0];
+    if (added.kind !== 'added' || !added.taken) throw new Error('Expected addition');
+    expect(added.taken.replaced?.[0]).toEqual(added.splits?.[0].before.rows[0]);
+  });
+
+  it('rejects a malformed or stale archive history before minting IDs or touching the library', async () => {
+    const conn = await openMigrated();
+    const history = seedUndoFixture(conn);
+    const doc = buildProject(conn, { draftIds: [D], now: 0, byteLength });
+    const invalid: unknown[] = [
+      { ...history, version: 999 },
+      { ...history, checkpoint: 'older draft' },
+      { ...history, future: [{ kind: 'added', ids: [S2], taken: { draftId: D2 } }] },
+    ];
+    for (const value of invalid) {
+      doc.tables.drafts[0].undoHistory = JSON.stringify(value);
+      expect(() => checkProject(doc)).toThrow('This .pulse file is damaged.');
+    }
+    doc.tables.drafts[0].undoHistory = JSON.stringify(history);
+    const required = P(S2, '.mp4');
+    doc.media = doc.media.filter((m) => m.path !== required);
+    expect(() => checkProject(doc)).toThrow('This .pulse file is damaged.');
+    expect(savedUndo(conn, D)).toEqual(history);
+  });
+
+  it('omits an interrupted checkpoint from exports and retains local history media', async () => {
+    const conn = await openMigrated();
+    const history = seedUndoFixture(conn);
+    conn.runSync('UPDATE drafts SET caption_y = ? WHERE id = ?', 0.8, D);
+    const doc = buildProject(conn, { draftIds: [D], now: 0, byteLength });
+    expect(doc.tables.drafts[0].undoHistory).toBeNull();
+    expect(savedUndo(conn, D)).toEqual(history);
+    expect(referencedMediaPaths(conn).has(P(S2, '.mp4'))).toBe(true);
+  });
+
+  it('still copies drafts whose older file has no undo column', async () => {
+    const conn = await openMigrated();
+    seedFixture(conn);
+    const doc = buildProject(conn, { draftIds: [D], now: 0, byteLength });
+    delete doc.tables.drafts[0].undoHistory;
+    let n = 0;
+    const plan = planCopy(checkProject(doc), () => `old-copy-${++n}`);
+    expect(plan.rows.drafts[0].undoHistory).toBeNull();
+  });
+
+  it('round trips dormant undo media through a whole-library backup and restart', async () => {
+    const source = newDevice();
+    use(source);
+    const src = await openMigrated();
+    const history = seedUndoFixture(src);
+    const uri = await createLibraryBackup(src, 1000);
+    use(newDevice());
+    const dst = await openMigrated();
+    await restoreLibraryBackup(dst, uri, 2000);
+    dst.closeSync();
+    const launched = openLibrary(3000);
+    expect(launched.restored).toBe(true);
+    await migrate(drizzle(launched.conn), migrations);
+    expect(savedUndo(launched.conn, D)).toEqual(history);
+    for (const rel of historyMediaPaths(history)) {
+      if (existsSync(join(source.docDir, rel))) {
+        expect(readMedia(rel)).toBe(readFileSync(join(source.docDir, rel), 'utf8'));
+      }
+    }
+    launched.conn.closeSync();
+  });
+
+  it('refuses export and backup when a retained replay source is missing', async () => {
+    const conn = await openMigrated();
+    seedUndoFixture(conn);
+    rmSync(join(env.docDir, P(S2, '.mp4')));
+    await expect(exportDrafts(conn, [D], 1000)).rejects.toThrow('Undo history media is missing.');
+    await expect(createLibraryBackup(conn, 2000)).rejects.toThrow('Undo history media is missing.');
+  });
+
+  it('rejects over-budget dormant history before import while exempting current clip media', async () => {
+    const conn = await openMigrated();
+    const history = seedUndoFixture(conn);
+    const doc = buildProject(conn, { draftIds: [D], now: 0, byteLength });
+    const path = P(S2, '.mp4');
+    doc.media.find((m) => m.path === path)!.byteLength = HISTORY_MAX_MEDIA_BYTES + 1;
+    expect(() => checkProject(doc)).toThrow('This .pulse file is damaged.');
+    const addition = history.future[0];
+    if (addition.kind !== 'added' || !addition.taken) throw new Error('Expected addition');
+    // A current clip can share a retained source. Its bytes are required by the draft regardless
+    // of the stack and therefore do not consume the history-only budget.
+    doc.tables.segments = [{ ...addition.taken.rows[0], id: 'current-sharer' }];
+    doc.tables.drafts[0].undoHistory = JSON.stringify({
+      ...history,
+      checkpoint: checkpointForRows(doc.tables.drafts[0].captionY, doc.tables.segments),
+    });
+    expect(() => checkProject(doc)).not.toThrow();
+  });
+
+  it('rejects non-finite, fractional and negative manifest byte lengths', async () => {
+    const conn = await openMigrated();
+    seedUndoFixture(conn);
+    const doc = buildProject(conn, { draftIds: [D], now: 0, byteLength });
+    for (const size of [-1, NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      doc.media[0].byteLength = size;
+      expect(() => checkProject(doc)).toThrow();
+    }
+  });
+
+  it('applies the history-only byte budget to whole-library backups too', async () => {
+    const conn = await openMigrated();
+    seedUndoFixture(conn);
+    // A sparse isolated fixture changes only stat size; rejection precedes reading/zipping it.
+    truncateSync(join(env.docDir, P(S2, '.mp4')), HISTORY_MAX_MEDIA_BYTES + 1);
+    await expect(createLibraryBackup(conn, 2000)).rejects.toThrow(
+      'Undo history exceeds its retention limit.',
+    );
+  });
+
+  it('rolls back the imported rows and files when the copy transaction fails', async () => {
+    const conn = await openMigrated();
+    const history = seedUndoFixture(conn);
+    const uri = await exportDrafts(conn, [D], 1000);
+    conn.execSync(
+      "CREATE TRIGGER fail_copy BEFORE INSERT ON drafts WHEN NEW.id LIKE 'fail-%' BEGIN SELECT RAISE(ABORT, 'injected copy failure'); END",
+    );
+    let n = 0;
+    await expect(importProjectFile(conn, uri, () => `fail-${++n}`)).rejects.toThrow(
+      'injected copy failure',
+    );
+    expect(
+      conn.getFirstSync<{ n: number }>("SELECT count(*) AS n FROM drafts WHERE id LIKE 'fail-%'")
+        ?.n,
+    ).toBe(0);
+    expect(existsSync(join(env.docDir, 'drafts', 'fail-1'))).toBe(false);
+    expect(savedUndo(conn, D)).toEqual(history);
+    expect(readMedia(P(S2, '.mp4'))).toBe(`bytes of ${P(S2, '.mp4')}`);
+  });
+
+  it('checks unsafe paths nested in saved undo data before restoring a database', async () => {
+    const conn = await openMigrated();
+    const history = seedUndoFixture(conn);
+    const step = history.future[0];
+    if (step.kind !== 'added' || !step.taken) throw new Error('Expected addition');
+    step.taken.rows[0].originalFilename = 'drafts/../logs/pulse.log';
+    conn.runSync('UPDATE drafts SET undo_history = ? WHERE id = ?', JSON.stringify(history), D);
+    expect(() => assertSafeLibrary(conn)).toThrow(/saved Undo history/);
+  });
+
+  it('does not collapse distinct retained source files with the same basename', async () => {
+    const conn = await openMigrated();
+    const history = seedUndoFixture(conn);
+    const step = history.future[0];
+    if (step.kind !== 'added' || !step.taken) throw new Error('Expected addition');
+    const first = {
+      ...step.taken.rows[0],
+      originalFilename: 'drafts/one/segments/shared.mp4',
+      editedFilename: null,
+    };
+    const second = { ...first, id: 'second', originalFilename: 'drafts/two/segments/shared.mp4' };
+    step.ids.push(second.id);
+    step.taken.rows = [first, second];
+    step.taken.order.push(second.id);
+    media(first.originalFilename, 'first source');
+    media(second.originalFilename, 'second source');
+    conn.runSync('UPDATE drafts SET undo_history = ? WHERE id = ?', JSON.stringify(history), D);
+    const doc = buildProject(conn, { draftIds: [D], now: 0, byteLength });
+    let n = 0;
+    const plan = planCopy(checkProject(doc), () => `collision-${++n}`);
+    const copied = parsePersistedHistory(
+      plan.rows.drafts[0].undoHistory as string,
+      plan.draftIds[0],
+    )!;
+    const addition = copied.future[0];
+    if (addition.kind !== 'added' || !addition.taken) throw new Error('Expected addition');
+    const sources = addition.taken.rows.map((r) => r.originalFilename);
+    expect(new Set(sources).size).toBe(2);
+    expect(sources.map((p) => plan.files.get(p))).toEqual([
+      first.originalFilename,
+      second.originalFilename,
+    ]);
   });
 });
 

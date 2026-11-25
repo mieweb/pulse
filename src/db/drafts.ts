@@ -14,6 +14,7 @@ import {
 } from '@/utils/file-store';
 import { type ClipAnchor, END, noteClipsAdded, resolveAnchor } from '@/core/clip-anchor';
 import { waitForClipWrites } from '@/core/draft-write-barrier';
+import { historyMediaPaths, parsePersistedHistory } from '@/db/persisted-history';
 import {
   canonicalEdit,
   editTimelineMs,
@@ -479,6 +480,7 @@ export async function insertSegments(
       tx.insert(clipTranscripts)
         .values([...transcripts])
         .run();
+    if (receipt) noteHeldFiles(tx, takenFiles(receipt.before));
     return receipt;
   });
   const segmentIds = newSegments.map((s) => s.id);
@@ -752,6 +754,8 @@ function rowFiles(seg: Segment): string[] {
   const files = [seg.originalFilename, thumbRelPath(seg.draftId, seg.id)];
   if (seg.editedFilename) files.push(seg.editedFilename, editedThumbRelPath(seg.editedFilename));
   if (seg.thumbnail) files.push(seg.thumbnail);
+  const caption = parseCaptionEdit(seg.captionEdit);
+  if (caption) files.push(caption.file);
   return [...new Set(files)];
 }
 
@@ -767,28 +771,58 @@ async function fileInUse(rel: string): Promise<boolean> {
         eq(segments.thumbnail, rel),
       ),
     );
-  return value > 0;
+  if (value > 0) return true;
+  if (
+    db.select({ value: count() }).from(clipTranscripts).where(eq(clipTranscripts.file, rel)).get()
+      ?.value
+  )
+    return true;
+  for (const row of db.select({ captionEdit: segments.captionEdit }).from(segments).all()) {
+    if (parseCaptionEdit(row.captionEdit)?.file === rel) return true;
+  }
+  for (const row of db
+    .select({ id: drafts.id, undoHistory: drafts.undoHistory })
+    .from(drafts)
+    .all()) {
+    try {
+      const history = parsePersistedHistory(row.undoHistory, row.id);
+      if (history && historyMediaPaths(history).has(rel)) return true;
+    } catch {
+      // Unreadable recovery inputs must never authorize file deletion.
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Files of clips taken out and not yet put back or dropped, with how many take-outs hold each. */
 const heldFiles = new Map<string, number>();
 const holding = new Set<TakenOutClips>();
+function takenFiles(taken: TakenOutClips): string[] {
+  return [
+    ...new Set([
+      ...[...taken.rows, ...(taken.replaced ?? [])].flatMap(rowFiles),
+      ...taken.transcripts.map((r) => r.file),
+    ]),
+  ];
+}
 function hold(taken: TakenOutClips): void {
   if (holding.has(taken)) return;
   holding.add(taken);
-  for (const row of taken.rows) {
-    for (const rel of rowFiles(row)) heldFiles.set(rel, (heldFiles.get(rel) ?? 0) + 1);
-  }
+  for (const rel of takenFiles(taken)) heldFiles.set(rel, (heldFiles.get(rel) ?? 0) + 1);
 }
 function release(taken: TakenOutClips): void {
   if (!holding.delete(taken)) return;
-  for (const row of taken.rows) {
-    for (const rel of rowFiles(row)) {
-      const left = (heldFiles.get(rel) ?? 0) - 1;
-      if (left > 0) heldFiles.set(rel, left);
-      else heldFiles.delete(rel);
-    }
+  for (const rel of takenFiles(taken)) {
+    const left = (heldFiles.get(rel) ?? 0) - 1;
+    if (left > 0) heldFiles.set(rel, left);
+    else heldFiles.delete(rel);
   }
+}
+
+/** Durable rows now protect these files; release only the editor session's transient hold. */
+export function releaseHistoryHold(taken: TakenOutClips): void {
+  release(taken);
 }
 
 /**
@@ -823,6 +857,7 @@ export type SplitReceipt = {
 export async function takeOutSegments(
   segmentIds: readonly string[],
   splits: readonly SplitReceipt[] = [],
+  checkpoint?: (tx: Tx, taken: TakenOutClips | null) => void,
 ): Promise<TakenOutClips | null> {
   const wanted = new Set([
     ...segmentIds,
@@ -871,12 +906,13 @@ export async function takeOutSegments(
       for (const row of rows) originals.set(row.id, row);
     }
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
-    // Noted on disk too: if Pulse dies with the redo pending, the next launch deletes them.
-    noteHeldFiles(tx, rows.flatMap(rowFiles));
+    // Noted on disk too: launch reclaims them only when no durable checkpoint retains them.
     const taken: TakenOutClips = { draftId, order: all.map((r) => r.id), rows, transcripts };
     if (splits.length > 0) {
       taken.replaced = [...originals.values()];
     }
+    noteHeldFiles(tx, takenFiles(taken));
+    checkpoint?.(tx, taken);
     return taken;
   });
   // Its files are kept for the redo, whatever else is deleted meanwhile.
@@ -896,7 +932,10 @@ export async function takeOutSegments(
  * is the same addition again, not a new one. A draft that has gone takes nothing back, and its
  * files are no longer held (its folder went with it).
  */
-export async function restoreSegments(taken: TakenOutClips): Promise<void> {
+export async function restoreSegments(
+  taken: TakenOutClips,
+  checkpoint?: (tx: Tx) => void,
+): Promise<void> {
   const { draftId } = taken;
   if (taken.rows.length === 0) return;
   await beginClipMutation(draftId);
@@ -932,6 +971,7 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
     }
     putSegmentsBack(tx, taken);
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
+    checkpoint?.(tx);
   });
   if (taken.replaced?.length) invalidateEditWrites(taken.replaced.map((row) => row.id));
   // Its rows point at its files again, which keeps them; or nothing can put them back.
@@ -999,6 +1039,15 @@ export async function dropTakenOut(taken: TakenOutClips): Promise<void> {
   for (const row of taken.rows) {
     const current = await db.select().from(segments).where(eq(segments.id, row.id)).get();
     await afterCommit('drop undone clip', () => deleteRowFiles(row, current));
+  }
+  await dropHistoryFiles(taken.transcripts.map((row) => row.file));
+}
+
+/** Reclaim only explicitly evicted history files, after its replacement checkpoint commits. */
+export async function dropHistoryFiles(paths: readonly string[]): Promise<void> {
+  for (const path of paths) {
+    if (heldFiles.has(path) || (await fileInUse(path))) continue;
+    await afterCommit('drop undo media', async () => deleteSegmentFile(path));
   }
 }
 

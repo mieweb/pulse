@@ -23,11 +23,13 @@ let snapshot: DraftWrites = { edits: new Set(), order: false };
 const listeners = new Set<() => void>();
 const failureListeners = new Set<(f: WriteFailure) => void>();
 let whenIdle: (() => void)[] = [];
+const otherWrites = new Set<Promise<unknown>>();
+let failureVersion = 0;
 
 function changed() {
   snapshot = { edits: new Set(editing), order: ordering };
   for (const l of listeners) l();
-  if (editing.size === 0 && !ordering) {
+  if (editing.size === 0 && !ordering && otherWrites.size === 0) {
     const waiting = whenIdle;
     whenIdle = [];
     for (const resolve of waiting) resolve();
@@ -35,6 +37,7 @@ function changed() {
 }
 
 const failed = (f: WriteFailure) => {
+  failureVersion++;
   for (const l of failureListeners) l(f);
 };
 
@@ -102,8 +105,26 @@ export function onWriteFailure(listener: (f: WriteFailure) => void) {
 
 /** Resolves once every edit and reorder asked for so far is stored (or failed). */
 export function flushDraftWrites(): Promise<void> {
-  if (editing.size === 0 && !ordering) return Promise.resolve();
+  if (editing.size === 0 && !ordering && otherWrites.size === 0) return Promise.resolve();
   return new Promise((resolve) => whenIdle.push(resolve));
 }
+
+/** Caption text/position writes participate in the same checkpoint barrier as clip edits. */
+export function trackDraftWrite<T>(write: Promise<T>): Promise<T> {
+  const tracked = write
+    .catch((error: unknown) => {
+      failureVersion++;
+      throw error;
+    })
+    .finally(() => {
+      otherWrites.delete(tracked);
+      changed();
+    });
+  otherWrites.add(tracked);
+  return tracked;
+}
+
+export const draftWriteFailureVersion = () => failureVersion;
+export const hasPendingDraftWrites = () => editing.size > 0 || ordering || otherWrites.size > 0;
 
 setClipWriteBarrier(flushDraftWrites);

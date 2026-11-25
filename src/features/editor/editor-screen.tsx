@@ -31,7 +31,7 @@ import { ADD_SIZE, EditorAddMenu } from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
 import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
 import { useFrameRates } from '@/features/editor/use-frame-rates';
-import { flushDraftWrites } from '@/features/editor/draft-writes';
+import { flushDraftWrites, trackDraftWrite } from '@/features/editor/draft-writes';
 import {
   CaptionTextBar,
   ClipToolbar,
@@ -190,16 +190,22 @@ export function EditorScreen({
   const { clips, covers, options } = draft;
   const { ctl, values, playing, status } = usePreviewTransport();
   usePlaybackSessionOnReturn();
-  const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
+  const {
+    data: captionRows,
+    updatedAt: captionsUpdatedAt,
+    error: captionError,
+  } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionYValue = captionRows[0]?.captionY;
   const history = useEditorHistory(
+    draftId,
+    draft.ready && captionsUpdatedAt !== undefined && captionError === undefined,
     clips,
     draft.setValue,
     draft.reorder,
     draft.captionEdits,
     draft.setCaptions,
     captionYValue ?? null,
-    (y) => void setCaptionY(draftId, y).catch(() => {}),
+    (y) => void trackDraftWrite(setCaptionY(draftId, y)).catch(() => {}),
   );
   // The same object until the place changes, so the caption on the video doesn't re-render.
   const captionStyle = useMemo(() => captionStyleFor(captionYValue), [captionYValue]);
@@ -823,7 +829,7 @@ export function EditorScreen({
     // One undo step per drag (it reports once, when let go).
     history.record('captionY');
     history.close();
-    return setCaptionY(draftId, y).catch((e: unknown) => {
+    return trackDraftWrite(setCaptionY(draftId, y)).catch((e: unknown) => {
       showToast({ kind: 'error', title: 'Couldn’t move the captions', message: 'Try again.' });
       throw e;
     });
