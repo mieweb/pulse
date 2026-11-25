@@ -1,81 +1,59 @@
 {
   "issue": "https://github.com/mieweb/pulse/issues/337",
   "date": "2026-11-25",
-  "platform": "iOS 26.0, isolated iPhone SE 3rd generation, 375x667 points",
-  "fixture": "12 synthetic portrait clips; Delete reduced fixture to 11; no user media",
-  "build": "Existing native simulator shell, full production app JavaScript rebundled for the final toolbar changes; no native-code change for this task",
-  "finalBundleSha256": "af10ab45ae2bf365b1b724e809955132e077c00065fb7e8f5570b31fa232618a",
-  "finalSourceSha256": {
-    "src/features/editor/clip-toolbar.tsx": "c4e69fa201ef056bb952d465a766d5bb463dc7cfb9a1ab993a3ea3887bdf4938",
-    "src/features/editor/editor-screen.tsx": "eb8bbead1275124a178b0a027c9481a89ec160e2a866473b88a907736bcf4608"
-  },
+  "mainBase": "6e74151dfcfd1c465228b929d9f00090a461c18b",
+  "nativePin": "306ff1d999589be6615275c60567ba371f073efd",
+  "version": "2.8.0 (1)",
+  "fixture": "Dedicated fresh iPhone SE3, iOS26.0,375x667;12 synthetic clips and3 legacy custom speeds; no user media",
   "functional": {
-    "priorityToolsVisible": true,
-    "fullRowScrollsIncludingDone": true,
-    "lastToolRotateVisibleAfterSwipe": true,
-    "speedSelectionAndDone": true,
-    "reset": true,
-    "deleteCounts": [
-      12,
-      11
+    "initialPriorityToolsAndLowerCommands": true,
+    "moreClicksToRotate": 2,
+    "swipeCyclesWithoutDismissingEdit": 3,
+    "all11SpeedsReachableWithButtons": [
+      ["0.25x", "0.5x", "0.75x", "1x"],
+      ["0.75x", "1x", "1.1x", "1.2x"],
+      ["1.1x", "1.2x", "1.25x", "1.3x"],
+      ["1.3x", "1.5x", "2x", "3.5x"]
     ],
-    "deleteUndoContract": "Existing deliberate behavior: deletion is not restored by Undo; no change to deletion/history logic.",
-    "speedUndoRedoUndo": [
-      0.5,
-      1,
-      0.5,
-      1
+    "speedPickDoneReset": true,
+    "delete": [12, 11],
+    "speedUndoRedo": [0.5, 1, 0.5, 1],
+    "splitUndoRedo": [11, 12, 11, 12, 11],
+    "doneAndClose": true,
+    "exactPhonePayloadNotesAllSixRendered": true,
+    "largestTextToolsFitVertically": true,
+    "largestTextMoreClicksToRotate": 2,
+    "largestTextAll11SpeedsReachableWithButtons": [
+      ["0.25x", "0.5x"],
+      ["0.75x", "1x", "1.1x"],
+      ["1x", "1.1x", "1.2x"],
+      ["1.2x", "1.25x", "1.3x"],
+      ["1.3x", "1.5x", "2x"],
+      ["1.3x", "1.5x", "2x", "3.5x"]
     ],
-    "splitUndoRedoUndo": [
-      11,
-      12,
-      11,
-      12,
-      11
-    ],
-    "doneEditing": true,
-    "darkLargestText": true,
-    "darkScrollToRotateAndBack": true,
-    "closeNavigation": true,
-    "finalNormalFourToolsFullyVisible": true,
-    "finalScrollToRotateAndBack": 3,
-    "finalSpeedDone": true,
-    "finalDoneEditing": true,
-    "finalLargeFontLabelsFitVertically": true,
-    "finalLargestFontRotateReachable": true,
-    "finalDarkLargestText": true,
-    "finalLargestFontLabelsFitVertically": true,
-    "finalCloseNavigation": true,
-    "finalExportNavigation": "Reached native Merging screen for 11 clips; completion/upload outside toolbar check."
+    "exactPhonePayloadDoneAndClose": true,
+    "exactFinalNormalFourToolsFullyVisible": true,
+    "finalVersion": "2.8.0 (1)",
+    "final28ExactPhoneNotesRendered": true,
+    "final28MoreFirstDoneAndClose": true
   },
-  "finalChecks": {
-    "source": "Source, format, lint, app/embed typing, protocol and embed bundles pass; standard root tsc retains 14 pre-existing pulse-desktop errors; 157 suites / 2205 tests passed with 1 suite / 8 integration tests skipped"
+  "sourceSha256": {
+    "src/features/editor/clip-toolbar.tsx": "aaea34dcfaa273d797ec2b80ae07324c064b88500831866d4887f0cddf7945a1",
+    "src/features/editor/editor-screen.tsx": "3b26825c7a5fba63dc929aa2684c50388e3538e179e1796113e829a4b040cf15"
   },
+  "finalPhoneBundleSha256": "7d3dde70043e5890b0b12732d650ecb5dee089f60af818f94323703cdebdc5f9",
+  "finalPhoneConfigSha256": "73a04704a60246967c9e05321c0c3939215eaf9b4ba489b0de5a91e7dee59097",
+  "builds": {
+    "simulatorRelease": true,
+    "deviceRelease": true,
+    "nativeOwnershipHelperCompiled": true,
+    "final28MetadataRefreshed": true,
+    "phoneAndSimulatorPayloadMatch": true,
+    "signaturesVerified": true
+  },
+  "evidenceScope": "Native operations checked before paging-overlap-only repair; final half-page payload reran normal/largest layout, all11 speeds, More/First, Done/Close. Version2.8 refresh changed metadata only; exact2.8 payload reran notes/version/toolbar smoke.",
   "cleanup": {
-    "firstRunnerRun": [
-      {
-        "sessionDelete": 200
-      },
-      {
-        "terminate": "com.facebook.WebDriverAgentRunner.xctrunner",
-        "exit": 0,
-        "stderr": ""
-      },
-      {
-        "terminate": "com.mieweb.pulse",
-        "exit": 0,
-        "stderr": ""
-      },
-      {
-        "shutdownExit": 0,
-        "stderr": "",
-        "runnerExit": -15
-      }
-    ],
-    "ownedSupervisorAndXcodebuildExited": true,
-    "simulatorShutdown": true,
-    "physicalDevicesUsed": false,
-    "secondRunnerRun": [
+    "actions": [
       {
         "sessionDelete": 200
       },
@@ -95,41 +73,23 @@
         "runnerExit": -15
       }
     ],
-    "finalRunnerRun": [
-      {
-        "sessionDelete": 200
-      },
-      {
-        "terminate": "com.facebook.WebDriverAgentRunner.xctrunner",
-        "exit": 0,
-        "stderr": ""
-      },
-      {
-        "terminate": "com.mieweb.pulse",
-        "exit": 0,
-        "stderr": ""
-      },
-      {
-        "shutdownExit": 0,
-        "stderr": "",
-        "runnerExit": -15
-      }
-    ],
-    "finalEvidenceRecapture": "Fresh settled normal-text screenshot; no application source changes; final automation session deleted and dedicated simulator shut down."
+    "ownedRunnersExited": true
+  },
+  "physicalHandoff": {
+    "installed": true,
+    "launchVerified": false,
+    "reason": "Installation and library preservation verified; automatic launch remains blocked by locked phone",
+    "privateLibraryBackupAndIntegrityCheckBeforeInstall": true,
+    "postInstallLibraryCheck": "passed: every pre-existing draft/segment column and persistent-history metadata unchanged",
+    "guardStatus": "released",
+    "automationStarted": false,
+    "captureStarted": false,
+    "libraryPreserved": true
   },
   "limitations": [
-    "Reporter phone and Android not tested",
-    "VoiceOver spoken navigation not manually exercised",
-    "Caption toolbar completion not exercised natively; no configured model in fixture",
-    "Separate transport time labels still become very large at largest text",
-    "Export check established navigation to Merging, not generation completion or upload"
-  ],
-  "evidence": [
-    "reporter-before.jpg",
-    "after-light.png",
-    "after-scrolled.png",
-    "after-dark-largest-text.png",
-    "after-dark-largest-scrolled.png",
-    "after-speed-picker.png"
+    "Physical thumb reach in either hand remains user test",
+    "Android/RTL/VoiceOver spoken navigation not exercised",
+    "Caption selection/keyboard remains inherited unverified coverage",
+    "Phone launch remains pending unlock; installation and library preservation passed"
   ]
 }
