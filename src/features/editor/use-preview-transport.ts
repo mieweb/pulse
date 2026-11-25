@@ -29,6 +29,9 @@ export type PlayheadValues = {
  * be that seek's frame (a frame at 24 fps is 42 ms). */
 const FRAME_SLACK_MS = 50;
 
+/** A native timeline swap can finish its own old-position seek after announcing readiness. */
+const MAX_SEEK_RETRIES = 2;
+
 /** A seek unanswered this long is given up on (one lands in tens of ms, a rebuild's in a few
  * hundred): Play and the next seeks stop waiting for it, so the transport can't get stuck. */
 const SEEK_GIVE_UP_MS = 1500;
@@ -92,7 +95,7 @@ export function usePreviewTransport() {
         playingNow.set(p);
         setPlaying(p);
       },
-      seek: (ms: number) => {
+      seek: (ms: number, retries = 0) => {
         c.lastMs = ms;
         const ref = c.ref;
         if (!ref) return;
@@ -130,6 +133,17 @@ export function usePreviewTransport() {
               c.afterBuild == null &&
               c.placeMs == null
             ) {
+              // A rebuild's automatic seek can win after native reports ready. Its promise
+              // then answers with the old frame: retry only this still-current paused intent,
+              // through the same queue, with a finite budget if the target can't be reached.
+              if (
+                c.target === ms &&
+                Math.abs(landed - ms) > FRAME_SLACK_MS &&
+                retries < MAX_SEEK_RETRIES
+              ) {
+                c.seek(ms, retries + 1);
+                return;
+              }
               c.settle(landed);
             }
             if (c.placing && c.placeMs == null && placeSeq === c.placeSeq) c.cancelPlace();

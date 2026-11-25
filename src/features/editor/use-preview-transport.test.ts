@@ -223,3 +223,80 @@ describe('preview initial placement', () => {
     expect(values.timeMs.get()).toBe(6000);
   });
 });
+
+describe('preview seek reconciliation', () => {
+  it('retries the current append target when a rebuild lands at the old position', async () => {
+    const swap = gate();
+    const corrected = gate();
+    const native = preview(swap, corrected);
+    const { ctl, values } = usePreviewTransport();
+    ctl.onReady(native.ref);
+    ctl.setTotal(12000);
+    ctl.seekTo(11999);
+
+    swap.resolve(9999); // The native swap's automatic seek won after its ready event.
+    await drain();
+    expect(native.seek.mock.calls).toEqual([[11999], [11999]]);
+    expect(values.timeMs.get()).toBe(11999);
+    ctl.onTime(9999, false);
+    expect(values.timeMs.get()).toBe(11999);
+
+    corrected.resolve(11999);
+    await drain();
+    expect(values.timeMs.get()).toBe(11999);
+    expect(native.seek).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives a newer intent priority over an in-flight retry', async () => {
+    const swap = gate();
+    const retry = gate();
+    const newest = gate();
+    const native = preview(swap, retry, newest);
+    const { ctl, values } = usePreviewTransport();
+    ctl.onReady(native.ref);
+    ctl.setTotal(12000);
+    ctl.seekTo(11999);
+    swap.resolve(9999);
+    await drain();
+
+    ctl.seekTo(3000);
+    retry.resolve(9999);
+    await drain();
+    expect(native.seek.mock.calls).toEqual([[11999], [11999], [3000]]);
+    expect(values.timeMs.get()).toBe(3000);
+    newest.resolve(3000);
+    await drain();
+    expect(values.timeMs.get()).toBe(3000);
+    expect(native.seek).toHaveBeenCalledTimes(3);
+  });
+
+  it('bounds retries and accepts the actual frame when the target remains unreachable', async () => {
+    const attempts = [gate(), gate(), gate()];
+    const native = preview(...attempts);
+    const { ctl, values } = usePreviewTransport();
+    ctl.onReady(native.ref);
+    ctl.setTotal(12000);
+    ctl.seekTo(11999);
+    for (const [index, attempt] of attempts.entries()) {
+      attempt.resolve(9999);
+      await drain();
+      expect(values.timeMs.get()).toBe(index < 2 ? 11999 : 9999);
+    }
+    expect(native.seek.mock.calls).toEqual([[11999], [11999], [11999]]);
+    jest.advanceTimersByTime(5000);
+    await drain();
+    expect(native.seek).toHaveBeenCalledTimes(3);
+  });
+
+  it('accepts normal frame rounding without another seek', async () => {
+    const native = preview();
+    native.seek.mockResolvedValue(11960);
+    const { ctl, values } = usePreviewTransport();
+    ctl.onReady(native.ref);
+    ctl.setTotal(12000);
+    ctl.seekTo(11999);
+    await drain();
+    expect(values.timeMs.get()).toBe(11999);
+    expect(native.seek).toHaveBeenCalledTimes(1);
+  });
+});
