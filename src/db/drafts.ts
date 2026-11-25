@@ -814,11 +814,15 @@ function rowFiles(seg: Segment): string[] {
 /** An explicit cleanup candidate survives active work, with a precise retry after a restart. */
 function deleteUnreferencedFile(rel: string): void {
   let referenced: Set<string>;
-  try { referenced = referencedMediaPaths(expoDb); }
-  catch { return; } // Unreadable recovery inputs never authorize deletion.
+  try {
+    referenced = referencedMediaPaths(expoDb);
+  } catch {
+    return;
+  } // Unreadable recovery inputs never authorize deletion.
   if (referenced.has(rel)) return;
   const held = segmentFileDeletionPaths(rel).filter(isMediaHeld);
   if (held.length) db.transaction((tx) => noteHeldFiles(tx, held));
+  if (isMediaHeld(rel)) return;
   // Keep the reference check and deletion synchronous so a newly committed reference cannot
   // land in an await gap. The same list protects live, derived, caption and saved-history files.
   deleteSegmentFile(rel, referenced);
