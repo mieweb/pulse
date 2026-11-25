@@ -39,8 +39,9 @@ evidence, not a device usability result.
 
 PR #327 is rebased onto main
 [`2aad841`](https://github.com/mieweb/pulse/commit/2aad841f137755965160d8acda00096261d1a0c1).
-The final application revision is `b7ab422`; its shared app/UI source and dependencies match the
-first rebase checkpoint `9710463` on main `2467627`. Current-base additions are recorded after the
+The final application revision is `87c600a`, including the empty-project, keyboard and contrast corrections below.
+Toolbar validation began at `9710463` on main `2467627`; the subsequent scene-lifecycle rebuild
+used `b7ab422` / `4e8abc1` on the current base. Current-base additions are recorded after the
 original inventory. The earlier `dce8303` and `3c52200` builds, phone installations and captures
 predate that rebase and must not be counted as validation of the rebased application.
 
@@ -174,9 +175,13 @@ widths, supported text sizes and in RTL, without a scroll activating an adjacent
 
 ### Rebased validation
 
-All seven source checks passed at final application revision `b7ab422`, based on main `2aad841`.
-The same checks also passed at the initial rebase checkpoint `9710463`; source/dependency identity
-between those checkpoints was verified.
+All seven source checks passed at application revision `87c600a`, based on main `2aad841`.
+The correction includes four regressions covering reopened empty projects, parent-query
+loading/failure/missing states, parent deletion and default embedded/history behavior.
+
+The same seven checks passed at earlier checkpoints: `9710463` / `b7ab422` had 150 suites /
+2,146 tests; `800d16e` had 150 suites / 2,150 tests. The final correction adds export-preview
+boundary cases alongside the empty-project navigation regressions.
 
 All seven source checks use Node 24.9.0:
 
@@ -184,18 +189,19 @@ All seven source checks use Node 24.9.0:
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
 | `npx tsc --noEmit`                               | Passed.                                                                                                              |
 | `npm run lint`                                   | Passed full lint.                                                                                                    |
-| `npm test -- --runInBand`                        | 150 suites / 2,146 tests passed; one opt-in PulseVault integration suite / eight tests skipped locally. No failures. |
+| `npm test -- --runInBand`                        | 151 suites / 2,161 tests passed; one opt-in PulseVault integration suite / eight tests skipped locally. No failures. |
 | `node scripts/gen-protocol-types.mjs --check`    | Generated protocol types are current.                                                                                |
 | `npx tsc --noEmit -p embed`                      | Passed.                                                                                                              |
 | `npx tsc --noEmit -p embed/packages/pulse-embed` | Passed.                                                                                                              |
-| `npm run check:embed`                            | Passed dependency/facade checks and iOS/Android bundle checks (4,235 / 4,144 sources).                               |
+| `npm run check:embed`                            | Passed dependency/facade checks and iOS/Android bundle checks (4,236 / 4,145 sources).                               |
 
-The full Jest run includes main's new Split/fractional-boundary and release-note tests. A separate
-focused regression passed eight suites / 244 tests for Split, anchors, storage, history, additions
-and segment windows. Changed-file formatting, local documentation links and whitespace checks pass.
+The full Jest run includes main's Split/fractional-boundary and release-note tests plus the new
+empty-project regressions. Focused Split/history/anchor/import regressions also passed during the
+rebase. Changed-file formatting, local documentation links and whitespace checks pass.
 
 Native iOS Release checks at the first rebase checkpoint `9710463` used task-owned iOS 26
-simulators with synthetic local clips. Its app/UI source is identical to `b7ab422`.
+simulators with synthetic local clips. The toolbar geometry and Split/history paths remain
+unchanged by the later empty-project correction.
 
 - **375 × 667:** Close, Undo, Redo and Export remain 44 × 44 at `y = 615`, with fixed x positions
   4 / 231 / 279 / 327 at normal and maximum text. Main's Edit, Split and Captions fit at normal
@@ -211,8 +217,11 @@ simulators with synthetic local clips. Its app/UI source is identical to `b7ab42
 After rebasing onto `2aad841`, Xcode/iPhoneOS SDK 27.2 passed the new SDK guard. Expo prebuild
 applied the inherited scene plugin: the generated scene manifest uses `EXExpoAppSceneDelegate`,
 multiple scenes are disabled and AppDelegate provides the React Native factory without the legacy
-startup block. See [PR #327 validation](https://github.com/mieweb/pulse/pull/327) for the final
-Release rebuild and cold-launch/lifecycle result against that generated configuration.
+startup block. The scene-lifecycle Release build at `b7ab422` / embedded metadata `4e8abc1`
+passed cold launch, Home and Editor background/foreground with the same process, project opening
+and lower Close. Its copied EXConstants resource initially retained stale metadata; refreshing
+that generated bundle produced the correct `4e8abc1` About metadata with unchanged app sources.
+The subsequent empty-project build and check are recorded below.
 
 These checks establish native layout and accessible activation, not actual either-hand grip reach.
 
@@ -224,14 +233,67 @@ native timeline boundary and the preserved exact playhead. The source tests pass
 this native rebuild interaction. A separate Split/preview timing repair and native retest are
 needed. The native boundary-state check failed.
 
-The capture below is the first rebase checkpoint `9710463`, with the same app/UI source as
-`b7ab422`.
+The capture below is the first rebase checkpoint `9710463`; its toolbar layout is retained in
+the final application.
 
 ![Rebased compact toolbar including Split](images/one-handed-navigation/editor-after-rebase.png)
 
 The earlier phone handoffs and captures below continue to describe their named pre-rebase builds.
 The phone has not been updated or exercised during this rebase; real camera/Record/Stop, either-hand
 reach, RTL, Android and the broader audit acceptance work remain unverified.
+
+### Empty-project review correction (`800d16e`)
+
+Direct library → Edit entry exposed an empty-project regression: deleting the only clip and
+closing left a project card whose editor immediately exited on reopening. Standalone Edit now
+keeps a valid persisted empty project open with lower Add/Close and disabled Export. It waits
+for a successful parent-project read before treating it as missing; loading or an initial read
+error does not imply deletion. Confirmed missing projects exit, and permission to edit an empty
+project does not enter the history-retention latch. Default embedded behavior, active additions
+and Undo/Redo holds remain intact. Anchored empty entry also exposes Add while waiting for the
+first clips to arrive.
+
+The Release build from `800d16e` (clean embedded metadata, unchanged source hashes) passed native
+checks on the 375 × 667 iOS 26 simulator: Delete the only clip → empty Editor, Close → Home →
+reopen empty Editor, anchored/deleted-clip entry with visible Add, donor-project copy → one clip,
+Undo → empty with Redo enabled, Redo → one clip and reopen the restored project. A nonexistent
+project returned to Home. Export was disabled while empty. Fixtures/text were restored, the owned
+session and runners ended, the port was clear and the simulator returned to Shutdown.
+
+![Empty project retains Add and lower Close](images/one-handed-navigation/editor-empty.png)
+
+### Keyboard and screen-recording status corrections (`87c600a`)
+
+Export content now scrolls above its separate lower return footer when the keyboard or expanded
+text exhausts the available height. The preview retains its normal space when room is available;
+its 9:16 geometry includes the metadata budget and hides the metadata/video when no positive card
+can fit. Eleven sizing regressions cover exhausted, negative, invalid and constrained viewports.
+Export/send/upload callbacks and guards are unchanged.
+
+A Release build from `87c600a` passed native checks on the 375 × 667 iOS 26 simulator with an
+offline synthetic draft requiring a name and exceeding its size limit. At normal and maximum
+text, the real on-screen keyboard appeared, typed names were accepted and lower Close returned
+Home while the keyboard stayed open. Its native rectangle (165, 382, 45 × 44, including AX rounding)
+remained above the keyboard at `y = 451`. A native content swipe dismissed the keyboard and exposed
+Share/Photos. The normal 9:16 preview remained visibly positive. This standalone fixture has no
+Trim callback; embedded Trim/captions/error combinations remain unverified under #104.
+
+Build metadata names `87c600a` with `dirty: true` from concurrent documentation edits; app-source
+hashes were unchanged. The before capture is `800d16e` using the same common keyboard fixture,
+which fits in that revision too; it is a layout comparison, not a pictured negative-dimension
+failure. Unit boundary cases establish that exhausted preview space is rejected. A settled after capture
+was independently repeated through WDA and simctl; their decoded RGB pixels matched exactly,
+including the visible keyboard and lower Close. The return action passed again.
+
+| Before (`800d16e`)                                                                                    | After (`87c600a`)                                                                                                     |
+| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| ![Earlier maximum-text export with keyboard](images/one-handed-navigation/export-keyboard-before.png) | ![Scrollable export content with lower return above keyboard](images/one-handed-navigation/export-keyboard-after.png) |
+
+The editor's relocated screen-recording status uses an opaque themed surface and text. Calculated
+status-text contrast is 18.82:1 in light mode and 13.94:1 in dark mode; the recorder retains its
+over-video glass appearance. Starting, busy and Stop callbacks/labels/targets are unchanged. Color
+calculation, type checks and existing regressions cover this variant; live screen recording on
+Android/older iOS remains an explicit manual acceptance check.
 
 ### Revision validation (`3c52200`)
 
