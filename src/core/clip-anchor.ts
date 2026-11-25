@@ -1,4 +1,5 @@
 import type { SplitReceipt } from '@/db/drafts';
+import { isSplitInterior, SPLIT_BOUNDARY_TOLERANCE_MS } from '@/utils/segment-window';
 
 /**
  * Where new clips go in a draft: at a boundary, at the end, or at an exact source point inside
@@ -180,7 +181,7 @@ export function anchorForExactPlayhead(
   if (n === 0 || !Number.isFinite(timeMs) || timeMs >= totalMs) return END;
   // The editor represents an end seek as totalMs - 1 so the preview can show its last frame.
   // Treat that position as append, rather than creating an invisible one-millisecond half.
-  if (timeMs > 0 && timeMs >= totalMs - 1) return END;
+  if (timeMs > 0 && timeMs >= totalMs - SPLIT_BOUNDARY_TOLERANCE_MS) return END;
   const ids = clips.slice(0, n).map((c) => c.id);
   let i = 0;
   while (i + 1 < n && starts[i + 1] <= timeMs) i++;
@@ -188,7 +189,12 @@ export function anchorForExactPlayhead(
   if (offsetMs === 0) return anchorAtSlot(i, ids);
   const clip = clips[i];
   const sourceMs = clip.edit.startMs + offsetMs * clip.edit.speed;
-  if (sourceMs >= clip.edit.endMs) return anchorAtSlot(i + 1, ids);
+  if (!isSplitInterior(sourceMs, clip.edit.startMs, clip.edit.endMs, clip.edit.speed)) {
+    // The same tolerance as Split's enabled state and the storage guard, measured after speed.
+    // Floating-point reconstruction of a fractional split can land on either side of its edge.
+    const nearerStart = sourceMs - clip.edit.startMs <= clip.edit.endMs - sourceMs;
+    return anchorAtSlot(nearerStart ? i : i + 1, ids);
+  }
   return {
     before: clip.id,
     ...(i + 1 < n ? { next: ids[i + 1] } : {}),

@@ -230,7 +230,7 @@ export function createEditorHistory(deps: HistoryDeps) {
     /** A change is about to be made: `before` is the draft as it is. */
     record: (before: Present, opKey: string | null) =>
       push({ kind: 'state', snapshot: snapshotOf(before) }, opKey),
-    /** Clips were added to the draft (already in it): one step that takes them all out. */
+    /** Added clips and/or a standalone split committed: one step reverses the whole operation. */
     recordAdded: (ids: string[], splits: readonly SplitReceipt[] = [], batchKey?: string) => {
       if (!ids.length && !splits.length) return;
       const step: AddedStep = {

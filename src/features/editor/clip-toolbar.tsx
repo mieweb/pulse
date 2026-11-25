@@ -21,6 +21,7 @@ const FLIP_ICON = 'arrow.left.and.right.righttriangle.left.righttriangle.right';
 type Tool = {
   key: string;
   label: string;
+  accessibilityLabel?: string;
   icon?: IconName;
   /** A text glyph instead of an icon (the speed). */
   text?: string;
@@ -41,7 +42,7 @@ function ToolButton({ tool }: { tool: Tool }) {
       onPress={tool.onPress}
       disabled={tool.disabled}
       accessibilityRole="button"
-      accessibilityLabel={tool.label}
+      accessibilityLabel={tool.accessibilityLabel ?? tool.label}
       accessibilityState={{ disabled: !!tool.disabled, busy: !!tool.busy }}
       hitSlop={4}
       style={({ pressed }) => [
@@ -66,12 +67,26 @@ function ToolButton({ tool }: { tool: Tool }) {
   );
 }
 
+function splitTool(canSplit: boolean, onSplit: () => void): Tool {
+  return {
+    key: 'split',
+    label: 'Split',
+    accessibilityLabel: 'Split at playhead',
+    icon: 'scissors',
+    onPress: onSplit,
+    disabled: !canSplit,
+  };
+}
+
 /** The clip under the playhead's tools (edit mode). */
 type Props = {
   muted: boolean;
   speed: number;
   editable: boolean;
   edited: boolean;
+  canSplit: boolean;
+  busy: boolean;
+  onSplit: () => void;
   onFlip: () => void;
   onRotate: () => void;
   onCrop: () => void;
@@ -83,10 +98,11 @@ type Props = {
   onDone: () => void;
 };
 
-/** The clip tools: flip, rotate, crop, mute, speed, then reset and delete (✓ leaves edit mode).
+/** The clip tools: split, flip, rotate, crop, mute, speed, then reset and delete (✓ leaves edit mode).
  * They scroll sideways when the screen is too narrow for all of them. */
 export function ClipToolbar(p: Props) {
   const tools: Tool[] = [
+    splitTool(p.canSplit, p.onSplit),
     { key: 'flip', label: 'Flip', icon: FLIP_ICON, onPress: p.onFlip, disabled: !p.editable },
     {
       key: 'rotate',
@@ -127,7 +143,7 @@ export function ClipToolbar(p: Props) {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollTools}>
         {tools.map((t) => (
-          <ToolButton key={t.key} tool={t} />
+          <ToolButton key={t.key} tool={{ ...t, disabled: p.busy || t.disabled }} />
         ))}
       </ScrollView>
     </View>
@@ -189,10 +205,12 @@ export function SpeedRow({
   );
 }
 
-/** Outside the modes: the draft's tools. Each opens its mode (✓ there comes back). */
+/** Outside the modes: split directly, or open Edit/Captions (✓ there comes back). */
 export function MainToolbar({
   canEdit,
   onEdit,
+  canSplit,
+  onSplit,
   captionsBusy,
   onCaptions,
   tip,
@@ -201,13 +219,17 @@ export function MainToolbar({
   canEdit: boolean;
   /** Edit mode, on the clip under the playhead. */
   onEdit: () => void;
+  /** Split the clip under the playhead without entering Edit. */
+  canSplit: boolean;
+  onSplit: () => void;
   /** The model downloading, or clips being transcribed. */
   captionsBusy: boolean;
   onCaptions: () => void;
   tip?: ReactNode;
 }) {
   const tools: Tool[] = [
-    { key: 'edit', label: 'Edit', icon: 'scissors', onPress: onEdit, disabled: !canEdit },
+    { key: 'edit', label: 'Edit', icon: 'pencil', onPress: onEdit, disabled: !canEdit },
+    splitTool(canSplit, onSplit),
     {
       key: 'captions',
       label: 'Captions',

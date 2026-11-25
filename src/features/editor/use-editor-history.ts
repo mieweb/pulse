@@ -73,7 +73,7 @@ export function useEditorHistory(
   return {
     /** Call before an edit. `opKey` (e.g. `speed:<id>`) merges quick repeats into one step. */
     record: (opKey: string | null) => store.record(present(), opKey),
-    /** Clips were added to the draft (already in it): one step that takes them all out. */
+    /** Added clips and/or a standalone split committed: one step reverses the whole operation. */
     recordAdded: store.recordAdded,
     beginBatch: store.beginBatch,
     endBatch: store.endBatch,
