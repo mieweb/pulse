@@ -1,0 +1,12 @@
+{
+  "version": "2.8.0",
+  "date": "2026-11-25",
+  "notes": [
+    "Toolbar #337 + Bulk Transcript #339 test",
+    "Home → open a project → Edit. Delete, Split, Speed and Reset should appear first in a full-width row above Close, Undo, Redo and Export. Swipe or use More/First; scrolling and gaps should keep Edit open.",
+    "Transcript remains available from the main editor tools and Captions. Select words or a Range, choose This beat or Whole Pulse, then Apply cuts. One Undo restores the full batch, and Redo reapplies it.",
+    "Clean up → Analyze still offers reviewed filler and quiet-pause suggestions. Use Listen, adjust Pause length and uncheck anything to keep before applying. Edit and Hide word change captions only.",
+    "On spare footage, try Delete (no Undo), Split → Undo/Redo, and Speed → Done → Reset. Try larger text and holding the phone in either hand; later tools and every speed choice should remain reachable with More/First.",
+    "This build retains Summary, persistent Undo/Redo, Voiceover and paused export. Please test natural speech cut quality, normal recording/playback and thumb reach. About → Release notes should show this exact combined-test label."
+  ]
+}
