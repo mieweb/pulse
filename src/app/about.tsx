@@ -29,6 +29,8 @@ import {
   type BuildConfig,
 } from '@/features/about/build-info';
 import { formatDetails, type DeviceInfo } from '@/features/about/details';
+import { ReleaseNoteList } from '@/features/about/release-note-list';
+import { readReleaseNotes } from '@/features/about/release-notes';
 import { useServerCompatibility } from '@/features/about/use-server-compatibility';
 import { expoDb } from '@/db/client';
 import { createLibraryBackup } from '@/features/draft-transfer/library-backup';
@@ -43,10 +45,10 @@ import { APP_PROTOCOL, protocolRangeLabel } from '@/features/upload/core/client-
 import { useTheme } from '@/hooks/use-theme';
 import { formatCount } from '@/utils/format';
 import { formatDateTime } from '@/utils/relative-date';
-import { tallSheetFits } from '@/utils/sheet-fit';
 import { userMessage } from '@/utils/user-message';
 
 const build = readBuildInfo(Constants.expoConfig as BuildConfig | null, Platform.OS);
+const releaseNotes = readReleaseNotes(Constants.expoConfig);
 const device: DeviceInfo = {
   os: Platform.OS === 'ios' ? 'iOS' : Platform.OS === 'android' ? 'Android' : Platform.OS,
   osVersion: Device.osVersion,
@@ -74,8 +76,6 @@ const NEW_ISSUE_URL = 'https://github.com/mieweb/pulse/issues/new';
  */
 export default function AboutScreen() {
   const insets = useSafeAreaInsets();
-  // Decided when the sheet opens, as its route options are (`tallSheetOptions`).
-  const [scrolls] = useState(() => !tallSheetFits());
   const theme = useTheme();
   const { showToast } = useToast();
   // Still checked here: Copy details and the log export carry each server's result.
@@ -164,14 +164,9 @@ export default function AboutScreen() {
   const surface = { backgroundColor: theme.card };
 
   return (
-    <View collapsable={false} style={scrolls ? styles.fill : undefined}>
-      {/* No title bar: the app icon, name and version open the sheet, and the content flows on
-          from there. The sheet sizes to it and doesn't scroll (a scroll view breaks a
-          `fitToContents` sheet's layout); at large text sizes or on a short screen, where it would
-          be clipped, it opens full height and scrolls instead (`tallSheetFits`). */}
-      <SheetBody
-        scrolls={scrolls}
-        style={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}>
+    <View collapsable={false} style={styles.fill}>
+      {/* Release notes vary in length, so About always opens full height and scrolls. */}
+      <SheetBody scrolls style={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}>
         <View style={styles.hero}>
           {/* expo-image, not RN's Image: RN re-fetched and re-decoded the 1024px icon on every
               open (in dev, over Wi-Fi from Metro), so it popped in late or never showed. The
@@ -188,6 +183,25 @@ export default function AboutScreen() {
             <ThemedText themeColor="textSecondary">Version {versionLabel(build)}</ThemedText>
           </View>
         </View>
+
+        <Section
+          title="Release notes"
+          surface={surface}
+          action={
+            <Pressable
+              onPress={() => router.push('/release-history')}
+              hitSlop={COPY_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Release history"
+              accessibilityHint="Shows notes for the previous five releases"
+              style={({ pressed }) => pressed && styles.pressedIcon}>
+              <ThemedText type="subheadlineEmphasized" themeColor="accent">
+                Release history
+              </ThemedText>
+            </Pressable>
+          }>
+          <ReleaseNoteList release={releaseNotes.current} />
+        </Section>
 
         <Section
           title="This build"

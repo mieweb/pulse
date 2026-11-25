@@ -2,6 +2,10 @@ import { execSync } from 'node:child_process';
 
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
+// Expo transpiles this config alone; Node 24 loads the helper's TypeScript by explicit path.
+const { collectReleaseNotes } =
+  require('./scripts/release-notes.ts') as typeof import('./scripts/release-notes');
+
 /** Runs a git command in the repo; `null` if git or the repo isn't available. */
 function git(args: string): string | null {
   try {
@@ -60,6 +64,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra: {
       ...config.extra,
       linkHost: LINK_HOST,
+      // Generated from this checkout, never fetched on the phone: notes match the build offline.
+      releaseNotes: collectReleaseNotes({
+        version: config.version ?? 'unknown',
+        commit: process.env.GITHUB_SHA ?? 'HEAD',
+      }),
       build: {
         commit: process.env.GITHUB_SHA ?? git('rev-parse HEAD'),
         ci,

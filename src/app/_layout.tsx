@@ -91,9 +91,17 @@ function ThemedNavigation() {
             options={() => ({
               presentation: 'formSheet',
               sheetGrabberVisible: true,
-              // Sized to its content, or full height and scrolling at large text sizes.
-              ...tallSheetOptions(),
+              // Notes vary in length; the full-height sheet keeps every section reachable.
+              sheetAllowedDetents: [1],
             })}
+          />
+          <Stack.Screen
+            name="release-history"
+            options={{
+              presentation: 'formSheet',
+              sheetGrabberVisible: true,
+              sheetAllowedDetents: [1],
+            }}
           />
           <Stack.Screen
             name="on-device-ai"
