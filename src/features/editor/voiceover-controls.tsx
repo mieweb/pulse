@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
@@ -7,6 +8,67 @@ import { useTheme } from '@/hooks/use-theme';
 import type { useVoiceover } from './use-voiceover';
 
 export const VOICEOVER_CONTROLS_HEIGHT = 142;
+
+/** Keep touch release events separate from the standard Start/Stop activation. */
+export function voiceoverRecordingActions() {
+  let held = false;
+  return {
+    resetHold: () => {
+      held = false;
+    },
+    forVoiceover: (
+      voiceover: Pick<ReturnType<typeof useVoiceover>, 'phase' | 'undoBusy' | 'press' | 'release'>,
+    ) => {
+      const { phase, undoBusy, press, release } = voiceover;
+      const recording = phase === 'starting' || phase === 'recording';
+      const waiting = phase === 'preparing' || phase === 'saving';
+      const disabled = !recording && (phase !== 'ready' || undoBusy);
+      const releaseHold = () => {
+        if (!held) return;
+        held = false;
+        release();
+      };
+      return {
+        hold: {
+          onPressIn: () => {
+            if (phase !== 'ready' || undoBusy) return;
+            held = true;
+            press();
+          },
+          // Use actual release only: Pressability's delayed onPressOut can outlive this take.
+          onTouchEnd: releaseHold,
+          onTouchCancel: releaseHold,
+          disabled,
+          // The adjacent Start/Stop button provides standard screen-reader and switch activation.
+          accessible: false,
+          accessibilityElementsHidden: true,
+          importantForAccessibility: 'no-hide-descendants' as const,
+          testID: 'voiceover.record',
+        },
+        toggle: {
+          onPress: () => {
+            if (disabled) return;
+            if (recording) {
+              held = false;
+              release();
+            } else {
+              held = false;
+              press();
+            }
+          },
+          disabled,
+          accessibilityRole: 'button' as const,
+          accessibilityLabel: recording ? 'Stop recording voiceover' : 'Start recording voiceover',
+          accessibilityHint: recording
+            ? 'Saves this take and pauses the video.'
+            : 'Starts narration while the video plays. Activate Stop to save this take and pause.',
+          accessibilityState: { busy: waiting, disabled },
+          testID: 'voiceover.toggle',
+        },
+      };
+    },
+  };
+}
 
 export function VoiceoverControls({
   voiceover,
@@ -18,6 +80,13 @@ export function VoiceoverControls({
   const theme = useTheme();
   const { phase, busy, error, takes } = voiceover;
   const recording = phase === 'starting' || phase === 'recording';
+  const [recordingActions] = useState(voiceoverRecordingActions);
+  useEffect(() => {
+    // An interrupted hold may unmount before its touch-cancel event is delivered.
+    if (phase === 'preparing' || phase === 'saving' || phase === 'failed')
+      recordingActions.resetHold();
+  }, [phase, recordingActions]);
+  const actions = recordingActions.forVoiceover(voiceover);
   return (
     <View style={styles.root}>
       <View style={styles.row}>
@@ -77,38 +146,42 @@ export function VoiceoverControls({
           </Text>
         </Pressable>
       ) : (
-        <Pressable
-          onPressIn={voiceover.press}
-          onPressOut={voiceover.release}
-          // Pressability keeps very short presses highlighted for 130 ms. End capture on the
-          // actual touch release too; duplicate release callbacks share the same finish task.
-          onTouchEnd={voiceover.release}
-          onTouchCancel={voiceover.release}
-          disabled={phase === 'preparing' || phase === 'saving' || voiceover.undoBusy}
-          accessibilityRole="button"
-          accessibilityLabel="Hold to record voiceover"
-          accessibilityHint="Press and hold to narrate while the video plays. Release to save this take and pause."
-          accessibilityState={{
-            busy: phase === 'preparing' || phase === 'saving',
-            disabled: phase === 'preparing' || phase === 'saving',
-          }}
-          testID="voiceover.record"
-          style={[styles.record, { backgroundColor: recording ? Accent : theme.text }]}>
-          {phase === 'preparing' || phase === 'saving' ? (
-            <ActivityIndicator size="small" color={theme.background} />
-          ) : (
-            <Icon name="mic.fill" size={20} tintColor={recording ? '#fff' : theme.background} />
-          )}
-          <Text style={[styles.recordText, { color: recording ? '#fff' : theme.background }]}>
-            {phase === 'preparing'
-              ? 'Preparing microphone…'
-              : phase === 'saving'
-                ? 'Saving take…'
-                : recording
-                  ? 'Recording · release to save'
-                  : 'Hold to record'}
-          </Text>
-        </Pressable>
+        <View style={styles.recordingRow}>
+          <Pressable
+            {...actions.hold}
+            style={[
+              styles.record,
+              styles.shortcut,
+              { backgroundColor: recording ? Accent : theme.text },
+            ]}>
+            {phase === 'preparing' || phase === 'saving' ? (
+              <ActivityIndicator size="small" color={theme.background} />
+            ) : (
+              <Icon name="mic.fill" size={20} tintColor={recording ? '#fff' : theme.background} />
+            )}
+            <Text style={[styles.recordText, { color: recording ? '#fff' : theme.background }]}>
+              {phase === 'preparing'
+                ? 'Preparing microphone…'
+                : phase === 'saving'
+                  ? 'Saving take…'
+                  : recording
+                    ? 'Recording…'
+                    : 'Hold to record'}
+            </Text>
+          </Pressable>
+          <Pressable
+            {...actions.toggle}
+            style={[
+              styles.record,
+              styles.toggle,
+              { backgroundColor: recording ? Accent : theme.backgroundElement },
+              actions.toggle.disabled && styles.dim,
+            ]}>
+            <Text style={[styles.recordText, { color: recording ? '#fff' : theme.text }]}>
+              {recording ? 'Stop' : 'Start'}
+            </Text>
+          </Pressable>
+        </View>
       )}
       <Text numberOfLines={1} style={[styles.hint, { color: theme.textSecondary }]}>
         {error && phase !== 'failed'
@@ -136,6 +209,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   small: { fontSize: 12 },
+  recordingRow: { flexDirection: 'row', gap: 8 },
+  shortcut: { flex: 1 },
+  toggle: { minWidth: 80 },
   record: {
     minHeight: 44,
     borderRadius: 22,

@@ -51,7 +51,7 @@ export class VoiceoverSession {
   }
 
   press() {
-    if (this.phase !== 'ready') return;
+    if (this.phase !== 'ready' || this.finishTask) return;
     this.held = true;
     const generation = this.generation;
     this.change('starting');
@@ -97,12 +97,14 @@ export class VoiceoverSession {
   }
 
   private async save(generation: number) {
-    if (!this.unsaved) return;
-    await this.ports.save(this.unsaved);
-    this.unsaved = null;
+    const take = this.unsaved;
+    if (!take || generation !== this.generation) return;
+    await this.ports.save(take);
+    if (this.unsaved === take) this.unsaved = null;
     if (generation === this.generation) {
       if (!this.prepared) {
         await this.ports.prepare();
+        if (generation !== this.generation) return;
         this.prepared = true;
       }
       if (generation === this.generation) this.change('ready');
@@ -113,15 +115,28 @@ export class VoiceoverSession {
     return this.unsaved != null;
   }
 
-  async retry() {
-    if (this.phase !== 'failed') return;
-    if (!this.unsaved) return this.prepare();
+  retry(): Promise<void> {
+    if (this.phase !== 'failed') return this.finishTask ?? Promise.resolve();
+    const generation = this.generation;
+    const pending = this.finishTask;
     this.change('saving');
-    try {
-      await this.save(this.generation);
-    } catch (error) {
-      this.change('failed', error);
-    }
+    const task = (async () => {
+      try {
+        // An interrupted finish may still commit successfully. Wait before deciding whether
+        // its original file needs another write; disposal must wait for this retry as well.
+        await pending;
+        if (generation !== this.generation || this.phase !== 'saving') return;
+        if (this.unsaved) await this.save(generation);
+        else await this.prepare();
+      } catch (error) {
+        if (generation === this.generation) this.change('failed', error);
+      }
+    })();
+    this.finishTask = task;
+    void task.finally(() => {
+      if (this.finishTask === task) this.finishTask = null;
+    });
+    return task;
   }
 
   cancel() {

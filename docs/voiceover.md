@@ -12,6 +12,9 @@ and the playhead moves to the tapped position. Screen-reader activation opens at
 After the microphone is ready, hold **Hold to record** to narrate while the picture plays.
 Release to pause the picture and save one take. The playhead stays at that take's end. Repeat
 for several short takes, or hold for a continuous narration spanning clip boundaries.
+Alternatively, tap **Start**, then **Stop** to save the take. This standard
+button activation is also available to screen readers and Switch Control, without a sustained
+touch. Both controls use the same recording and save workflow.
 
 **Undo take** removes the most recently added entire take, leaving the video unchanged. Repeated
 Undo removes earlier takes in reverse recording order. The playhead returns to the end of the
@@ -59,8 +62,10 @@ mix's composition swap and playhead seek before becoming recordable again.
 
 Backgrounding, audio interruptions, lost routes, playback stalls and unexpected seeks cancel
 unfinished recording and preserve earlier takes. Capture rejects incomplete input and timestamp
-gaps rather than saving a take with a missing tail or compressed timing. Retry re-prepares the microphone. A failed durable save can
-retry the original capture; leaving the workflow discards that unsaved capture.
+gaps rather than saving a take with a missing tail or compressed timing. Retry re-prepares the
+microphone. A failed durable save can retry the original capture after any in-flight save
+finishes; repeated interruptions and Retry cannot save the same capture concurrently. Leaving
+the workflow discards that unsaved capture.
 
 Each saved take logs `[voiceover] capture timing` with timeline bounds and these native metrics:
 
