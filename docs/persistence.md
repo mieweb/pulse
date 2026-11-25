@@ -150,8 +150,8 @@ Home’s **+ → Summary** collects beats from checked projects, an inclusive **
 calendar date range, or **Since last summary**. The screen previews the included projects
 with the same first-clip cover thumbnails as Home, plus their beat count and duration.
 With no earlier summary, choose projects or dates first. The last
-summary reminder opens that project in the recorder; a new summary opens there too, ready
-to edit, record more beats or export as one update. Blank project creation opens the usual
+summary reminder opens that existing project in the editor; a new summary opens in the recorder,
+ready to record more beats or export as one update. Blank project creation opens the usual
 recorder immediately when **Blank project** is tapped, without another submit step.
 
 The source query excludes every summary project, including duplicates of summaries. Beats

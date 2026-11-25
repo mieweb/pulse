@@ -3,26 +3,34 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 
 import { GlassPill } from '@/components/glass-pill';
 import { Accent, Opacity, Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { formatDuration } from '@/utils/format';
 
 /**
- * The screen take's own Stop, in the recorder of the draft it goes to: how long it has run, and a
+ * The screen take's own Stop, in its draft's recorder or editor: how long it has run, and a
  * tap anywhere on it stops it (the shutter stays the camera's); the red Stop inside is what reads
- * as the button. While the file settles Stop shows a spinner and takes no taps. Dims only what's
- * inside the glass: a partly transparent ancestor draws it flat.
+ * as the button. While the file settles Stop shows a spinner and takes no taps. Over video it
+ * dims only what's inside the glass; on a flat editor background it uses the themed surface.
  */
 export function ScreenStopPill({
   began,
   starting,
   stopping,
   onStop,
+  overVideo = true,
 }: {
   began: number | null;
   /** Record screen was tapped and the capture hasn't begun: a spinner, nothing to tap yet. */
   starting: boolean;
   stopping: boolean;
   onStop: () => void;
+  /** False on the editor's flat background; the recorder keeps glass over its video. */
+  overVideo?: boolean;
 }) {
+  const theme = useTheme();
+  const Surface = overVideo ? GlassPill : View;
+  const color = overVideo ? '#fff' : theme.text;
+  const surfaceStyle = [styles.pill, !overVideo && { backgroundColor: theme.backgroundElement }];
   // Its own tick, so the clock re-renders this pill alone.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -34,14 +42,14 @@ export function ScreenStopPill({
 
   if (starting) {
     return (
-      <GlassPill style={styles.pill} accessible accessibilityLabel="Starting screen recording">
+      <Surface style={surfaceStyle} accessible accessibilityLabel="Starting screen recording">
         <View style={styles.status}>
-          <ActivityIndicator size="small" color="#fff" />
-          <Text style={styles.text} maxFontSizeMultiplier={1.3}>
+          <ActivityIndicator size="small" color={color} />
+          <Text style={[styles.text, { color }]} maxFontSizeMultiplier={1.3}>
             Starting…
           </Text>
         </View>
-      </GlassPill>
+      </Surface>
     );
   }
 
@@ -54,10 +62,10 @@ export function ScreenStopPill({
       accessibilityLabel="Stop screen recording"
       accessibilityState={{ busy: stopping, disabled: stopping }}>
       {({ pressed }) => (
-        <GlassPill style={styles.pill}>
+        <Surface style={surfaceStyle}>
           <View style={styles.status}>
             <View style={styles.dot} />
-            <Text style={styles.text} maxFontSizeMultiplier={1.3}>
+            <Text style={[styles.text, { color }]} maxFontSizeMultiplier={1.3}>
               {`Screen ${formatDuration(elapsed, { floor: true })}`}
             </Text>
           </View>
@@ -76,7 +84,7 @@ export function ScreenStopPill({
               Stop
             </Text>
           </View>
-        </GlassPill>
+        </Surface>
       )}
     </Pressable>
   );
@@ -96,7 +104,6 @@ const styles = StyleSheet.create({
   status: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Accent },
   text: {
-    color: '#fff',
     fontSize: 15,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],

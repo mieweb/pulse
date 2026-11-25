@@ -43,6 +43,13 @@ Before opening, splitting or substantially rescoping a PR, verify this checklist
 - For UI changes, update affected documentation and include before/after screenshots or a short clip in the PR. Record the platform and any unverified interaction or accessibility behavior.
 - Use native simulator/device checks for native behavior and browser tools for web behavior. Leave an interactive browser session available for the user unless asked to close it.
 
+### One-handed phone use
+
+- Design app-owned phone controls so each operation can be completed with one thumb while holding the phone in either hand. Keep required commands in the lower half of the UI, with a reachable path to Back, Close, Cancel and the primary action in every actionable state, including loading, errors, sheets and keyboard entry. A bottom control at the opposite screen edge is not sufficient evidence of reachability.
+- Keep a reachable button alternative to required swipes, long presses, dragging and multi-touch gestures. Preserve gesture shortcuts without making them the only way to complete an operation. Account for safe areas, small screens, large text, RTL, accessibility focus and gesture conflicts with navigation, scrolling, recording and editing.
+- Document and review any exception before treating it as accepted. Name the affected operation and state, why lower placement or a button alternative is unsuitable, and the reachable fallback or follow-up. Distinguish OS-owned UI (for example permission prompts, Photos/Files pickers and share sheets) from app-owned UI; accessibility or layout constraints do not silently waive the requirement. Record any unverified reach or accessibility behavior.
+- Every PR must state whether it changes a phone flow. For applicable PRs, review the complete affected flow with both hands, record platform/device or simulator and text-size coverage, attach before/after evidence, and list exceptions and remaining physical reach checks. For PRs without phone UI or flow changes, record a brief N/A reason. Simulator screenshots establish layout, not actual thumb reach. Use [the one-handed navigation audit](docs/one-handed-navigation.md) for scope, deferred work and acceptance mapping.
+
 ## Documentation and CI
 
 - Update relevant behavior, architecture and build documentation in the same PR as the change. Link authoritative documents instead of duplicating rules or explanations.

@@ -79,6 +79,14 @@ flowchart TB
 
 ### Editing & export
 
+- Existing library cards and **View last summary** open the editor. Home’s **+** opens **New
+  project**: **Blank project** opens the camera, while creating a new **Summary** opens its
+  collected beats in the recorder. Use the editor’s Add menu to record more into the same draft.
+  An empty existing draft stays in Edit so you can add media or restore clips retained for Redo.
+- Editor Close, contextual tools (including Split), Undo/Redo and compact Export share one lower toolbar.
+  Recorder Close/Export and export Close are lower too. See the
+  [one-handed navigation audit](docs/one-handed-navigation.md) for scope, remaining gesture/sheet
+  work and validation requirements.
 - Per-clip trim and transforms are saved as settings over the untouched source and rendered at export
 - The editor has **one sticky + at the right edge of the clip row**, visible in both views and while editing a clip. **Clips (beat list)** inserts at the nearest clip boundary without splitting: before the clip in its first half, after it in its second half, and after it at the midpoint. **Timeline** inserts at the exact playhead. At the end, either view appends a new clip/beat to the existing Pulse.
 - In Timeline, adding X inside A produces **A-left → X → A-right**, with both halves sharing the source video. One Undo restores A and removes X; Redo restores the insertion. Canceling or failing before the first new clip commits leaves A unsplit.

@@ -122,6 +122,20 @@ export function keepEmptyEditorOpen(
   return historyKeepsOpen || (clipCount === 0 && retained);
 }
 
+/**
+ * A library draft can be empty and still offer Add. Only a successful parent-row read establishes
+ * that it is missing; `undefined` means loading or a failed read. Other callers leave when empty
+ * as before, while an active addition or retained history always keeps its session open.
+ */
+export function shouldLeaveEmptyEditor(
+  clipCount: number,
+  retainedHistory: boolean,
+  allowEmpty: boolean,
+  draftExists: boolean | undefined,
+): boolean {
+  return clipCount === 0 && !retainedHistory && (!allowEmpty || draftExists === false);
+}
+
 /** The clips taken out by additions on the redo stack: their files go when it's cleared. */
 export function takenOut(steps: readonly Step[]): TakenOutClips[] {
   return steps.flatMap((s) => (s.kind === 'added' && s.taken ? [s.taken] : []));

@@ -30,7 +30,7 @@ import Sortable from 'react-native-sortables';
 import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
 import { ADD_SIZE, EditorAddMenu } from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
-import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
+import { CommandButton, ViewSwitcher } from '@/features/editor/editor-controls';
 import { useFrameRates } from '@/features/editor/use-frame-rates';
 import { flushDraftWrites, trackDraftWrite } from '@/features/editor/draft-writes';
 import {
@@ -70,7 +70,7 @@ import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
-import { keepEmptyEditorOpen } from '@/features/editor/editor-history';
+import { keepEmptyEditorOpen, shouldLeaveEmptyEditor } from '@/features/editor/editor-history';
 import { useCanSplitAtPlayhead, usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { clipSplitAnchor } from '@/features/editor/clip-split';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
@@ -155,7 +155,8 @@ function usePlaybackSessionOnReturn() {
 /**
  * The timeline editor: the draft playing as it will export (<PulsePreview>), a strip of its
  * clips under a centre playhead, and a bottom bar of tools. Every edit applies at once (no Save),
- * with undo/redo in the header; trims snap to source frames as the engine does.
+ * with Close, undo/redo and Export in the bottom toolbar; trims snap to source frames as the
+ * engine does.
  *
  * The bottom bar offers Split directly; Edit and Captions open a mode until its ✓.
  * Edit (or a tap on a clip) edits the clip
@@ -178,6 +179,7 @@ function usePlaybackSessionOnReturn() {
  */
 export function EditorScreen({
   draftId,
+  allowEmpty = false,
   clipId,
   anchor: openAnchor,
   view: openView,
@@ -199,13 +201,13 @@ export function EditorScreen({
   usePlaybackSessionOnReturn();
   const {
     data: captionRows,
-    updatedAt: captionsUpdatedAt,
+    updatedAt: draftRowUpdatedAt,
     error: captionError,
   } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionYValue = captionRows[0]?.captionY;
   const history = useEditorHistory(
     draftId,
-    draft.ready && captionsUpdatedAt !== undefined && captionError === undefined,
+    draft.ready && draftRowUpdatedAt !== undefined && captionError === undefined,
     clips,
     draft.setValue,
     draft.reorder,
@@ -325,9 +327,10 @@ export function EditorScreen({
       .catch(() => {});
   }, []);
 
-  // Leave an empty draft once, except when undo retains clips for redo. Keep that session through
-  // database/live-query timing gaps until restored clips reach the screen. Only close while on
-  // top: otherwise a recorder over this editor would be closed instead.
+  // The standalone library keeps persisted empty drafts editable through Add. Other callers
+  // leave once empty, except when history retains clips for Redo. Wait for the draft row as well
+  // as its clips so a loading query cannot close a valid empty draft. Only close while on top:
+  // otherwise a recorder over this editor would be closed instead.
   const focused = useScreenFocused();
   const left = useRef(false);
   const retainedEmpty = useRef(false);
@@ -337,11 +340,27 @@ export function EditorScreen({
       clips.length,
       history.keepEmptyOpen,
     );
-    if (left.current || !focused || !draft.loaded || clips.length > 0 || retainedEmpty.current)
+    // Drizzle can retain an earlier error after a successful read; updatedAt marks usable rows.
+    const draftExists = draftRowUpdatedAt === undefined ? undefined : captionRows.length > 0;
+    if (
+      left.current ||
+      !focused ||
+      !draft.loaded ||
+      !shouldLeaveEmptyEditor(clips.length, retainedEmpty.current, allowEmpty, draftExists)
+    )
       return;
     left.current = true;
     onClose();
-  }, [focused, draft.loaded, clips.length, history.keepEmptyOpen, onClose]);
+  }, [
+    focused,
+    draft.loaded,
+    clips.length,
+    history.keepEmptyOpen,
+    allowEmpty,
+    captionRows.length,
+    draftRowUpdatedAt,
+    onClose,
+  ]);
 
   // Opened on a clip or at a boundary: the playhead starts there. Placed once the clips are known,
   // before the strip or row is shown (they stay hidden until then, on the UI thread, so no frame
@@ -350,7 +369,12 @@ export function EditorScreen({
   const placed = useSharedValue(opensPlaced ? 0 : 1);
   const placedOnce = useRef(!opensPlaced);
   useLayoutEffect(() => {
-    if (placedOnce.current || clips.length === 0) return;
+    if (placedOnce.current) return;
+    if (clips.length === 0) {
+      // An allowed empty draft still needs its Add button, even with an opening anchor/clip id.
+      if (allowEmpty && draft.loaded) placed.set(1);
+      return;
+    }
     placedOnce.current = true;
     const ids = clips.map((c) => c.id);
     const i = clipId ? ids.indexOf(clipId) : -1;
@@ -363,7 +387,17 @@ export function EditorScreen({
       : timeAtAnchor(openAnchor ?? END, ids, layout.starts, layout.totalMs);
     ctl.place(Math.min(at, Math.max(0, layout.totalMs - 1)));
     placed.set(1);
-  }, [clips, clipId, openAnchor, ctl, layout.starts, layout.totalMs, placed]);
+  }, [
+    clips,
+    clipId,
+    openAnchor,
+    ctl,
+    layout.starts,
+    layout.totalMs,
+    placed,
+    allowEmpty,
+    draft.loaded,
+  ]);
   // The scale the timeline opens at, once the clips are known: the clip it was opened on fitted
   // (`clipZoom`, ready to trim), or the whole draft when it's short (`draftZoom`).
   const openedZoom = useRef(false);
@@ -928,33 +962,6 @@ export function EditorScreen({
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={[styles.root, { paddingTop: insets.top, backgroundColor: theme.background }]}>
-        {/* Off-clip space, like every black area around the controls: a tap lets a selection go. */}
-        <Pressable style={styles.header} onPress={deselect} accessible={false}>
-          <HeaderButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
-          <View style={styles.headerRight}>
-            <HeaderButton
-              icon="arrow.uturn.backward"
-              label="Undo"
-              onPress={undo}
-              disabled={!history.canUndo}
-            />
-            <HeaderButton
-              icon="arrow.uturn.forward"
-              label="Redo"
-              onPress={redo}
-              disabled={!history.canRedo}
-            />
-            {/* Finished editing: on to the export screen (back returns here). */}
-            <View style={styles.export}>
-              <ExportButton
-                onPress={openExport}
-                disabled={clips.length === 0}
-                testID="editor.export"
-              />
-            </View>
-          </View>
-        </Pressable>
-
         <Pressable
           style={[styles.preview, { backgroundColor: theme.background }]}
           onLayout={(e) =>
@@ -1001,17 +1008,6 @@ export function EditorScreen({
           />
           {status?.error && (
             <Text style={[styles.error, { color: theme.textSecondary }]}>{status.error}</Text>
-          )}
-          {/* A screen take for this draft (from the "+"): its Stop, over the top of the preview. */}
-          {screenCapture && add.screenHere && (
-            <View style={styles.screenStop} pointerEvents="box-none">
-              <screenCapture.StopPill
-                began={screen.began}
-                starting={screen.starting && !screenLive}
-                stopping={screen.phase === 'stopping'}
-                onStop={() => void screenCapture.stop()}
-              />
-            </View>
           )}
         </Pressable>
 
@@ -1110,14 +1106,27 @@ export function EditorScreen({
           </View>
         </Animated.View>
 
+        {/* The take's Stop has its own lower row, clear of the clip gestures and sticky "+". */}
+        {screenCapture && add.screenHere && (
+          <View style={styles.screenStop}>
+            <screenCapture.StopPill
+              overVideo={false}
+              began={screen.began}
+              starting={screen.starting && !screenLive}
+              stopping={screen.phase === 'stopping'}
+              onStop={() => void screenCapture.stop()}
+            />
+          </View>
+        )}
+
         <Pressable
-          // One height whether it holds the tools or the hint, so selecting never moves the layout.
-          // Above the keyboard while typing, it needs no room for the home indicator.
+          // One shared row for commands and tools; caption entry replaces it above the keyboard.
+          // Apply the home inset once, without a separate row or extra vertical padding.
           style={[
             styles.tools,
             {
-              height: TOOLBAR_HEIGHT + 8 + (typing ? 8 : insets.bottom + 4),
-              paddingBottom: typing ? 8 : insets.bottom + 4,
+              height: TOOLBAR_HEIGHT + (typing ? 0 : insets.bottom),
+              paddingBottom: typing ? 0 : insets.bottom,
             },
           ]}
           onPress={deselect}
@@ -1132,68 +1141,96 @@ export function EditorScreen({
                 typed.current = t;
               }}
             />
-          ) : captionTools ? (
-            <CaptionTools
-              lines={lines}
-              timeMs={values.timeMs}
-              hasWord={selWord >= 0}
-              edited={captionsEdited}
-              onDone={() => setMode('main')}
-              onEdit={editCaption}
-              onDelete={deleteCaption}
-              onSplit={splitCaption}
-              onMerge={mergeCaption}
-              onModel={onOpenModelSheet}
-              onReset={resetCaptions}
-            />
-          ) : !sel ? (
-            <MainToolbar
-              canEdit={clips.length > 0 && !splitBusy && !history.busy}
-              canSplit={canSplit && !add.busy && !splitBusy && !history.busy}
-              onSplit={split}
-              onEdit={() => {
-                haptics.tap();
-                const i = clipIndexAt(layout.starts, ctl.lastMs);
-                enterEdit(i);
-                zoomToClip(i);
-              }}
-              captionsBusy={captionsBusy}
-              onCaptions={openCaptions}
-              tip={
-                captionsTip.mounted && (
-                  <TipAnchor
-                    id="captions"
-                    shown={captionsTip.shown}
-                    onDismiss={captionsTip.dismiss}
-                  />
-                )
-              }
-            />
-          ) : tools === 'speed' ? (
-            <SpeedRow
-              speeds={speedMenu(customSpeeds)}
-              speed={sel.edit.speed}
-              onPick={(s) => edit('speed', (e) => ({ ...e, speed: s }))}
-              onDone={() => setTools('clip')}
-            />
           ) : (
-            <ClipToolbar
-              muted={sel.edit.muted}
-              speed={sel.edit.speed}
-              editable={sel.editable}
-              edited={sel.canReset}
-              canSplit={canSplit && !add.busy}
-              busy={splitBusy || history.busy}
-              onSplit={split}
-              onFlip={() => edit(null, flippedEdit)}
-              onRotate={() => edit('rotate', rotated)}
-              onCrop={startCrop}
-              onMute={() => edit(null, (e) => ({ ...e, muted: !e.muted }))}
-              onSpeed={() => setTools('speed')}
-              onReset={reset}
-              onDelete={remove}
-              onDone={() => setMode('main')}
-            />
+            <View style={styles.toolbar}>
+              <CommandButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
+              <View style={styles.contextTools}>
+                {captionTools ? (
+                  <CaptionTools
+                    lines={lines}
+                    timeMs={values.timeMs}
+                    hasWord={selWord >= 0}
+                    edited={captionsEdited}
+                    onDone={() => setMode('main')}
+                    onEdit={editCaption}
+                    onDelete={deleteCaption}
+                    onSplit={splitCaption}
+                    onMerge={mergeCaption}
+                    onModel={onOpenModelSheet}
+                    onReset={resetCaptions}
+                  />
+                ) : !sel ? (
+                  <MainToolbar
+                    canEdit={clips.length > 0 && !splitBusy && !history.busy}
+                    canSplit={canSplit && !add.busy && !splitBusy && !history.busy}
+                    onSplit={split}
+                    onEdit={() => {
+                      haptics.tap();
+                      const i = clipIndexAt(layout.starts, ctl.lastMs);
+                      enterEdit(i);
+                      zoomToClip(i);
+                    }}
+                    captionsBusy={captionsBusy}
+                    onCaptions={openCaptions}
+                    tip={
+                      captionsTip.mounted && (
+                        <TipAnchor
+                          id="captions"
+                          shown={captionsTip.shown}
+                          onDismiss={captionsTip.dismiss}
+                        />
+                      )
+                    }
+                  />
+                ) : tools === 'speed' ? (
+                  <SpeedRow
+                    speeds={speedMenu(customSpeeds)}
+                    speed={sel.edit.speed}
+                    onPick={(s) => edit('speed', (e) => ({ ...e, speed: s }))}
+                    onDone={() => setTools('clip')}
+                  />
+                ) : (
+                  <ClipToolbar
+                    muted={sel.edit.muted}
+                    speed={sel.edit.speed}
+                    editable={sel.editable}
+                    edited={sel.canReset}
+                    canSplit={canSplit && !add.busy}
+                    busy={splitBusy || history.busy}
+                    onSplit={split}
+                    onFlip={() => edit(null, flippedEdit)}
+                    onRotate={() => edit('rotate', rotated)}
+                    onCrop={startCrop}
+                    onMute={() => edit(null, (e) => ({ ...e, muted: !e.muted }))}
+                    onSpeed={() => setTools('speed')}
+                    onReset={reset}
+                    onDelete={remove}
+                    onDone={() => setMode('main')}
+                  />
+                )}
+              </View>
+              {/* Keep command slots fixed when disabled, including an empty draft awaiting Redo. */}
+              <CommandButton
+                icon="arrow.uturn.backward"
+                label="Undo"
+                onPress={undo}
+                disabled={!history.canUndo}
+                testID="editor.undo"
+              />
+              <CommandButton
+                icon="arrow.uturn.forward"
+                label="Redo"
+                onPress={redo}
+                disabled={!history.canRedo}
+                testID="editor.redo"
+              />
+              <ExportButton
+                onPress={openExport}
+                disabled={clips.length === 0}
+                testID="editor.export"
+                compact
+              />
+            </View>
           )}
         </Pressable>
 
@@ -1218,21 +1255,20 @@ export function EditorScreen({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    height: 48,
-    paddingHorizontal: 12,
+  toolbar: {
+    height: TOOLBAR_HEIGHT,
+    paddingHorizontal: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    gap: 4,
   },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  export: { marginLeft: 8 },
+  contextTools: { flex: 1, minWidth: 0 },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
   track: { height: STRIP_HEIGHT },
   // Centred on the clip tiles, which both views draw under the ruler.
   add: { position: 'absolute', right: 12, top: RULER_HEIGHT + (TILE_HEIGHT - ADD_SIZE) / 2 },
-  screenStop: { position: 'absolute', top: 8, left: 0, right: 0, alignItems: 'center' },
-  dim: { opacity: 0.35 },
+  screenStop: { alignItems: 'center', paddingVertical: 4 },
   preview: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   cover: { position: 'absolute' },
   error: { textAlign: 'center', padding: 16 },

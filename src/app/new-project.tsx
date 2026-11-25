@@ -7,7 +7,7 @@ const startBlank = () => router.replace('/recorder');
 const openProject = (draftId: string) =>
   router.replace({ pathname: '/recorder', params: { draftId } });
 const reviewSummary = (draftId: string) =>
-  router.push({ pathname: '/recorder', params: { draftId } });
+  router.push({ pathname: '/editor', params: { draftId } });
 
 export default function NewProjectRoute() {
   return (

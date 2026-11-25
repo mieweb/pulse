@@ -5,7 +5,7 @@ import { DraftsScreen } from '@/features/drafts/drafts-screen';
 import { useOnboardingRedirect } from '@/features/onboarding/use-onboarding-redirect';
 
 const newProject = () => router.push('/new-project');
-const openDraft = (draftId: string) => router.push({ pathname: '/recorder', params: { draftId } });
+const openDraft = (draftId: string) => router.push({ pathname: '/editor', params: { draftId } });
 const openAbout = () => router.push('/about');
 
 /**

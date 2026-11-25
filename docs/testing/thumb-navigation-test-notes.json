@@ -1,0 +1,14 @@
+{
+  "version": "2.7.0",
+  "date": "2026-11-25",
+  "notes": [
+    "Thumb navigation test build: includes Summary and Undo/Redo that survive closing the app. Start on Home: existing project cards and View last summary should open Edit.",
+    "In Edit, try Close, Undo, Redo and icon Export in the single bottom toolbar. Swipe the middle tools to reveal more, and check reach while holding the phone in either hand.",
+    "Try a spare project: copy a clip with Edit + → Other Pulse, then Undo. Close and fully relaunch Pulse, reopen the project and tap Redo. The clip should return, even if the project was empty.",
+    "Home + → Blank project opens the camera. Record and stop a short clip, expand the lower camera tools, then Export. Check these controls with one hand.",
+    "Home + → Summary → Choose projects → Create summary opens copied beats in the recorder. View last summary opens Edit; Close returns to the same Summary form.",
+    "If a destination requires a name during Export, open the keyboard and try the lower Close button. Also try larger text; the return control should remain available.",
+    "Known limits: some library, calendar and sheet controls remain high; overflowing editor tools still need a swipe. Caption keyboard, RTL and Android checks remain outstanding.",
+    "Known Split issue: tapping Split again without moving the playhead can create a very short extra clip. Undo rejoins it. Real camera and screen-recording behavior still need your phone test."
+  ]
+}

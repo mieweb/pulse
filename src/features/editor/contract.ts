@@ -18,7 +18,9 @@ export type EditorScreenProps = {
   anchor?: ClipAnchor;
   /** The view to open in when none was remembered from an earlier session (default Clips). */
   view?: EditorView;
-  /** Close, and the draft running out of clips. */
+  /** Keep a persisted empty draft open so media can be added; otherwise it closes when empty. */
+  allowEmpty?: boolean;
+  /** Close, and the draft running out of clips when `allowEmpty` is false. */
   onClose: () => void;
   /** Export, after the editor's pending writes are on disk. */
   onExport: (draftId: string) => void;
@@ -30,7 +32,7 @@ export type EditorScreenProps = {
   onAddClips?: (draftId: string, anchor: ClipAnchor) => void;
   /**
    * Screen recording, from the Pulse app (src/features/screen-capture), as the recorder gets it:
-   * with it the "+" offers Record screen, and the take's Stop shows over the preview. The embed
+   * with it the "+" offers Record screen, and the take's Stop shows in the lower controls. The embed
    * has none (`npm run check:embed`).
    */
   screenCapture?: ScreenCapturePort;
