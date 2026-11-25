@@ -205,7 +205,7 @@ export function EditorScreen({
     draft.captionEdits,
     draft.setCaptions,
     captionYValue ?? null,
-    (y) => void trackDraftWrite(setCaptionY(draftId, y)).catch(() => {}),
+    (y) => void trackDraftWrite(draftId, setCaptionY(draftId, y)).catch(() => {}),
   );
   // The same object until the place changes, so the caption on the video doesn't re-render.
   const captionStyle = useMemo(() => captionStyleFor(captionYValue), [captionYValue]);
@@ -829,7 +829,7 @@ export function EditorScreen({
     // One undo step per drag (it reports once, when let go).
     history.record('captionY');
     history.close();
-    return trackDraftWrite(setCaptionY(draftId, y)).catch((e: unknown) => {
+    return trackDraftWrite(draftId, setCaptionY(draftId, y)).catch((e: unknown) => {
       showToast({ kind: 'error', title: 'Couldn’t move the captions', message: 'Try again.' });
       throw e;
     });

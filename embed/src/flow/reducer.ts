@@ -20,7 +20,7 @@ import type { RecorderEditAt } from '@/features/recorder/contract';
  *
  * Exits (PLAN §5.1 Back navigation): X, the editor's close, Android back at the root and the
  * VoiceOver escape all mean `close`.
- *   - Nothing recorded: `canceled`, and no draft is left behind.
+ *   - No clips or retained Undo/Redo addition: `canceled`, and no draft is left behind.
  *   - A draft this flow made, with a clip: the keep/discard sheet. Keep → `closed{draftId}`;
  *     Discard → `canceled` and the draft is deleted.
  *   - A draft the flow opened (edit, export, record continue): it was there before and edits
@@ -94,6 +94,8 @@ export interface FlowState {
   /** The draft was made by this flow (record, draft 'new'), so X can discard it. */
   newDraft: boolean;
   clipCount: number;
+  /** Undo has retained an addition that can restore an otherwise empty draft. */
+  retainedUndo: boolean;
   /** This flow changed the draft (a clip, an edit). */
   changed: boolean;
   stage: FlowStage;
@@ -109,6 +111,8 @@ export interface FlowState {
 export type FlowEvent =
   /** The first screen drew. */
   | { type: 'mounted' }
+  /** Durable or in-flight Undo retention changed, even if the live clip count did not. */
+  | { type: 'undoRetention'; retainedUndo: boolean }
   /** The recorder started a take. */
   | { type: 'record' }
   /**
@@ -160,6 +164,7 @@ export type FlowEvent =
 export interface OpenedDraft {
   context: PulseContext | null;
   clipCount: number;
+  retainedUndo?: boolean;
 }
 
 /** The first screen of each entry (no Drafts screen anywhere). */
@@ -196,6 +201,7 @@ export function initFlow(requestId: string, request: OpenRequest, draft?: Opened
       draftId: continued,
       newDraft: continued === null,
       clipCount: continued === null ? 0 : (draft?.clipCount ?? 0),
+      retainedUndo: continued !== null && draft?.retainedUndo === true,
     };
   }
   return {
@@ -204,6 +210,7 @@ export function initFlow(requestId: string, request: OpenRequest, draft?: Opened
     draftId: request.draftId,
     newDraft: false,
     clipCount: draft?.clipCount ?? 0,
+    retainedUndo: draft?.retainedUndo === true,
   };
 }
 
@@ -218,6 +225,11 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
   if (state.end) return state; // one result per flow: nothing after it counts
 
   if (event.type === 'mounted') return state.mounted ? state : { ...state, mounted: true };
+  if (event.type === 'undoRetention') {
+    return state.retainedUndo === event.retainedUndo
+      ? state
+      : { ...state, retainedUndo: event.retainedUndo };
+  }
 
   // The host and failures end the flow from anywhere, the sheet included. During a take they wait
   // for its stop, so the draft it lands in is known.
@@ -285,7 +297,7 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
     case 'merged':
       return state.clipCount > 0 ? { ...state, stage: 'exported' } : state;
     case 'edit':
-      return top === 'recorder' && state.clipCount > 0 ? go(state, 'editor') : state;
+      return top === 'recorder' && hasTake(state) ? go(state, 'editor') : state;
     case 'addClips':
       // Always a new recorder over the editor, as in the app: the editor stays (its undo and its
       // playhead carry on), and its insert cursor starts at the editor's add position. Its Edit
@@ -358,19 +370,25 @@ function go(state: FlowState, screen: FlowScreen): FlowState {
 
 function stopped(state: FlowState, event: Extract<FlowEvent, { type: 'stop' }>): FlowState {
   if (!event.draftId) return { ...state, recording: false };
+  const clipCount = event.clipCount ?? state.clipCount + 1;
   return {
     ...state,
     recording: false,
     draftId: event.draftId,
-    clipCount: event.clipCount ?? state.clipCount + 1,
+    clipCount,
     changed: true,
     // A new clip after a merge makes the export stale again.
-    stage: STAGE_RANK[state.stage] >= STAGE_RANK.edited ? 'edited' : 'recorded',
+    stage:
+      clipCount === 0
+        ? 'none'
+        : STAGE_RANK[state.stage] >= STAGE_RANK.edited
+          ? 'edited'
+          : 'recorded',
   };
 }
 
 function hasTake(state: FlowState): boolean {
-  return state.draftId !== null && state.clipCount > 0;
+  return state.draftId !== null && (state.clipCount > 0 || state.retainedUndo);
 }
 
 /** X (and back at the root). */
@@ -402,7 +420,7 @@ function settle(state: FlowState, end: PendingEnd): FlowState {
 function hostClose(state: FlowState, discard: boolean): FlowState {
   // An opened draft was the person's before this flow: the host's close leaves it as X would.
   if (!state.newDraft) return leaveExisting(state, 'host');
-  // A draft this flow made: kept with a clip unless the host discards; with none, it goes.
+  // A draft this flow made keeps retained Redo just as it keeps clips, unless explicitly discarded.
   if (!hasTake(state) || discard) {
     return finish(state, { status: 'canceled', reason: 'host' }, state.draftId);
   }
@@ -418,8 +436,8 @@ function leaveExisting(state: FlowState, reason: CloseReason): FlowState {
 }
 
 function fail(state: FlowState, error: PulseErrorInfo): FlowState {
-  // The draft survives a failure whenever it had a clip (and an opened draft always does). A draft
-  // this flow made with no clip goes.
+  // A retained addition makes an empty draft recoverable. Automatic failure cleanup must keep
+  // that draft and report its ID; explicit discard still removes a draft this flow made.
   const survives = state.draftId !== null && (hasTake(state) || !state.newDraft);
   return finish(
     state,

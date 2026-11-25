@@ -1074,6 +1074,87 @@ describe('undo history in .pulse files', () => {
     expect(readMedia(P(S2, '.mp4'))).toBe(`bytes of ${P(S2, '.mp4')}`);
   });
 
+  it.each(['live', 'dormant'] as const)(
+    'rejects a .pulse history targeting another draft’s %s clip before copying anything',
+    async (owner) => {
+      const conn = await openMigrated();
+      seedUndoFixture(conn);
+      const target = owner === 'live' ? D : D2;
+      const foreignId = owner === 'live' ? S4 : S2;
+      const original = dump(conn);
+      const uri = await exportDrafts(conn, [D, D2], 1000);
+      const archive = unzipSync(readFileSync(new File(uri).path));
+      const doc = JSON.parse(strFromU8(archive['project.json'])) as ProjectDocument;
+      doc.tables.drafts.find((row) => row.id === target)!.undoHistory = JSON.stringify({
+        version: 1,
+        checkpoint: historyCheckpoint(conn, target),
+        past: [{ kind: 'added', ids: [foreignId], taken: null }],
+        future: [],
+      });
+      // The checkpoint truthfully describes the target draft. Only cross-draft ID ownership is
+      // wrong, including the second case where the foreign clip has no live segments row.
+      expect(() => checkProject(doc)).toThrow('This .pulse file is damaged.');
+      const tampered = join(env.cacheDir, `foreign-${owner}.pulse`);
+      writeFileSync(
+        tampered,
+        zipSync({ ...archive, 'project.json': strToU8(JSON.stringify(doc)) }, { level: 0 }),
+      );
+      const fresh = jest.fn(() => 'must-not-be-copied');
+      await expect(importProjectFile(conn, `file://${tampered}`, fresh)).rejects.toThrow(
+        'This .pulse file is damaged.',
+      );
+      expect(fresh).not.toHaveBeenCalled();
+      expect(dump(conn)).toEqual(original);
+      expect(readMedia(P(S2, '.mp4'))).toBe(`bytes of ${P(S2, '.mp4')}`);
+      expect(readMedia(P(S4, '.mp4', D2))).toBe(`bytes of ${P(S4, '.mp4', D2)}`);
+    },
+  );
+
+  it.each(['live', 'dormant'] as const)(
+    'rejects a backup history targeting another draft’s %s clip before replacing the library',
+    async (owner) => {
+      const conn = await openMigrated();
+      seedUndoFixture(conn);
+      const target = owner === 'live' ? D : D2;
+      const foreignId = owner === 'live' ? S4 : S2;
+      const originalHistory = conn.getFirstSync<{ value: string }>(
+        'SELECT undo_history AS value FROM drafts WHERE id = ?',
+        target,
+      )!.value;
+      const original = dump(conn);
+      const files = [...referencedMediaPaths(conn)].filter(
+        (path) => byteLength(path) !== null && !path.endsWith('/export.mp4'),
+      );
+      conn.runSync(
+        'UPDATE drafts SET undo_history = ? WHERE id = ?',
+        JSON.stringify({
+          version: 1,
+          checkpoint: historyCheckpoint(conn, target),
+          past: [{ kind: 'added', ids: [foreignId], taken: null }],
+          future: [],
+        }),
+        target,
+      );
+      // Source selections also check the rest of the source library: the owning draft need not
+      // be selected for export for its live/dormant rows to keep ownership of their IDs.
+      expect(() => buildProject(conn, { draftIds: [target], now: 0, byteLength })).toThrow(
+        /saved Undo history/,
+      );
+      expect(() => assertSafeLibrary(conn)).toThrow(/saved Undo history/);
+      await expect(createLibraryBackup(conn, 3000)).rejects.toThrow(/saved Undo history/);
+      // Deliberately write an older-format backup without current validation. The database and
+      // every file have correct sizes and MD5s, so restore must reject the nested ownership.
+      const tampered = oldBackup(conn, files);
+      conn.runSync('UPDATE drafts SET undo_history = ? WHERE id = ?', originalHistory, target);
+      await expect(restoreLibraryBackup(conn, tampered, 4000)).rejects.toThrow(
+        'This backup is damaged.',
+      );
+      expect(dump(conn)).toEqual(original);
+      expect(readMedia(P(S2, '.mp4'))).toBe(`bytes of ${P(S2, '.mp4')}`);
+      expect(readMedia(P(S4, '.mp4', D2))).toBe(`bytes of ${P(S4, '.mp4', D2)}`);
+    },
+  );
+
   it('checks unsafe paths nested in saved undo data before restoring a database', async () => {
     const conn = await openMigrated();
     const history = seedUndoFixture(conn);

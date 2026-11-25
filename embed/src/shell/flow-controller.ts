@@ -1,5 +1,6 @@
 import type { PulseErrorInfo } from '@mieweb/pulse-embed';
 
+import { waitForUndoHistory } from '@/core/undo-write-barrier';
 import { flushDraftWrites } from '@/features/editor/draft-writes';
 import type { ExportedVideo, SentVideo } from '@/features/export/contract';
 import { finalizeRecorders, recorderOnScreen } from '@/features/recorder/recorder-presence';
@@ -68,6 +69,9 @@ export function createFlowController(
   async function settle(): Promise<void> {
     await finalizeRecorders();
     await flushDraftWrites().catch(() => {});
+    await waitForUndoHistory().catch((error: unknown) => {
+      console.warn('[embed] could not checkpoint Undo before leaving the flow', error);
+    });
     observe();
   }
 
@@ -96,7 +100,11 @@ export function createFlowController(
         if (!seen) return false;
         last = seen;
         // The draft's own place (and host data): what the flow's result names as its context.
-        store.open({ context: seen.context, clipCount: seen.clipCount });
+        store.open({
+          context: seen.context,
+          clipCount: seen.clipCount,
+          retainedUndo: seen.retainedUndo,
+        });
       }
       return true;
     },
@@ -189,6 +197,8 @@ export function createFlowController(
       if (using) return; // one copy per tap
       using = true;
       try {
+        // The project must include the same settled checkpoint as an explicit .pulse export.
+        await waitForUndoHistory();
         const files = await saveExportForHost({
           requestId,
           exportPath: video.path,

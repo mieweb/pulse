@@ -6,6 +6,8 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import journal from '../../drizzle/meta/_journal.json';
 import {
   historyClipIds,
+  historyOwnedClipIds,
+  assertHistoryOwnership,
   parsePersistedHistory,
   remapPersistedHistory,
   requiredHistoryMediaPaths,
@@ -14,7 +16,7 @@ import {
 import { exportRelPath } from '@/utils/media-paths';
 import { liveSegmentMediaPaths, referencedMediaPaths } from './media-refs';
 import * as schema from './schema';
-import { checkpointForRows, historyCheckpoint } from './undo-history';
+import { checkpointForRows, historyCheckpoint, historyOwners } from './undo-history';
 
 // The `pulse-project` document (v2): every row of the chosen drafts — or of the whole library —
 // with every column, read from the Drizzle schema so a new column is carried without code here.
@@ -200,8 +202,10 @@ export function buildProject(
     if (draftIds && !DRAFT_TABLES.has(name)) continue;
     tables[name] = selectRows(conn, t, draftIds);
   }
+  const owners = historyOwners(conn);
   for (const row of tables.drafts ?? []) {
     const history = parsePersistedHistory(row.undoHistory as string | null, row.id as string);
+    if (history) assertHistoryOwnership(history, row.id as string, owners);
     // A kill between a row write and the next undo checkpoint cannot transfer an older stack
     // against newer live rows. The current draft remains recoverable without that stack.
     if (history && history.checkpoint !== historyCheckpoint(conn, row.id as string)) {
@@ -239,6 +243,22 @@ const isPlainEntry = (entry: unknown, taken: Set<string>) =>
   !/[/\\]/.test(entry) &&
   !taken.has(entry);
 const DAMAGED_PROJECT = 'This .pulse file is damaged.';
+
+/** A project's canonical live and dormant rows establish ownership before any IDs are copied. */
+function projectHistoryOwners(tables: Record<string, Row[]>): Map<string, string> {
+  const owners = new Map<string, string>();
+  const claim = (id: string, draftId: string) => {
+    const current = owners.get(id);
+    owners.set(id, current !== undefined && current !== draftId ? '' : draftId);
+  };
+  for (const row of tables.segments ?? []) claim(row.id as string, row.draftId as string);
+  for (const row of tables.drafts ?? []) {
+    const draftId = row.id as string;
+    const history = parsePersistedHistory(row.undoHistory as string | null | undefined, draftId);
+    if (history) for (const id of historyOwnedClipIds(history)) claim(id, draftId);
+  }
+  return owners;
+}
 
 /** Redo rows without their videos must never be accepted as a recoverable history. */
 function assertHistoryMedia(
@@ -311,11 +331,13 @@ export function checkProject(value: unknown): ProjectDocument {
     throw new Error(DAMAGED_PROJECT);
   }
   try {
+    const owners = projectHistoryOwners(t);
     for (const row of t.drafts ?? []) {
       const history = parsePersistedHistory(
         row.undoHistory as string | null | undefined,
         row.id as string,
       );
+      if (history) assertHistoryOwnership(history, row.id as string, owners);
       if (
         history &&
         history.checkpoint !==

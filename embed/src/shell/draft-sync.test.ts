@@ -97,6 +97,57 @@ describe('syncEvents', () => {
     expect(syncEvents(s, seen({ lastModified: 200 }), seen())).toEqual([]);
   });
 
+  it('retains a newly created empty draft whose first observed state has a redo-only addition', () => {
+    const initial = run(initFlow('r1', record), { type: 'mounted' });
+    const dormant = seen({ clipCount: 0, retainedUndo: true });
+    expect(syncEvents(initial, dormant, null)).toEqual([
+      { type: 'undoRetention', retainedUndo: true },
+      { type: 'record' },
+      { type: 'stop', draftId: 'd1', clipCount: 0 },
+    ]);
+    const state = sync(initial, dormant);
+    expect(state).toMatchObject({ draftId: 'd1', clipCount: 0, retainedUndo: true, stage: 'none' });
+    const closed = run(state, { type: 'hostClose' });
+    expect(closed.end).toEqual({ status: 'closed', reason: 'host', draftId: 'd1' });
+    expect(closed.deleteDraft).toBeNull();
+  });
+
+  it('tracks retained Undo changes even with the same zero count and timestamp', () => {
+    const recorded = sync(run(initFlow('r1', record), { type: 'mounted' }), seen());
+    const editor = run(recorded, { type: 'edit' });
+    const dormant = seen({ clipCount: 0, lastModified: 200, retainedUndo: true });
+    const emptied = sync(editor, dormant, seen());
+    expect(emptied).toMatchObject({ clipCount: 0, retainedUndo: true });
+    expect(run(emptied, { type: 'close' }).sheet).toBe('exit');
+    const noRedo = { ...dormant, retainedUndo: false };
+    expect(syncEvents(emptied, noRedo, dormant)).toEqual([
+      { type: 'undoRetention', retainedUndo: false },
+    ]);
+    const discarded = run(sync(emptied, noRedo, dormant), { type: 'hostClose' });
+    expect(discarded.end).toEqual({ status: 'canceled', reason: 'host' });
+    expect(discarded.deleteDraft).toBe('d1');
+  });
+
+  it('refreshes retention on the recorder and Export without inventing another take or edit', () => {
+    const recording = sync(run(initFlow('r1', record), { type: 'mounted' }), seen());
+    const retained = seen({ retainedUndo: true });
+    expect(syncEvents(recording, retained, seen())).toEqual([
+      { type: 'undoRetention', retainedUndo: true },
+    ]);
+    const exporting = run(recording, { type: 'edit' }, { type: 'export' });
+    expect(syncEvents(exporting, retained, seen())).toEqual([
+      { type: 'undoRetention', retainedUndo: true },
+    ]);
+    const untouched = initFlow('r1', { entry: 'edit', draftId: 'd1' }, { context, clipCount: 1 });
+    const fresh = sync(untouched, retained, seen());
+    expect(fresh.changed).toBe(false);
+    expect(run(fresh, { type: 'hostClose' }).end).toEqual({
+      status: 'canceled',
+      reason: 'host',
+      draftId: 'd1',
+    });
+  });
+
   it('ignores another draft, an ended flow and a draft that is gone', () => {
     const s = sync(run(initFlow('r1', record), { type: 'mounted' }), seen());
     expect(syncEvents(s, seen({ draftId: 'd2', clipCount: 4 }), null)).toEqual([]);

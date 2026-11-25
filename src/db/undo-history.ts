@@ -3,6 +3,46 @@ import { drizzle } from 'drizzle-orm/expo-sqlite';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { drafts, segments } from './schema';
+import {
+  assertHistoryOwnership,
+  historyOwnedClipIds,
+  parsePersistedHistory,
+} from './persisted-history';
+
+/** Live rows and dormant replay rows own IDs; conflicting ownership is always invalid. */
+export function historyOwners(conn: SQLiteDatabase): Map<string, string> {
+  const owners = new Map(
+    conn
+      .getAllSync<{ id: string; draftId: string }>('SELECT id, draft_id AS draftId FROM segments')
+      .map((row) => [row.id, row.draftId]),
+  );
+  for (const row of conn.getAllSync<{ id: string; history: string | null }>(
+    'SELECT id, undo_history AS history FROM drafts',
+  )) {
+    try {
+      const history = parsePersistedHistory(row.history, row.id);
+      if (!history) continue;
+      for (const id of historyOwnedClipIds(history)) {
+        const owner = owners.get(id);
+        owners.set(id, owner !== undefined && owner !== row.id ? '' : row.id);
+      }
+    } catch {
+      /* An unreadable unrelated draft cannot supply trusted dormant identities. */
+    }
+  }
+  return owners;
+}
+
+/** Validate every library checkpoint before a backup can replace current user data. */
+export function assertLibraryHistoryOwnership(conn: SQLiteDatabase): void {
+  const owners = historyOwners(conn);
+  for (const row of conn.getAllSync<{ id: string; history: string | null }>(
+    'SELECT id, undo_history AS history FROM drafts',
+  )) {
+    const history = parsePersistedHistory(row.history, row.id);
+    if (history) assertHistoryOwnership(history, row.id, owners);
+  }
+}
 
 export function checkpointForRows(
   captionY: unknown,

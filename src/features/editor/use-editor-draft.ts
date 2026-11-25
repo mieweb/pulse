@@ -226,7 +226,8 @@ export function useEditorDraft(draftId: string) {
   // A write that failed: its pending value drops (the row is the truth) and the person is told.
   useEffect(
     () =>
-      onWriteFailure(({ id, error: e }) => {
+      onWriteFailure(({ draftId: owner, id, error: e }) => {
+        if (owner !== draftId) return;
         if (id === null) {
           setPendingOrder(null);
           showToast({
@@ -247,14 +248,14 @@ export function useEditorDraft(draftId: string) {
           message: userMessage(e, 'Try again.', 'edit clip'),
         });
       }),
-    [showToast],
+    [draftId, showToast],
   );
 
   const write = (id: string, value: EditValue) => {
     const row = rows.find((s) => s.id === id);
     const editState = row ? segmentEditValue(row, value) : value;
     setPending((p) => new Map(p).set(id, editState));
-    writeEdit(id, editState);
+    writeEdit(id, editState, draftId);
   };
 
   /** Store `edit` for a clip (canonical form). */
@@ -264,7 +265,7 @@ export function useEditorDraft(draftId: string) {
   const reorder = (ids: string[]) => {
     const all = [...ids, ...rows.map((r) => r.id).filter((id) => !ids.includes(id))];
     setPendingOrder(all);
-    writeOrder(all);
+    writeOrder(all, draftId);
   };
 
   /** Store clips' edited captions (JSON, or null for the model's words again). */
@@ -282,7 +283,7 @@ export function useEditorDraft(draftId: string) {
   const setCaptions = (values: ReadonlyMap<string, string | null>) => {
     setPendingCaptions((p) => new Map([...p, ...values]));
     countCaptionWrites(values.keys(), 1);
-    trackDraftWrite(setCaptionEdits(values))
+    trackDraftWrite(draftId, setCaptionEdits(values))
       .catch((e: unknown) => {
         // The rows are the truth: what this write would have set drops (unless newer replaced it).
         setPendingCaptions((p) => {
@@ -303,7 +304,7 @@ export function useEditorDraft(draftId: string) {
   const remove = async (id: string): Promise<boolean> => {
     try {
       dropClipJobs({ segmentIds: [id] });
-      await trackDraftWrite(deleteSegment(id));
+      await trackDraftWrite(draftId, deleteSegment(id));
       return true;
     } catch (e) {
       showToast({

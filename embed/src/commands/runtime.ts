@@ -1,11 +1,13 @@
 import * as Brownfield from 'expo-brownfield';
 
 import { isOnline, setNetworkSource } from '@/core/network';
+import { waitForUndoHistory } from '@/core/undo-write-barrier';
 import { expoDb, library } from '@/db/client';
 import { runMigrations } from '@/db/migrate';
 import { installLogCapture } from '@/features/logs/logger';
 import { listUploadJobs, subscribeUploadJobs } from '@/db/upload-jobs';
 import { startCatalogWriter, stopCatalogWriter } from '@/features/drafts/catalog-writer';
+import { flushDraftWrites } from '@/features/editor/draft-writes';
 import { clearClipQueue } from '@/features/transcription/clip-queue';
 import { releaseVad } from '@/features/transcription/vad';
 import { releaseWhisper } from '@/features/transcription/whisper';
@@ -85,6 +87,7 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
   let runner: JobRunner | null = null;
   let accountActive = true;
   let released = false;
+  let releasing: Promise<void> | null = null;
 
   const lifetime = createLifetime({
     activeJobs: () => (released ? 0 : countActiveJobs(listUploadJobs().map((j) => j.state))),
@@ -196,8 +199,11 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
   stops.push(
     routeCommands(channel, commandHandlers(deps), (method, run) =>
       lifetime.track(async () => {
-        if (released) throw coded('busy', 'Pulse let go of its library; try again.');
+        if (released || releasing)
+          throw coded('busy', 'Pulse is letting go of its library; try again.');
         await ready;
+        if (released || releasing)
+          throw coded('busy', 'Pulse is letting go of its library; try again.');
         lifetime.mark('command');
         log(`command ${method}`);
         return run();
@@ -207,7 +213,7 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
   stops.push(
     channel.handle('accountActive', (args) => {
       accountActive = args.active !== false;
-      runner?.setAccountActive(accountActive);
+      runner?.setAccountActive(!releasing && accountActive);
       return null;
     }),
   );
@@ -225,30 +231,48 @@ function createServices(namespace: string, props: RuntimeProps): RuntimeServices
    * warning): the job loop stops, nothing more is written, and the database closes. PulseKit then
    * starts a fresh runtime for whatever comes next.
    */
-  async function releaseLibrary(): Promise<void> {
-    if (released) return;
-    released = true;
-    runner?.setAccountActive(false);
-    await ready.catch(() => {});
-    runner?.setAccountActive(false);
-    for (const stop of stops.splice(0)) stop();
-    jobChanges.clear();
-    setBackgroundUploads(null);
-    setNetworkSource(null);
-    // Nothing below may stop `pulse.released`: the handlers are gone already, so PulseKit must
-    // hear that this runtime takes no more commands.
-    try {
-      await stopCatalogWriter();
-    } catch (e) {
-      log(`catalog.json's writer didn't stop cleanly: ${String(e)}`);
+  function releaseLibrary(): Promise<void> {
+    if (released) return Promise.resolve();
+    if (lifetime.load().commandsInFlight > 0) {
+      return Promise.reject(coded('busy', 'A library command is still running.'));
     }
-    try {
-      expoDb.closeSync();
-    } catch (e) {
-      log(`the library didn't close cleanly: ${String(e)}`);
-    }
-    log(`released the library of ${namespace}`);
-    channel.released(namespace);
+    releasing ??= (async () => {
+      await ready.catch(() => {});
+      // A dismissed editor can still be committing an addition Undo/Redo or its last checkpoint.
+      // A failed checkpoint leaves this runtime usable so the host can retry instead of closing
+      // SQLite underneath its writer. Flow unmount cancels imports before this idle-only release.
+      runner?.setAccountActive(false);
+      try {
+        await flushDraftWrites();
+        await waitForUndoHistory();
+      } catch (error) {
+        runner?.setAccountActive(accountActive);
+        throw error;
+      }
+      released = true;
+      runner?.setAccountActive(false);
+      for (const stop of stops.splice(0)) stop();
+      jobChanges.clear();
+      setBackgroundUploads(null);
+      setNetworkSource(null);
+      // Nothing below may stop `pulse.released`: the handlers are gone already, so PulseKit must
+      // hear that this runtime takes no more commands.
+      try {
+        await stopCatalogWriter();
+      } catch (e) {
+        log(`catalog.json's writer didn't stop cleanly: ${String(e)}`);
+      }
+      try {
+        expoDb.closeSync();
+      } catch (e) {
+        log(`the library didn't close cleanly: ${String(e)}`);
+      }
+      log(`released the library of ${namespace}`);
+      channel.released(namespace);
+    })().finally(() => {
+      releasing = null;
+    });
+    return releasing;
   }
 
   channel.ready(namespace);

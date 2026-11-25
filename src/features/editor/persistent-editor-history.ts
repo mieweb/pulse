@@ -15,6 +15,7 @@ import type { Step } from '@/features/editor/editor-history';
 import { emptyHistory, type History } from '@/features/transcription/edit-history';
 import {
   historyMediaPaths,
+  assertHistoryOwnership,
   parsePersistedHistory,
   trimPersistedHistory,
   type PersistedHistory,
@@ -33,7 +34,7 @@ import {
 } from '@/db/drafts';
 import { drafts } from '@/db/schema';
 import { liveDraftMediaPaths } from '@/db/media-refs';
-import { historyCheckpoint } from '@/db/undo-history';
+import { historyCheckpoint, historyOwners } from '@/db/undo-history';
 import { noteHeldFiles } from '@/db/held-files';
 
 type Failure = (direction: 'undo' | 'redo' | 'save', error: unknown) => void;
@@ -72,7 +73,9 @@ function createSession(draftId: string) {
   let saved: PersistedHistory | null = null;
   try {
     saved = read(draftId);
+    if (saved) assertHistoryOwnership(saved, draftId, historyOwners(expoDb));
   } catch (e) {
+    saved = null;
     console.warn('[undo] invalid saved checkpoint', e);
   }
   const initial =
@@ -82,7 +85,7 @@ function createSession(draftId: string) {
   let previousPaths = saved ? historyMediaPaths(saved) : new Set<string>();
   const drops = new Set<TakenOutClips>();
   const failures = new Set<Failure>();
-  let failureVersion = draftWriteFailureVersion();
+  let failureVersion = draftWriteFailureVersion(draftId);
   let revision = 0;
   let written = -1;
   let work: Promise<void> | null = null;
@@ -99,7 +102,9 @@ function createSession(draftId: string) {
     let before: PersistedHistory | null = null;
     try {
       before = read(draftId);
+      if (before) assertHistoryOwnership(before, draftId, historyOwners(expoDb));
     } catch {
+      before = null;
       /* Unknown recovery data never authorizes deletion. */
     }
     const retained = next ? historyMediaPaths(next) : new Set<string>();
@@ -134,7 +139,7 @@ function createSession(draftId: string) {
   const checkpointAddition = (history: History<Step>, tx: Tx) => {
     // A concurrent optimistic change has not landed yet. Invalidate the old checkpoint in the
     // row transaction, then checkpoint the final stacks once every queued change settles.
-    if (hasPendingDraftWrites() || failureVersion !== draftWriteFailureVersion()) {
+    if (hasPendingDraftWrites(draftId) || failureVersion !== draftWriteFailureVersion(draftId)) {
       replaceCheckpoint(tx, null);
     } else checkpoint(history, tx);
   };
@@ -146,15 +151,20 @@ function createSession(draftId: string) {
     retainOnClose: true,
     flush: async () => {
       await flushDraftWrites();
-      if (failureVersion !== draftWriteFailureVersion())
+      if (failureVersion !== draftWriteFailureVersion(draftId))
         throw new Error('An edit could not be saved.');
     },
-    takeOut: takeOutSegments,
-    restore: restoreSegments,
+    takeOut: (ids, splits) => takeOutSegments(ids, splits, undefined, draftId),
+    restore: (taken) => restoreSegments(taken, undefined, draftId),
     takeOutAndCheckpoint: async (ids, splits, next) => {
-      const taken = await takeOutSegments(ids, splits, (tx, value) => {
-        checkpointAddition(next(value), tx);
-      });
+      const taken = await takeOutSegments(
+        ids,
+        splits,
+        (tx, value) => {
+          checkpointAddition(next(value), tx);
+        },
+        draftId,
+      );
       if (taken) {
         const restored = new Set(splits.flatMap((s) => s.before.rows.map((r) => r.id)));
         dropClipJobs({
@@ -164,9 +174,13 @@ function createSession(draftId: string) {
       return taken;
     },
     restoreAndCheckpoint: (taken, next) =>
-      restoreSegments(taken, (tx) => {
-        checkpointAddition(next(), tx);
-      }),
+      restoreSegments(
+        taken,
+        (tx) => {
+          checkpointAddition(next(), tx);
+        },
+        draftId,
+      ),
     drop: async (taken) => {
       drops.add(taken);
     },
@@ -181,8 +195,8 @@ function createSession(draftId: string) {
       while (written !== revision) {
         await store.settled();
         await flushDraftWrites();
-        if (failureVersion !== draftWriteFailureVersion()) {
-          failureVersion = draftWriteFailureVersion();
+        if (failureVersion !== draftWriteFailureVersion(draftId)) {
+          failureVersion = draftWriteFailureVersion(draftId);
           store.reset();
         }
         const at = revision;

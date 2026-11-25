@@ -33,7 +33,7 @@ import { plainPath, yieldToUi, zipFlat } from './native-zip';
 import { exportWorkspace } from './workspace';
 import { documentDir } from '@/utils/storage-root';
 import { databaseDir } from '@/db/database-dir';
-import { historyCheckpoint } from '@/db/undo-history';
+import { assertLibraryHistoryOwnership, historyCheckpoint } from '@/db/undo-history';
 import {
   parsePersistedHistory,
   requiredHistoryMediaPaths,
@@ -101,6 +101,7 @@ function checkUndoMedia(
       .some((c) => c.name === 'undo_history')
   )
     return;
+  assertLibraryHistoryOwnership(conn);
   for (const row of conn.getAllSync<{ id: string; history: string | null }>(
     'SELECT id, undo_history AS history FROM drafts',
   )) {

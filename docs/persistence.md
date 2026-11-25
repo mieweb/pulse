@@ -73,6 +73,11 @@ checkpoint in [`src/db/undo-history.ts`](../src/db/undo-history.ts), and the per
 - **Close and reopen:** completed stacks survive editor close and app restart. An editor reopened
   while its writes, an image batch or an addition Undo/Redo are still running reuses the same
   per-draft store. Closing the screen does not abandon a partly committed image batch's Undo step.
+  PulseKit waits for pending Undo/Redo checkpoints before returning a file-mode project or closing
+  its namespace's database. A failed shutdown checkpoint leaves the library open for a retry.
+  Automatic close or failure cleanup keeps an empty draft with a retained Redo addition and names
+  it in the host result. Explicitly discarding a draft made by the current flow still deletes it.
+  A recorder can reopen that empty draft in the editor for Redo; video export requires live clips.
 - **Addition Undo/Redo:** the clip rows, their transcripts and the resulting stacks commit in the
   same SQLite transaction. A failed transaction leaves both at the previous state. Dormant Redo
   rows retain their edits, labels, captions and transcripts; split receipts also retain the
@@ -80,7 +85,7 @@ checkpoint in [`src/db/undo-history.ts`](../src/db/undo-history.ts), and the per
   queued, the row transaction clears the older checkpoint instead of binding the new stacks to
   uncommitted changes; the session saves the resulting stacks once all queued writes settle.
 - **Ordinary edits:** edits, reorder and caption writes finish before the stacks are checkpointed.
-  A failed queued write invalidates the optimistic stacks. If Pulse is interrupted after a row
+  A failed queued write invalidates that draft's optimistic stacks. If Pulse is interrupted after a row
   changes but before the checkpoint commits, the stored checkpoint no longer matches the draft:
   the next open discards that stack and keeps the current rows. It never replays a stack against
   different stored edits. This interruption can lose Undo/Redo, but does not roll back saved edits.
@@ -91,7 +96,9 @@ checkpoint in [`src/db/undo-history.ts`](../src/db/undo-history.ts), and the per
   the copy. Older files without history remain importable.
 
 The parser rejects unsupported history versions, malformed steps, unsafe paths and dormant rows
-owned by another draft. A draft transfer with history but missing required video, caption or
+owned by another draft. History references are also checked against the owners of live and dormant
+clip IDs, so a valid checkpoint for one draft cannot authorize Undo against another draft's clips.
+A draft transfer with history but missing required video, caption or
 transcript source media is refused. Optional thumbnails may be regenerated. When loading or saving
 local history, a missing required source removes its step and the farther steps on that stack,
 leaving a contiguous usable chain closest to the current draft.

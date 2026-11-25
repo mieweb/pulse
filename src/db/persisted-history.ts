@@ -248,6 +248,29 @@ export function historyClipIds(history: PersistedHistory): Set<string> {
   return out;
 }
 
+/** Dormant row identities claim ownership too, before Redo brings them back into segments. */
+export function historyOwnedClipIds(history: PersistedHistory): Set<string> {
+  return new Set(
+    [...history.past, ...history.future].flatMap((step) =>
+      takenFrom(step).flatMap((taken) =>
+        [...taken.rows, ...(taken.replaced ?? [])].map((row) => row.id),
+      ),
+    ),
+  );
+}
+
+/** Deleted snapshot-only IDs are valid; IDs owned by another draft can never be replayed here. */
+export function assertHistoryOwnership(
+  history: PersistedHistory,
+  draftId: string,
+  owners: ReadonlyMap<string, string>,
+): void {
+  for (const id of historyClipIds(history)) {
+    const owner = owners.get(id);
+    if (owner !== undefined && owner !== draftId) throw new Error(BAD_HISTORY);
+  }
+}
+
 /** Files actually needed to replay a step; thumbnails are regenerable and aren't required. */
 function requiredPaths(step: Step): Set<string> {
   const out = new Set<string>();

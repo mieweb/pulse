@@ -5,6 +5,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { historyMediaPaths, parsePersistedHistory } from '@/db/persisted-history';
 import { editedThumbRelPath, exportRelPath, thumbRelPath } from '@/utils/media-paths';
 import { clipTranscripts, drafts, segments } from './schema';
+import { assertLibraryHistoryOwnership } from './undo-history';
 
 /** The `file` a `caption_edit` value is timed against, if it has one. */
 function captionFile(json: string | null): string | null {
@@ -132,12 +133,8 @@ export function assertSafeLibrary(conn: SQLiteDatabase): void {
     if (path != null && !isSafeMediaPath(path)) throw new Error('Unsafe media path.');
   }
   if (has('drafts').has('undo_history')) {
-    for (const row of conn.getAllSync<{ id: string; history: string | null }>(
-      'SELECT id, undo_history AS history FROM drafts',
-    )) {
-      // Nested dormant rows and snapshot caption files need the same path/ownership checks as
-      // live rows before a backup's database can replace the library.
-      parsePersistedHistory(row.history, row.id);
-    }
+    // Dormant rows claim IDs too. All nested references must belong to their owning draft before
+    // a backup can replace the library; safe paths alone cannot establish that ownership.
+    assertLibraryHistoryOwnership(conn);
   }
 }

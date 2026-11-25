@@ -23,6 +23,7 @@ import { GlassPill } from '@/components/glass-pill';
 import { useTextSizeKey } from '@/hooks/use-text-size-key';
 import { Spacing } from '@/constants/theme';
 import { flushDraftWrites } from '@/features/editor/draft-writes';
+import { hasRetainedUndo } from '@/features/editor/persistent-editor-history';
 import { CameraControls } from '@/features/recorder/camera-controls';
 import { holdsCamera, releaseCamera, takeCamera } from '@/features/recorder/camera-holder';
 import { ExportButton } from '@/components/export-button';
@@ -969,9 +970,9 @@ export function RecorderScreen({
                 <TipAnchor id="record" shown={recordTip.shown} onDismiss={recordTip.dismiss} />
               </View>
             )}
-            {/* The draft in the editor, at the insert cursor; there once there's a clip. Faded out
-                with the record button during a drag, like the "+". */}
-            {draftId && segments.length > 0 && (
+            {/* The draft in the editor, including an empty draft whose Redo can restore a clip.
+                Faded out with the record button during a drag, like the "+". */}
+            {draftId && (segments.length > 0 || hasRetainedUndo(draftId)) && (
               <View style={styles.editSlot} pointerEvents="box-none">
                 <Animated.View style={[CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
                   <EditButton

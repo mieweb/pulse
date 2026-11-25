@@ -107,10 +107,11 @@ function present(draftId: string): Present {
   };
 }
 function apply(draftId: string, diff: SnapshotDiff) {
-  for (const [id, value] of diff.edits) writeEdit(id, value);
-  if (diff.order) writeOrder(diff.order);
-  if (diff.captions.size) void trackDraftWrite(setCaptionEdits(diff.captions));
-  if (diff.captionY !== undefined) void trackDraftWrite(setCaptionY(draftId, diff.captionY));
+  for (const [id, value] of diff.edits) writeEdit(id, value, draftId);
+  if (diff.order) writeOrder(diff.order, draftId);
+  if (diff.captions.size) void trackDraftWrite(draftId, setCaptionEdits(diff.captions));
+  if (diff.captionY !== undefined)
+    void trackDraftWrite(draftId, setCaptionY(draftId, diff.captionY));
 }
 function file(draftId: string, id: string) {
   const relative = `drafts/${draftId}/segments/${id}.mp4`;
@@ -157,7 +158,7 @@ describe('persistent editor Undo on a migrated library', () => {
     const a = await add(draftId, 'a');
     const first = open(draftId);
     first.store.record(present(draftId), null);
-    writeEdit(a.id, speedEdit);
+    writeEdit(a.id, speedEdit, draftId);
     await waitForUndoHistory();
     expect(saved(draftId)?.past).toHaveLength(1);
     await first.close();
@@ -260,7 +261,7 @@ describe('persistent editor Undo on a migrated library', () => {
     const a = await add(draftId, 'a');
     const first = open(draftId);
     first.store.record(present(draftId), null);
-    writeEdit(a.id, speedEdit);
+    writeEdit(a.id, speedEdit, draftId);
     await waitForUndoHistory();
     await first.close();
     conn.runSync('UPDATE segments SET edit_state = NULL WHERE id = ?', a.id);
@@ -278,11 +279,75 @@ describe('persistent editor Undo on a migrated library', () => {
     const first = open(draftId);
     await waitForUndoHistory();
     first.store.record(present(draftId), null);
-    await trackDraftWrite(Promise.reject(new Error('caption disk failure'))).catch(() => {});
+    await trackDraftWrite(draftId, Promise.reject(new Error('caption disk failure'))).catch(
+      () => {},
+    );
     await waitForUndoHistory();
     expect(first.store.getState().past).toEqual([]);
     expect(saved(draftId)).toBeNull();
   });
+
+  it.each(['edit', 'order', 'caption', 'position'] as const)(
+    'invalidates only draft A when its %s fails, preserving draft B’s saved Redo and video',
+    async (operation) => {
+      const draftA = await createDraft();
+      const a = await add(draftA, 'a');
+      const a2 = await add(draftA, 'a2');
+      const editorA = open(draftA);
+      const draftB = await createDraft();
+      const editorB = open(draftB);
+      const b = await add(draftB, 'b');
+      editorB.store.recordAdded([b.id]);
+      await waitForUndoHistory();
+      editorB.store.undo(present(draftB), (diff) => apply(draftB, diff));
+      await waitForUndoHistory();
+      const beforeB = saved(draftB);
+      expect(beforeB?.future).toHaveLength(1);
+
+      editorA.store.record(present(draftA), null);
+      switch (operation) {
+        case 'edit':
+          writeEdit(a.id, 'unusable edit', draftA);
+          break;
+        case 'order':
+          conn.execSync(
+            `CREATE TRIGGER reject_undo_checkpoint BEFORE UPDATE OF sort_order ON segments WHEN OLD.draft_id = '${draftA}' BEGIN SELECT RAISE(ABORT, 'order write failed'); END`,
+          );
+          writeOrder([a2.id, a.id], draftA);
+          break;
+        case 'caption':
+          conn.execSync(
+            `CREATE TRIGGER reject_undo_checkpoint BEFORE UPDATE OF caption_edit ON segments WHEN OLD.draft_id = '${draftA}' BEGIN SELECT RAISE(ABORT, 'caption write failed'); END`,
+          );
+          await trackDraftWrite(
+            draftA,
+            setCaptionEdits(new Map([[a.id, JSON.stringify({ file: a.relative, words: [] })]])),
+          ).catch(() => {});
+          break;
+        case 'position':
+          conn.execSync(
+            `CREATE TRIGGER reject_undo_checkpoint BEFORE UPDATE OF caption_y ON drafts WHEN OLD.id = '${draftA}' BEGIN SELECT RAISE(ABORT, 'caption position write failed'); END`,
+          );
+          await trackDraftWrite(draftA, setCaptionY(draftA, 0.7)).catch(() => {});
+          break;
+      }
+      await waitForUndoHistory();
+      expect(editorA.store.getState().past).toEqual([]);
+      expect(saved(draftA)).toBeNull();
+      // Closing B forces another checkpoint after A's failure, where a global failure epoch
+      // would have discarded B's unrelated dormant addition and its media.
+      await editorB.close();
+      expect(saved(draftB)).toEqual(beforeB);
+      expect(existsSync(b.absolute)).toBe(true);
+
+      const reopenedB = open(draftB);
+      expect(reopenedB.store.getState().future).toHaveLength(1);
+      reopenedB.store.redo(present(draftB), (diff) => apply(draftB, diff));
+      await waitForUndoHistory();
+      expect(clipRows(draftB).map((row) => row.id)).toEqual([b.id]);
+      expect(existsSync(b.absolute)).toBe(true);
+    },
+  );
 
   it('evicts a dormant redo whose source video is missing on reopen', async () => {
     const draftId = await createDraft();

@@ -858,24 +858,36 @@ export async function takeOutSegments(
   segmentIds: readonly string[],
   splits: readonly SplitReceipt[] = [],
   checkpoint?: (tx: Tx, taken: TakenOutClips | null) => void,
+  expectedDraftId?: string,
 ): Promise<TakenOutClips | null> {
   const wanted = new Set([
     ...segmentIds,
     ...splits.flatMap((split) => [split.rightId, ...split.before.rows.map((row) => row.id)]),
   ]);
   if (wanted.size === 0) return null;
-  const [first] = await db
+  const found = await db
     .select({ draftId: segments.draftId })
     .from(segments)
-    .where(inArray(segments.id, [...wanted]))
-    .limit(1);
-  if (!first) return null;
-  const { draftId } = first;
-  if (splits.some((split) => split.before.draftId !== draftId)) {
+    .where(inArray(segments.id, [...wanted]));
+  if (!found.length) return null;
+  const draftId = expectedDraftId ?? found[0].draftId;
+  if (
+    found.some((row) => row.draftId !== draftId) ||
+    splits.some((split) => split.before.draftId !== draftId)
+  ) {
     throw new Error('The clips to undo belong to different drafts.');
   }
   await beginClipMutation(draftId);
   const taken = db.transaction((tx) => {
+    if (
+      tx
+        .select({ id: segments.id })
+        .from(segments)
+        .where(and(inArray(segments.id, [...wanted]), ne(segments.draftId, draftId)))
+        .get()
+    ) {
+      throw new Error('The clips to undo belong to different drafts.');
+    }
     const all = tx
       .select()
       .from(segments)
@@ -935,11 +947,34 @@ export async function takeOutSegments(
 export async function restoreSegments(
   taken: TakenOutClips,
   checkpoint?: (tx: Tx) => void,
+  expectedDraftId?: string,
 ): Promise<void> {
   const { draftId } = taken;
+  if (
+    (expectedDraftId !== undefined && draftId !== expectedDraftId) ||
+    [...taken.rows, ...(taken.replaced ?? [])].some((row) => row.draftId !== draftId)
+  ) {
+    throw new Error('The clips to redo belong to different drafts.');
+  }
   if (taken.rows.length === 0) return;
+  const replayIds = [...taken.rows, ...(taken.replaced ?? [])].map((row) => row.id);
+  const foreign = await db
+    .select({ id: segments.id })
+    .from(segments)
+    .where(and(inArray(segments.id, replayIds), ne(segments.draftId, draftId)))
+    .limit(1);
+  if (foreign.length) throw new Error('The clips to redo belong to different drafts.');
   await beginClipMutation(draftId);
   db.transaction((tx) => {
+    if (
+      tx
+        .select({ id: segments.id })
+        .from(segments)
+        .where(and(inArray(segments.id, replayIds), ne(segments.draftId, draftId)))
+        .get()
+    ) {
+      throw new Error('The clips to redo belong to different drafts.');
+    }
     const draft = tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, draftId)).get();
     if (!draft) return;
     if (taken.replaced?.length) {
