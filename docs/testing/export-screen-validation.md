@@ -52,18 +52,58 @@ keyboard’s Done button dismisses it and restores the full viewport. This does 
 one-thumb reach in either hand. Native seek controls, keyboard, permission prompts and
 sharing sheets are OS-owned.
 
-Actual left/right thumb reach, RTL presentation and VoiceOver focus/announcements remain
-unverified. The simulator results below establish only their recorded layout and accessible
+At the largest system text size on iPhone SE, Play is at y=268–313, above the 333.5-point
+midline, while primary and Back remain visible below it. This is an unresolved lower-half
+placement exception; it is not accepted as proof of one-handed reach. Follow-up reach review
+remains attached to #333. Actual left/right thumb reach, RTL presentation and VoiceOver
+focus/announcements remain unverified. The simulator results below establish only their recorded layout and accessible
 control labels. The existing [one-handed navigation audit](../one-handed-navigation.md)
 remains authoritative for the surrounding flow.
 
-## Native evidence and remaining acceptance
+## Final footer layout and phone handoff
+
+The final three export runtime files match implementation commit `2a1804c`. The same Hermes
+bundle was checked in the iOS 26.0 simulators and installed/launched as Pulse **2.7.0 (1)**
+on the reporter’s phone. Its SHA-256 is
+`ae62baffcf7503de859ff377b5d2540232d8429cbde21669e4882fa0e840fce2`.
+The test artifact retains the earlier local Summary/Voiceover prototypes; those changes are
+outside this PR. Its six test-note paragraphs begin **Export #333 phone test** in
+**About → Release notes** and were verified in the packaged config and simulator.
+
+| Final native check                                                                 | Result                                                                                                 |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| iPhone SE, 375×667; iPhone 16e, 390×844; iPhone 17 Pro Max, 440×956; ordinary text | All applicable controls visible together; Play centers in the lower half; preview paused               |
+| Largest accessibility text, all three sizes                                        | All controls visible; SE Play remains above the midpoint (exception below)                             |
+| iPhone 17 Pro Max, dark, ordinary/largest text                                     | Black background verified; controls visible                                                            |
+| Standalone iPhone 16e                                                              | Bottom Back, initial pause and manual Play/Pause passed                                                |
+| Phone handoff                                                                      | Installed and launched; shared device guard verified released; no automation runner or capture started |
+
+The user reported that the phone test worked and authorized merging with main. This records
+general user acceptance; it does not infer unreported RTL, VoiceOver, audio, sharing or
+both-hand reach checks. All owned simulator sessions/runners were ended and their dedicated
+simulators shut down. No device, app-container or lease identifiers are published here.
+
+Final screenshots: [SE ordinary](../../screenshots/validation/export-screen/footer-iphone-se-upload-light.png),
+[16e ordinary](../../screenshots/validation/export-screen/footer-iphone16e-upload-light.png),
+[Pro Max dark](../../screenshots/validation/export-screen/footer-iphone17promax-upload-dark.png),
+[16e largest text](../../screenshots/validation/export-screen/footer-iphone16e-upload-largest-text.png),
+[Pro Max dark/largest text](../../screenshots/validation/export-screen/footer-iphone17promax-upload-dark-largest-text.png),
+[SE largest text](../../screenshots/validation/export-screen/footer-iphone-se-upload-largest-text.png),
+[standalone](../../screenshots/validation/export-screen/footer-iphone16e-standalone-light.png).
+The [report](../../screenshots/validation/export-screen/simulator-report.json) separates final
+footer measurements from predecessor evidence and records the handoff and cleanup.
+
+Final smoke did not repeat native Share return, end/replay, background, regeneration,
+warning/keyboard, captions/voiceover audio or network delivery. Earlier evidence below and
+unit tests remain separate. Both real PulseVault integration variants, JVM vectors, source
+checks and embed bundles passed in [implementation CI](https://github.com/mieweb/pulse/actions/runs/45576392867).
+
+## Predecessor native evidence
 
 The screenshots and report below were captured from the predecessor checkout at `2467627`
 plus the export fix, before porting it onto `main` at `27e617a`. They show a top Close control.
 They establish the recorded predecessor behavior and are **not native verification of the
-final PR’s bottom Back layout**. Final footer-layout simulator/phone results are recorded
-separately when available; until then that verification remains pending.
+final PR’s bottom Back layout**. Final footer-layout evidence is recorded above.
 
 Predecessor native before/after checks use isolated iOS simulators and synthetic 12-clip / 0:38 projects.
 The pre-change screen in this checkout has a top Close button and no scrolling container,
@@ -107,6 +147,6 @@ Native Share opened its activity sheet, but accessibility inspection timed out o
 simulator shell. Dismissal/return remains unverified; unit checks cover pausing while the sharing
 promise is pending and staying paused afterward.
 
-Final footer-layout validation, reporter-phone reproduction, physical-device audio checks
-and VoiceOver navigation remain release acceptance work. No physical device was attached
-for the predecessor evidence recorded above.
+The user’s general phone acceptance is recorded above. Specific physical-device audio,
+sharing-return, RTL, VoiceOver and both-hand reach checks remain unverified. No physical
+device was attached for the predecessor evidence in this section.

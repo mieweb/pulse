@@ -148,6 +148,207 @@
     "base": "2467627",
     "changes": "Predecessor checkout plus export fix; top Close layout before port to current main",
     "finalPrBase": "27e617a",
-    "finalPrFooterNativeValidation": "Pending separate evidence; this report does not certify the final footer layout"
+    "finalPrFooterNativeValidation": "Recorded below in finalFooterValidation; earlier sections retain predecessor provenance"
+  },
+  "finalFooterValidation": {
+    "implementationCommit": "2a1804c97e163aab79ce4b3d31e7fe5e8a44fc81",
+    "platform": "iOS26.0 dedicated synthetic simulators: iPhoneSE3 375x667, iPhone16e390x844, iPhone17ProMax440x956",
+    "fixture": "12 synthetic portrait clips totaling0:38; no user media",
+    "runtimeSource": "Three export runtime files byte-identical to the PR; test bundle retains prior local Summary/Voiceover prototypes outside PR scope",
+    "mainJsBundleSha256": "ae62baffcf7503de859ff377b5d2540232d8429cbde21669e4882fa0e840fce2",
+    "simulatorBundleMatchesPhone": true,
+    "harnessMainJsBundleSha256": "95e1215e82f43514d6e9fa380d11fbe6be6ab4995da0ce4954383e41aae48504",
+    "checks": {
+      "main16eExportPaused": true,
+      "main16eManualPlayPause": true,
+      "main16eAllOrdinaryControlsAndBottomBackVisible": true,
+      "poolAll3SizesOrdinaryControlsVisibleAndPlayCentersLowerHalf": true,
+      "poolLargestTextControlsVisibleAll3Sizes": true,
+      "largeDarkBackgroundSampleRGB": [0, 0, 0],
+      "largeDarkVerifiedBlack": true
+    },
+    "measurements": [
+      {
+        "layout": "390x844",
+        "text": "largest",
+        "appearance": "light",
+        "context": "synthetic pool",
+        "allControlsWithinScreen": true,
+        "paused": true,
+        "playCenterInLowerHalf": true,
+        "verticalControlFrames": {
+          "play": [412.0, 45.0],
+          "share": [468.0, 45.0],
+          "saveToPhotos": [468.0, 45.0],
+          "primary": [694.0, 57.0],
+          "close": [758.0, 44.0]
+        }
+      },
+      {
+        "layout": "390x844",
+        "text": "default",
+        "appearance": "light",
+        "context": "synthetic pool",
+        "allControlsWithinScreen": true,
+        "paused": true,
+        "playCenterInLowerHalf": true,
+        "verticalControlFrames": {
+          "play": [465.0, 45.0],
+          "share": [521.0, 45.0],
+          "saveToPhotos": [521.0, 45.0],
+          "primary": [698.0, 53.0],
+          "close": [758.0, 44.0]
+        }
+      },
+      {
+        "layout": "390x844",
+        "text": "default",
+        "appearance": "light",
+        "context": "standalone",
+        "allControlsWithinScreen": true,
+        "paused": true,
+        "playCenterInLowerHalf": true,
+        "verticalControlFrames": {
+          "play": [650.0, 44.0],
+          "share": [706.0, 44.0],
+          "saveToPhotos": [706.0, 44.0],
+          "close": [758.0, 44.0]
+        }
+      },
+      {
+        "layout": "440x956",
+        "text": "default",
+        "appearance": "light",
+        "context": "synthetic pool",
+        "allControlsWithinScreen": true,
+        "paused": true,
+        "playCenterInLowerHalf": true,
+        "verticalControlFrames": {
+          "play": [577.0, 45.0],
+          "share": [633.0, 45.0],
+          "saveToPhotos": [633.0, 45.0],
+          "primary": [809.0, 53.0],
+          "close": [870.0, 44.0]
+        }
+      },
+      {
+        "layout": "440x956",
+        "text": "largest",
+        "appearance": "dark",
+        "context": "synthetic pool",
+        "allControlsWithinScreen": true,
+        "paused": true,
+        "playCenterInLowerHalf": true,
+        "verticalControlFrames": {
+          "play": [524.0, 45.0],
+          "share": [580.0, 45.0],
+          "saveToPhotos": [580.0, 45.0],
+          "primary": [806.0, 57.0],
+          "close": [870.0, 44.0]
+        }
+      },
+      {
+        "layout": "375x667",
+        "text": "largest",
+        "appearance": "light",
+        "context": "synthetic pool",
+        "allControlsWithinScreen": true,
+        "paused": true,
+        "playCenterInLowerHalf": false,
+        "verticalControlFrames": {
+          "play": [268.0, 45.0],
+          "share": [324.0, 45.0],
+          "saveToPhotos": [324.0, 45.0],
+          "primary": [551.0, 56.0],
+          "close": [615.0, 44.0]
+        }
+      },
+      {
+        "layout": "375x667",
+        "text": "default",
+        "appearance": "light",
+        "context": "synthetic pool",
+        "allControlsWithinScreen": true,
+        "paused": true,
+        "playCenterInLowerHalf": true,
+        "verticalControlFrames": {
+          "play": [322.0, 44.0],
+          "share": [378.0, 44.0],
+          "saveToPhotos": [378.0, 44.0],
+          "primary": [555.0, 52.0],
+          "close": [615.0, 44.0]
+        }
+      }
+    ],
+    "reachException": {
+      "layout": "SE375x667 at largest system accessibility text",
+      "playRect": {
+        "y": 268,
+        "height": 45,
+        "centerY": 290.5
+      },
+      "screenMidlineY": 333.5,
+      "status": "NOT ACCEPTED as one-handed reach. Play lies above the midpoint in this enlarged-text case. Actions remain fully visible and primary/back reachable; physical reach review remains pending. Ordinary normal-text Play center344 is below midpoint."
+    },
+    "selectedEvidence": [
+      "footer-iphone16e-standalone-light.png",
+      "footer-iphone16e-upload-light.png",
+      "footer-iphone16e-upload-largest-text.png",
+      "footer-iphone17promax-upload-dark.png",
+      "footer-iphone17promax-upload-dark-largest-text.png",
+      "footer-iphone-se-upload-light.png",
+      "footer-iphone-se-upload-largest-text.png"
+    ],
+    "limitations": [
+      "Pool harness uses real final ExportScreen/PulseCore/DestinationSelector with synthetic destination metadata and callback stand-ins; no actual upload/send test",
+      "Final V2 smoke did not repeat native Share return, captions/voiceover recording/audio, end/replay, background, regeneration, warning/keyboard flows; earlier implementation evidence remains separate",
+      "No VoiceOver spoken-output test or physical reach measurement"
+    ],
+    "cleanup": {
+      "small": {
+        "sessionDeleted200": true,
+        "sessionFileRemoved": true,
+        "supervisorExited": true,
+        "xcodebuildExited": true,
+        "appTerminated": true,
+        "ownedSimulatorShutdown": true
+      },
+      "large": {
+        "sessionDeleted200": true,
+        "sessionFileRemoved": true,
+        "supervisorExited": true,
+        "xcodebuildExited": true,
+        "appTerminated": true,
+        "ownedSimulatorShutdown": true
+      },
+      "se": {
+        "sessionDeleted200": true,
+        "sessionFileRemoved": true,
+        "supervisorExited": true,
+        "xcodebuildExited": true,
+        "appTerminated": true,
+        "ownedSimulatorShutdown": true
+      }
+    },
+    "measurementUnits": "Points; verticalControlFrames entries are [top, height]"
+  },
+  "phoneHandoff": {
+    "version": "2.7.0",
+    "build": "1",
+    "installed": true,
+    "launched": true,
+    "combinedSourceBase": "9cb7ac8",
+    "exportImplementationCommit": "2a1804c",
+    "mainJsBundleSha256": "ae62baffcf7503de859ff377b5d2540232d8429cbde21669e4882fa0e840fce2",
+    "releaseNotes": "About \u2192 Release notes; six paragraphs beginning Export #333 phone test; final packaged config and notes verified in the simulator",
+    "verifiedReleased": true,
+    "automationRunnerOrCaptureStarted": false,
+    "physicalFunctionalChecksByAgent": "Installation and launch only; no physical UI, audio, VoiceOver, sharing or thumb-reach check claimed",
+    "userAcceptance": "User reported the phone test worked and explicitly authorized merging with main on 2026-11-25; no unreported specific accessibility or reach check is inferred"
+  },
+  "implementationCi": {
+    "commit": "2a1804c",
+    "result": "All CI checks passed, including both PulseVault integration variants and JVM vectors",
+    "url": "https://github.com/mieweb/pulse/actions/runs/45576392867"
   }
 }
