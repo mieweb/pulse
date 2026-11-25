@@ -1,4 +1,5 @@
 import { anchorForExactPlayhead } from '@/core/clip-anchor';
+import { isSplitInterior, SPLIT_BOUNDARY_TOLERANCE_MS } from '@/utils/segment-window';
 
 import { clipIndexAt } from './timeline-geometry';
 
@@ -11,9 +12,9 @@ export function canSplitClip(
 ): boolean {
   'worklet';
   // The preview represents an end seek as totalMs - 1, as exact insertion anchors do.
-  if (!Number.isFinite(timeMs) || timeMs >= totalMs - 1 || timeMs <= slotStartMs) return false;
+  if (!Number.isFinite(timeMs) || timeMs >= totalMs - SPLIT_BOUNDARY_TOLERANCE_MS) return false;
   const sourceMs = edit.startMs + (timeMs - slotStartMs) * edit.speed;
-  return sourceMs > edit.startMs && sourceMs < edit.endMs;
+  return isSplitInterior(sourceMs, edit.startMs, edit.endMs, edit.speed);
 }
 
 /** Main-toolbar availability follows the playhead even when no clip is selected. */

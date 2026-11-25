@@ -46,12 +46,44 @@ describe('standalone clip splitting at the playhead', () => {
 
   it('follows the playhead across clips without a selection or Edit mode', () => {
     const edits = clips.map((clip) => clip.edit);
-    for (const ms of [0, 2000, 2999, 3000, NaN]) {
+    for (const ms of [0, 1999, 2000, 2999, 3000, NaN]) {
       expect(canSplitAtPlayhead(edits, layout.starts, layout.totalMs, ms)).toBe(false);
     }
-    for (const ms of [750, 1999, 2200]) {
+    for (const ms of [750, 1998, 2200]) {
       expect(canSplitAtPlayhead(edits, layout.starts, layout.totalMs, ms)).toBe(true);
     }
     expect(canSplitAtPlayhead([], [], 0, 0)).toBe(false);
+  });
+
+  it('does not split again at a fractional boundary rounded to either side of the playhead', () => {
+    const original = {
+      id: 'fractional',
+      sourceKey: 'fractional-key',
+      edit: { startMs: 500, endMs: 3500, speed: 1.25 },
+    };
+    const timeMs = 750.123;
+    const first = clipSplitAnchor([original], { starts: [0], totalMs: 2400 }, timeMs, () => 'r');
+    const sourceMs = first!.split!.sourceMs;
+    const boundary = (sourceMs - original.edit.startMs) / original.edit.speed;
+    expect(boundary).toBeLessThan(timeMs);
+    const halves = [
+      { ...original, edit: { ...original.edit, endMs: sourceMs } },
+      { ...original, id: 'r', edit: { ...original.edit, startMs: sourceMs } },
+    ];
+    const layout = { starts: [0, boundary], totalMs: 2400 };
+    const freshId = jest.fn(() => 'tiny');
+    for (const at of [timeMs, boundary - 1e-10, boundary + 1e-10]) {
+      expect(
+        canSplitAtPlayhead(
+          halves.map((clip) => clip.edit),
+          layout.starts,
+          2400,
+          at,
+        ),
+      ).toBe(false);
+      expect(clipSplitAnchor(halves, layout, at, freshId)).toBeNull();
+    }
+    expect(freshId).not.toHaveBeenCalled();
+    expect(clipSplitAnchor(halves, layout, timeMs + 2, freshId)?.split).toBeDefined();
   });
 });

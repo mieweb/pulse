@@ -60,6 +60,11 @@ It is unavailable at existing clip boundaries or the end. This uses
 the same metadata transaction and retained original as split-and-insert: one Undo rejoins the
 original and one Redo restores the halves, including their captions, transcripts and settings.
 
+Split availability, captured insertion anchors and storage share a 1 ms timeline tolerance at
+both clip edges, after applying speed. Positions within that tolerance use the existing boundary;
+direct storage splits reject them. This prevents floating-point reconstruction of a fractional
+boundary from producing a fragment whose stored duration rounds to zero.
+
 An image batch creates its history step with the first committed clip and extends that same step
 beneath any intervening edits. Undo and Redo remain unavailable until the batch finishes or is
 canceled. A canceled partial batch keeps one history step for the clips already committed. The
