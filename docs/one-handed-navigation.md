@@ -31,10 +31,18 @@ behavior, simulator layout/accessibility evidence and actual physical thumb reac
 
 ## Audit baseline and inventory
 
-This source audit uses `origin/main` at
+The original source audit used main at
 [`cf6771c0a6b27a4e8dbbdf8105ae4d91a27c4403`](https://github.com/mieweb/pulse/tree/cf6771c0a6b27a4e8dbbdf8105ae4d91a27c4403),
-reviewed on 2026-11-25. File links below point to the maintained implementation; use that baseline
-for the before state. This inventory is source evidence, not a device usability result.
+reviewed on 2026-11-25. That remains the historical baseline for the before findings below, not
+the current PR base. File links point to the maintained implementation. This inventory is source
+evidence, not a device usability result.
+
+PR #327 is rebased onto main
+[`2aad841`](https://github.com/mieweb/pulse/commit/2aad841f137755965160d8acda00096261d1a0c1).
+The final application revision is `b7ab422`; its shared app/UI source and dependencies match the
+first rebase checkpoint `9710463` on main `2467627`. Current-base additions are recorded after the
+original inventory. The earlier `dce8303` and `3c52200` builds, phone installations and captures
+predate that rebase and must not be counted as validation of the rebased application.
 
 | Screen/state                        | Baseline finding and source                                                                                                                                                                                                                                                                                                                                                 | Decision / priority                                                                                                                                                                                                                                 |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -63,6 +71,31 @@ The existing [SheetBody](../src/components/sheet-body.tsx) and
 they do not guarantee a lower fixed action footer. Reuse the onboarding and Add-from-another-Pulse
 footer patterns where appropriate. Existing effective touch areas and accessibility labels must
 survive repositioning; controls that already have sufficient target size can still be too high.
+
+### Additions inherited from the refreshed main
+
+- [PR #326](https://github.com/mieweb/pulse/pull/326) adds direct **Split at playhead** to both
+  [MainToolbar and ClipToolbar](../src/features/editor/clip-toolbar.tsx), with availability and
+  busy guards in the [editor](../src/features/editor/editor-screen.tsx). The integrated lower
+  toolbar preserves those actions, callbacks and the accessibility name. Rebased validation must
+  cover Split in the main and clip modes, Clips and Timeline views, boundary/disabled states,
+  fractional-speed cases, Undo/Redo and horizontal access on narrow phones. Earlier captures with
+  fewer main tools do not establish that this row still fits.
+- [PR #330](https://github.com/mieweb/pulse/pull/330) adds build release notes to
+  [About](../src/app/about.tsx) and a [Release history](../src/app/release-history.tsx) screen.
+  [Both routes](../src/app/_layout.tsx) now always use full-height scrolling form sheets. About's
+  Release history action is near its upper sections; both screens retain top-right Close.
+  **P1 under #310:** provide lower dismissal and reachable action alternatives, and verify
+  scroll-versus-swipe dismissal at supported text sizes. These inherited screens remain deferred
+  rather than silently treated as covered by the core-navigation change. The original audit's
+  content-sized About description applies only to its historical baseline.
+- [PR #329](https://github.com/mieweb/pulse/pull/329) adds the Expo scene-lifecycle prebuild plugin
+  and requires Xcode/iPhoneOS SDK 27 or later for TestFlight archives. Regenerate the native project
+  before rebuilding this base; see [the build instructions](../README.md#getting-started).
+- Release notes are generated from Git by [app.config.ts](../app.config.ts) and
+  [the generator](../scripts/release-notes.ts). A rebuilt application needs complete history and
+  `app-v*` tags; the notes describe that build's checkout. The pre-rebase phone builds do not
+  contain these inherited release-note screens.
 
 ## Swipe return and gesture conflicts
 
@@ -139,7 +172,72 @@ an exception for review under #310, alongside precision gesture alternatives; a 
 step controls are possible follow-ups. Verify access to every tool, including Done, at narrow
 widths, supported text sizes and in RTL, without a scroll activating an adjacent command.
 
+### Rebased validation
+
+All seven source checks passed at final application revision `b7ab422`, based on main `2aad841`.
+The same checks also passed at the initial rebase checkpoint `9710463`; source/dependency identity
+between those checkpoints was verified.
+
+All seven source checks use Node 24.9.0:
+
+| Command                                          | Result                                                                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `npx tsc --noEmit`                               | Passed.                                                                                                              |
+| `npm run lint`                                   | Passed full lint.                                                                                                    |
+| `npm test -- --runInBand`                        | 150 suites / 2,146 tests passed; one opt-in PulseVault integration suite / eight tests skipped locally. No failures. |
+| `node scripts/gen-protocol-types.mjs --check`    | Generated protocol types are current.                                                                                |
+| `npx tsc --noEmit -p embed`                      | Passed.                                                                                                              |
+| `npx tsc --noEmit -p embed/packages/pulse-embed` | Passed.                                                                                                              |
+| `npm run check:embed`                            | Passed dependency/facade checks and iOS/Android bundle checks (4,235 / 4,144 sources).                               |
+
+The full Jest run includes main's new Split/fractional-boundary and release-note tests. A separate
+focused regression passed eight suites / 244 tests for Split, anchors, storage, history, additions
+and segment windows. Changed-file formatting, local documentation links and whitespace checks pass.
+
+Native iOS Release checks at the first rebase checkpoint `9710463` used task-owned iOS 26
+simulators with synthetic local clips. Its app/UI source is identical to `b7ab422`.
+
+- **375 × 667:** Close, Undo, Redo and Export remain 44 × 44 at `y = 615`, with fixed x positions
+  4 / 231 / 279 / 327 at normal and maximum text. Main's Edit, Split and Captions fit at normal
+  text. At maximum text, an element-based horizontal swipe revealed the remaining 13 points of
+  Captions; its native button opened the model sheet without starting a download.
+- **440 × 956:** all four commands remain 44 × 44 at `y = 870`, with fixed x positions
+  4 / 296 / 344 / 392. All three Main tools fit at normal and maximum text. Main and Clip Split,
+  Undo and Redo restored clip IDs, source windows, ordering and settings. Initial-position Split
+  was disabled. Fractional repeat-Split behavior failed as described below.
+- Text settings and original synthetic fixtures were restored; owned WDA sessions/runners ended,
+  ports were clear and the simulators returned to Shutdown. No physical device was used.
+
+After rebasing onto `2aad841`, Xcode/iPhoneOS SDK 27.2 passed the new SDK guard. Expo prebuild
+applied the inherited scene plugin: the generated scene manifest uses `EXExpoAppSceneDelegate`,
+multiple scenes are disabled and AppDelegate provides the React Native factory without the legacy
+startup block. See [PR #327 validation](https://github.com/mieweb/pulse/pull/327) for the final
+Release rebuild and cold-launch/lifecycle result against that generated configuration.
+
+These checks establish native layout and accessible activation, not actual either-hand grip reach.
+
+**Known inherited Split defect:** at a fractional playhead position, Split can remain enabled
+after committing even without a user seek. Repeating it created a roughly 8–9 ms extra fragment
+on both simulators, in Main and Clip modes. Undo/Redo restored the exact ordered clip windows.
+The Split, timeline-layout and preview-transport logic is unchanged from main `2aad841`. Source analysis indicates a mismatch between the frame-quantized
+native timeline boundary and the preserved exact playhead. The source tests pass but do not cover
+this native rebuild interaction. A separate Split/preview timing repair and native retest are
+needed. The native boundary-state check failed.
+
+The capture below is the first rebase checkpoint `9710463`, with the same app/UI source as
+`b7ab422`.
+
+![Rebased compact toolbar including Split](images/one-handed-navigation/editor-after-rebase.png)
+
+The earlier phone handoffs and captures below continue to describe their named pre-rebase builds.
+The phone has not been updated or exercised during this rebase; real camera/Record/Stop, either-hand
+reach, RTL, Android and the broader audit acceptance work remain unverified.
+
 ### Revision validation (`3c52200`)
+
+This section records the **pre-rebase** compact-toolbar build. Its source-check counts, native
+measurements and phone installation are historical evidence; they are not results for `9710463`
+or its inherited Split and release-note changes.
 
 All seven source checks passed again: root/embed/client TypeScript, full lint, protocol generation,
 the embed bundle/dependency check, and Jest (147 suites / 2,100 tests passed; the same opt-in
@@ -171,7 +269,7 @@ both builds. Physical grip/Record/Stop and the broader acceptance work remain us
 
 ## Initial test build (`dce8303`): observed validation
 
-The initial test build uses application source at `dce8303` on
+The initial, pre-rebase test build uses application source at `dce8303` on
 [PR #327](https://github.com/mieweb/pulse/pull/327). The signed Release build was installed in
 place on the requested iPhone, launched without a debugger, and its running process verified.
 No drafts were removed and no physical test/capture runner was started. The shared device guard

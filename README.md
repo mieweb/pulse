@@ -81,7 +81,7 @@ flowchart TB
 
 - Open an existing library draft directly in the editor; New recording opens the camera. Use the
   editor's Add menu to record more into the same draft.
-- Editor Close, contextual tools, Undo/Redo and compact Export share one lower toolbar.
+- Editor Close, contextual tools (including Split), Undo/Redo and compact Export share one lower toolbar.
   Recorder Close/Export and export Close are lower too. See the
   [one-handed navigation audit](docs/one-handed-navigation.md) for scope, remaining gesture/sheet
   work and validation requirements.
