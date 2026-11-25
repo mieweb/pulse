@@ -5,6 +5,7 @@ import { emptyHistory, record, type History } from '@/features/transcription/edi
 
 import {
   diffSnapshot,
+  keepEmptyEditorOpen,
   planStep,
   restoreOrder,
   snapshotOf,
@@ -95,26 +96,23 @@ describe('planStep', () => {
     expect(plan.history.past).toEqual([]);
   });
 
-  it('drops an addition that would leave the draft with no clips', () => {
-    const h = push(emptyHistory<Step>(), { kind: 'added', ids: ['x'], taken: null });
+  it('takes out an addition even when deleting the original leaves only its clips', () => {
+    const added: Step = { kind: 'added', ids: ['x'], taken: null };
+    const h = push(emptyHistory<Step>(), added);
     const plan = planStep(h, 'undo', present(['x']));
-    expect(plan).toMatchObject({ kind: 'none', history: { past: [] } });
+    expect(plan).toMatchObject({ kind: 'takeOut', ids: ['x'], step: added });
+    expect(plan.history).toBe(h);
   });
 
-  it('undoes nothing older in place of an addition that is the whole draft', () => {
+  it('undoes the final addition before older draft-wide edits', () => {
     // The captions moved (a draft-wide step), x added, then a deleted: x is all that's left.
     const moved: Present = { ...present(['a']), captionY: 0.2 };
     let h = push(emptyHistory<Step>(), state(moved));
     h = push(h, { kind: 'added', ids: ['x'], taken: null });
     const now: Present = { ...present(['x']), captionY: 0.8 };
     const plan = planStep(h, 'undo', now);
-    expect(plan.kind).toBe('none');
-    // The addition is dropped; the captions step is still there for the next undo.
-    expect(plan.history.past).toEqual([state(moved)]);
-    expect(planStep(plan.history, 'undo', now)).toMatchObject({
-      kind: 'state',
-      diff: { captionY: 0.2 },
-    });
+    expect(plan).toMatchObject({ kind: 'takeOut', ids: ['x'] });
+    expect(plan.history.past).toEqual([state(moved), { kind: 'added', ids: ['x'], taken: null }]);
   });
 
   it('redoes an addition that has what was taken out', () => {
@@ -146,5 +144,26 @@ describe('planStep', () => {
     expect(plan.kind).toBe('state');
     if (plan.kind === 'state') expect(plan.diff.edits).toEqual([['a', 'e1']]);
     expect(plan.history.past).toEqual([]);
+  });
+});
+
+describe('empty editor after addition undo', () => {
+  it('stays open through empty database updates until restored clips are observed', () => {
+    let retained = false;
+    const render = (clips: number, historyKeepsOpen: boolean) => {
+      retained = keepEmptyEditorOpen(retained, clips, historyKeepsOpen);
+      return retained;
+    };
+    expect(render(1, false)).toBe(false);
+    expect(render(1, true)).toBe(true); // undo starts before the row disappears
+    expect(render(0, true)).toBe(true); // undo commits and keeps the clip for redo
+    expect(render(0, true)).toBe(true); // redo starts, its future stack is temporarily empty
+    expect(render(0, false)).toBe(true); // redo committed, live query still has the old rows
+    expect(render(1, false)).toBe(false); // the restored clip reaches the screen
+    expect(render(0, false)).toBe(false); // ordinary deletion can close the editor again
+  });
+
+  it('does not retain an empty draft with no recoverable addition', () => {
+    expect(keepEmptyEditorOpen(false, 0, false)).toBe(false);
   });
 });

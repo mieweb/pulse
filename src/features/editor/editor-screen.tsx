@@ -69,6 +69,7 @@ import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
+import { keepEmptyEditorOpen } from '@/features/editor/editor-history';
 import { usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
@@ -301,16 +302,23 @@ export function EditorScreen({
       .catch(() => {});
   }, []);
 
-  // Leave when the draft has no clips left, once: a new `onClose` while leaving doesn't close twice
-  // (which would also close the screen underneath). Only while on top: a recorder opened over the
-  // editor (Add clips) can empty the draft, and closing then would close that recorder instead.
+  // Leave an empty draft once, except when undo retains clips for redo. Keep that session through
+  // database/live-query timing gaps until restored clips reach the screen. Only close while on
+  // top: otherwise a recorder over this editor would be closed instead.
   const focused = useScreenFocused();
   const left = useRef(false);
+  const retainedEmpty = useRef(false);
   useEffect(() => {
-    if (left.current || !focused || !draft.loaded || clips.length > 0) return;
+    retainedEmpty.current = keepEmptyEditorOpen(
+      retainedEmpty.current,
+      clips.length,
+      history.keepEmptyOpen,
+    );
+    if (left.current || !focused || !draft.loaded || clips.length > 0 || retainedEmpty.current)
+      return;
     left.current = true;
     onClose();
-  }, [focused, draft.loaded, clips.length, onClose]);
+  }, [focused, draft.loaded, clips.length, history.keepEmptyOpen, onClose]);
 
   // Opened on a clip or at a boundary: the playhead starts there. Placed once the clips are known,
   // before the strip or row is shown (they stay hidden until then, on the UI thread, so no frame
@@ -557,7 +565,9 @@ export function EditorScreen({
     ctl.pause();
     void flushDraftWrites().then(go);
   };
-  const openExport = () => openOver(() => onExport(draftId));
+  const openExport = () => {
+    if (clips.length > 0) openOver(() => onExport(draftId));
+  };
 
   // --- Adding clips (the "+") ---------------------------------------------------------------
   const add = useEditorAdditions({
@@ -832,8 +842,14 @@ export function EditorScreen({
   // Created once the area is measured and the clips are known; dropped with no clips left.
   const showPreview = !!options && previewClips.length > 0 && fitW > 0;
   useEffect(() => {
-    if (!showPreview) ctl.detach();
-  }, [showPreview, ctl]);
+    if (!showPreview) {
+      ctl.detach();
+      if (clips.length === 0) {
+        ctl.pause();
+        ctl.seekTo(0);
+      }
+    }
+  }, [showPreview, clips.length, ctl]);
 
   return (
     // The portal lifts a picked-up clip above everything (preview, controls) while it's dragged.
@@ -861,7 +877,11 @@ export function EditorScreen({
             />
             {/* Finished editing: on to the export screen (back returns here). */}
             <View style={styles.export}>
-              <ExportButton onPress={openExport} testID="editor.export" />
+              <ExportButton
+                onPress={openExport}
+                disabled={clips.length === 0}
+                testID="editor.export"
+              />
             </View>
           </View>
         </Pressable>

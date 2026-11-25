@@ -76,5 +76,7 @@ export function useEditorHistory(
     redo: () => store.redo(present(), apply),
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
+    /** An addition is moving through the database or its clips are retained for redo. */
+    keepEmptyOpen: history.keepEmptyOpen,
   };
 }
