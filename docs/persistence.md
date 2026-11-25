@@ -55,6 +55,8 @@ converted from centiseconds to milliseconds and snapped to the probed source fra
 first pass requires at least one frame on each side of the cut; edge/whole-beat cuts are disabled.
 Caption **Edit** and **Hide word** continue to change captions only. Preview and export consume
 the saved kept ranges, and one Undo/Redo restores/reapplies the cut across reopening and transfer.
+Separate draft narration keeps its timeline placement, following the existing voiceover contract;
+the speech cut affects the selected source video's picture and sound.
 
 One Undo step owns a Timeline split and insertion together. Undo takes the inserted clips and
 halves out and restores the unsplit original in one transaction; Redo restores the applied rows,
