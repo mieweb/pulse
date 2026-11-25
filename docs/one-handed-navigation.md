@@ -39,17 +39,21 @@ the current PR base. File links point to the maintained implementation. This inv
 evidence, not a device usability result.
 
 PR #327 is rebased onto main
-[`f3c93ce`](https://github.com/mieweb/pulse/commit/f3c93ce9bb85b3238c14869c8f38cec4ca2e504a),
-which includes Summary collection from #332. The current application source is `d61f31d`:
+[`7c29eb8`](https://github.com/mieweb/pulse/commit/7c29eb83889d74ebad3c9cac71ec79d363b1d5df),
+which includes Summary collection from #332 and durable Undo/Redo from #328. The current
+application source is `60aaae7`; `9850893` adds the local phone-test notes without changing it.
 Home's New project entry is preserved, existing library cards open Edit, and View last summary
 pushes Edit while retaining its form underneath. Blank and newly-created Summary still open the
-recorder. Current-base additions are recorded after the original inventory.
+recorder. Lower Undo/Redo uses main's persistent per-draft history, including retained empty-draft
+Redo. Current-base source, simulator and phone-handoff results are recorded below; earlier installs
+remain historical evidence.
 
-The preceding application checkpoint `87c600a` was based on main `2aad841` and included the
+The preceding Summary checkpoint `d61f31d` was based on main `f3c93ce`, before durable history.
+The application checkpoint `87c600a` was based on main `2aad841` and included the
 empty-project, keyboard and contrast corrections below. Toolbar validation began at `9710463`
 on main `2467627`; the scene-lifecycle rebuild used `b7ab422` / `4e8abc1` on `2aad841`. Those
 results, earlier `dce8303` / `3c52200` phone installations and all captures labeled with their
-original revisions are historical evidence, not validation of the Summary rebase.
+original revisions are historical evidence, not validation of the current durable-history base.
 
 | Screen/state                        | Baseline finding and source                                                                                                                                                                                                                                                                                                                                                 | Decision / priority                                                                                                                                                                                                                                 |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -81,6 +85,16 @@ survive repositioning; controls that already have sufficient target size can sti
 
 ### Additions inherited from the refreshed main
 
+- [PR #328](https://github.com/mieweb/pulse/pull/328), addressing
+  [#325](https://github.com/mieweb/pulse/issues/325), ships durable Undo/Redo. Migration 22,
+  per-draft checkpoints, retained Redo media and `.pulse` transfer are inherited unchanged;
+  see [persistence](persistence.md#editor-operations-and-undo). The lower commands call the same
+  [history hook](../src/features/editor/use-editor-history.ts); its existing readiness guard
+  still waits for the draft and successful parent-row data before opening durable history.
+  Empty standalone entry separately distinguishes an unknown parent from a confirmed missing
+  parent without latching the permission to remain empty. Verify close/reopen, app restart,
+  additions and empty Redo on this base; prior session-history native checks are historical,
+  not proof of persistent-history integration.
 - [PR #332](https://github.com/mieweb/pulse/pull/332) adds the
   [New project route](../src/app/new-project.tsx) and
   [chooser/Summary form](../src/features/project-summary/new-project-screen.tsx). Home's + now
@@ -174,7 +188,7 @@ results do not cover this additional screen.
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | New → Record → Stop → Export → destination/send | Single- and multi-clip recordings; lower app-owned controls; no upper Export detour; return retains draft; busy/progress/retry/cancel works.                                       | Verify OS picker/share completion separately and record placement constraints.                        |
 | Existing project opens edit                     | Tap library draft → editor without camera/mic prompt; Record more uses same draft; return to project list; explicit host/deep-link recording routes preserved.                     | Additional entry paths only change when their intended operation is editing.                          |
-| History and edit preservation                   | Undo/Redo and empty-draft restoration, disabled Export when empty, return/dismiss autosave, keyboard/caption state.                                                                | Persistent cross-session history remains its separately tracked feature.                              |
+| History and edit preservation                   | Undo/Redo and empty-draft restoration, disabled Export when empty, return/dismiss autosave, keyboard/caption state; retain main's durable checkpoints across navigation/restart.   | Durable history ships in #328; verify its integration rather than treating it as future work.         |
 | Either hand and supported phone layouts         | Small and large iOS/Android layouts, safe-area/home indicator, supported text sizes, RTL, labels/focus/disabled states. Actual left/right grip reach must be recorded on hardware. | Full secondary-screen and alternate-posture audit, including #231/#246.                               |
 | Swipe return/dismiss                            | Report supported, blocked and unverified surfaces; verify each enabled gesture uses the existing logical close path.                                                               | Gesture-conflict inventory above remains open until each affected surface is implemented and checked. |
 | Exceptions and overlap                          | Separate OS-owned dialogs/native chrome from app-owned controls. Record rationale, reachable fallback and linked follow-up for app exceptions.                                     | #104 export/keyboard/long-destination/toast combinations and all deferred sheets.                     |
@@ -202,9 +216,60 @@ an exception for review under #310, alongside precision gesture alternatives; a 
 step controls are possible follow-ups. Verify access to every tool, including Done, at narrow
 widths, supported text sizes and in RTL, without a scroll activating an adjacent command.
 
-### Summary-base source validation (`d61f31d`)
+### Current durable-history-base source validation (`9850893`)
 
-All seven full source checks passed on the actual Summary base `f3c93ce`, application source
+All seven full source checks passed at `9850893`, with application source unchanged from
+`60aaae7`, on main `7c29eb8` using Node 24.9.0. This includes the inherited durable-history
+tests and this PR's navigation, empty-project and export-layout regressions.
+
+| Command                                          | Result                                                                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `npx tsc --noEmit`                               | Passed.                                                                                                              |
+| `npm run lint`                                   | Passed full lint.                                                                                                    |
+| `npm test -- --runInBand`                        | 156 suites / 2,304 tests passed; one opt-in PulseVault integration suite / eight tests skipped locally. No failures. |
+| `node scripts/gen-protocol-types.mjs --check`    | Generated protocol types are current.                                                                                |
+| `npx tsc --noEmit -p embed`                      | Passed.                                                                                                              |
+| `npx tsc --noEmit -p embed/packages/pulse-embed` | Passed.                                                                                                              |
+| `npm run check:embed`                            | Passed dependency/facade checks and iOS/Android bundle checks (4,243 / 4,152 sources).                               |
+
+These source/bundle results are complemented by the fresh native checks and phone handoff below.
+Earlier native results and captures retain their original revision labels. Physical either-hand
+reach and the broader #310 exceptions remain user acceptance work.
+
+### Current native checks and phone handoff (`9850893`)
+
+Release simulator and signed iPhone builds used the same frozen application source and the
+[test notes](testing/thumb-navigation-test-notes.json) via `PULSE_TEST_NOTES_FILE`. Both native
+`EXConstants.bundle/app.config` resources contain the exact eight notes and retain five historical
+releases. The simulator's metadata is clean; the phone bundle's dirty flag reflects concurrent
+README/audit edits, with app-source hashes unchanged. Apple Development deep/strict signature
+verification passed for the phone bundle, Pulse 2.7.0 (1).
+
+On the task-owned 375 × 667 iOS 26 simulator at normal text:
+
+- All eight notes were observed through native accessibility scrolling in About → Release notes.
+- A donor clip was copied into an empty project and Undo returned it to empty. After Close and a
+  full app termination/relaunch, the empty Home card opened Edit with enabled lower Redo. Redo
+  restored the same clip ID and media path; the saved history matched across restart and the
+  donor remained unchanged.
+- Close/Undo/Redo/Export retained their fixed 44 × 44 targets at `y = 615`; Export was disabled
+  while empty. Migration 22 preserved the synthetic library. Fixtures/media/text were restored,
+  the owned WDA session/runners stopped, the port released and the simulator shut down.
+
+The signed `9850893` build was installed in place on the requested iPhone, launched without a
+debugger and its running process verified. The global device guard returned `released` before
+any further work. No phone WDA/XCTest/capture was started. This establishes installation/launch;
+real camera, either-hand reach and the other acceptance cases remain for the user. Testing starts
+at Home; About → Release notes contains paths, actions, expected results and known limitations.
+
+| App-visible phone test notes                                                                   | Persistent Redo after restarting empty                                                                                    |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| ![Test instructions in About Release notes](images/one-handed-navigation/phone-test-notes.png) | ![Lower Redo remains available after restarting an empty project](images/one-handed-navigation/persistent-empty-redo.png) |
+
+### Earlier Summary-base source validation (`d61f31d`)
+
+This historical checkpoint predates durable Undo/Redo from #328. All seven full source checks
+passed on the Summary base `f3c93ce`, application source
 `d61f31d`, using Node 24.9.0. This checkpoint preserves Home's New project chooser and new
 Summary creation while sending both existing library cards and View last summary to Edit.
 
@@ -220,13 +285,14 @@ Summary creation while sending both existing library cards and View last summary
 
 The full test run includes main's Summary database/date tests as well as the earlier navigation,
 empty-project, export sizing, Split and release-note regressions. Documentation formatting,
-local links and whitespace checks pass. These are source/bundle results; current-base native
-chooser, Blank, Summary creation and last-summary review results must be recorded separately.
+local links and whitespace checks passed at that checkpoint. These are source/bundle results;
+the following native entry checks used the same earlier base.
 Earlier phone builds and captures below retain their original revision labels.
 
-### Summary-base native entry validation (`d61f31d`)
+### Earlier Summary-base native entry validation (`d61f31d`)
 
-A fresh Release build embedded `d61f31d` (dirty flag from concurrent docs only); app-source hashes
+Before the durable-history rebase, a fresh Release build embedded `d61f31d` (dirty flag from
+concurrent docs only); app-source hashes
 stayed unchanged. Native accessibility checks on the task-owned 375 × 667 iOS 26 simulator at
 normal text passed:
 
@@ -315,8 +381,8 @@ not the new-project chooser or Summary flows inherited later.
 ![Rebased compact toolbar including Split](images/one-handed-navigation/editor-after-rebase.png)
 
 The earlier phone handoffs and captures below continue to describe their named pre-rebase builds.
-This task used no physical device during the later rebases; real camera/Record/Stop, either-hand
-reach, RTL, Android and the broader audit acceptance work remain unverified.
+These later historical rebase checks used simulators, not a physical device. Real camera/Record/Stop,
+either-hand reach, RTL, Android and the broader audit acceptance work remain unverified here.
 
 ### Empty-project review correction (`800d16e`)
 
