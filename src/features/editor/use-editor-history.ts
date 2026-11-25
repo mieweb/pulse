@@ -1,30 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import {
-  closeCoalescing,
-  emptyHistory,
-  record as recordStep,
-  redo as redoStep,
-  undo as undoStep,
-  type History,
-} from '@/features/transcription/edit-history';
+import { dropTakenOut, restoreSegments, takeOutSegments } from '@/db/drafts';
+import { useToast } from '@/features/toast/toast-provider';
+import { dropClipJobs } from '@/features/transcription/clip-queue';
+import { userMessage } from '@/utils/user-message';
 
+import { flushDraftWrites } from './draft-writes';
+import type { Present, SnapshotDiff } from './editor-history';
+import { createEditorHistory } from './editor-history-store';
 import type { EditorClip, EditValue } from './use-editor-draft';
 
-/** The clips' order, every clip's stored edit and edited captions, by id, and where the
- * captions sit: one undo step (strings and a number, so cheap). */
-type Snapshot = {
-  order: string[];
-  edits: Record<string, EditValue>;
-  captions: Record<string, string | null>;
-  captionY: number | null;
-};
-
 /**
- * Undo/redo for the editor's per-clip settings and captions, over edit-history.ts. A step is
- * the draft's order and edits before a change; undoing writes back only what differs. A
- * deleted clip isn't restored (delete has no undo): its entries are skipped, and a step that
- * only touched deleted clips is dropped and the next one tried. History lives for the session.
+ * Undo/redo for the editor: per-clip settings, captions, the order, and clips added (the + or a
+ * recorder over the editor). The steps and their rules are editor-history.ts; the store that runs
+ * them, the database work of an addition's undo and redo included, is editor-history-store.ts. A
+ * deleted clip isn't restored (delete has no undo): a step that only touched deleted clips is
+ * dropped and the next one tried.
+ *
+ * Undoing an addition takes its clips out of the draft but keeps their files, so a redo puts them
+ * back as they were (labels, edits, captions, transcripts). Their files go once no redo can: the
+ * redo stack cleared by a new change, or the editor closing. History lives for the session.
  */
 export function useEditorHistory(
   clips: EditorClip[],
@@ -35,80 +30,61 @@ export function useEditorHistory(
   captionY: number | null,
   setCaptionY: (y: number | null) => void,
 ) {
-  const [history, setHistory] = useState<History<Snapshot>>(emptyHistory);
+  const { showToast } = useToast();
+  const [store] = useState(() =>
+    createEditorHistory({
+      flush: flushDraftWrites,
+      takeOut: async (ids, splits) => {
+        const taken = await takeOutSegments(ids, splits);
+        // Out of the draft: their transcriptions stop, as a deleted clip's do. A take-out that
+        // failed leaves them running.
+        if (taken) {
+          const restored = new Set((splits ?? []).flatMap((s) => s.before.rows.map((r) => r.id)));
+          dropClipJobs({
+            segmentIds: taken.rows.filter((r) => !restored.has(r.id)).map((r) => r.id),
+          });
+        }
+        return taken;
+      },
+      restore: restoreSegments,
+      drop: dropTakenOut,
+      failed: (direction, e) =>
+        showToast({
+          kind: 'error',
+          title: direction === 'undo' ? 'Couldn’t undo' : 'Couldn’t redo',
+          message: userMessage(e, 'Try again.', `${direction} added clips`),
+        }),
+    }),
+  );
+  useEffect(() => {
+    store.open();
+    return () => store.dispose();
+  }, [store]);
+  const history = useSyncExternalStore(store.subscribe, store.getState);
 
-  const snapshot = (): Snapshot => ({
-    order: clips.map((c) => c.id),
-    edits: Object.fromEntries(clips.map((c) => [c.id, c.editKey])),
-    captions: Object.fromEntries(clips.map((c) => [c.id, captions.get(c.id) ?? null])),
-    captionY,
-  });
-
-  /** Writes `target` where it differs from now; false when nothing did (a no-op step). */
-  const apply = (target: Snapshot) => {
-    let changed = false;
-    for (const c of clips) {
-      if (!(c.id in target.edits) || target.edits[c.id] === c.editKey) continue;
-      setValue(c.id, target.edits[c.id]);
-      changed = true;
-    }
-    const captionsBack = new Map<string, string | null>();
-    for (const c of clips) {
-      const value = target.captions?.[c.id];
-      if (value === undefined || value === (captions.get(c.id) ?? null)) continue;
-      captionsBack.set(c.id, value);
-    }
-    if (captionsBack.size) {
-      setCaptions(captionsBack);
-      changed = true;
-    }
-    // Where the captions sit (a step from before it was recorded has none).
-    if (target.captionY !== undefined && target.captionY !== captionY) {
-      setCaptionY(target.captionY);
-      changed = true;
-    }
-    // The order, among the clips still here.
-    const ids = clips.map((c) => c.id);
-    const order = target.order.filter((id) => ids.includes(id));
-    const rest = ids.filter((id) => !order.includes(id));
-    if (order.join() !== ids.filter((id) => order.includes(id)).join()) {
-      reorder([...order, ...rest]);
-      changed = true;
-    }
-    return changed;
-  };
-
-  const step = (direction: 'undo' | 'redo') => {
-    let h = history;
-    const now = snapshot();
-    while (true) {
-      const r = direction === 'undo' ? undoStep(h, now) : redoStep(h, now);
-      if (!r) {
-        setHistory(h);
-        return;
-      }
-      if (apply(r.value)) {
-        setHistory(r.history);
-        return;
-      }
-      // Nothing left to change in that step: drop it, keep the other stack as it was.
-      h =
-        direction === 'undo' ? { ...r.history, future: h.future } : { ...r.history, past: h.past };
-    }
+  const present = (): Present => ({ clips, captions, captionY });
+  const apply = (diff: SnapshotDiff) => {
+    for (const [id, value] of diff.edits) setValue(id, value);
+    if (diff.captions.size) setCaptions(diff.captions);
+    if (diff.captionY !== undefined) setCaptionY(diff.captionY);
+    if (diff.order) reorder(diff.order);
   };
 
   return {
     /** Call before an edit. `opKey` (e.g. `speed:<id>`) merges quick repeats into one step. */
-    record: (opKey: string | null) => {
-      const before = snapshot();
-      const at = Date.now();
-      setHistory((h) => recordStep(h, before, opKey, at));
-    },
+    record: (opKey: string | null) => store.record(present(), opKey),
+    /** Clips were added to the draft (already in it): one step that takes them all out. */
+    recordAdded: store.recordAdded,
+    beginBatch: store.beginBatch,
+    endBatch: store.endBatch,
     /** Ends a merge window (a drag let go). */
-    close: () => setHistory(closeCoalescing),
-    undo: () => step('undo'),
-    redo: () => step('redo'),
-    canUndo: history.past.length > 0,
-    canRedo: history.future.length > 0,
+    close: store.close,
+    undo: () => store.undo(present(), apply),
+    redo: () => store.redo(present(), apply),
+    canUndo: history.past.length > 0 && !history.batchOpen && !history.busy,
+    canRedo: history.future.length > 0 && !history.batchOpen && !history.busy,
+    busy: history.busy,
+    /** An addition is moving through the database or its clips are retained for redo. */
+    keepEmptyOpen: history.keepEmptyOpen,
   };
 }

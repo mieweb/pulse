@@ -7,6 +7,8 @@ import {
   decideImport,
   NORMALIZE_TARGET_BITRATE,
   NORMALIZE_TARGET_FPS,
+  recorderEncodeFormat,
+  type RecorderFormat,
 } from './import-normalization';
 
 // Real probe() values from the wild-import corpus in assets/dev/import/
@@ -251,5 +253,46 @@ describe('decideImport edge cases beyond the corpus', () => {
     const d = decideImport(probe({ rotation: 270, bitDepth: 10 }));
     expect(d.action).toBe('normalize');
     if (d.action === 'normalize') expect(d.reasons).toContain('10-bit video');
+  });
+});
+
+describe('recorderEncodeFormat (an image clip)', () => {
+  const recorder = (audioSampleRate: number, audioChannels: number): RecorderFormat => ({
+    width: 1920,
+    height: 1080,
+    rotation: 90,
+    audioSampleRate,
+    audioChannels,
+  });
+
+  it('writes the recorder’s video format and a mono or stereo layout as it is', () => {
+    expect(recorderEncodeFormat(recorder(48000, 1))).toEqual({
+      width: CANVAS_WIDTH,
+      height: CANVAS_HEIGHT,
+      rotation: 90,
+      fps: NORMALIZE_TARGET_FPS,
+      bitrate: NORMALIZE_TARGET_BITRATE,
+      audio: { sampleRate: 48000, channels: 1 },
+    });
+    expect(recorderEncodeFormat(recorder(44100, 2)).audio).toEqual({
+      sampleRate: 44100,
+      channels: 2,
+    });
+  });
+
+  it('a multichannel recorder (5.1, or any count past 2) gets stereo: imageClip takes 1 or 2', () => {
+    for (const channels of [3, 4, 6, 8]) {
+      expect(recorderEncodeFormat(recorder(48000, channels)).audio).toEqual({
+        sampleRate: 48000,
+        channels: 2,
+      });
+    }
+  });
+
+  it('a rate imageClip or AAC can’t take becomes a whole AAC rate at or below it', () => {
+    expect(recorderEncodeFormat(recorder(96000, 2)).audio.sampleRate).toBe(48000);
+    expect(recorderEncodeFormat(recorder(250000, 2)).audio.sampleRate).toBe(48000);
+    expect(recorderEncodeFormat(recorder(47999.6, 2)).audio.sampleRate).toBe(48000);
+    expect(recorderEncodeFormat(recorder(46000, 2)).audio.sampleRate).toBe(44100);
   });
 });

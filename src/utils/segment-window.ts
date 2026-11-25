@@ -14,6 +14,9 @@ import type { Segment } from '@/db/schema';
 /** Crop rect, normalized 0–1 to the displayed frame after rotation/flip. */
 export type ClipCrop = { x: number; y: number; w: number; h: number };
 
+/** The source interval a split clip owns, retained when its edits are reset. */
+export type ClipWindow = { startMs: number; endMs: number };
+
 /** What the player / export must do to show a clip as edited. */
 export type ClipRender = {
   /** Media file to play (relative path). */
@@ -33,9 +36,25 @@ export type ClipRender = {
 export type ParsedEdit = Omit<ClipRender, 'file' | 'inMs' | 'outMs'> & {
   startMs: number;
   endMs: number;
+  baseWindow?: ClipWindow;
 };
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+function parseWindow(v: unknown): ClipWindow | undefined {
+  if (typeof v !== 'object' || v === null) return undefined;
+  const { startMs, endMs } = v as Record<string, unknown>;
+  return isNum(startMs) && isNum(endMs) && startMs >= 0 && endMs > startMs
+    ? { startMs, endMs }
+    : undefined;
+}
+
+/** Keep a trim inside its split interval; a disjoint window falls back to that interval. */
+function boundedWindow(startMs: number, endMs: number, baseWindow: ClipWindow): ClipWindow {
+  const start = Math.max(startMs, baseWindow.startMs);
+  const end = Math.min(endMs, baseWindow.endMs);
+  return start < end ? { startMs: start, endMs: end } : { ...baseWindow };
+}
 
 function parseCrop(v: unknown): ClipCrop | null {
   if (typeof v !== 'object' || v === null) return null;
@@ -62,10 +81,16 @@ export function parseEdit(editState: string | null | undefined): ParsedEdit | nu
   try {
     const o: unknown = JSON.parse(editState);
     if (typeof o === 'object' && o !== null) {
-      const { startMs, endMs, rotation, flipped, crop, muted, speed } = o as Record<
-        string,
-        unknown
-      >;
+      const {
+        startMs,
+        endMs,
+        rotation,
+        flipped,
+        crop,
+        muted,
+        speed,
+        baseWindow: rawBase,
+      } = o as Record<string, unknown>;
       if (
         isNum(startMs) &&
         isNum(endMs) &&
@@ -78,14 +103,15 @@ export function parseEdit(editState: string | null | undefined): ParsedEdit | nu
         speed >= 0.25 &&
         speed <= 4
       ) {
+        const baseWindow = parseWindow(rawBase);
         parsed = {
-          startMs,
-          endMs,
+          ...(baseWindow ? boundedWindow(startMs, endMs, baseWindow) : { startMs, endMs }),
           rotation: Math.round(rotation),
           flipped: flipped === true,
           crop: parseCrop(crop),
           muted: muted === true,
           speed,
+          ...(baseWindow && { baseWindow }),
         };
       }
     }
@@ -167,7 +193,72 @@ export function canonicalEdit(editState: string | null | undefined): string | nu
     },
     muted: e.muted,
     speed: e.speed,
+    ...(e.baseWindow && { baseWindow: e.baseWindow }),
   });
+}
+
+/** Whole source, or the half a split owns, with default transforms and playback settings. */
+export function segmentDefaults(s: Segment): ParsedEdit {
+  const baseWindow = s.editedFilename ? undefined : parseEdit(s.editState)?.baseWindow;
+  return {
+    startMs: baseWindow?.startMs ?? 0,
+    endMs:
+      baseWindow?.endMs ?? (s.editedFilename ? (s.editedDurationMs ?? s.durationMs) : s.durationMs),
+    rotation: 0,
+    flipped: false,
+    crop: null,
+    muted: false,
+    speed: 1,
+    ...(baseWindow && { baseWindow }),
+  };
+}
+
+/** Reset preserves a split's source bounds; an ordinary clip can clear its edit entirely. */
+export function resetSegmentEdit(s: Segment): string | null {
+  const edit = segmentDefaults(s);
+  return edit.baseWindow ? canonicalEdit(JSON.stringify(edit)) : null;
+}
+
+/** Normalize a raw save/reset without allowing it to erase or expand a split's source bounds. */
+export function segmentEditValue(s: Segment, value: string | null | undefined): string | null {
+  if (value == null) return resetSegmentEdit(s);
+  const edit = parseEdit(value);
+  if (!edit) throw new Error('Unusable clip edit');
+  const baseWindow = s.editedFilename ? undefined : parseEdit(s.editState)?.baseWindow;
+  // Raw editor states may carry fields outside the render settings (including older per-clip
+  // history). Preserve that existing storage contract; only a split's bounds need normalizing.
+  if (!baseWindow) return value;
+  const bounded = canonicalEdit(JSON.stringify({ ...edit, baseWindow }))!;
+  return JSON.stringify({ ...JSON.parse(value), ...JSON.parse(bounded) });
+}
+
+/** Split the rendered source interval without copying or encoding its underlying media. */
+export function splitSegmentAt(
+  s: Segment,
+  sourceMs: number,
+  rightId: string,
+): { left: Segment; right: Segment } {
+  const { file, inMs, outMs, ...settings } = clipRender(s);
+  if (!Number.isFinite(sourceMs) || sourceMs <= inMs || sourceMs >= outMs) {
+    throw new Error('The split point must be inside the clip');
+  }
+  if (!rightId || rightId === s.id) throw new Error('The split needs a new clip id');
+  const durationMs = s.editedFilename ? (s.editedDurationMs ?? s.durationMs) : s.durationMs;
+  const half = (id: string, startMs: number, endMs: number): Segment => {
+    const editState = canonicalEdit(
+      JSON.stringify({ ...settings, startMs, endMs, baseWindow: { startMs, endMs } }),
+    )!;
+    return {
+      ...s,
+      id,
+      originalFilename: file,
+      durationMs,
+      editedFilename: null,
+      editedDurationMs: editTimelineMs(editState),
+      editState,
+    };
+  };
+  return { left: half(s.id, inMs, sourceMs), right: half(rightId, sourceMs, outMs) };
 }
 
 /**

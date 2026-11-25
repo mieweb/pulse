@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
-import { type ReactNode, useCallback, useEffect, useRef } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   interpolateColor,
@@ -22,15 +22,29 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { GlassPill } from '@/components/glass-pill';
 import { EaseOut } from '@/constants/motion';
 import { Accent, Spacing } from '@/constants/theme';
+import type { ClipAnchor } from '@/core/clip-anchor';
 import type { Segment } from '@/db/schema';
 import { TipClip } from '@/features/tips/tip-callout';
 import { useThumbnail } from '@/hooks/use-thumbnail';
 import { formatDuration } from '@/utils/format';
 import { haptics } from '@/utils/haptics';
 import { effMs } from '@/utils/segment-window';
+import { CursorTapArea, InsertCursor, STRIP } from './insert-cursor';
+import {
+  anchorAtBoundary,
+  boundaryOf,
+  boundaryX,
+  cursorA11yForAnchor,
+  cursorPosition,
+  cursorAfterReorder,
+  insertChipForAnchor,
+  orderShown,
+  scrollToShow,
+} from './insert-point';
 import {
   BADGE_SIZE,
   BAR_LANE,
+  CURSOR_INSET,
   POP_LANE,
   RECORD_BAR_GAP,
   RECORD_BUTTON_SIZE,
@@ -64,6 +78,16 @@ const THUMB_TEXT_SCALE = 1;
 
 type TrashRect = { x: number; y: number; w: number; h: number };
 
+// Room kept either side of new clips when the strip scrolls them into view.
+const REVEAL_MARGIN = Spacing.three;
+// The chip over the strip: its height, and how far it overlaps the bar's top edge (it sits in the
+// gap between the record button and the bar, clear of the clip labels).
+const CHIP_HEIGHT = 20;
+const CHIP_OVERLAP = 6;
+// The chip's text grows a little with the text size, no more: there is no more room (VoiceOver
+// reads the same, and the time, from the cursor).
+const CHIP_TEXT_SCALE = 1.2;
+
 type Props = {
   segments: Segment[];
   onReorder: (ids: string[]) => void;
@@ -74,6 +98,12 @@ type Props = {
   onDragActiveChange?: (active: boolean) => void;
   /** Laid over the first clip (it scrolls with it), taking no touches: the clips tip's anchor. */
   firstClipOverlay?: ReactNode;
+  /** The insert cursor (#308): where new clips go. Moved here by a tap off the clips, a drag of its
+   *  handle, or VoiceOver's adjust; each move is `onInsertAnchorChange`. */
+  insertAnchor: ClipAnchor;
+  onInsertAnchorChange: (anchor: ClipAnchor) => void;
+  /** False while a take records: the cursor stays where the take will go. */
+  cursorEnabled: boolean;
 };
 
 export function SegmentBar(props: Props) {
@@ -90,26 +120,80 @@ function Bar({
   onSelect,
   onDragActiveChange,
   firstClipOverlay,
+  insertAnchor,
+  onInsertAnchorChange,
+  cursorEnabled,
 }: Props) {
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollOffset = useScrollOffset(scrollRef);
   // The viewport's width, for clamping the scroll restored after a delete.
   const viewportW = useSharedValue(0);
+  // The content's width, for the cursor's edge scrolling.
+  const contentW = useSharedValue(0);
+  const ids = useMemo(() => segments.map((s) => s.id), [segments]);
 
   // Length-change reactions, mutually exclusive by direction (reorder never changes length):
   // — DECREASE (delete): preserve the user's place. Capture the current offset (the effect
   //   runs before the shrunken content re-lays out and snaps the scroll) and restore it in
   //   onContentSizeChange, clamped to the new content width.
-  // — INCREASE (new recording or library import): scroll the new clip into view (#167).
-  //   Deferred to onContentSizeChange so the added thumb has laid out before the scrollToEnd.
-  const prevCount = useRef(segments.length);
+  // — INCREASE (new recording or library import): scroll the new clips into view (#167), wherever
+  //   the cursor put them, with the cursor after them. Deferred to onContentSizeChange so the
+  //   added thumbs have laid out first.
+  const prevIds = useRef(ids);
   const restoreOffset = useRef<number | null>(null);
-  const stickToEnd = useRef(false);
+  const reveal = useRef<string[] | null>(null);
+  // Opened with the cursor inside the draft (from the editor's "Record a clip here"): it's shown
+  // once the thumbs have laid out, however far along it is.
+  const revealCursor = useRef(boundaryOf(insertAnchor, ids) < ids.length);
+  // Whichever of the viewport's layout and the content's size comes second does it: with either
+  // width unknown (0) the scroll can't be worked out.
+  const showCursorOnce = (content: number) => {
+    const viewport = viewportW.get();
+    if (!revealCursor.current || viewport <= 0 || content <= 0) return;
+    revealCursor.current = false;
+    const x = boundaryX(
+      cursorPosition(
+        insertAnchor,
+        ids,
+        segments.map((s) => ({ label: s.label, durationMs: effMs(s) })),
+      ),
+      STRIP,
+    );
+    const target = scrollToShow(
+      scrollOffset.get(),
+      viewport,
+      content,
+      x - REVEAL_MARGIN,
+      x + REVEAL_MARGIN,
+    );
+    if (target != null) scrollRef.current?.scrollTo({ x: target, animated: false });
+  };
   useEffect(() => {
-    if (segments.length < prevCount.current) restoreOffset.current = scrollOffset.get();
-    else if (segments.length > prevCount.current) stickToEnd.current = true;
-    prevCount.current = segments.length;
-  }, [segments.length, scrollOffset]);
+    if (ids.length < prevIds.current.length) restoreOffset.current = scrollOffset.get();
+    else if (ids.length > prevIds.current.length) {
+      const old = new Set(prevIds.current);
+      reveal.current = ids.filter((id) => !old.has(id));
+    }
+    prevIds.current = ids;
+  }, [ids, scrollOffset]);
+
+  // The insert cursor (insert-cursor.tsx): dragged by its own pan, moved by a tap off the clips
+  // (CursorTapArea) or VoiceOver's adjust. Moving it plays nothing. It goes by the order on screen:
+  // after a drop, the grid shows the new order a beat before the draft's clips catch up.
+  const [dropped, setDropped] = useState<{ base: Segment[]; ids: string[] } | null>(null);
+  const shownIds = orderShown(segments, ids, dropped);
+  const byId = new Map(segments.map((s) => [s.id, s]));
+  const clipInfo = shownIds.flatMap((id) => {
+    const s = byId.get(id);
+    return s ? [{ label: s.label, durationMs: effMs(s) }] : [];
+  });
+  const cursorAt = cursorPosition(insertAnchor, shownIds, clipInfo);
+  const chip = insertChipForAnchor(insertAnchor, shownIds, clipInfo);
+  // A reorder hides the cursor and the chip (the clips move under them); a cursor drag holds the
+  // strip's own scrolling still (the cursor scrolls it at the edges).
+  const [reordering, setReordering] = useState(false);
+  const [cursorDragging, setCursorDragging] = useState(false);
+  const cursorLive = cursorEnabled && !reordering;
 
   // Drag-to-trash. The trash floats above the bar, shown only while dragging; dropping a clip
   // on it deletes that clip — otherwise the drag just reorders. Hit-testing runs on the UI
@@ -145,14 +229,42 @@ function Bar({
 
   // The drag callbacks are stable, so the grid doesn't re-wrap them on every render; the
   // parent's callbacks are read through this ref, kept current after each render.
-  const latest = useRef({ onDelete, onReorder, onDragActiveChange });
-  useEffect(() => {
-    latest.current = { onDelete, onReorder, onDragActiveChange };
+  const latest = useRef({
+    onDelete,
+    onReorder,
+    onDragActiveChange,
+    onInsertAnchorChange,
+    insertAnchor,
+    segments,
+    shownIds,
+    cursorLive,
   });
+  useEffect(() => {
+    latest.current = {
+      onDelete,
+      onReorder,
+      onDragActiveChange,
+      onInsertAnchorChange,
+      insertAnchor,
+      segments,
+      shownIds,
+      cursorLive,
+    };
+  });
+
+  // From the cursor's drag and a tap off the clips (a tick each), and VoiceOver's adjust. Never
+  // while the cursor is held (a take recording: it's where the take goes), even for a move a drag
+  // begun before the take had already sent.
+  const moveCursor = useCallback((k: number, tick: boolean) => {
+    if (!latest.current.cursorLive) return;
+    if (tick) haptics.tap();
+    latest.current.onInsertAnchorChange(anchorAtBoundary(k, latest.current.shownIds));
+  }, []);
 
   const onDragStart = useCallback(
     ({ key }: DragStartParams) => {
       haptics.pickUp();
+      setReordering(true);
       draggedKey.current = key;
       overTrash.set(false);
       over.set(0);
@@ -201,6 +313,7 @@ function Bar({
         latest.current.onDragActiveChange?.(false);
         return;
       }
+      setReordering(false);
       vis.set(withTiming(0, TRASH_FADE));
       // Dropped on the trash → delete that clip; otherwise persist the new order.
       const key = draggedKey.current;
@@ -208,11 +321,17 @@ function Bar({
       // A delete leaves the trash red as it fades: easing it back to grey at the moment the
       // delete lands read as "cancelled". (The next drag starts it grey again.)
       if (!deleting) over.set(withTiming(0, TRASH_HOVER));
+      const { segments: base, shownIds: before, insertAnchor: cursor } = latest.current;
       if (deleting && key) {
         haptics.drop();
+        setDropped({ base, ids: before.filter((id) => id !== key) });
         latest.current.onDelete(key);
       } else {
-        latest.current.onReorder(data.map((s) => s.id));
+        const order = data.map((s) => s.id);
+        setDropped({ base, ids: order });
+        // The cursor keeps its place on the strip while the clips move round it.
+        latest.current.onInsertAnchorChange(cursorAfterReorder(cursor, before, order));
+        latest.current.onReorder(order);
       }
       overTrash.set(false);
       draggedKey.current = null;
@@ -249,54 +368,110 @@ function Bar({
           </View>
         </View>
 
+        {/* Where new clips go, over the strip; none at the end (adding appends). Read by VoiceOver
+            from the cursor instead. */}
+        {chip && !reordering && (
+          <View
+            style={styles.chipWrap}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants">
+            <View style={styles.chip} testID="recorder.insertChip">
+              <Text
+                style={styles.chipText}
+                numberOfLines={1}
+                maxFontSizeMultiplier={CHIP_TEXT_SCALE}>
+                {chip}
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Also bounds the clips tip: its callout shows only while the first clip is in here. */}
-        <TipClip
-          style={styles.viewport}
-          onLayout={(e) => {
-            viewportW.set(e.nativeEvent.layout.width);
-          }}>
-          <Animated.ScrollView
-            ref={scrollRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.content}
-            onContentSizeChange={(w) => {
-              // Restore the pre-delete offset now the remaining thumbs have laid out.
-              if (restoreOffset.current != null) {
-                const target = Math.min(restoreOffset.current, Math.max(0, w - viewportW.get()));
-                restoreOffset.current = null;
-                scrollRef.current?.scrollTo({ x: target, animated: false });
-              }
-              // Honor a pending scroll-to-newest now that the added thumb has been measured.
-              if (stickToEnd.current) {
-                stickToEnd.current = false;
-                scrollRef.current?.scrollToEnd({ animated: true });
-              }
+        <CursorTapArea
+          at={cursorAt}
+          count={shownIds.length}
+          enabled={cursorLive && !cursorDragging}
+          onMove={moveCursor}
+          scrollOffset={scrollOffset}>
+          <TipClip
+            style={styles.viewport}
+            onLayout={(e) => {
+              viewportW.set(e.nativeEvent.layout.width);
+              showCursorOnce(contentW.get());
             }}>
-            <Sortable.Grid
-              rows={1}
-              rowHeight={THUMB_HEIGHT}
-              columnGap={TRACK_GAP}
-              data={segments}
-              keyExtractor={(s) => s.id}
-              scrollableRef={scrollRef}
-              autoScrollDirection="horizontal"
-              // Insert, as the editor's Clips view: the dragged clip slides into the gap and the
-              // clips it passes shift over by one (dropping 1 on 5 gives 2 3 4 5 1).
-              strategy="insert"
-              onDragStart={onDragStart}
-              onDragMove={onDragMove}
-              onDragEnd={onDragEnd}
-              renderItem={({ item }) => (
-                <SegmentThumb
-                  segment={item}
-                  onSelect={() => onSelect(item.id)}
-                  overlay={item.id === segments[0]?.id ? firstClipOverlay : undefined}
-                />
-              )}
-            />
-          </Animated.ScrollView>
-        </TipClip>
+            <Animated.ScrollView
+              ref={scrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              scrollEnabled={!cursorDragging}
+              contentContainerStyle={styles.content}
+              onContentSizeChange={(w) => {
+                contentW.set(w);
+                // Restore the pre-delete offset now the remaining thumbs have laid out.
+                if (restoreOffset.current != null) {
+                  const target = Math.min(restoreOffset.current, Math.max(0, w - viewportW.get()));
+                  restoreOffset.current = null;
+                  scrollRef.current?.scrollTo({ x: target, animated: false });
+                }
+                showCursorOnce(w);
+                // Bring new clips into view, with the cursor after them, now they've laid out.
+                const added = reveal.current;
+                if (added) {
+                  reveal.current = null;
+                  const at = added.map((id) => ids.indexOf(id)).filter((i) => i >= 0);
+                  if (at.length > 0) {
+                    const target = scrollToShow(
+                      scrollOffset.get(),
+                      viewportW.get(),
+                      w,
+                      boundaryX(Math.min(...at), STRIP) - REVEAL_MARGIN,
+                      boundaryX(Math.max(...at) + 1, STRIP) + REVEAL_MARGIN,
+                    );
+                    if (target != null) scrollRef.current?.scrollTo({ x: target, animated: true });
+                  }
+                }
+              }}>
+              <Sortable.Grid
+                rows={1}
+                rowHeight={THUMB_HEIGHT}
+                columnGap={TRACK_GAP}
+                data={segments}
+                keyExtractor={(s) => s.id}
+                scrollableRef={scrollRef}
+                autoScrollDirection="horizontal"
+                // Insert, as the editor's Clips view: the dragged clip slides into the gap and the
+                // clips it passes shift over by one (dropping 1 on 5 gives 2 3 4 5 1).
+                strategy="insert"
+                onDragStart={onDragStart}
+                onDragMove={onDragMove}
+                onDragEnd={onDragEnd}
+                renderItem={({ item }) => (
+                  <SegmentThumb
+                    segment={item}
+                    onSelect={() => onSelect(item.id)}
+                    overlay={item.id === segments[0]?.id ? firstClipOverlay : undefined}
+                  />
+                )}
+              />
+            </Animated.ScrollView>
+
+            {!reordering && (
+              <InsertCursor
+                at={cursorAt}
+                count={shownIds.length}
+                enabled={cursorLive}
+                onMove={moveCursor}
+                onDraggingChange={setCursorDragging}
+                a11yValue={cursorA11yForAnchor(insertAnchor, shownIds, clipInfo)}
+                scrollRef={scrollRef}
+                scrollOffset={scrollOffset}
+                viewportW={viewportW}
+                contentW={contentW}
+              />
+            )}
+          </TipClip>
+        </CursorTapArea>
       </View>
     </Sortable.PortalProvider>
   );
@@ -425,15 +600,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Room above and below the thumbs, symmetric so they sit on the bar's centerline.
+  // Room above and below the thumbs, symmetric so they sit on the bar's centerline; the insert
+  // cursor's tags ride it.
   viewport: { flex: 1, overflow: 'hidden', paddingVertical: BAR_LANE },
   content: {
     alignItems: 'center',
-    paddingHorizontal: Spacing.two,
+    // Room at each end for the insert cursor's tags (before the first clip, after the last).
+    paddingHorizontal: CURSOR_INSET,
     // Symmetric top/bottom room inside the scroll frame so the badge pill's protruding half
     // isn't clipped by the ScrollView. Symmetric → thumbs stay vertically centered, keeping
     // the export-button alignment.
     paddingVertical: POP_LANE,
+  },
+  // Over the bar's top edge, in the gap under the record button and clear of the clip labels.
+  chipWrap: {
+    position: 'absolute',
+    top: -(CHIP_HEIGHT - CHIP_OVERLAP),
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  // The clip labels' look (badge below), as a wider pill.
+  chip: {
+    minHeight: CHIP_HEIGHT,
+    maxWidth: '100%',
+    paddingHorizontal: Spacing.two,
+    borderRadius: CHIP_HEIGHT / 2,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+    justifyContent: 'center',
+  },
+  chipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
   },
   thumb: {
     width: THUMB_WIDTH,

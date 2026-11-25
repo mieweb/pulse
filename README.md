@@ -79,7 +79,13 @@ flowchart TB
 
 ### Editing & export
 
-- Per-clip trim and transform via FFmpeg — destructive but safe: re-editing always reopens the untouched original
+- Per-clip trim and transforms are saved as settings over the untouched source and rendered at export
+- The editor has **one sticky + at the right edge of the clip row**, visible in both views and while editing a clip. **Clips (beat list)** inserts at the nearest clip boundary without splitting: before the clip in its first half, after it in its second half, and after it at the midpoint. **Timeline** inserts at the exact playhead. At the end, either view appends a new clip/beat to the existing Pulse.
+- In Timeline, adding X inside A produces **A-left → X → A-right**, with both halves sharing the source video. One Undo restores A and removes X; Redo restores the insertion. Canceling or failing before the first new clip commits leaves A unsplit.
+- Each split half keeps its own source bounds: trim handles and Reset cannot reveal the sibling's footage. Reset clears that half's transforms and speed without rejoining the clip.
+- An image batch registers one history step when its first clip commits and extends it as later images arrive. Edits remain available; Undo/Redo waits until the batch finishes or is canceled. A canceled partial batch keeps its committed clips in that step.
+- Undoing an addition can remove the last remaining clips. The editor stays open for Redo, which restores those clips with their edits; export stays disabled while the draft is empty.
+- Undo/Redo history lasts for the editor session. Current edits travel in `.pulse` files; persisting the history is tracked separately in [#325](https://github.com/mieweb/pulse/issues/325). See [persistence](docs/persistence.md#editor-operations-and-session-history).
 - Smart merge on export: clips with matching formats are concatenated losslessly (passthrough); mixed resolution/fps/codec/orientation drafts conform only the outlier clips, with a full re-encode fallback
 - Save to Photos or Files, share anywhere, or upload — with a live progress ring
 

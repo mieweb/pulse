@@ -3,9 +3,8 @@ import {
   launchImageLibraryAsync,
   UIImagePickerPreferredAssetRepresentationMode,
 } from 'expo-image-picker';
-import { usePermissions } from 'expo-media-library';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Linking, Platform } from 'react-native';
+import { Alert, AppState, Platform } from 'react-native';
 import { probe } from '@mieweb/pulse-editor';
 import {
   type CameraRef,
@@ -14,6 +13,7 @@ import {
   useVideoOutput,
 } from 'react-native-vision-camera';
 
+import { type ClipAnchor, END, sameAnchor } from '@/core/clip-anchor';
 import type { CameraFacing, StabilizationMode } from '@/core/types/recorder-prefs';
 import {
   addSegment,
@@ -38,14 +38,18 @@ import { describeError, formatBytes, formatSeconds } from '@/features/upload/cor
 import { absolutize, deleteQuietly, persistRecording } from '@/utils/file-store';
 import { importFailureCopy, isOutOfSpace } from '@/utils/import-copy';
 import { userMessage } from '@/utils/user-message';
-import { getDurationMs } from '@/utils/video';
+import { coverFailed, getDurationMs } from '@/utils/video';
 
 import CallDetector from '../../../modules/expo-call-detector/src/CallDetectorModule';
 import { addExternalClip } from './add-external-clip';
 import type { RecorderNewDraft, ScreenCapturePort } from './contract';
+import { draftOnDemand } from './draft-on-demand';
 import { importLog } from './import-log';
+import { cursorAfterRemoval, cursorBeforeDelete } from './insert-point';
+import { usePhotosAccess } from './photos-access';
 import { learnRecorderFormat } from './recorder-format';
 import { useScreenTake } from './screen-take';
+import { useImportImages } from './use-import-images';
 import { useCallState } from './use-call-state';
 
 // 'cinematic' is an iOS-only AVCaptureVideoStabilizationMode — CameraX has no equivalent, so
@@ -64,12 +68,14 @@ const MIN_RECORD_MS = 350;
  * `newDraft`: what a draft this recorder creates starts with — a link's `name` as its name (if
  * it has one) and the link's place as its context; embedded, the host place and `createdVia`.
  * Read once, like `initialDraftId`. `screenCapture`: the Pulse app's screen recording, if any (a
- * take owns the mic; its draft isn't dropped as empty).
+ * take owns the mic; its draft isn't dropped as empty). `insertAnchor`: where the recorder's
+ * clips go in the draft at first (default the end; see `insertAnchor` below).
  */
 export function useRecorder(
   initialDraftId?: string,
   newDraft?: RecorderNewDraft,
   screenCapture?: ScreenCapturePort,
+  { insertAnchor: initialAnchor = END }: { insertAnchor?: ClipAnchor } = {},
 ) {
   const cameraRef = useRef<CameraRef>(null);
   const [draftId, setDraftId] = useState<string | null>(initialDraftId ?? null);
@@ -208,16 +214,8 @@ export function useRecorder(
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId ?? ''), [draftId]);
   const { showToast } = useToast();
 
-  // Library access for the + import — granular (photo+video) like the camera/mic gate,
-  // but requested just-in-time on tap (§2.3). Granting up front also lets the picker's
-  // passthrough fast path stream originals instead of prompting mid-import. iOS only: Android
-  // imports through the system photo picker, which needs no permission, and Play's photo/video
-  // policy rejects READ_MEDIA_* for that. With those out of the manifest, even checking the
-  // photo/video permission throws on Android 13+, so the hook doesn't check there.
-  const [libraryPermission, requestLibraryPermission] = usePermissions({
-    granularPermissions: ['photo', 'video'],
-    get: Platform.OS === 'ios',
-  });
+  // Photos access for the + import, asked for on the tap.
+  const ensurePhotosAccess = usePhotosAccess();
 
   // Start/stop decisions run from memoized gesture callbacks where `isRecording` state can
   // lag a render behind — they go through refs that flip synchronously instead.
@@ -246,6 +244,10 @@ export function useRecorder(
   // unmount cleanup), and whether we've left (that cancel is silent: no alert on a closed screen).
   const importAbortRef = useRef<AbortController | null>(null);
   const unmountedRef = useRef(false);
+  // Images from the + (one clip each, at the cursor). The hook stops its batch when the recorder
+  // closes; while one runs, the empty-draft cleanup is left to it, as for a video import.
+  const images = useImportImages();
+  const imagesRunningRef = useRef(false);
 
   // Drop an empty draft on leave so it doesn't litter Home: either one we created this
   // session and never kept a clip in, or a resumed draft whose every clip was deleted.
@@ -286,7 +288,7 @@ export function useRecorder(
       // An import still running is cancelled: the clip would otherwise land in a draft the user
       // has left. It may be mid-save (creating the draft, copying the file), so it drops an empty
       // draft itself once it has stopped; deleting it here could race that save.
-      const importing = importAbortRef.current != null;
+      const importing = importAbortRef.current != null || imagesRunningRef.current;
       importAbortRef.current?.abort();
       // Backstop for a recording still live at unmount — the gesture's onFinalize is the
       // primary stop path. Stopping the recorder finalizes the file (the clip is then dropped
@@ -296,6 +298,26 @@ export function useRecorder(
       if (!importing) dropEmptyDraft();
     };
   }, []);
+
+  // The insert cursor (#308): where takes, imports and screen recordings go in the draft. Read
+  // through the ref as late as possible (`insertSegments` calls the getter just before it writes);
+  // the state is for rendering. A `ClipAnchor` stays put as clips land at it, so a run of takes
+  // stays in order, and survives a retake (the take before it deleted). When its own clip goes
+  // (deleted here or in the editor), it stays in the same place, before the next clip.
+  const [insertAnchor, setAnchorState] = useState<ClipAnchor>(initialAnchor);
+  const anchorRef = useRef(insertAnchor);
+  const setInsertAnchor = (next: ClipAnchor) => {
+    if (sameAnchor(next, anchorRef.current)) return;
+    anchorRef.current = next;
+    setAnchorState(next);
+  };
+  // The clips as last seen, to tell which went.
+  const shownIds = useRef<string[]>([]);
+  useEffect(() => {
+    const ids = segments.map((s) => s.id);
+    setInsertAnchor(cursorAfterRemoval(anchorRef.current, shownIds.current, ids));
+    shownIds.current = ids;
+  }, [segments]);
 
   // Hydrate persisted camera prefs once on mount, then mark ready so the camera can render.
   useEffect(() => {
@@ -360,14 +382,22 @@ export function useRecorder(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reuses the current draft, or lazily creates one on the first clip/import of the session.
-  async function ensureDraft(): Promise<string> {
-    if (draftId) return draftId;
-    const id = await createDraft(newDraft);
-    sessionDraftId.current = id;
-    setDraftId(id);
-    return id;
-  }
+  // Reuses the current draft, or lazily creates one on the first clip/import of the session. Read
+  // from refs, not the `draftId` state: an import or a batch of images holds the function from the
+  // render it started in, and a take (or another import) may make the draft meanwhile; a call while
+  // one is creating it waits for that one. Either way the session gets one draft.
+  const [ensureDraft] = useState(() =>
+    draftOnDemand(
+      () => draftIdRef.current,
+      async () => {
+        const id = await createDraft(newDraft);
+        sessionDraftId.current = id;
+        draftIdRef.current = id;
+        setDraftId(id);
+        return id;
+      },
+    ),
+  );
 
   // A clip an import just wrote, reflected synchronously in the unmount-cleanup refs (see the
   // effect above) so a racing close/unmount can't see an "empty" draft and delete it.
@@ -389,6 +419,9 @@ export function useRecorder(
     setRecordStartedAt(Date.now());
     setRecordStoppedAt(null);
     setIsRecording(true);
+    // Only the new file successfully moved out of the camera cache belongs to this save.
+    // Once its row commits, the draft owns it and this cleanup must leave it alone.
+    let uncommittedFile: string | null = null;
     try {
       // Codec: VisionCamera defaults to the most efficient codec available (HEVC/h265 on modern
       // iPhones), which is what keeps every clip format-uniform for the merge engine's fast
@@ -439,21 +472,35 @@ export function useRecorder(
       const id = await ensureDraft();
       const segmentId = `${id}-${Date.now()}`;
       const originalFilename = await persistRecording(uri, id, segmentId);
+      uncommittedFile = originalFilename;
       const durationMs = await getDurationMs(absolutize(originalFilename));
       // The row first, the cover after: the clip shows as soon as it's saved. On Android the
       // cover is the longest step after a stop (150–400 ms: Media3 prepares a player for each new
       // file). Imports stay cover-first (addExternalClip): they can be cancelled while it renders.
       expectSegmentCover(originalFilename);
-      await addSegment(id, { id: segmentId, originalFilename, durationMs, thumbnail: null });
+      await addSegment(
+        id,
+        { id: segmentId, originalFilename, durationMs, thumbnail: null },
+        () => anchorRef.current,
+      );
+      uncommittedFile = null;
       everHadSegments.current = true;
       segmentCount.current = Math.max(segmentCount.current, 1);
       void addSegmentCover(id, segmentId, originalFilename);
       // Imports are conformed to exactly what the recorder writes on this device (so mixed
       // drafts merge without re-encoding) — keep that signature current.
       void learnRecorderFormat(absolutize(originalFilename));
-    } catch {
-      // Recording died with no salvageable file (see the error probe above), or the persist
-      // itself failed — nothing to keep.
+    } catch (e) {
+      if (uncommittedFile) {
+        const uri = absolutize(uncommittedFile);
+        coverFailed(uri);
+        deleteQuietly(uri);
+      }
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t save the recording',
+        message: userMessage(e, 'Try recording again.', 'save recording'),
+      });
     } finally {
       recorderRef.current = null;
       stopRequestedRef.current = false;
@@ -487,22 +534,8 @@ export function useRecorder(
   // Pick an existing device video (system picker — no permission prompt) and add it as a
   // segment: conformed to the recorder's own format unless it's already in it (addExternalClip).
   async function importClip() {
-    if (isRecordingRef.current || isImporting) return;
-    if (Platform.OS === 'ios' && !libraryPermission?.granted) {
-      if (libraryPermission && !libraryPermission.canAskAgain) {
-        Alert.alert(
-          'Photos access needed',
-          'Allow Pulse to access your photo library in Settings to import videos.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => void Linking.openSettings() },
-          ],
-        );
-        return;
-      }
-      const next = await requestLibraryPermission();
-      if (!next.granted) return;
-    }
+    if (isRecordingRef.current || isImporting || imagesRunningRef.current) return;
+    if (!(await ensurePhotosAccess('videos'))) return;
     let pickedUri: string | null = null;
     let appStateSub: ReturnType<typeof AppState.addEventListener> | null = null;
     try {
@@ -560,6 +593,7 @@ export function useRecorder(
         signal: abort.signal,
         onProgress: setImportProgress,
         onAdded: noteSegmentAdded,
+        anchor: () => anchorRef.current,
       });
       if (outcome.status === 'cancelled') {
         cancelled();
@@ -590,6 +624,21 @@ export function useRecorder(
       if (pickedUri) deleteQuietly(pickedUri);
       setImportProgress(null);
       setIsImporting(false);
+    }
+  }
+
+  // Pick images (several at once) and add them at the cursor, one clip each, in the order picked.
+  async function importImages() {
+    if (isRecordingRef.current || isImporting || imagesRunningRef.current) return;
+    imagesRunningRef.current = true;
+    try {
+      await images.importImages(ensureDraft, () => anchorRef.current, {
+        onAdded: noteSegmentAdded,
+      });
+    } finally {
+      imagesRunningRef.current = false;
+      // The recorder closed while this ran: the empty-draft cleanup it left to the batch.
+      if (unmountedRef.current) dropEmptyDraft();
     }
   }
 
@@ -690,6 +739,8 @@ export function useRecorder(
   // No confirm: the clip goes at once (drag-to-trash in the clip bar).
   async function removeSegment(id: string) {
     try {
+      // The cursor leaves a clip that's going now, before a take can be written at it.
+      setInsertAnchor(cursorBeforeDelete(anchorRef.current, shownIds.current, id));
       dropClipJobs({ segmentIds: [id] });
       await deleteSegment(id);
     } catch (e) {
@@ -719,8 +770,11 @@ export function useRecorder(
     startQueued,
     recordingShownNow,
     cameraReady,
-    isImporting,
-    importProgress,
+    // A video import or a batch of images: the + is busy with either.
+    isImporting: isImporting || images.importing,
+    importProgress: isImporting ? importProgress : images.progress,
+    importProgressText: isImporting ? undefined : images.stepText,
+    importProgressCount: isImporting ? undefined : images.stepCount,
     prefsReady,
     facing,
     torch,
@@ -741,7 +795,11 @@ export function useRecorder(
     toggleRecording,
     finalizeRecording,
     ensureDraft,
+    insertAnchor,
+    setInsertAnchor,
+    getInsertAnchor: () => anchorRef.current,
     importClip: () => void importClip(),
+    importImages: () => void importImages(),
     startHoldRecording,
     endHoldRecording,
     flipCamera,

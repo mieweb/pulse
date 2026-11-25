@@ -14,6 +14,7 @@ import {
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { ThemedView } from '@/components/themed-view';
+import { END } from '@/core/clip-anchor';
 import { useScreenFocusEffect } from '@/core/navigation/focus';
 import { useStatusBarStyle } from '@/core/status-bar/status-bar';
 import { captionsOffQuery } from '@/db/captions';
@@ -26,6 +27,7 @@ import { CameraControls } from '@/features/recorder/camera-controls';
 import { holdsCamera, releaseCamera, takeCamera } from '@/features/recorder/camera-holder';
 import { ExportButton } from '@/components/export-button';
 import { AddMenu } from '@/features/recorder/add-menu';
+import { useFromAnotherPulse } from '@/features/recorder/from-another-pulse';
 import { CloseAction, CloseButton } from '@/features/recorder/close-button';
 import { ContextBanner, RecorderNotice } from '@/features/recorder/context-banner';
 import { EditButton } from '@/features/recorder/edit-button';
@@ -140,6 +142,8 @@ export function RecorderScreen({
   onExport,
   onClose,
   screenCapture,
+  insertAnchor: initialInsertAnchor,
+  placeLabels,
 }: RecorderScreenProps) {
   const insets = useSafeAreaInsets();
   // Re-measures the timer text when the system text size changes (see `useTextSizeKey`).
@@ -178,9 +182,15 @@ export function RecorderScreen({
     toggleRecording,
     finalizeRecording,
     ensureDraft,
+    insertAnchor,
+    setInsertAnchor,
+    getInsertAnchor,
     importClip,
+    importImages,
     isImporting,
     importProgress,
+    importProgressText,
+    importProgressCount,
     startHoldRecording,
     endHoldRecording,
     flipCamera,
@@ -189,7 +199,16 @@ export function RecorderScreen({
     cycleStabilization,
     deleteSegment,
     reorderSegments,
-  } = useRecorder(initialDraftId, newDraft, screenCapture);
+  } = useRecorder(initialDraftId, newDraft, screenCapture, {
+    insertAnchor: initialInsertAnchor,
+  });
+  // Clips copied from another draft go in at the insert cursor, into this draft (made if needed).
+  const anotherPulse = useFromAnotherPulse({
+    draftId,
+    target: ensureDraft,
+    anchor: getInsertAnchor,
+    placeLabels,
+  });
 
   // A refused microphone (embedded, PLAN-final §5.3): the recorder records without sound instead
   // of blocking. Denied asks first ("Record without sound?", or Settings); restricted can't be
@@ -270,7 +289,7 @@ export function RecorderScreen({
   const ScreenStopPill = screenCapture?.StopPill;
   const recordScreen = () => {
     if (isRecording || isImporting || screenLive || screen.importing) return;
-    void screenCapture?.start(ensureDraft, !muted);
+    void screenCapture?.start(ensureDraft, !muted, getInsertAnchor());
   };
 
   // While the editor or Export is presented over this one, the recorder is unfocused — drop the
@@ -309,6 +328,7 @@ export function RecorderScreen({
       place: () => newDraft.context,
       draftId: () => draftId,
       ensureDraft,
+      insertAnchor: getInsertAnchor,
       focused: () => focused,
     };
   });
@@ -319,6 +339,7 @@ export function RecorderScreen({
         place: () => mounted.current?.place() ?? null,
         draftId: () => mounted.current?.draftId() ?? null,
         ensureDraft: () => mounted.current?.ensureDraft() ?? Promise.reject(new Error('unmounted')),
+        insertAnchor: () => mounted.current?.insertAnchor() ?? END,
         focused: () => mounted.current?.focused() ?? false,
       }),
     [],
@@ -727,8 +748,10 @@ export function RecorderScreen({
   // call detection re-poll first. `|| isRecording` keeps the session up while a clip finalizes in
   // background, so the segment saves before we tear it down. `!recovering` drops it for one bounce
   // after a mic-priority error so it rebuilds cleanly, and `!audioHandoff` holds the restart after
-  // the editor closes until the recording session config is back (see the handoff above).
-  const cameraActive = !audioHandoff && focused && (appActive || isRecording) && !recovering;
+  // the editor closes until the recording session config is back (see the handoff above). The
+  // "From another Pulse" sheet covers it too (full screen on Android): no camera behind it.
+  const cameraActive =
+    !audioHandoff && focused && (appActive || isRecording) && !recovering && !anotherPulse.open;
 
   // Close: finalize any in-flight clip (saving it into the draft) before the shell leaves, so the
   // segment isn't lost when the camera unmounts. (Hooks above the early returns register the same
@@ -946,15 +969,16 @@ export function RecorderScreen({
                 <TipAnchor id="record" shown={recordTip.shown} onDismiss={recordTip.dismiss} />
               </View>
             )}
-            {/* The draft in the editor, from its start; there once there's a clip. Faded out with the
-                record button during a drag, like the "+". */}
+            {/* The draft in the editor, at the insert cursor; there once there's a clip. Faded out
+                with the record button during a drag, like the "+". */}
             {draftId && segments.length > 0 && (
               <View style={styles.editSlot} pointerEvents="box-none">
                 <Animated.View style={[CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
                   <EditButton
                     onPress={() => {
                       editTip.retire();
-                      open(() => onEdit(draftId));
+                      // The cursor as it is once pending writes are stored (a take landing at it).
+                      open(() => onEdit(draftId, { anchor: getInsertAnchor() }));
                     }}
                     disabled={isRecording || dragging}
                     testID="recorder.edit"
@@ -972,13 +996,17 @@ export function RecorderScreen({
               style={[styles.importWrap, CONTROLS_FADE, { opacity: dragging ? 0 : 1 }]}>
               <AddMenu
                 onImport={importClip}
+                onImportImages={importImages}
                 onRecordScreen={recordScreen}
+                onFromAnotherPulse={anotherPulse.action?.onPress}
                 // Importing works during a screen take; only a second screen take can't start.
                 screenAvailable={screenCapture != null && !screenLive}
                 disabled={isRecording || dragging}
                 // A screen recording converting into a draft shows here too, as a Photos import.
                 busy={isImporting || screen.importing}
                 progress={isImporting ? importProgress : screen.progress}
+                progressText={isImporting ? importProgressText : undefined}
+                progressCount={isImporting ? importProgressCount : undefined}
               />
             </Animated.View>
           </View>
@@ -991,20 +1019,26 @@ export function RecorderScreen({
                 <TipAnchor id="clips" shown={clipsTip.shown} onDismiss={clipsTip.dismiss} />
               )
             }
+            // The bar keeps the insert cursor in its place across a reorder itself.
             onReorder={reorderSegments}
+            insertAnchor={insertAnchor}
+            onInsertAnchorChange={setInsertAnchor}
+            // Held still while a take records: it's where the take goes.
+            cursorEnabled={!isRecording}
             // Drag-to-trash deletes at once.
             onDelete={deleteSegment}
             onDragActiveChange={setDragging}
             // A tapped clip opens the editor on it (in the view last used there).
             onSelect={(id) => {
               if (!isRecording && draftId) {
-                open(() => onEdit(draftId, id));
+                open(() => onEdit(draftId, { clipId: id }));
               }
             }}
           />
         </View>
       </View>
 
+      {anotherPulse.sheet}
       {/* Over everything: the recorder's tips are callouts, which leave the shutter tappable. */}
       <TipLayer />
     </View>

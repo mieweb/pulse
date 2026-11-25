@@ -144,12 +144,38 @@ describe('navigation', () => {
     expect(flowReducer(onEditor, { type: 'edit' })).toBe(onEditor);
   });
 
-  it('addClips round trip from a record flow returns to the same recorder and editor', () => {
-    let s = run(recorded(), { type: 'edit' }, { type: 'addClips' });
-    expect(s.stack).toEqual(['recorder']);
+  it('addClips from a record flow opens a recorder over the editor, and Edit returns to it', () => {
+    let s = run(recorded(), { type: 'edit' }, { type: 'addClips', anchor: { before: 'c1' } });
+    expect(s.stack).toEqual(['recorder', 'editor', 'recorder']);
     s = run(s, { type: 'record' }, { type: 'stop', draftId: 'd1', clipCount: 2 }, { type: 'edit' });
     expect(s.stack).toEqual(['recorder', 'editor']);
-    expect(s.clipCount).toBe(2);
+    expect(s).toMatchObject({ clipCount: 2, changed: true, end: null });
+    // X on the added recorder (back) also returns to the editor, and the flow stays open.
+    s = run(s, { type: 'addClips' }, { type: 'back' });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    expect(s.end).toBeNull();
+  });
+
+  it('Export from the added recorder goes over the editor, and Trim comes back to it', () => {
+    let s = run(recorded(), { type: 'edit' }, { type: 'addClips', anchor: { before: 'c1' } });
+    s = run(s, { type: 'record' }, { type: 'stop', draftId: 'd1', clipCount: 2 });
+    // The recorder's Export, as the shell sends it: edit, then export.
+    s = run(s, { type: 'edit' }, { type: 'export' });
+    expect(s.stack).toEqual(['recorder', 'editor', 'export']);
+    // Trim (the shell's back from Export, offered with the editor under it).
+    s = run(s, { type: 'back' });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    expect(s.end).toBeNull();
+  });
+
+  it('the round trip sends no result, whichever way the recorder is left', () => {
+    let s = run(recorded(), { type: 'edit' });
+    for (const leave of [{ type: 'edit' }, { type: 'back' }] as const) {
+      s = run(s, { type: 'addClips', anchor: { before: 'c2' } });
+      s = run(s, { type: 'record' }, { type: 'stop', draftId: 'd1' }, leave);
+      expect(topScreen(s)).toBe('editor');
+      expect(s.end).toBeNull();
+    }
   });
 
   it('addClips round trip from an edit flow pushes the recorder and pops back', () => {
@@ -159,6 +185,21 @@ describe('navigation', () => {
     s = run(s, { type: 'record' }, { type: 'stop', draftId: 'd1', clipCount: 2 }, { type: 'edit' });
     expect(s.stack).toEqual(['editor']);
     expect(s).toMatchObject({ clipCount: 2, changed: true, end: null });
+  });
+
+  it('Edit carries where the recorder was without changing where it goes', () => {
+    // The place rides along for the store (a new editor opens there, one gone back to is told).
+    const at = { anchor: { before: 'c1', next: 'c2' } };
+    let s = run(recorded(), { type: 'edit', at });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    s = run(s, { type: 'addClips', anchor: { before: 'c1' } });
+    s = run(s, { type: 'edit', at: { clipId: 'c2' } });
+    expect(s.stack).toEqual(['recorder', 'editor']);
+    expect(s.end).toBeNull();
+    // Still needs a clip, and still only from a recorder.
+    const fresh = run(initFlow('r1', recordNew), { type: 'mounted' });
+    expect(flowReducer(fresh, { type: 'edit', at })).toBe(fresh);
+    expect(flowReducer(s, { type: 'edit', at })).toBe(s);
   });
 
   it('back from an added recorder returns to the editor without ending', () => {

@@ -22,10 +22,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ExportButton } from '@/components/export-button';
 import { Icon } from '@/components/icon';
+import { END, timeAtAnchor } from '@/core/clip-anchor';
 import { useScreenFocused, useScreenFocusEffect } from '@/core/navigation/focus';
 import Sortable from 'react-native-sortables';
 
 import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
+import { ADD_SIZE, EditorAddMenu } from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
 import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
 import { useFrameRates } from '@/features/editor/use-frame-rates';
@@ -41,6 +43,7 @@ import { CropEditor } from '@/features/editor/crop-editor';
 import { SkiaCaption } from '@/features/transcription/skia-caption';
 import {
   resetTimelineZoom,
+  RULER_HEIGHT,
   STRIP_HEIGHT,
   TimelineStrip,
   type TrimInfo,
@@ -64,7 +67,9 @@ import { pruneFrameCache } from '@/features/editor/filmstrip';
 import { toMergeClip } from '@/features/export/editor-merge';
 import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
+import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
+import { keepEmptyEditorOpen } from '@/features/editor/editor-history';
 import { usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
@@ -95,6 +100,7 @@ import { useDraftCaptions } from '@/features/transcription/use-draft-captions';
 import { useTheme } from '@/hooks/use-theme';
 import { claimAudioSession } from '@/utils/audio-session';
 import { haptics } from '@/utils/haptics';
+import { TILE_HEIGHT } from '@/features/editor/clip-tile';
 import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
 
 import type { EditorScreenProps } from './contract';
@@ -155,17 +161,25 @@ function usePlaybackSessionOnReturn() {
  * merged at the playhead. Captions show over the preview (drag one to move them all) and on a
  * lane under the clips; their edits are kept per clip, so trims and reorders carry them along.
  *
- * No router: where Close, Export, Add clips and the captions model go is the caller's
+ * The sticky right-edge "+" inserts at the nearest beat boundary in Clips view (a midpoint goes
+ * after), or at the exact playhead in Timeline view, splitting metadata when inside a clip.
+ * At the end it appends. It offers recordings, imports and screen takes;
+ * the playhead then sits after the addition. One undo reverses the split and insertion together.
+ *
+ * No router: where Close, Export, Record a clip here and the captions model go is the caller's
  * (`EditorScreenProps`), and whether the screen is the one on top comes through the focus port.
  */
 export function EditorScreen({
   draftId,
   clipId,
+  anchor: openAnchor,
   view: openView,
   onClose,
   onExport,
   onAddClips,
   onOpenModelSheet,
+  screenCapture,
+  placeLabels,
 }: EditorScreenProps) {
   // Not compiled by the React Compiler (as before): its memoization here leaves the track's
   // animated opacity stale until a re-render. To be turned on as a change of its own, tested.
@@ -227,7 +241,16 @@ export function EditorScreen({
   // The preview's clips: the draft's, with the clip being trimmed played whole so the handle can
   // show frames past the current trim. Stable while those don't change (a new array rebuilds).
   const previewClips = useMemo(
-    () => clips.map((c) => (c.id === trimmingId ? { ...c.merge, startMs: 0, endMs: 0 } : c.merge)),
+    () =>
+      clips.map((c) =>
+        c.id === trimmingId
+          ? {
+              ...c.merge,
+              startMs: c.edit.baseWindow?.startMs ?? 0,
+              endMs: c.edit.baseWindow?.endMs ?? 0,
+            }
+          : c.merge,
+      ),
     [clips, trimmingId],
   );
 
@@ -289,29 +312,45 @@ export function EditorScreen({
       .catch(() => {});
   }, []);
 
-  // Leave when the draft has no clips left, once: a new `onClose` while leaving doesn't close twice
-  // (which would also close the screen underneath). Only while on top: a recorder opened over the
-  // editor (Add clips) can empty the draft, and closing then would close that recorder instead.
+  // Leave an empty draft once, except when undo retains clips for redo. Keep that session through
+  // database/live-query timing gaps until restored clips reach the screen. Only close while on
+  // top: otherwise a recorder over this editor would be closed instead.
   const focused = useScreenFocused();
   const left = useRef(false);
+  const retainedEmpty = useRef(false);
   useEffect(() => {
-    if (left.current || !focused || !draft.loaded || clips.length > 0) return;
+    retainedEmpty.current = keepEmptyEditorOpen(
+      retainedEmpty.current,
+      clips.length,
+      history.keepEmptyOpen,
+    );
+    if (left.current || !focused || !draft.loaded || clips.length > 0 || retainedEmpty.current)
+      return;
     left.current = true;
     onClose();
-  }, [focused, draft.loaded, clips.length, onClose]);
+  }, [focused, draft.loaded, clips.length, history.keepEmptyOpen, onClose]);
 
-  // Opened on a clip: the playhead starts on it. Placed once the clips are known, before the strip
-  // or row is shown (they stay hidden until then, on the UI thread, so no frame shows 0 first).
-  const placed = useSharedValue(clipId ? 0 : 1);
-  const placedOnce = useRef(!clipId);
+  // Opened on a clip or at a boundary: the playhead starts there. Placed once the clips are known,
+  // before the strip or row is shown (they stay hidden until then, on the UI thread, so no frame
+  // shows 0 first).
+  const opensPlaced = clipId != null || openAnchor != null;
+  const placed = useSharedValue(opensPlaced ? 0 : 1);
+  const placedOnce = useRef(!opensPlaced);
   useLayoutEffect(() => {
     if (placedOnce.current || clips.length === 0) return;
     placedOnce.current = true;
-    const i = clips.findIndex((c) => c.id === clipId);
-    // Opened from a clip in the recorder: paused at that clip's start.
-    ctl.place(i > 0 ? (layout.starts[i] ?? 0) : 0);
+    const ids = clips.map((c) => c.id);
+    const i = clipId ? ids.indexOf(clipId) : -1;
+    // Opened from a clip in the recorder: paused at that clip's start. From its Edit: at its
+    // insert cursor, the end on the last frame (as a seek there lands).
+    const at = clipId
+      ? i > 0
+        ? (layout.starts[i] ?? 0)
+        : 0
+      : timeAtAnchor(openAnchor ?? END, ids, layout.starts, layout.totalMs);
+    ctl.place(Math.min(at, Math.max(0, layout.totalMs - 1)));
     placed.set(1);
-  }, [clips, clipId, ctl, layout.starts, placed]);
+  }, [clips, clipId, openAnchor, ctl, layout.starts, layout.totalMs, placed]);
   // The scale the timeline opens at, once the clips are known: the clip it was opened on fitted
   // (`clipZoom`, ready to trim), or the whole draft when it's short (`draftZoom`).
   const openedZoom = useRef(false);
@@ -436,6 +475,8 @@ export function EditorScreen({
           startMs: sel.edit.startMs,
           endMs: sel.edit.endMs,
           sourceMs: sel.sourceMs,
+          sourceStartMs: sel.edit.baseWindow?.startMs,
+          sourceEndMs: sel.edit.baseWindow?.endMs,
           speed: sel.edit.speed,
           slotStartMs: slotOf(current).start,
           frameMs: 1000 / selFps,
@@ -536,8 +577,34 @@ export function EditorScreen({
     ctl.pause();
     void flushDraftWrites().then(go);
   };
-  const openExport = () => openOver(() => onExport(draftId));
-  const addClips = () => openOver(() => onAddClips?.(draftId));
+  const openExport = () => {
+    if (clips.length > 0) openOver(() => onExport(draftId));
+  };
+
+  // --- Adding clips (the "+") ---------------------------------------------------------------
+  const add = useEditorAdditions({
+    draftId,
+    clips,
+    layout,
+    timeMs: values.timeMs,
+    focused,
+    view,
+    previewReady:
+      !!builtStatus?.ready &&
+      !builtStatus.error &&
+      builtStatus.clipStartsMs.length === clips.length,
+    pause: ctl.pause,
+    seekTo: ctl.seekTo,
+    recordAdded: history.recordAdded,
+    beginBatch: history.beginBatch,
+    endBatch: history.endBatch,
+    leaveEditMode: () => setMode((m) => (m === 'edit' ? 'main' : m)),
+    openOver,
+    onAddClips,
+    screenCapture,
+    placeLabels,
+  });
+  const { screen, screenLive } = add;
 
   const reset = () => {
     const t = target();
@@ -628,11 +695,13 @@ export function EditorScreen({
     letGo();
   }
   const undo = () => {
+    if (!history.canUndo) return;
     letGo();
     keepPlayhead();
     history.undo();
   };
   const redo = () => {
+    if (!history.canRedo) return;
     letGo();
     keepPlayhead();
     history.redo();
@@ -793,8 +862,14 @@ export function EditorScreen({
   // Created once the area is measured and the clips are known; dropped with no clips left.
   const showPreview = !!options && previewClips.length > 0 && fitW > 0;
   useEffect(() => {
-    if (!showPreview) ctl.detach();
-  }, [showPreview, ctl]);
+    if (!showPreview) {
+      ctl.detach();
+      if (clips.length === 0) {
+        ctl.pause();
+        ctl.seekTo(0);
+      }
+    }
+  }, [showPreview, clips.length, ctl]);
 
   return (
     // The portal lifts a picked-up clip above everything (preview, controls) while it's dragged.
@@ -808,15 +883,6 @@ export function EditorScreen({
         <Pressable style={styles.header} onPress={deselect} accessible={false}>
           <HeaderButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
           <View style={styles.headerRight}>
-            {/* More clips for this draft: the recorder, back here with them on Edit. */}
-            {onAddClips && (
-              <HeaderButton
-                icon="plus"
-                label="Add clips"
-                onPress={addClips}
-                testID="editor.addClips"
-              />
-            )}
             <HeaderButton
               icon="arrow.uturn.backward"
               label="Undo"
@@ -831,7 +897,11 @@ export function EditorScreen({
             />
             {/* Finished editing: on to the export screen (back returns here). */}
             <View style={styles.export}>
-              <ExportButton onPress={openExport} testID="editor.export" />
+              <ExportButton
+                onPress={openExport}
+                disabled={clips.length === 0}
+                testID="editor.export"
+              />
             </View>
           </View>
         </Pressable>
@@ -882,6 +952,17 @@ export function EditorScreen({
           />
           {status?.error && (
             <Text style={[styles.error, { color: theme.textSecondary }]}>{status.error}</Text>
+          )}
+          {/* A screen take for this draft (from the "+"): its Stop, over the top of the preview. */}
+          {screenCapture && add.screenHere && (
+            <View style={styles.screenStop} pointerEvents="box-none">
+              <screenCapture.StopPill
+                began={screen.began}
+                starting={screen.starting && !screenLive}
+                stopping={screen.phase === 'stopping'}
+                onStop={() => void screenCapture.stop()}
+              />
+            </View>
           )}
         </Pressable>
 
@@ -964,6 +1045,20 @@ export function EditorScreen({
               onBlankTap={deselect}
             />
           )}
+          {/* Add at the playhead: over the clips at the right edge, outside their scroll and gestures, so it
+              stays put while they scroll under it (each view pads half its width at the end, so
+              the last clip scrolls clear of it) and while a clip is selected. */}
+          <View style={styles.add} pointerEvents="box-none">
+            <EditorAddMenu
+              actions={add.actions}
+              view={view}
+              busy={add.busy || history.busy}
+              progress={add.progress}
+              progressText={add.progressText}
+              progressCount={add.progressCount}
+              onOpen={ctl.pause}
+            />
+          </View>
         </Animated.View>
 
         <Pressable
@@ -1035,7 +1130,7 @@ export function EditorScreen({
               muted={sel.edit.muted}
               speed={sel.edit.speed}
               editable={sel.editable}
-              edited={sel.editKey !== null || !sel.editable}
+              edited={sel.canReset}
               onFlip={() => edit(null, flippedEdit)}
               onRotate={() => edit('rotate', rotated)}
               onCrop={startCrop}
@@ -1059,6 +1154,7 @@ export function EditorScreen({
             onDone={finishCrop}
           />
         )}
+        {add.anotherPulseSheet}
         {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
         <TipLayer />
       </KeyboardAvoidingView>
@@ -1079,6 +1175,9 @@ const styles = StyleSheet.create({
   export: { marginLeft: 8 },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
   track: { height: STRIP_HEIGHT },
+  // Centred on the clip tiles, which both views draw under the ruler.
+  add: { position: 'absolute', right: 12, top: RULER_HEIGHT + (TILE_HEIGHT - ADD_SIZE) / 2 },
+  screenStop: { position: 'absolute', top: 8, left: 0, right: 0, alignItems: 'center' },
   dim: { opacity: 0.35 },
   preview: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   cover: { position: 'absolute' },

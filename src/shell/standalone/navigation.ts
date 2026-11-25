@@ -1,5 +1,8 @@
 import { router } from 'expo-router';
 
+import { anchorToRouteParam } from '@/core/clip-anchor';
+import type { RecorderEditAt } from '@/features/recorder/contract';
+
 /**
  * Close a presented screen (recorder / export) reliably.
  *
@@ -11,4 +14,14 @@ import { router } from 'expo-router';
 export function closeToHome() {
   if (router.canGoBack()) router.back();
   else router.replace('/');
+}
+
+/**
+ * The params of an editor the recorder's Edit opens (src/app/editor.tsx reads them): on the clip
+ * tapped, else at the insert cursor (`anchorToRouteParam`).
+ */
+export function editorParams(draftId: string, at: RecorderEditAt): Record<string, string> {
+  return 'clipId' in at
+    ? { draftId, clipId: at.clipId }
+    : { draftId, anchor: anchorToRouteParam(at.anchor) };
 }

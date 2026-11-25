@@ -3,6 +3,7 @@
 // navigates.
 import type { ComponentType } from 'react';
 
+import type { ClipAnchor } from '@/core/clip-anchor';
 import type { DraftContext } from '@/db/drafts';
 import type { HostContext } from '@/db/host-context';
 
@@ -30,15 +31,23 @@ export type RecorderCloseResult = {
   draftId: string | null;
 };
 
+/**
+ * Where the recorder's Edit opens the editor: on the clip tapped in the bar (`clipId`), else at the
+ * insert cursor (`anchor`), so the editor is where the person was in the recorder (#308).
+ */
+export type RecorderEditAt = { clipId: string } | { anchor: ClipAnchor };
+
 export type RecorderScreenProps = {
   /** An existing draft to add clips to; without it the first take creates one from `newDraft`. */
   draftId?: string;
   newDraft: RecorderNewDraft;
   /**
-   * Open the editor on the draft, on `clipId` when a clip in the bar was tapped. Called after
-   * pending edits are stored, and once per tap until the recorder is focused again.
+   * Open the editor on the draft, `at` the clip tapped in the bar or the insert cursor (Edit). A new
+   * editor opens there; an editor the recorder goes back to puts its playhead there
+   * (`returnEditorTo` with `editAnchor(at)`). Called after pending edits are stored, and once per
+   * tap until the recorder is focused again.
    */
-  onEdit: (draftId: string, clipId?: string) => void;
+  onEdit: (draftId: string, at: RecorderEditAt) => void;
   /** Open Export for the draft; same timing as `onEdit`. */
   onExport: (draftId: string) => void;
   /** Leave the recorder (its ✕, after the take in flight is saved). */
@@ -49,7 +58,21 @@ export type RecorderScreenProps = {
    * its "+" is the plain import.
    */
   screenCapture?: ScreenCapturePort;
+  /**
+   * Where the recorder's clips go in the draft at first (its insert cursor, #308): the editor's
+   * add position when the editor's "Record a clip here" opened it. Default: the end.
+   */
+  insertAnchor?: ClipAnchor;
+  /** What paired places are called, for drafts named after one ("From another Pulse"). */
+  placeLabels?: PlaceLabels;
 };
+
+/**
+ * What a place in the Pulse app's paired pool is called (`usePlaceLabels`, standalone-only), so a
+ * draft recorded for one is listed under that label, as on Home. Live: a new function when the
+ * pool changes. The embed has no paired places and passes none (its drafts show their own names).
+ */
+export type PlaceLabels = (server: string | null, ref: string | null) => string | null;
 
 /** `live`: a screen take of Pulse's own is capturing. `stopping`: Stop asked, file settling. */
 export type ScreenPhase = 'idle' | 'live' | 'stopping';
@@ -76,8 +99,11 @@ export type ScreenCapturePort = {
   getState: () => ScreenCaptureState;
   /** Whether a take or its import is using this draft: the recorder mustn't drop it as empty. */
   holds: (draftId: string) => boolean;
-  /** Record screen, for the recorder's draft (`draft` makes it if needed); `enableMic`: its mic. */
-  start: (draft: () => Promise<string>, enableMic: boolean) => Promise<void>;
+  /**
+   * Record screen, for the recorder's draft (`draft` makes it if needed); `enableMic`: its mic;
+   * `anchor`: where the clip goes (the recorder's insert cursor at the tap).
+   */
+  start: (draft: () => Promise<string>, enableMic: boolean, anchor: ClipAnchor) => Promise<void>;
   stop: () => Promise<void>;
   /** The take's Stop, under the recorder's top bar. */
   StopPill: ComponentType<{

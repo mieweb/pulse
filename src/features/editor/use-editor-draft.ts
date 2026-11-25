@@ -15,6 +15,10 @@ import {
   editTimelineMs,
   effMs,
   parseEdit,
+  renderKey,
+  resetSegmentEdit,
+  segmentDefaults,
+  segmentEditValue,
   segmentSignature,
   type ParsedEdit,
 } from '@/utils/segment-window';
@@ -40,6 +44,10 @@ export type EditorClip = {
   edit: ParsedEdit;
   /** The stored edit (canonical), or null when unedited. */
   editKey: string | null;
+  /** Exact source and current settings, including optimistic edits, for insertion anchors. */
+  sourceKey: string;
+  /** Some edit can be reset without undoing the clip's split boundaries. */
+  canReset: boolean;
   /** False for a clip edited before edits were settings (a baked file): only reset and delete. */
   editable: boolean;
   /** Timeline length, ms. */
@@ -55,24 +63,15 @@ export type EditorClip = {
 const sourceMsOf = (s: Segment) =>
   s.editedFilename ? (s.editedDurationMs ?? s.durationMs) : s.durationMs;
 
-const defaults = (s: Segment): ParsedEdit => ({
-  startMs: 0,
-  endMs: sourceMsOf(s),
-  rotation: 0,
-  flipped: false,
-  crop: null,
-  muted: false,
-  speed: 1,
-});
-
 /** The row as it will be once a pending write lands. */
 function withPending(s: Segment, value: EditValue | undefined): Segment {
   if (value === undefined) return s;
+  const editState = segmentEditValue(s, value);
   return {
     ...s,
-    editState: value,
+    editState,
     editedFilename: null,
-    editedDurationMs: value ? editTimelineMs(value) : null,
+    editedDurationMs: editState ? editTimelineMs(editState) : null,
   };
 }
 
@@ -92,8 +91,10 @@ function toEditorClip(s: Segment): EditorClip {
   return {
     id: s.id,
     label: s.label,
-    edit: (legacy ? null : parseEdit(s.editState)) ?? defaults(s),
+    edit: (legacy ? null : parseEdit(s.editState)) ?? segmentDefaults(s),
     editKey: legacy ? null : canonicalEdit(s.editState),
+    sourceKey: renderKey(s),
+    canReset: legacy || canonicalEdit(s.editState) !== resetSegmentEdit(s),
     editable: !legacy,
     lengthMs: effMs(s),
     sourceMs: sourceMsOf(s),
@@ -249,8 +250,10 @@ export function useEditorDraft(draftId: string) {
   );
 
   const write = (id: string, value: EditValue) => {
-    setPending((p) => new Map(p).set(id, value));
-    writeEdit(id, value);
+    const row = rows.find((s) => s.id === id);
+    const editState = row ? segmentEditValue(row, value) : value;
+    setPending((p) => new Map(p).set(id, editState));
+    writeEdit(id, editState);
   };
 
   /** Store `edit` for a clip (canonical form). */

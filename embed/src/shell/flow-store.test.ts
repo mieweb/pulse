@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import type { OpenRequest, PulseContext, PulseErrorInfo } from '@mieweb/pulse-embed';
 
+import { END, expectClipsAdded, takeEditorReturn } from '@/core/clip-anchor';
+
 import type { FlowState } from '../flow/reducer';
 import { flowResult } from '../flow/result';
 import { createFlowStore, stackItems, type StackItem } from './flow-store';
@@ -40,9 +42,17 @@ describe('stackItems', () => {
     ]);
   });
 
-  it('gives a clip only to a new editor', () => {
-    const items = stackItems([], ['editor', 'recorder'], key, 'c2');
+  it('gives a clip only to a new editor, and an anchor to a new recorder or editor', () => {
+    const items = stackItems([], ['editor', 'recorder'], key, {
+      clipId: 'c2',
+      anchor: { before: 'c2' },
+    });
     expect(items.map((i) => i.clipId)).toEqual(['c2', undefined]);
+    // The editor's clip wins over the anchor.
+    expect(items.map((i) => i.anchor)).toEqual([undefined, { before: 'c2' }]);
+    const [editor] = stackItems([], ['editor'], key, { anchor: { before: 'c3' } });
+    expect(editor).toMatchObject({ screen: 'editor', anchor: { before: 'c3' } });
+    expect(editor.clipId).toBeUndefined();
   });
 });
 
@@ -53,7 +63,7 @@ describe('createFlowStore', () => {
     s.dispatch({ type: 'record' });
     s.dispatch({ type: 'stop', draftId: 'd1', clipCount: 1 });
     const [recorder] = keys();
-    s.dispatch({ type: 'edit' }, { clipId: 'c1' });
+    s.dispatch({ type: 'edit', at: { clipId: 'c1' } });
     const [, editor] = keys();
     expect(s.getSnapshot().items[1]).toEqual({ key: editor, screen: 'editor', clipId: 'c1' });
     s.dispatch({ type: 'back' });
@@ -61,6 +71,75 @@ describe('createFlowStore', () => {
     expect(keys()[0]).toBe(recorder);
     expect(keys()[1]).not.toBe(editor);
     expect(s.getSnapshot().items[1].clipId).toBeUndefined();
+  });
+
+  it('opens a recorder over the editor at the editor’s anchor, and Edit comes back to it', () => {
+    const { s, keys, ended } = store();
+    s.dispatch({ type: 'mounted' });
+    s.dispatch({ type: 'record' });
+    s.dispatch({ type: 'stop', draftId: 'd1', clipCount: 1 });
+    s.dispatch({ type: 'edit' });
+    const [recorder, editor] = keys();
+    s.dispatch({ type: 'addClips', anchor: { before: 'c1' } });
+    const items = s.getSnapshot().items;
+    expect(items.map((i) => i.screen)).toEqual(['recorder', 'editor', 'recorder']);
+    expect(items[2]).toMatchObject({ screen: 'recorder', anchor: { before: 'c1' } });
+    expect(items[0].anchor).toBeUndefined();
+    // A take there, then Edit: back to the same editor (its undo and playhead carry on).
+    s.dispatch({ type: 'record' });
+    s.dispatch({ type: 'stop', draftId: 'd1', clipCount: 2 });
+    s.dispatch({ type: 'edit', at: { clipId: 'c2' } });
+    expect(keys()).toEqual([recorder, editor]);
+    expect(ended).toEqual([]);
+  });
+
+  it('opens a new editor at the recorder’s insert cursor on its Edit', () => {
+    const { s } = store();
+    s.dispatch({ type: 'mounted' });
+    s.dispatch({ type: 'record' });
+    s.dispatch({ type: 'stop', draftId: 'd1', clipCount: 2 });
+    s.dispatch({ type: 'edit', at: { anchor: { before: 'c2' } } });
+    expect(s.getSnapshot().items[1]).toEqual({
+      key: 'editor-1',
+      screen: 'editor',
+      anchor: { before: 'c2' },
+    });
+  });
+
+  it('an editor Edit goes back to puts its playhead at the cursor or the clip tapped', () => {
+    const { s, keys } = store();
+    s.dispatch({ type: 'mounted' });
+    s.dispatch({ type: 'record' });
+    s.dispatch({ type: 'stop', draftId: 'd1', clipCount: 2 });
+    s.dispatch({ type: 'edit' });
+    const editor = keys()[1];
+    const disarm = expectClipsAdded('d1'); // as the editor arms its draft
+    // Its "Record a clip here" at c1, the cursor moved to the end in the recorder, then Edit.
+    s.dispatch({ type: 'addClips', anchor: { before: 'c1' } });
+    s.dispatch({ type: 'edit', at: { anchor: END } });
+    expect(keys()[1]).toBe(editor);
+    expect(s.getSnapshot().items[1].anchor).toBeUndefined(); // it isn't reopened
+    expect(takeEditorReturn('d1')).toEqual(END);
+    // A clip tapped in that recorder's bar: the clip wins.
+    s.dispatch({ type: 'addClips', anchor: { before: 'c1' } });
+    s.dispatch({ type: 'edit', at: { clipId: 'c2' } });
+    expect(takeEditorReturn('d1')).toEqual({ before: 'c2' });
+    // ✕ (back) leaves it no place: the playhead goes after the clips added, as before.
+    s.dispatch({ type: 'addClips', anchor: { before: 'c1' } });
+    s.dispatch({ type: 'back' });
+    expect(takeEditorReturn('d1')).toBeNull();
+    // Nor does the recorder's Export, which passes through the editor.
+    s.dispatch({ type: 'addClips', anchor: { before: 'c1' } });
+    s.dispatch({ type: 'edit' });
+    expect(takeEditorReturn('d1')).toBeNull();
+    disarm();
+  });
+
+  it('an edit flow’s recorder from the editor starts at the end when no anchor is given', () => {
+    const { s } = store({ entry: 'edit', draftId: 'd1' });
+    s.dispatch({ type: 'mounted' });
+    s.dispatch({ type: 'addClips' });
+    expect(s.getSnapshot().items[1]).toEqual({ key: 'recorder-1', screen: 'recorder' });
   });
 
   it('keeps the same snapshot when an event changes nothing', () => {

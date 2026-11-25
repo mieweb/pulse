@@ -8,11 +8,13 @@ import type {
   PulseErrorInfo,
 } from '@mieweb/pulse-embed';
 
+import type { ClipAnchor } from '@/core/clip-anchor';
 import { confirmCopy } from '@/features/export/send-flow';
+import type { RecorderEditAt } from '@/features/recorder/contract';
 
 /**
  * The embed's flow as a pure reducer (B2): one presentation, one stack of screens
- * (recorder ⇄ editor → export), one result. The shell (FlowStack) renders the stack, feeds the
+ * (recorder ⇄ editor → export, and a recorder over the editor to add clips), one result. The shell (FlowStack) renders the stack, feeds the
  * screens' callbacks in as events, and once `end` is set writes the result (result.ts) and
  * carries out `deleteDraft`. Nothing here touches the library, the clock or the bridge.
  *
@@ -118,10 +120,17 @@ export type FlowEvent =
   | { type: 'edited'; clipCount: number }
   /** Export's merge is current. */
   | { type: 'merged' }
-  /** Recorder → editor (its Done/Edit). */
-  | { type: 'edit' }
-  /** Editor → recorder, to add clips to this draft (M3). */
-  | { type: 'addClips' }
+  /**
+   * Recorder → editor (its Done/Edit), `at` the clip tapped in its bar or its insert cursor: a new
+   * editor opens there, and one it goes back to puts its playhead there (the store passes it on;
+   * the flow doesn't read it). Without it (Export from the recorder), as the editor last was.
+   */
+  | { type: 'edit'; at?: RecorderEditAt }
+  /**
+   * Editor → recorder, to add clips to this draft (M3): the editor's "Record a clip here", its
+   * insert cursor at `anchor` (the store gives it to the new recorder; the flow doesn't read it).
+   */
+  | { type: 'addClips'; anchor?: ClipAnchor }
   /** Editor → Export. */
   | { type: 'export' }
   /** Back (the back arrow, Android back): pops a screen, or at the root means X. */
@@ -278,7 +287,10 @@ export function flowReducer(state: FlowState, event: FlowEvent): FlowState {
     case 'edit':
       return top === 'recorder' && state.clipCount > 0 ? go(state, 'editor') : state;
     case 'addClips':
-      return top === 'editor' ? go(state, 'recorder') : state;
+      // Always a new recorder over the editor, as in the app: the editor stays (its undo and its
+      // playhead carry on), and its insert cursor starts at the editor's add position. Its Edit
+      // comes back to this editor.
+      return top === 'editor' ? { ...state, stack: [...state.stack, 'recorder'] } : state;
     case 'export':
       return top === 'editor' && state.clipCount > 0 ? go(state, 'export') : state;
     case 'back':

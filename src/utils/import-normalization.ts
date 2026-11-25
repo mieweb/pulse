@@ -190,6 +190,45 @@ function audioReasons(audio: ProbeAudio | undefined, target?: RecorderFormat): s
   return [];
 }
 
+/** A full re-encode's format, without the source's say. */
+export type EncodeFormat = Omit<ConformOptions, 'copyVideo'>;
+
+/**
+ * What every full re-encode writes: the portrait canvas, scale-fit + centered letterbox to exactly
+ * CANVAS_WxH (display), H.264 8-bit SDR (HDR tone-mapped), at the recorder's frame rate and
+ * bitrate. With a merge target the pixels are written in the recorder's coded orientation under
+ * its rotation tag.
+ */
+function encodeFormat(rotation: number, audio: MergeAudio): EncodeFormat {
+  return {
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+    rotation,
+    fps: NORMALIZE_TARGET_FPS,
+    bitrate: NORMALIZE_TARGET_BITRATE,
+    audio,
+  };
+}
+
+/**
+ * The recorder's format, for a clip made from scratch (an image, pulse-editor `imageClip`): what a
+ * conform to `target` writes, so the clip's video joins recordings without re-encoding. Its silent
+ * track is in a layout `imageClip` writes, mono or stereo at a whole AAC rate: a multichannel
+ * recorder's (an iPhone 17 Pro records 5.1) becomes stereo. Clips joined with it still merge: the
+ * merge re-encodes the sound of a join into the draft's layout on both platforms, mixing each
+ * clip's channels into it.
+ */
+export function recorderEncodeFormat(target: RecorderFormat): EncodeFormat {
+  const { sampleRate, channels } = conformAudio(undefined, target);
+  return encodeFormat(target.rotation, {
+    sampleRate: AAC_RATES.find((r) => r <= sampleRate + 1) ?? AAC_RATES[AAC_RATES.length - 1],
+    channels: channels === 1 ? 1 : 2,
+  });
+}
+
+/** Which phone decides (the module stays free of react-native so it tests as pure code). */
+export type ImportPlatform = 'ios' | 'android';
+
 /**
  * Decide how an imported clip enters the draft: byte-for-byte passthrough, an audio-only
  * conform (video samples copied), or a full re-encode. Pure — feed it a `probe()` result.
@@ -198,9 +237,6 @@ function audioReasons(audio: ProbeAudio | undefined, target?: RecorderFormat): s
  * clip must also match the recorder's signature to pass through, and every conform writes that
  * signature (rotation tag, AAC rate/channels) so the merge can join it by copy.
  */
-/** Which phone decides (the module stays free of react-native so it tests as pure code). */
-export type ImportPlatform = 'ios' | 'android';
-
 export function decideImport(
   probe: ProbeResult,
   target?: RecorderFormat,
@@ -227,16 +263,8 @@ export function decideImport(
     platform === 'android' &&
     audio.length > 0 &&
     audio.every((r) => r.includes('differs from the recorder'));
-  // Bake the portrait canvas on every full re-encode: scale-fit + centered letterbox to exactly
-  // CANVAS_WxH (display), H.264 8-bit SDR (HDR tone-mapped). With a merge target the pixels are
-  // written in the recorder's coded orientation under its rotation tag.
   const options: ConformOptions = {
-    width: CANVAS_WIDTH,
-    height: CANVAS_HEIGHT,
-    rotation: target?.rotation ?? 0,
-    fps: NORMALIZE_TARGET_FPS,
-    bitrate: NORMALIZE_TARGET_BITRATE,
-    audio: conformAudio(probe.audio, target),
+    ...encodeFormat(target?.rotation ?? 0, conformAudio(probe.audio, target)),
     copyVideo: false,
   };
 

@@ -67,7 +67,7 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Allow Pulse to access your photos to import videos into your drafts.",
+          "photosPermission": "Allow Pulse to access your photos to import photos and videos into your drafts.",
           "savePhotosPermission": "Allow Pulse to save exported videos to your photo library.",
           "granularPermissions": []
         }
@@ -75,7 +75,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Pulse to access your photos to import videos into your drafts."
+          "photosPermission": "Allow Pulse to access your photos to import photos and videos into your drafts."
         }
       ],
       [

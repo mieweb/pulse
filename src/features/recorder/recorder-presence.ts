@@ -1,3 +1,4 @@
+import type { ClipAnchor } from '@/core/clip-anchor';
 import type { DraftContext } from '@/db/drafts';
 import { createPresence } from '@/utils/presence';
 
@@ -11,6 +12,8 @@ export type MountedRecorder = {
   draftId(): string | null;
   /** The draft it is on, made now if it hasn't made one yet. */
   ensureDraft(): Promise<string>;
+  /** Where its clips go in the draft now (its insert cursor). */
+  insertAnchor(): ClipAnchor;
   /** Whether it is the screen on top, with nothing presented over it. */
   focused(): boolean;
 };
@@ -49,6 +52,7 @@ export function recorderOnScreen(): {
   place: DraftContext | null;
   draftId: string | null;
   ensureDraft: () => Promise<string>;
+  insertAnchor: () => ClipAnchor;
 } | null {
   for (const recorder of recorders) {
     if (recorder.focused()) {
@@ -56,6 +60,7 @@ export function recorderOnScreen(): {
         place: recorder.place(),
         draftId: recorder.draftId(),
         ensureDraft: () => recorder.ensureDraft(),
+        insertAnchor: () => recorder.insertAnchor(),
       };
     }
   }

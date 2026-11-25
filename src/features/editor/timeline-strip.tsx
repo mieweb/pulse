@@ -33,14 +33,13 @@ import {
 import { TimelineCanvas, useCovers, type CanvasCaption, type CanvasClip } from './timeline-canvas';
 import {
   CAP_GRIP,
-  ceilToFrame,
   clamp,
   DP_PER_MS,
-  floorToFrame,
   MAX_DP_PER_MS,
-  MIN_CLIP_SOURCE_MS,
   minDpPerMs,
   snapToFrame,
+  trimPreviewTarget,
+  trimSourceBounds,
   type TimelineLayout,
   type ZoomRequest,
 } from './timeline-geometry';
@@ -102,6 +101,9 @@ export type TrimInfo = {
   startMs: number;
   endMs: number;
   sourceMs: number;
+  /** Durable split boundaries; a handle cannot reveal frames from the sibling half. */
+  sourceStartMs?: number;
+  sourceEndMs?: number;
   speed: number;
   /** Where the clip starts on the timeline. */
   slotStartMs: number;
@@ -503,9 +505,7 @@ export function TimelineStrip(props: Props) {
           delta.set(0);
           atLimit.set(false);
           trimSrc.set(s === 1 ? info.startMs : info.endMs);
-          trimTarget.set(
-            info.slotStartMs + (s === 1 ? info.startMs : info.endMs - info.frameMs) / info.speed,
-          );
+          trimTarget.set(trimPreviewTarget(info, s, s === 1 ? info.startMs : info.endMs));
           mode.set(Mode.trim);
           scheduleOnRN(trimStart, s);
         })
@@ -514,17 +514,7 @@ export function TimelineStrip(props: Props) {
           if (!info || side.get() !== s) return;
           const base = s === 1 ? info.startMs : info.endMs;
           // The shortest-clip limits sit on frames, so a handle stopped there leaves a frame edge.
-          const lo =
-            s === 1
-              ? 0
-              : Math.min(
-                  info.sourceMs,
-                  ceilToFrame(info.startMs + MIN_CLIP_SOURCE_MS, info.frameMs),
-                );
-          const hi =
-            s === 1
-              ? Math.max(0, floorToFrame(info.endMs - MIN_CLIP_SOURCE_MS, info.frameMs))
-              : info.sourceMs;
+          const { lo, hi } = trimSourceBounds(info, s);
           const raw = clamp(base + (e.translationX / zoomNow.get()) * info.speed, lo, hi);
           const src = clamp(snapToFrame(raw, info.frameMs), lo, hi);
           const limited = src <= lo || src >= hi;
@@ -532,10 +522,8 @@ export function TimelineStrip(props: Props) {
           atLimit.set(limited);
           trimSrc.set(src);
           delta.set((src - base) / info.speed);
-          // The preview has this clip untrimmed meanwhile: source time = slot start + src/speed.
-          trimTarget.set(
-            info.slotStartMs + (s === 1 ? src : Math.max(0, src - info.frameMs)) / info.speed,
-          );
+          // The preview plays this half's base window while trimming it.
+          trimTarget.set(trimPreviewTarget(info, s, src));
         })
         .onFinalize(() => {
           if (side.get() !== s || mode.get() !== Mode.trim) return;
@@ -678,13 +666,13 @@ export function TimelineStrip(props: Props) {
     const info = trimInfo.get();
     if (!info) return false;
     const start = side.get() === 1 ? trimSrc.get() : info.startMs;
-    return start > info.frameMs / 2;
+    return start > (info.sourceStartMs ?? 0) + info.frameMs / 2;
   });
   const rightTrimmed = useDerivedValue(() => {
     const info = trimInfo.get();
     if (!info) return false;
     const end = side.get() === 2 ? trimSrc.get() : info.endMs;
-    return end < info.sourceMs - info.frameMs / 2;
+    return end < (info.sourceEndMs ?? info.sourceMs) - info.frameMs / 2;
   });
   const leftOut = useAnimatedStyle(() => ({ opacity: leftTrimmed.get() ? 1 : 0 }));
   const leftIn = useAnimatedStyle(() => ({ opacity: leftTrimmed.get() ? 0 : 1 }));
@@ -722,8 +710,8 @@ export function TimelineStrip(props: Props) {
     let near: number[] = [];
     if (end >= nearFrom && start <= nearTo) {
       const { speed } = c.edit;
-      const lo = i === trimming ? 0 : c.edit.startMs;
-      const hi = i === trimming ? c.sourceMs : c.edit.endMs;
+      const lo = i === trimming ? (c.edit.baseWindow?.startMs ?? 0) : c.edit.startMs;
+      const hi = i === trimming ? (c.edit.baseWindow?.endMs ?? c.sourceMs) : c.edit.endMs;
       const from = Math.max(lo, c.edit.startMs + (nearFrom - start) * speed);
       const to = Math.min(hi, c.edit.startMs + (nearTo - start) * speed);
       // The source time at the middle of the screen, for ordering this clip's detail.

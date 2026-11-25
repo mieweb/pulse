@@ -1,4 +1,6 @@
+import type { ClipAnchor } from '@/core/clip-anchor';
 import type { EditorView } from '@/db/settings';
+import type { PlaceLabels, ScreenCapturePort } from '@/features/recorder/contract';
 
 /**
  * What the editor screen is given: the draft to open and where its exits go. The standalone route
@@ -9,14 +11,31 @@ export type EditorScreenProps = {
   draftId: string;
   /** Opens paused at this clip's start, the timeline fitted to it (a clip tapped in the recorder). */
   clipId?: string;
+  /**
+   * Opens paused at this clip boundary (`timeAtAnchor`: the start of the clip it names, or the end):
+   * the recorder's insert cursor, on its Edit. `clipId` wins when both are given.
+   */
+  anchor?: ClipAnchor;
   /** The view to open in when none was remembered from an earlier session (default Clips). */
   view?: EditorView;
   /** Close, and the draft running out of clips. */
   onClose: () => void;
   /** Export, after the editor's pending writes are on disk. */
   onExport: (draftId: string) => void;
-  /** Add clips: the recorder for this draft. The editor shows the control only when given. */
-  onAddClips?: (draftId: string) => void;
+  /**
+   * "Record a clip here" in the editor's "+": the recorder for this draft, its insert cursor at
+   * `anchor` (the exact playhead, including a pending metadata split). Without it the "+" offers only what the editor does
+   * itself (import, screen recording).
+   */
+  onAddClips?: (draftId: string, anchor: ClipAnchor) => void;
+  /**
+   * Screen recording, from the Pulse app (src/features/screen-capture), as the recorder gets it:
+   * with it the "+" offers Record screen, and the take's Stop shows over the preview. The embed
+   * has none (`npm run check:embed`).
+   */
+  screenCapture?: ScreenCapturePort;
   /** Captions with no model, the model control and the "pick a model" status open the model sheet. */
   onOpenModelSheet: () => void;
+  /** What paired places are called, for drafts named after one ("From another Pulse"). */
+  placeLabels?: PlaceLabels;
 };

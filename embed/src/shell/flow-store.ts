@@ -1,5 +1,8 @@
 import type { FlowScreen, OpenRequest, PulseErrorInfo } from '@mieweb/pulse-embed';
 
+import { type ClipAnchor, returnEditorTo } from '@/core/clip-anchor';
+import { editAnchor } from '@/features/recorder/insert-point';
+
 import {
   flowReducer,
   initFlow,
@@ -19,19 +22,28 @@ export type StackItem = {
   screen: FlowScreen;
   /** The editor opens on this clip (a clip tapped in the recorder, or the edit entry's clipId). */
   clipId?: string;
+  /**
+   * A recorder: its insert cursor starts here (the editor's "Record a clip here"). An editor: it
+   * opens at this boundary (the recorder's insert cursor, on its Edit).
+   */
+  anchor?: ClipAnchor;
 };
+
+/** What a screen pushed by an event opens with. */
+export type PushedWith = { clipId?: string; anchor?: ClipAnchor };
 
 export type FlowSnapshot = { readonly state: FlowState; readonly items: readonly StackItem[] };
 
 /**
  * The items for `stack`: the bottom items that are still the same screen keep their keys (and
- * stay mounted); the rest are new. A new editor takes `clipId`.
+ * stay mounted); the rest are new. A new editor takes `clipId`, else `anchor`; a new recorder
+ * `anchor`.
  */
 export function stackItems(
   prev: readonly StackItem[],
   stack: readonly FlowScreen[],
   newKey: (screen: FlowScreen) => string,
-  clipId?: string,
+  { clipId, anchor }: PushedWith = {},
 ): StackItem[] {
   let kept = 0;
   while (kept < prev.length && kept < stack.length && prev[kept].screen === stack[kept]) kept++;
@@ -41,6 +53,9 @@ export function stackItems(
       key: newKey(screen),
       screen,
       ...(screen === 'editor' && clipId ? { clipId } : null),
+      ...((screen === 'recorder' || (screen === 'editor' && !clipId)) && anchor
+        ? { anchor }
+        : null),
     })),
   ];
 }
@@ -58,7 +73,7 @@ export function createFlowStore(opts: {
   const first = initFlow(requestId, request);
   let snapshot: FlowSnapshot = {
     state: first,
-    items: stackItems([], first.stack, newKey, firstClip),
+    items: stackItems([], first.stack, newKey, { clipId: firstClip }),
   };
   const listeners = new Set<() => void>();
 
@@ -97,14 +112,31 @@ export function createFlowStore(opts: {
       if (state.mounted || state.end) return;
       set({ state: { ...state, end: { status: 'failed', error } }, items: snapshot.items });
     },
-    /** Feed `event` to the reducer; a new editor it shows opens on `clipId`. */
-    dispatch(event: FlowEvent, extra?: { clipId?: string }): void {
+    /**
+     * Feed `event` to the reducer. The recorder `addClips` pushes starts its insert cursor at the
+     * event's anchor. The editor `edit` shows opens `at` the clip tapped or the recorder's cursor;
+     * an editor it goes back to (the recorder was over it) is left that place (`returnEditorTo`),
+     * so its playhead goes there as it's back on top.
+     */
+    dispatch(event: FlowEvent): void {
       const state = flowReducer(snapshot.state, event);
       if (state === snapshot.state) return;
+      const pushed: PushedWith =
+        event.type === 'addClips'
+          ? { anchor: event.anchor }
+          : event.type === 'edit' && event.at
+            ? 'clipId' in event.at
+              ? { clipId: event.at.clipId }
+              : { anchor: event.at.anchor }
+            : {};
       const items =
         state.stack === snapshot.state.stack
           ? snapshot.items
-          : stackItems(snapshot.items, state.stack, newKey, extra?.clipId);
+          : stackItems(snapshot.items, state.stack, newKey, pushed);
+      const top = items[items.length - 1];
+      if (event.type === 'edit' && event.at && state.draftId && snapshot.items.includes(top)) {
+        returnEditorTo(state.draftId, editAnchor(event.at));
+      }
       set({ state, items });
     },
   };

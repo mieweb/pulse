@@ -1,4 +1,5 @@
 import { reorderSegments, resetEdit, setEditState } from '@/db/drafts';
+import { setClipWriteBarrier } from '@/core/draft-write-barrier';
 
 /** An edit as stored, or null for "no edit" (reset). */
 export type EditValue = string | null;
@@ -104,3 +105,5 @@ export function flushDraftWrites(): Promise<void> {
   if (editing.size === 0 && !ordering) return Promise.resolve();
   return new Promise((resolve) => whenIdle.push(resolve));
 }
+
+setClipWriteBarrier(flushDraftWrites);

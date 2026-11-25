@@ -14,6 +14,7 @@ import {
   stopGlobalRecording,
 } from 'react-native-nitro-screen-recorder';
 
+import { anchorFromRouteParam, anchorToRouteParam, type ClipAnchor, END } from '@/core/clip-anchor';
 import { createDraft, draftTakesClips, segmentExists } from '@/db/drafts';
 import { deleteSetting, getSetting, setSetting } from '@/db/settings';
 import { addExternalClip } from '@/features/recorder/add-external-clip';
@@ -65,6 +66,12 @@ type Row = {
   createdAt: number;
   /** The recorder's mic toggle at the start (off: the sheet offered no Microphone). */
   mic: boolean;
+  /**
+   * Where the clip goes in the draft (`anchorToRouteParam`'s text): the recorder's insert cursor
+   * at the tap, kept if its clip is deleted while the take converts (`ClipAnchor.next`). Missing
+   * (an older row), unreadable or stale (its clips gone, or a new draft): the end.
+   */
+  anchor?: string;
   /** The file to import, once known. */
   sourcePath?: string;
   /** iOS: the broadcast's Microphone was off. */
@@ -171,7 +178,12 @@ function phase(): ScreenPhase {
  * system sheet / consent dialog says nothing when dismissed (iOS), so a dismissed one just lets
  * this expire, and the next tap replaces it.
  */
-let requested: { at: number; draftId: string; mic: boolean } | null = null;
+let requested: {
+  at: number;
+  draftId: string;
+  mic: boolean;
+  anchor: ClipAnchor;
+} | null = null;
 const REQUEST_TTL_MS = 60_000;
 
 /**
@@ -379,6 +391,7 @@ async function importTake(row: Row, src: string, noVoice: boolean): Promise<void
     const result = await addExternalClip(src, () => draftFor(row), row.segmentId, {
       signal: abort.signal,
       onProgress: (progress) => setState({ progress }),
+      anchor: anchorFromRouteParam(row.anchor),
     });
     if (result.status === 'cancelled') {
       log.warn(`cancelled after ${formatSeconds(Date.now() - started)}: Pulse left`);
@@ -465,12 +478,14 @@ async function addOffered(src: string, micOff: boolean) {
     if (!fileExists(src)) throw new Error('the offered file is gone');
     const recorder = recorderOnScreen();
     const draftId = recorder ? await recorder.ensureDraft() : null;
+    const anchor = recorder?.insertAnchor() ?? END;
     log.info(`Add: to ${draftId ? 'the open draft' : 'a new draft'}`);
     await writeRow({
       segmentId: `${draftId ?? 'screen'}-${Date.now()}`,
       draftId,
       createdAt: Date.now(),
       mic: true,
+      anchor: anchorToRouteParam(anchor),
       sourcePath: src,
       micOff,
     });
@@ -493,11 +508,13 @@ const IOS_WAIT_MS = 20_000;
 
 /**
  * Record screen: asks for a take for the recorder's draft (`draft` makes it if needed). Nothing is
- * saved until the capture begins. `enableMic`: the recorder's mic toggle.
+ * saved until the capture begins. `enableMic`: the recorder's mic toggle; `anchor`: where the clip
+ * goes in the draft.
  */
 export async function startScreenCapture(
   draft: () => Promise<string>,
   enableMic: boolean,
+  anchor: ClipAnchor = END,
 ): Promise<void> {
   if (!canRecordScreen || state.phase !== 'idle' || state.importing) return;
   // The last take still owns the saved row (its file is settling, or Pulse left mid-import): a new
@@ -512,7 +529,7 @@ export async function startScreenCapture(
   }
   try {
     const draftId = await draft();
-    requested = { at: Date.now(), draftId, mic: enableMic };
+    requested = { at: Date.now(), draftId, mic: enableMic, anchor };
     showStarting(draftId, STARTING_MAX_MS);
     // Android: the recording's notification (and its Stop) needs it; a denial still records.
     if (Platform.OS === 'android') await uploadNotify.ensurePermission();
@@ -591,6 +608,7 @@ function onRecordingEvent(event: ScreenRecordingEvent) {
       draftId: req.draftId,
       createdAt: now,
       mic: req.mic,
+      anchor: anchorToRouteParam(req.anchor),
     }).catch((e: unknown) => log.warn(`couldn't save the take: ${describeError(e)}`));
   } else if (state.phase === 'live' || state.phase === 'stopping') {
     log.info('capture ended');

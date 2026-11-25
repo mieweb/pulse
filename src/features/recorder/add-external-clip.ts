@@ -1,3 +1,4 @@
+import { type ClipAnchor, END } from '@/core/clip-anchor';
 import { addSegment } from '@/db/drafts';
 import { describeError, formatSeconds } from '@/features/upload/core/upload-log';
 import { conformToContract, type ConformOutcome } from '@/utils/contract-gate';
@@ -33,7 +34,12 @@ export type ExternalClipResult =
  * `segmentId` defaults to `{draftId}-{now}`; a caller that retries passes its own to stay
  * idempotent. `signal` cancels it at every step, undoing what's been done, so the clip lands whole
  * in its draft or not at all. `onProgress` gets the conversion's progress in whole percents (and
- * never after a cancel). `onAdded` runs synchronously right after the segment row is written.
+ * never after a cancel). `onAdded` runs once the segment row is written, before this resolves: a
+ * beat after the insert is announced (`onClipsAdded` listeners have run by then), not with it.
+ * `anchor` says where in the draft the clip goes (default the end); as a function it is called just
+ * before the row is written (`insertSegments`), so a caller that passes its live cursor (the
+ * recorder's import) follows a cursor moved during the conversion, and one that passes a fixed
+ * place (a screen take, pinned where the cursor was when Record screen was tapped) gets that place.
  *
  * Throws on anything other than a cancel or a conversion refusal (a copy or a db write failing).
  */
@@ -45,10 +51,12 @@ export async function addExternalClip(
     signal,
     onProgress,
     onAdded,
+    anchor,
   }: {
     signal: AbortSignal;
     onProgress?: (fraction: number) => void;
     onAdded?: () => void;
+    anchor?: ClipAnchor | (() => ClipAnchor);
   },
 ): Promise<ExternalClipResult> {
   const started = Date.now();
@@ -91,30 +99,84 @@ export async function addExternalClip(
     return { status: 'cancelled' };
   }
   const segId = segmentId ?? `${id}-${Date.now()}`;
-  const originalFilename = await copyIntoSegments(conformed?.path ?? uri, id, segId);
-  // The conform output lives in the OS-purgeable cache dir; drop it once copied.
-  if (conformed) deleteQuietly(conformed.path);
-  const durationMs = await getDurationMs(absolutize(originalFilename));
-  if (signal.aborted) {
-    deleteSegmentFile(originalFilename);
-    return { status: 'cancelled' };
-  }
-
-  // The cover first, then the row: an import can be cancelled while its cover renders, and then
-  // nothing is added.
-  const thumbRel = thumbRelPath(id, segId);
-  const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
-  if (signal.aborted) {
-    if (ok) deleteSegmentFile(thumbRel);
-    deleteSegmentFile(originalFilename);
-    return { status: 'cancelled' };
-  }
-  await addSegment(id, {
-    id: segId,
-    originalFilename,
-    durationMs,
-    thumbnail: ok ? thumbRel : null,
+  const added = await storeClip(conformed?.path ?? uri, {
+    draftId: id,
+    segmentId: segId,
+    owned: conformed != null,
+    signal,
+    anchor: anchor ?? END,
   });
+  if (!added) return { status: 'cancelled' };
   onAdded?.();
   return { status: 'added', draftId: id, segmentId: segId };
+}
+
+/**
+ * The steps after the conversion, shared by every clip made outside the recorder (an import, a
+ * screen recording, an image): `file`, already in the recorder's format, is copied into draft
+ * `draftId`'s segments folder as clip `segmentId`, its length read, its cover rendered, and its row
+ * written at `anchor` (`insertSegments`). `owned` says `file` is a conversion's output in the
+ * OS-purgeable cache dir: it's deleted once copied (or the copy failed); otherwise it's only read.
+ *
+ * Resolves true once the row is written, false when `signal` aborted on the way (nothing is left
+ * behind). Throws when the copy, the length or the db write fails, its files deleted.
+ */
+export async function storeClip(
+  file: string,
+  {
+    draftId,
+    segmentId,
+    owned,
+    signal,
+    anchor,
+  }: {
+    draftId: string;
+    segmentId: string;
+    owned: boolean;
+    signal: AbortSignal;
+    anchor: ClipAnchor | (() => ClipAnchor);
+  },
+): Promise<boolean> {
+  let originalFilename: string;
+  try {
+    originalFilename = await copyIntoSegments(file, draftId, segmentId);
+  } finally {
+    if (owned) deleteQuietly(file);
+  }
+  // Until the row is in, nothing points at the copy or its cover: a cancel or a throw (the draft
+  // deleted meanwhile, a full disk) takes them back out.
+  const thumbRel = thumbRelPath(draftId, segmentId);
+  const discard = () => {
+    deleteSegmentFile(thumbRel);
+    deleteSegmentFile(originalFilename);
+  };
+  try {
+    const durationMs = await getDurationMs(absolutize(originalFilename));
+    if (signal.aborted) {
+      discard();
+      return false;
+    }
+    // The cover first, then the row: an import can be cancelled while its cover renders, and then
+    // nothing is added.
+    const ok = await generateThumbnailFile(absolutize(originalFilename), absolutize(thumbRel));
+    if (signal.aborted) {
+      discard();
+      return false;
+    }
+    await addSegment(
+      draftId,
+      { id: segmentId, originalFilename, durationMs, thumbnail: ok ? thumbRel : null },
+      () => {
+        // Insertion can wait for queued editor writes. Recheck at the transaction boundary,
+        // so canceling during that wait never leaves a split or a clip row behind.
+        if (signal.aborted) throw new Error('Import canceled');
+        return typeof anchor === 'function' ? anchor() : anchor;
+      },
+    );
+    return true;
+  } catch (e) {
+    discard();
+    if (signal.aborted) return false;
+    throw e;
+  }
 }

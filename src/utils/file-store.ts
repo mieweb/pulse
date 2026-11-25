@@ -150,6 +150,11 @@ export async function readRelBytes(relPath: string): Promise<Uint8Array | null> 
   return file.bytes();
 }
 
+/** Whether a relative stored path names a file on disk. */
+export function relFileExists(relPath: string): boolean {
+  return new File(absolutize(relPath)).exists;
+}
+
 /**
  * Copy a stored file to another relative path, creating its folder; false when the source is
  * missing.

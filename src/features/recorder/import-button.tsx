@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { Opacity } from '@/constants/theme';
+import { BatchCount } from './batch-count';
 import { CONTROLS_FADE } from './record-button';
 
 /** The "+" import control next to the record button — opens the system video picker to add
@@ -16,6 +17,8 @@ export function ImportButton({
   busy = false,
   progress = null,
   label = 'Import video',
+  progressText,
+  progressCount,
 }: {
   onPress: () => void;
   disabled: boolean;
@@ -23,6 +26,10 @@ export function ImportButton({
   progress?: number | null;
   /** Screen-reader label. */
   label?: string;
+  /** What it's busy with, read with the progress ("Adding 2 of 5"). */
+  progressText?: string;
+  /** Shown beside the ring during a batch ("2/5"). */
+  progressCount?: string;
 }) {
   const ring = busy ? progress : null;
   // Busy isn't disabled: it can't be pressed again, but the spinner (or the ring) stays at full
@@ -38,7 +45,9 @@ export function ImportButton({
         accessibilityLabel={label}
         accessibilityState={{ busy, disabled: disabled || busy }}
         accessibilityValue={
-          ring != null ? { min: 0, max: 100, now: Math.round(ring * 100) } : undefined
+          ring != null
+            ? { min: 0, max: 100, now: Math.round(ring * 100), text: progressText }
+            : undefined
         }
         style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
         {ring != null ? (
@@ -48,6 +57,9 @@ export function ImportButton({
         ) : (
           <Icon name="plus" size={24} weight="medium" tintColor="#000" />
         )}
+        {busy && progressCount ? (
+          <BatchCount text={progressCount} color="#fff" background="#000" />
+        ) : null}
       </Pressable>
     </Animated.View>
   );

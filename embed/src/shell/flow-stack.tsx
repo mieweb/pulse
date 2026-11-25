@@ -10,11 +10,16 @@ import {
 import { Alert, BackHandler, StyleSheet, View } from 'react-native';
 import { ScreenStack, ScreenStackItem } from 'react-native-screens';
 
+import type { ClipAnchor } from '@/core/clip-anchor';
 import { ScreenFocusProvider } from '@/core/navigation/focus';
 import { EditorScreen } from '@/features/editor/editor-screen';
 import type { ExportedVideo, ExportPolicy, ExportPrimaryAction } from '@/features/export/contract';
 import { ExportScreen } from '@/features/export/export-screen';
-import type { RecorderCloseResult, RecorderNewDraft } from '@/features/recorder/contract';
+import type {
+  RecorderCloseResult,
+  RecorderEditAt,
+  RecorderNewDraft,
+} from '@/features/recorder/contract';
 import { RecorderScreen } from '@/features/recorder/recorder-screen';
 import { OnDeviceAiSheet } from '@/features/transcription/on-device-ai-sheet';
 import { tallSheetFits } from '@/utils/sheet-fit';
@@ -206,9 +211,9 @@ function FlowScreen({
   // The recorder's exits come after its take is saved and its pending writes are stored, so the
   // library is current: read the draft it names, then move.
   const recorderEdit = useCallback(
-    (id: string, clipId?: string) => {
+    (id: string, at: RecorderEditAt) => {
       controller.observe(id);
-      store.dispatch({ type: 'edit' }, { clipId });
+      store.dispatch({ type: 'edit', at });
     },
     [controller, store],
   );
@@ -233,7 +238,11 @@ function FlowScreen({
     controller.observe();
     store.dispatch({ type: 'export' });
   }, [controller, store]);
-  const editorAddClips = useCallback(() => store.dispatch({ type: 'addClips' }), [store]);
+  // "Record a clip here": a recorder over the editor, its cursor at the editor's add position.
+  const editorAddClips = useCallback(
+    (_id: string, anchor: ClipAnchor) => store.dispatch({ type: 'addClips', anchor }),
+    [store],
+  );
   const exportClose = useCallback(() => store.dispatch({ type: 'back' }), [store]);
   const exportReady = useCallback(
     (video: ExportedVideo) => controller.exportReady(video.draftId),
@@ -269,6 +278,7 @@ function FlowScreen({
           onEdit={recorderEdit}
           onExport={recorderExport}
           onClose={recorderClose}
+          insertAnchor={item.anchor}
         />
       );
     case 'editor':
@@ -276,6 +286,7 @@ function FlowScreen({
         <EditorScreen
           draftId={draftId}
           clipId={item.clipId}
+          anchor={item.anchor}
           onClose={editorClose}
           onExport={editorExport}
           onAddClips={editorAddClips}

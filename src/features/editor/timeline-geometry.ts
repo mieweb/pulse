@@ -71,6 +71,40 @@ export function floorToFrame(ms: number, frameMs: number): number {
   return Math.round((n * frameMs > ms + 1 ? n - 1 : n) * frameMs);
 }
 
+/** Trim handles may reveal hidden frames inside a split half, never its sibling's frames. */
+export function trimSourceBounds(
+  info: {
+    startMs: number;
+    endMs: number;
+    sourceMs: number;
+    frameMs: number;
+    sourceStartMs?: number;
+    sourceEndMs?: number;
+  },
+  side: 1 | 2,
+): { lo: number; hi: number } {
+  'worklet';
+  const start = info.sourceStartMs ?? 0;
+  const end = info.sourceEndMs ?? info.sourceMs;
+  const minimum = Math.min(MIN_CLIP_SOURCE_MS, end - start);
+  return {
+    lo: side === 1 ? start : Math.min(end, ceilToFrame(info.startMs + minimum, info.frameMs)),
+    hi: side === 1 ? Math.max(start, floorToFrame(info.endMs - minimum, info.frameMs)) : end,
+  };
+}
+
+/** The right grip previews the last visible frame, including halves shorter than one frame. */
+export function trimPreviewTarget(
+  info: { slotStartMs: number; sourceStartMs?: number; speed: number; frameMs: number },
+  side: 1 | 2,
+  sourceMs: number,
+): number {
+  'worklet';
+  const start = info.sourceStartMs ?? 0;
+  const frame = side === 1 ? sourceMs : Math.max(start, sourceMs - info.frameMs);
+  return info.slotStartMs + (frame - start) / info.speed;
+}
+
 /** Index of the clip under timeline time `ms` (-1 for an empty timeline). */
 export function clipIndexAt(starts: readonly number[], ms: number): number {
   'worklet';
