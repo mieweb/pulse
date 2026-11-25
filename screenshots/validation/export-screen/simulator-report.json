@@ -1,0 +1,153 @@
+{
+  "date": "2026-11-25",
+  "platform": "iOS26.0 native simulators",
+  "fixture": "12 synthetic animated portrait clips / 0:38; no user media",
+  "automation": "Owned WebDriverAgent sessions; accessibility identifiers/labels/roles and semantic text entry/scroll; no coordinate fallback",
+  "bundles": {
+    "InstalledBaseline": {
+      "mainJsBundleSha256": "12ee3a90d8d18aecdc9123ef75d646427ca1d1c367fe93c158a15f19d017cc3a",
+      "purpose": "Existing working native shell + earlier export implementation; baseline autoplay evidence"
+    },
+    "After": {
+      "mainJsBundleSha256": "30289aa0632ce5c51b5dde1557075179bd9a560a53fac5d2fc9bd6bce587df19",
+      "purpose": "Initial fix; playback/pause/background checks; precedes final Share link busy-handler adjustment only"
+    },
+    "AfterFinal": {
+      "mainJsBundleSha256": "35a325c62bd5329a9f3930ba188f4cf1a96f4bd0abce38209070d3a5a2ecf155",
+      "purpose": "Pre-port final shipping source on predecessor checkout; regenerated export, editor return, manual Play/Pause smoke; not final footer-layout PR proof"
+    },
+    "Harness": {
+      "mainJsBundleSha256": "799e95ceedcf2e0812bba9bccff8722766f7d2a72f262374c552d8883becd283",
+      "purpose": "Pre-port real ExportScreen/PulseCore/ToastProvider/DestinationSelector with synthetic target metadata and callback stand-ins; not final footer-layout PR proof or real upload/send verification"
+    }
+  },
+  "matrix": [
+    {
+      "layout": "iPhone16e390x844",
+      "appearance": "light + visually verified dark",
+      "text": "default",
+      "result": "PASS real screen and pool harness: metadata, preview, applicable actions and Close together; primary742-795, Share565-610 in pool case"
+    },
+    {
+      "layout": "iPhone17ProMax440x956",
+      "appearance": "light + visually verified dark",
+      "text": "default",
+      "result": "PASS pool harness: primary853-906; all ordinary controls together"
+    },
+    {
+      "layout": "iPhoneSE3 375x667",
+      "appearance": "light",
+      "text": "default",
+      "result": "PASS pool harness: primary599-651, Close28-68; all ordinary controls together"
+    },
+    {
+      "layout": "375x667,390x844,440x956",
+      "appearance": "light or verified dark",
+      "text": "system accessibility-extra-extra-extra-large; existing product font caps apply",
+      "result": "PASS pool primary/Close reachable; SE primary595-651; semantic scroll-to-primary succeeded"
+    },
+    {
+      "layout": "390x844",
+      "appearance": "light",
+      "text": "largest system text + keyboard",
+      "result": "PASS use-video harness with name required and1KB warning: Close55-95, primary407-464 above keyboard536. Name entry enabled primary; Use callback closed screen"
+    },
+    {
+      "layout": "440x956",
+      "appearance": "verified dark",
+      "text": "largest system text",
+      "result": "PASS missing synthetic clip error: failure copy, Retry525-582, Close70-110, disabled primary763-820 reachable; original fixture restored"
+    }
+  ],
+  "playback": {
+    "newlyReadyPaused": true,
+    "manualPlayMotion": true,
+    "manualPauseStablePixels": true,
+    "backgroundForegroundRemainsPaused": true,
+    "pixelEvidence": {
+      "ready-paused": {
+        "samePixels": true,
+        "hashes": ["MD5=270a0a0380d0a72a00432eee5d399aa7", "MD5=270a0a0380d0a72a00432eee5d399aa7"]
+      },
+      "manual-playing": {
+        "samePixels": false,
+        "hashes": ["MD5=af69aee4528c6aba5f23250c8acc50f6", "MD5=44d86d0b96cf6017809cfbc8e80628bd"]
+      },
+      "manual-paused": {
+        "samePixels": true,
+        "hashes": ["MD5=c270d92a1cefc7408b5f809ca2e74b67", "MD5=c270d92a1cefc7408b5f809ca2e74b67"]
+      },
+      "background-return": {
+        "samePixels": true,
+        "hashes": ["MD5=943a93087ae4e0b33e0a9ea7d4c713bc", "MD5=943a93087ae4e0b33e0a9ea7d4c713bc"]
+      }
+    },
+    "completionReplayReopen": {
+      "naturalEndPaused": true,
+      "elapsedSeconds": 37.4732242077589,
+      "replayWorks": true,
+      "reopenedPaused": true
+    },
+    "exactFinalSmoke": {
+      "regenerationLoadingObserved": true,
+      "regeneratedPreviewPaused": true,
+      "realEditorToExportPaused": true,
+      "manualPlayPause": true
+    },
+    "shareReturn": "UNVERIFIED: native Share presentation/AX snapshot stalled in reused unsigned simulator shell; owned app terminated to recover. No baseline comparison established cause. Share link completion also not exercised natively.",
+    "audio": "Paused state confirmed via native playing label and stable video frames; no separate audio-output capture."
+  },
+  "limitations": [
+    "Reporter physical phone not used",
+    "No Android native checks",
+    "Pool/use-video harness uses real screen but synthetic targets/callbacks; no actual upload/send delivery test",
+    "VoiceOver spoken announcements and captions overlay interactions not manually tested",
+    "Baseline no-destination layout fit this predecessor checkout; reported clipping was not reproduced there; baseline autoplay was observed"
+  ],
+  "selectedEvidence": [
+    "after-error-dark-largest-text.png",
+    "after-host-keyboard-largest-text.png",
+    "after-iphone-se-upload-light.png",
+    "after-iphone16e-upload-dark-largest-text.png",
+    "after-iphone16e-upload-light.png",
+    "after-iphone17promax-upload-dark.png",
+    "after-regenerated-paused.png",
+    "before-iphone16e-light.png"
+  ],
+  "cleanup": {
+    "small": {
+      "sessionDeleted": true,
+      "sessionFileRemoved": true,
+      "supervisorExited": true,
+      "xcodebuildExited": true,
+      "simulatorShutdown": true,
+      "runnerTermination": "Already absent after owned xcodebuild exited; simctl termination returned found nothing to terminate",
+      "appTerminated": true
+    },
+    "large": {
+      "sessionDeleted": true,
+      "sessionFileRemoved": true,
+      "supervisorExited": true,
+      "xcodebuildExited": true,
+      "simulatorShutdown": true,
+      "runnerTermination": "Already absent after owned xcodebuild exited; simctl termination returned found nothing to terminate",
+      "appTerminated": true
+    },
+    "se": {
+      "sessionDeleted": true,
+      "sessionFileRemoved": true,
+      "supervisorExited": true,
+      "xcodebuildExited": true,
+      "simulatorShutdown": true,
+      "runnerTermination": "Already absent after owned xcodebuild exited; simctl termination returned found nothing to terminate",
+      "appTerminated": true
+    }
+  },
+  "physicalDevices": "No physical-device action, lease, capture, installation or runner. Existing shared simulators were not controlled or mutated.",
+  "sourceProvenance": {
+    "base": "2467627",
+    "changes": "Predecessor checkout plus export fix; top Close layout before port to current main",
+    "finalPrBase": "27e617a",
+    "finalPrFooterNativeValidation": "Pending separate evidence; this report does not certify the final footer layout"
+  }
+}
