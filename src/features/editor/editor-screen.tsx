@@ -155,7 +155,7 @@ function usePlaybackSessionOnReturn() {
 /**
  * The timeline editor: the draft playing as it will export (<PulsePreview>), a strip of its
  * clips under a centre playhead, and a bottom bar of tools. Every edit applies at once (no Save),
- * with Close, undo/redo and Export in a bottom command row; trims snap to source frames as the
+ * with Close, undo/redo and Export in the bottom toolbar; trims snap to source frames as the
  * engine does.
  *
  * The bottom bar offers Split directly; Edit and Captions open a mode until its ✓.
@@ -1086,9 +1086,15 @@ export function EditorScreen({
         )}
 
         <Pressable
-          // One height whether it holds the tools or the hint, so selecting never moves the layout.
-          // The command row owns the home inset; while typing these tools sit above the keyboard.
-          style={styles.tools}
+          // One shared row for commands and tools; caption entry replaces it above the keyboard.
+          // Apply the home inset once, without a separate row or extra vertical padding.
+          style={[
+            styles.tools,
+            {
+              height: TOOLBAR_HEIGHT + (typing ? 0 : insets.bottom),
+              paddingBottom: typing ? 0 : insets.bottom,
+            },
+          ]}
           onPress={deselect}
           accessible={false}>
           {typing ? (
@@ -1101,100 +1107,98 @@ export function EditorScreen({
                 typed.current = t;
               }}
             />
-          ) : captionTools ? (
-            <CaptionTools
-              lines={lines}
-              timeMs={values.timeMs}
-              hasWord={selWord >= 0}
-              edited={captionsEdited}
-              onDone={() => setMode('main')}
-              onEdit={editCaption}
-              onDelete={deleteCaption}
-              onSplit={splitCaption}
-              onMerge={mergeCaption}
-              onModel={onOpenModelSheet}
-              onReset={resetCaptions}
-            />
-          ) : !sel ? (
-            <MainToolbar
-              canEdit={clips.length > 0 && !splitBusy && !history.busy}
-              canSplit={canSplit && !add.busy && !splitBusy && !history.busy}
-              onSplit={split}
-              onEdit={() => {
-                haptics.tap();
-                const i = clipIndexAt(layout.starts, ctl.lastMs);
-                enterEdit(i);
-                zoomToClip(i);
-              }}
-              captionsBusy={captionsBusy}
-              onCaptions={openCaptions}
-              tip={
-                captionsTip.mounted && (
-                  <TipAnchor
-                    id="captions"
-                    shown={captionsTip.shown}
-                    onDismiss={captionsTip.dismiss}
-                  />
-                )
-              }
-            />
-          ) : tools === 'speed' ? (
-            <SpeedRow
-              speeds={speedMenu(customSpeeds)}
-              speed={sel.edit.speed}
-              onPick={(s) => edit('speed', (e) => ({ ...e, speed: s }))}
-              onDone={() => setTools('clip')}
-            />
           ) : (
-            <ClipToolbar
-              muted={sel.edit.muted}
-              speed={sel.edit.speed}
-              editable={sel.editable}
-              edited={sel.canReset}
-              canSplit={canSplit && !add.busy}
-              busy={splitBusy || history.busy}
-              onSplit={split}
-              onFlip={() => edit(null, flippedEdit)}
-              onRotate={() => edit('rotate', rotated)}
-              onCrop={startCrop}
-              onMute={() => edit(null, (e) => ({ ...e, muted: !e.muted }))}
-              onSpeed={() => setTools('speed')}
-              onReset={reset}
-              onDelete={remove}
-              onDone={() => setMode('main')}
-            />
+            <View style={styles.toolbar}>
+              <CommandButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
+              <View style={styles.contextTools}>
+                {captionTools ? (
+                  <CaptionTools
+                    lines={lines}
+                    timeMs={values.timeMs}
+                    hasWord={selWord >= 0}
+                    edited={captionsEdited}
+                    onDone={() => setMode('main')}
+                    onEdit={editCaption}
+                    onDelete={deleteCaption}
+                    onSplit={splitCaption}
+                    onMerge={mergeCaption}
+                    onModel={onOpenModelSheet}
+                    onReset={resetCaptions}
+                  />
+                ) : !sel ? (
+                  <MainToolbar
+                    canEdit={clips.length > 0 && !splitBusy && !history.busy}
+                    canSplit={canSplit && !add.busy && !splitBusy && !history.busy}
+                    onSplit={split}
+                    onEdit={() => {
+                      haptics.tap();
+                      const i = clipIndexAt(layout.starts, ctl.lastMs);
+                      enterEdit(i);
+                      zoomToClip(i);
+                    }}
+                    captionsBusy={captionsBusy}
+                    onCaptions={openCaptions}
+                    tip={
+                      captionsTip.mounted && (
+                        <TipAnchor
+                          id="captions"
+                          shown={captionsTip.shown}
+                          onDismiss={captionsTip.dismiss}
+                        />
+                      )
+                    }
+                  />
+                ) : tools === 'speed' ? (
+                  <SpeedRow
+                    speeds={speedMenu(customSpeeds)}
+                    speed={sel.edit.speed}
+                    onPick={(s) => edit('speed', (e) => ({ ...e, speed: s }))}
+                    onDone={() => setTools('clip')}
+                  />
+                ) : (
+                  <ClipToolbar
+                    muted={sel.edit.muted}
+                    speed={sel.edit.speed}
+                    editable={sel.editable}
+                    edited={sel.canReset}
+                    canSplit={canSplit && !add.busy}
+                    busy={splitBusy || history.busy}
+                    onSplit={split}
+                    onFlip={() => edit(null, flippedEdit)}
+                    onRotate={() => edit('rotate', rotated)}
+                    onCrop={startCrop}
+                    onMute={() => edit(null, (e) => ({ ...e, muted: !e.muted }))}
+                    onSpeed={() => setTools('speed')}
+                    onReset={reset}
+                    onDelete={remove}
+                    onDone={() => setMode('main')}
+                  />
+                )}
+              </View>
+              {/* Keep command slots fixed when disabled, including an empty draft awaiting Redo. */}
+              <CommandButton
+                icon="arrow.uturn.backward"
+                label="Undo"
+                onPress={undo}
+                disabled={!history.canUndo}
+                testID="editor.undo"
+              />
+              <CommandButton
+                icon="arrow.uturn.forward"
+                label="Redo"
+                onPress={redo}
+                disabled={!history.canRedo}
+                testID="editor.redo"
+              />
+              <ExportButton
+                onPress={openExport}
+                disabled={clips.length === 0}
+                testID="editor.export"
+                compact
+              />
+            </View>
           )}
         </Pressable>
-
-        {/* Global commands stay put through tool modes, including an empty draft awaiting Redo.
-            Caption entry uses its own Cancel/Done directly above the keyboard instead. */}
-        {!typing && (
-          <Pressable
-            style={[styles.commands, { paddingBottom: insets.bottom + 4 }]}
-            onPress={deselect}
-            accessible={false}>
-            <CommandButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
-            <CommandButton
-              icon="arrow.uturn.backward"
-              label="Undo"
-              onPress={undo}
-              disabled={!history.canUndo}
-              testID="editor.undo"
-            />
-            <CommandButton
-              icon="arrow.uturn.forward"
-              label="Redo"
-              onPress={redo}
-              disabled={!history.canRedo}
-              testID="editor.redo"
-            />
-            <ExportButton
-              onPress={openExport}
-              disabled={clips.length === 0}
-              testID="editor.export"
-            />
-          </Pressable>
-        )}
 
         {cropping && cropClip && (
           <CropEditor
@@ -1217,14 +1221,15 @@ export function EditorScreen({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  commands: {
-    paddingHorizontal: 12,
-    paddingTop: 4,
+  toolbar: {
+    height: TOOLBAR_HEIGHT,
+    paddingHorizontal: 4,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
+    gap: 4,
   },
+  contextTools: { flex: 1, minWidth: 0 },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
   track: { height: STRIP_HEIGHT },
   // Centred on the clip tiles, which both views draw under the ruler.
@@ -1253,5 +1258,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tools: { height: TOOLBAR_HEIGHT + 16, paddingBottom: 8, justifyContent: 'center' },
+  tools: { justifyContent: 'center' },
 });

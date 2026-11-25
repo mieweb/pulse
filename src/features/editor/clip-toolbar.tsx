@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 
 import { Icon, type IconName } from '@/components/icon';
-import { Accent } from '@/constants/theme';
+import { Accent, MaxTextScale } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 import { speedLabel } from './timeline-geometry';
@@ -44,7 +44,6 @@ function ToolButton({ tool }: { tool: Tool }) {
       accessibilityRole="button"
       accessibilityLabel={tool.accessibilityLabel ?? tool.label}
       accessibilityState={{ disabled: !!tool.disabled, busy: !!tool.busy }}
-      hitSlop={4}
       style={({ pressed }) => [
         styles.tool,
         tool.disabled && styles.disabled,
@@ -54,13 +53,18 @@ function ToolButton({ tool }: { tool: Tool }) {
         {tool.busy ? (
           <ActivityIndicator size="small" color={color} />
         ) : tool.text ? (
-          <Text style={[styles.glyphText, { color }]}>{tool.text}</Text>
+          <Text style={[styles.glyphText, { color }]} maxFontSizeMultiplier={1.3}>
+            {tool.text}
+          </Text>
         ) : (
           tool.icon && <Icon name={tool.icon} size={20} weight="medium" tintColor={color} />
         )}
         {tool.tip}
       </View>
-      <Text style={[styles.label, { color }]} numberOfLines={1}>
+      <Text
+        style={[styles.label, { color }]}
+        numberOfLines={1}
+        maxFontSizeMultiplier={MaxTextScale}>
         {tool.label}
       </Text>
     </Pressable>
@@ -158,7 +162,6 @@ function DoneButton({ label, onPress }: { label: string; onPress: () => void }) 
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
-      hitSlop={6}
       style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
       <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.text} />
     </Pressable>
@@ -194,7 +197,9 @@ export function SpeedRow({
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
               style={[styles.chip, { backgroundColor: on ? theme.text : theme.backgroundElement }]}>
-              <Text style={[styles.chipText, { color: on ? theme.background : theme.text }]}>
+              <Text
+                style={[styles.chipText, { color: on ? theme.background : theme.text }]}
+                maxFontSizeMultiplier={MaxTextScale}>
                 {speedLabel(s)}
               </Text>
             </Pressable>
@@ -240,10 +245,15 @@ export function MainToolbar({
     },
   ];
   return (
-    <View style={[styles.row, styles.rowStart]}>
-      {tools.map((t) => (
-        <ToolButton key={t.key} tool={t} />
-      ))}
+    <View style={styles.row}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.mainTools}>
+        {tools.map((t) => (
+          <ToolButton key={t.key} tool={t} />
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -331,7 +341,6 @@ export function CaptionTextBar({
         onPress={onCancel}
         accessibilityRole="button"
         accessibilityLabel="Cancel"
-        hitSlop={6}
         style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
         <Icon name="xmark" size={16} weight="semibold" tintColor={theme.text} />
       </Pressable>
@@ -354,7 +363,6 @@ export function CaptionTextBar({
         onPress={() => onDone(text)}
         accessibilityRole="button"
         accessibilityLabel="Done"
-        hitSlop={6}
         style={[styles.done, styles.doneEnd, { backgroundColor: theme.text }]}>
         <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.background} />
       </Pressable>
@@ -370,32 +378,39 @@ const styles = StyleSheet.create({
     justifyContent: 'space-evenly',
     paddingHorizontal: 4,
   },
-  rowStart: { justifyContent: 'flex-start', paddingHorizontal: 12, gap: 16 },
+  mainTools: { flexGrow: 1, alignItems: 'center', gap: 4 },
   scrollTools: { flexGrow: 1, justifyContent: 'space-evenly', alignItems: 'center' },
   input: { flex: 1, height: 40, borderRadius: 20, paddingHorizontal: 16, fontSize: 16 },
   doneEnd: { marginRight: 0, marginLeft: 8 },
   // Each tool's own size (not a stretched share of the row), so the space between tools is
   // off-tool: a tap there lets the selection go instead of firing a tool.
-  tool: { minWidth: 44, alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 2 },
+  tool: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
   disabled: { opacity: 0.35 },
   pressed: { opacity: 0.6 },
   glyph: { height: 24, justifyContent: 'center', alignItems: 'center' },
   glyphText: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
   label: { fontSize: 11, fontWeight: '500' },
   done: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
   },
   chips: { gap: 8, alignItems: 'center', paddingRight: 8 },
   chip: {
-    height: 34,
+    minHeight: 44,
     minWidth: 52,
     paddingHorizontal: 12,
-    borderRadius: 17,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },

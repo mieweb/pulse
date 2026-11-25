@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 
+import { Icon } from '@/components/icon';
 import { Accent, ButtonHeight, Opacity, Radius } from '@/constants/theme';
 
 const HEIGHT = 44;
@@ -10,11 +11,14 @@ export function ExportButton({
   onPress,
   disabled,
   testID,
+  compact = false,
 }: {
   onPress: () => void;
   disabled?: boolean;
   /** For UI automation. */
   testID?: string;
+  /** An icon-only, full-size target when the action shares an editing toolbar. */
+  compact?: boolean;
 }) {
   return (
     <Pressable
@@ -26,11 +30,16 @@ export function ExportButton({
       testID={testID}
       style={({ pressed }) => [
         styles.button,
+        compact && styles.compact,
         disabled ? styles.disabled : pressed && styles.pressed,
       ]}>
-      <Text style={styles.text} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-        Export
-      </Text>
+      {compact ? (
+        <Icon name="square.and.arrow.up" size={20} weight="semibold" tintColor="#fff" />
+      ) : (
+        <Text style={styles.text} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          Export
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -46,6 +55,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pressed: { opacity: Opacity.pressed },
+  compact: { width: HEIGHT, paddingHorizontal: 0 },
   disabled: { opacity: Opacity.disabled },
   text: { color: '#fff', fontSize: 15, fontWeight: '600' },
 });
