@@ -70,7 +70,7 @@ import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
-import { keepEmptyEditorOpen } from '@/features/editor/editor-history';
+import { keepEmptyEditorOpen, shouldLeaveEmptyEditor } from '@/features/editor/editor-history';
 import { useCanSplitAtPlayhead, usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { clipSplitAnchor } from '@/features/editor/clip-split';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
@@ -179,6 +179,7 @@ function usePlaybackSessionOnReturn() {
  */
 export function EditorScreen({
   draftId,
+  allowEmpty = false,
   clipId,
   anchor: openAnchor,
   view: openView,
@@ -200,13 +201,13 @@ export function EditorScreen({
   usePlaybackSessionOnReturn();
   const {
     data: captionRows,
-    updatedAt: captionsUpdatedAt,
+    updatedAt: draftRowUpdatedAt,
     error: captionError,
   } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionYValue = captionRows[0]?.captionY;
   const history = useEditorHistory(
     draftId,
-    draft.ready && captionsUpdatedAt !== undefined && captionError === undefined,
+    draft.ready && draftRowUpdatedAt !== undefined && captionError === undefined,
     clips,
     draft.setValue,
     draft.reorder,
@@ -326,9 +327,10 @@ export function EditorScreen({
       .catch(() => {});
   }, []);
 
-  // Leave an empty draft once, except when undo retains clips for redo. Keep that session through
-  // database/live-query timing gaps until restored clips reach the screen. Only close while on
-  // top: otherwise a recorder over this editor would be closed instead.
+  // The standalone library keeps persisted empty drafts editable through Add. Other callers
+  // leave once empty, except when history retains clips for Redo. Wait for the draft row as well
+  // as its clips so a loading query cannot close a valid empty draft. Only close while on top:
+  // otherwise a recorder over this editor would be closed instead.
   const focused = useScreenFocused();
   const left = useRef(false);
   const retainedEmpty = useRef(false);
@@ -338,11 +340,27 @@ export function EditorScreen({
       clips.length,
       history.keepEmptyOpen,
     );
-    if (left.current || !focused || !draft.loaded || clips.length > 0 || retainedEmpty.current)
+    // Drizzle can retain an earlier error after a successful read; updatedAt marks usable rows.
+    const draftExists = draftRowUpdatedAt === undefined ? undefined : captionRows.length > 0;
+    if (
+      left.current ||
+      !focused ||
+      !draft.loaded ||
+      !shouldLeaveEmptyEditor(clips.length, retainedEmpty.current, allowEmpty, draftExists)
+    )
       return;
     left.current = true;
     onClose();
-  }, [focused, draft.loaded, clips.length, history.keepEmptyOpen, onClose]);
+  }, [
+    focused,
+    draft.loaded,
+    clips.length,
+    history.keepEmptyOpen,
+    allowEmpty,
+    captionRows.length,
+    draftRowUpdatedAt,
+    onClose,
+  ]);
 
   // Opened on a clip or at a boundary: the playhead starts there. Placed once the clips are known,
   // before the strip or row is shown (they stay hidden until then, on the UI thread, so no frame
@@ -351,7 +369,12 @@ export function EditorScreen({
   const placed = useSharedValue(opensPlaced ? 0 : 1);
   const placedOnce = useRef(!opensPlaced);
   useLayoutEffect(() => {
-    if (placedOnce.current || clips.length === 0) return;
+    if (placedOnce.current) return;
+    if (clips.length === 0) {
+      // An allowed empty draft still needs its Add button, even with an opening anchor/clip id.
+      if (allowEmpty && draft.loaded) placed.set(1);
+      return;
+    }
     placedOnce.current = true;
     const ids = clips.map((c) => c.id);
     const i = clipId ? ids.indexOf(clipId) : -1;
@@ -364,7 +387,17 @@ export function EditorScreen({
       : timeAtAnchor(openAnchor ?? END, ids, layout.starts, layout.totalMs);
     ctl.place(Math.min(at, Math.max(0, layout.totalMs - 1)));
     placed.set(1);
-  }, [clips, clipId, openAnchor, ctl, layout.starts, layout.totalMs, placed]);
+  }, [
+    clips,
+    clipId,
+    openAnchor,
+    ctl,
+    layout.starts,
+    layout.totalMs,
+    placed,
+    allowEmpty,
+    draft.loaded,
+  ]);
   // The scale the timeline opens at, once the clips are known: the clip it was opened on fitted
   // (`clipZoom`, ready to trim), or the whole draft when it's short (`draftZoom`).
   const openedZoom = useRef(false);

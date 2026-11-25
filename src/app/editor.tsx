@@ -42,6 +42,7 @@ export default function EditorRoute() {
     <ScreenFocusProvider focused={focused}>
       <EditorScreen
         draftId={draftId}
+        allowEmpty
         clipId={clipId}
         anchor={openAnchor}
         view={asView(view)}
