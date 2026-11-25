@@ -48,6 +48,7 @@ jest.mock('expo-crypto', () => {
   let n = 0;
   return { randomUUID: () => `split-draft-${++n}` };
 });
+jest.mock('@mieweb/pulse-editor', () => ({}), { virtual: true });
 
 /* eslint-disable import/first -- native stand-ins must load before the database */
 import {
@@ -62,12 +63,17 @@ import { env } from '@/test-support/expo-fs-node';
 import { setClipWriteBarrier } from '@/core/draft-write-barrier';
 // eslint-disable-next-line import/no-restricted-paths -- exercise the real DB/history integration
 import { createEditorHistory } from '@/features/editor/editor-history-store';
+// eslint-disable-next-line import/no-restricted-paths -- verify caption projection after a stored cut
+import { composeCaptions } from '@/features/transcription/compose';
+// eslint-disable-next-line import/no-restricted-paths -- verify the real native export contract
+import { toMergeClip } from '@/features/export/editor-merge';
 import { clipRender, effMs, parseEdit, renderKey } from '@/utils/segment-window';
 import * as video from '@/utils/video';
 import { expoDb } from './client';
 import {
   addSegment,
   createDraft,
+  cutSegmentRange,
   deleteSegment,
   dropTakenOut,
   insertSegments,
@@ -82,6 +88,8 @@ import {
   type TakenOutClips,
 } from './drafts';
 import type { Segment } from './schema';
+import { getClipTranscripts } from './clip-transcripts';
+import { parsePersistedHistory } from './persisted-history';
 /* eslint-enable import/first */
 
 const conn = expoDb as unknown as {
@@ -194,7 +202,10 @@ const presentRows = (rows: readonly Segment[]) => ({
 });
 
 /** Run actual row mutations for both addition steps and the intervening edit snapshots. */
-function databaseHistory(draftId: string) {
+function databaseHistory(
+  draftId: string,
+  initial?: Parameters<typeof createEditorHistory>[0]['initial'],
+) {
   const writes: Promise<void>[] = [];
   const flush = async () => {
     await Promise.all(writes.splice(0));
@@ -202,6 +213,7 @@ function databaseHistory(draftId: string) {
   const failed = jest.fn();
   const takeOut = jest.fn<typeof takeOutSegments>(takeOutSegments);
   const history = createEditorHistory({
+    initial,
     flush,
     takeOut,
     restore: restoreSegments,
@@ -229,6 +241,135 @@ function databaseHistory(draftId: string) {
     },
   };
 }
+
+describe('transcript-driven source cut', () => {
+  it('cuts spoken media, projects captions and exports the same retained ranges', async () => {
+    const t = await setup();
+    const words = [
+      { text: 'before', t0: 100, t1: 140 },
+      { text: 'remove', t0: 150, t1: 200 },
+      { text: 'after', t0: 210, t1: 250 },
+    ];
+    const captionEdit = JSON.stringify({ file: t.video, words });
+    conn.runSync('UPDATE segments SET caption_edit = ? WHERE id = ?', captionEdit, t.a);
+    conn.runSync(
+      'UPDATE clip_transcripts SET words = ? WHERE segment_id = ?',
+      JSON.stringify(words),
+      t.a,
+    );
+    const original = (await segmentsForDraft(t.d))[0];
+    const receipt = await cutSegmentRange(t.d, {
+      clipId: t.a,
+      sourceKey: renderKey(original),
+      startMs: 1500,
+      endMs: 2000,
+      rightId: `${t.d}-speech-right`,
+      fps: 30,
+    });
+    const applied = await segmentsForDraft(t.d);
+    expect(applied.map((row) => row.id)).toEqual([t.a, receipt.rightId, t.b]);
+    expect(clipRender(applied[0])).toMatchObject({
+      file: t.video,
+      inMs: 500,
+      outMs: 1500,
+      speed: 2,
+    });
+    expect(clipRender(applied[1])).toMatchObject({
+      file: t.video,
+      inMs: 2000,
+      outMs: 3500,
+      speed: 2,
+    });
+    expect(applied.slice(0, 2).reduce((ms, row) => ms + effMs(row), 0)).toBe(effMs(original) - 250);
+    expect(applied.slice(0, 2).map(toMergeClip)).toEqual([
+      expect.objectContaining({
+        uri: expect.stringContaining(t.video),
+        startMs: 500,
+        endMs: 1500,
+        speed: 2,
+      }),
+      expect.objectContaining({
+        uri: expect.stringContaining(t.video),
+        startMs: 2000,
+        endMs: 3500,
+        speed: 2,
+      }),
+    ]);
+    const captions = composeCaptions(
+      applied,
+      await getClipTranscripts(
+        applied.map((row) => row.id),
+        'base',
+      ),
+    );
+    expect(captions.lines.flatMap((line) => line.words?.map((word) => word.text) ?? [])).toEqual([
+      'before',
+      'after',
+    ]);
+    expect(transcript(receipt.rightId)).toEqual(transcript(t.a));
+    expect(bytes(t.video)).toBe('original video bytes');
+
+    // Restore the operation from the on-disk format rather than relying on the returned receipt.
+    const stored = conn.getFirstSync<{ value: string }>(
+      'SELECT undo_history AS value FROM drafts WHERE id = ?',
+      t.d,
+    );
+    const persisted = parsePersistedHistory(stored?.value, t.d)!;
+    expect(persisted.past.at(-1)).toMatchObject({ kind: 'added', ids: [], splits: [receipt] });
+    const h = databaseHistory(t.d, {
+      past: persisted.past,
+      future: persisted.future,
+      lastOp: null,
+    });
+    try {
+      for (let cycle = 0; cycle < 2; cycle++) {
+        h.history.undo(await h.present(), h.apply);
+        await h.settled();
+        expect((await segmentsForDraft(t.d))[0]).toEqual(original);
+        expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a, t.b]);
+        h.history.redo(await h.present(), h.apply);
+        await h.settled();
+        expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(applied));
+      }
+      expect(h.failed).not.toHaveBeenCalled();
+    } finally {
+      h.history.dispose();
+    }
+  });
+
+  it('rejects a changed source and edge/sliver selections without changing rows or history', async () => {
+    const t = await setup();
+    const request = {
+      clipId: t.a,
+      sourceKey: renderKey(t.before),
+      startMs: 1500,
+      endMs: 2000,
+      rightId: `${t.d}-right`,
+      fps: 30,
+    };
+    await setClipEdit(t.a, { ...edit, speed: 1 });
+    const before = await segmentsForDraft(t.d);
+    const saved = conn.getFirstSync(
+      'SELECT last_clip_number, undo_history FROM drafts WHERE id = ?',
+      t.d,
+    );
+    await expect(cutSegmentRange(t.d, request)).rejects.toThrow(/changed/);
+    for (const [startMs, endMs] of [
+      [500, 1000],
+      [510, 1000],
+      [1000, 3500],
+      [1000, 1001],
+    ]) {
+      await expect(
+        cutSegmentRange(t.d, { ...request, sourceKey: renderKey(before[0]), startMs, endMs }),
+      ).rejects.toThrow(/both sides/);
+    }
+    expect(await segmentsForDraft(t.d)).toEqual(before);
+    expect(
+      conn.getFirstSync('SELECT last_clip_number, undo_history FROM drafts WHERE id = ?', t.d),
+    ).toEqual(saved);
+  });
+});
 
 describe('standalone split at playhead', () => {
   it.each(['standalone', 'split + insert'])(

@@ -29,6 +29,7 @@ import {
   type ParsedEdit,
 } from '@/utils/segment-window';
 import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
+import { cutSegmentAt } from '@/utils/transcript-cut';
 import { isCaptionsOff, parseCaptionEdit, setCaptionsOff } from './captions';
 import { db, expoDb } from './client';
 import {
@@ -397,12 +398,45 @@ export async function splitSegment(draftId: string, anchor: ClipAnchor): Promise
   return (await commitSegments(draftId, anchor, [], []))!;
 }
 
-/** Shared transaction for additions (possibly splitting) and an explicit split without media. */
+/**
+ * Remove speech inside one beat, retaining the source ranges on either side. Like a split, the
+ * receipt reverses the entire operation in one Undo/Redo step without rewriting source media.
+ */
+export async function cutSegmentRange(
+  draftId: string,
+  cut: {
+    clipId: string;
+    sourceKey: string;
+    startMs: number;
+    endMs: number;
+    rightId: string;
+    fps: number;
+  },
+): Promise<SplitReceipt> {
+  return (await commitSegments(
+    draftId,
+    {
+      before: cut.clipId,
+      split: {
+        sourceMs: cut.startMs,
+        sourceKey: cut.sourceKey,
+        rightId: cut.rightId,
+        offsetMs: 0,
+      },
+    },
+    [],
+    [],
+    { endMs: cut.endMs, fps: cut.fps },
+  ))!;
+}
+
+/** Shared transaction for additions, standalone splits and bounded transcript cuts. */
 async function commitSegments(
   draftId: string,
   anchorOrGet: ClipAnchor | (() => ClipAnchor),
   newSegments: readonly NewSegment[],
   transcripts: readonly (typeof clipTranscripts.$inferInsert)[],
+  cut?: { endMs: number; fps: number },
 ): Promise<SplitReceipt | undefined> {
   await beginClipMutation(draftId);
   await waitForClipWrites();
@@ -446,7 +480,9 @@ async function commitSegments(
         if (renderKey(original) !== point.sourceKey) {
           throw new Error('The clip at the insertion point changed. Choose the position again.');
         }
-        halves = splitSegmentAt(original, point.sourceMs, point.rightId);
+        halves = cut
+          ? cutSegmentAt(original, point.sourceMs, cut.endMs, point.rightId, cut.fps)
+          : splitSegmentAt(original, point.sourceMs, point.rightId);
         const order = tx
           .select({ id: segments.id })
           .from(segments)

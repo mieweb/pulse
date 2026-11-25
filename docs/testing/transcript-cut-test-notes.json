@@ -1,0 +1,12 @@
+{
+  "version": "2.7.0",
+  "date": "2026-11-25",
+  "notes": [
+    "Transcript cut test build: open an existing project in Edit, then Captions. Use the lower Previous word and Next word buttons to choose a word. Its text and position appear above Cut speech.",
+    "Tap Cut speech to remove that word's recorded audio and video. The timeline closes the gap, and captions follow the new timing. Undo restores the whole beat; Redo reapplies the cut.",
+    "Close and reopen the project, then fully restart Pulse. The cut and its Undo/Redo should survive. Export should contain the same shortened sequence you preview.",
+    "Edit changes caption text; Hide word removes only the displayed caption. Cut speech changes the recording. Try these on a spare project so their effects are easy to compare.",
+    "First-pass limits: one timed word inside one beat, with video remaining on both sides. Boundary words and whole-beat removal are disabled. Sentence selection, moving passages and automatic audio crossfades follow later.",
+    "Simulator verification covers the deterministic constant-frame-rate demo. Actual thumb reach in either hand, Android, variable-frame-rate footage and natural speech cut quality still need verification."
+  ]
+}

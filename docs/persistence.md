@@ -47,6 +47,15 @@ Their `editState` includes a `baseWindow` source interval: trim handles and Rese
 half. Reset clears transforms and speed while preserving this interval. Splitting a legacy baked
 clip uses its effective baked file as the halves' source; the original row is retained for Undo.
 
+**Cut speech** in Captions uses the same transaction and history receipt to remove one selected
+word's source interval. Previous/Next word buttons provide a native accessible selection path.
+The kept ranges share the unchanged media file, retain effects and caption corrections, and have
+separate `baseWindow` bounds so Reset cannot reveal the removed speech. Source word timing is
+converted from centiseconds to milliseconds and snapped to the probed source frame rate. This
+first pass requires at least one frame on each side of the cut; edge/whole-beat cuts are disabled.
+Caption **Edit** and **Hide word** continue to change captions only. Preview and export consume
+the saved kept ranges, and one Undo/Redo restores/reapplies the cut across reopening and transfer.
+
 One Undo step owns a Timeline split and insertion together. Undo takes the inserted clips and
 halves out and restores the unsplit original in one transaction; Redo restores the applied rows,
 including their edits, captions and transcripts. Media needed by either form stays held while a

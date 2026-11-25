@@ -27,7 +27,7 @@ import { END, timeAtAnchor } from '@/core/clip-anchor';
 import { useScreenFocused, useScreenFocusEffect } from '@/core/navigation/focus';
 import Sortable from 'react-native-sortables';
 
-import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
+import { CaptionStatus, CaptionTools, CaptionWordPicker } from '@/features/editor/caption-tools';
 import { ADD_SIZE, EditorAddMenu } from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
 import { CommandButton, ViewSwitcher } from '@/features/editor/editor-controls';
@@ -63,7 +63,7 @@ import {
   timelineLayout,
 } from '@/features/editor/timeline-geometry';
 import { captionYQuery, setCaptionY } from '@/db/captions';
-import { allSegments, splitSegment } from '@/db/drafts';
+import { allSegments, cutSegmentRange, splitSegment } from '@/db/drafts';
 import { pruneFrameCache } from '@/features/editor/filmstrip';
 import { toMergeClip } from '@/features/export/editor-merge';
 import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
@@ -105,6 +105,7 @@ import { haptics } from '@/utils/haptics';
 import { userMessage } from '@/utils/user-message';
 import { TILE_HEIGHT } from '@/features/editor/clip-tile';
 import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
+import { interiorCutWindow } from '@/utils/transcript-cut';
 
 import type { EditorScreenProps } from './contract';
 
@@ -229,6 +230,8 @@ export function EditorScreen({
   // last switched to, remembered across sessions (Clips the first time).
   const [view, setView] = useState<EditorView>(() => getEditorView() ?? openView ?? 'clips');
   const [tools, setTools] = useState<'clip' | 'speed'>('clip');
+  const splitting = useRef(false);
+  const [splitBusy, setSplitBusy] = useState(false);
   // Each editor opens the timeline at its usual scale (a pinch's scale is kept across views).
   useState(resetTimelineZoom);
   // The bottom bar: the main tools, edit mode (the tools of the clip under the playhead) or the
@@ -310,6 +313,7 @@ export function EditorScreen({
     useCallback(() => {
       if (!cropping && !typing && tools === 'clip' && mode === 'main') return;
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (splitBusy) return true;
         if (cropping) setCropping(null);
         else if (typing) setTyping(null);
         else if (tools !== 'clip') setTools('clip');
@@ -317,7 +321,7 @@ export function EditorScreen({
         return true;
       });
       return () => sub.remove();
-    }, [cropping, typing, tools, mode]),
+    }, [cropping, typing, tools, mode, splitBusy]),
   );
 
   // Once per app run: the filmstrip's disk cache keeps only frames of files a clip still plays.
@@ -626,7 +630,7 @@ export function EditorScreen({
     void flushDraftWrites().then(go);
   };
   const openExport = () => {
-    if (clips.length > 0) openOver(() => onExport(draftId));
+    if (clips.length > 0 && !splitting.current) openOver(() => onExport(draftId));
   };
 
   // --- Adding clips (the "+") ---------------------------------------------------------------
@@ -654,8 +658,6 @@ export function EditorScreen({
   });
   const { screen, screenLive } = add;
 
-  const splitting = useRef(false);
-  const [splitBusy, setSplitBusy] = useState(false);
   /** Split the current source window without adding media; one history step rejoins it. */
   const split = () => {
     if (splitting.current || history.busy || add.busy) return;
@@ -827,6 +829,73 @@ export function EditorScreen({
       shown.map((l) => l.from),
       shown.length ? shown[shown.length - 1].to : 0,
     );
+  };
+
+  // Use the selected word's source timing, never its composed (trimmed/speed-adjusted)
+  // position. The first pass keeps footage on both sides, sharing the existing split receipt.
+  const speechSegment = captionTools && picked ? segmentOf(picked.clipId) : undefined;
+  const speechClip = speechSegment && clips.find((c) => c.id === speechSegment.id);
+  const speechWord =
+    speechSegment && picked
+      ? clipWords(speechSegment, captions.clipRows)?.words[picked.i]
+      : undefined;
+  const speechFps = speechClip && fpsOf(speechClip.uri);
+  const speechWindow =
+    speechSegment && speechWord && speechFps && selWord >= 0
+      ? interiorCutWindow(
+          clipRender(speechSegment),
+          speechWord.t0 * 10,
+          speechWord.t1 * 10,
+          speechFps,
+        )
+      : null;
+  const speechCut =
+    speechClip && speechWord && speechFps && speechWindow
+      ? { clip: speechClip, word: speechWord, fps: speechFps, window: speechWindow }
+      : null;
+
+  const cutSpeech = () => {
+    if (!speechCut || splitting.current || history.busy || add.busy) return;
+    const { clip, word, fps, window } = speechCut;
+    const cutTimeMs =
+      (layout.starts[clips.findIndex((c) => c.id === clip.id)] ?? 0) +
+      (window.startMs - clip.merge.startMs) / clip.merge.speed;
+    ctl.pause();
+    splitting.current = true;
+    setSplitBusy(true);
+    haptics.tap();
+    const key = randomUUID();
+    void (async () => {
+      try {
+        await history.beginBatch(key);
+        const receipt = await cutSegmentRange(draftId, {
+          clipId: clip.id,
+          sourceKey: clip.sourceKey,
+          startMs: word.t0 * 10,
+          endMs: word.t1 * 10,
+          rightId: randomUUID(),
+          fps,
+        });
+        history.recordAdded([], [receipt]);
+        letGo();
+        ctl.seekTo(cutTimeMs);
+        showToast({
+          kind: 'success',
+          title: `Cut “${word.text}” from video`,
+          message: 'Undo restores the audio, video and captions.',
+        });
+      } catch (error) {
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t cut the word',
+          message: userMessage(error, 'Select a word inside the beat and try again.', 'cut speech'),
+        });
+      } finally {
+        history.endBatch(key);
+        splitting.current = false;
+        setSplitBusy(false);
+      }
+    })();
   };
   /** Store a clip's caption words, in the file it plays (one undo step). */
   const saveCaptionWords = (clipId: string, words: CaptionWord[]) => {
@@ -1119,6 +1188,26 @@ export function EditorScreen({
           </View>
         )}
 
+        {captionTools && !typing && (
+          <CaptionWordPicker
+            lines={lines}
+            picked={picked}
+            timeMs={values.timeMs}
+            busy={splitBusy || history.busy || add.busy}
+            canCutSpeech={!!speechCut}
+            onPick={(lineIndex, wordIndex) => {
+              const line = lines[lineIndex];
+              const word = line?.words?.[wordIndex];
+              if (!word) return;
+              ctl.pause();
+              setPicked({ clipId: line.clipId, i: line.from + wordIndex });
+              zoomToCaption(lineIndex, wordIndex);
+              ctl.seekTo(word.t0 * 10);
+            }}
+            onCutSpeech={cutSpeech}
+          />
+        )}
+
         <Pressable
           // One shared row for commands and tools; caption entry replaces it above the keyboard.
           // Apply the home inset once, without a separate row or extra vertical padding.
@@ -1143,13 +1232,20 @@ export function EditorScreen({
             />
           ) : (
             <View style={styles.toolbar}>
-              <CommandButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
+              <CommandButton
+                icon="xmark"
+                label="Close"
+                onPress={onClose}
+                disabled={splitBusy}
+                testID="editor.close"
+              />
               <View style={styles.contextTools}>
                 {captionTools ? (
                   <CaptionTools
                     lines={lines}
                     timeMs={values.timeMs}
                     hasWord={selWord >= 0}
+                    busy={splitBusy || history.busy || add.busy}
                     edited={captionsEdited}
                     onDone={() => setMode('main')}
                     onEdit={editCaption}
@@ -1226,7 +1322,7 @@ export function EditorScreen({
               />
               <ExportButton
                 onPress={openExport}
-                disabled={clips.length === 0}
+                disabled={clips.length === 0 || splitBusy}
                 testID="editor.export"
                 compact
               />
