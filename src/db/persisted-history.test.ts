@@ -21,6 +21,7 @@ const path = (id: string) => `drafts/d/segments/${id}.mp4`;
 const row = (id: string): Segment => ({
   id,
   draftId: 'd',
+  addedAt: 1234,
   order: 0,
   label: id,
   originalFilename: path(id),
@@ -75,6 +76,36 @@ function compoundHistory(): PersistedHistory {
 }
 
 describe('saved Undo data validation', () => {
+  it('accepts older v1 dormant and split rows without dates, using the unknown-date fallback', () => {
+    const legacy = compoundHistory();
+    const step = legacy.future[0];
+    if (step.kind !== 'added' || !step.taken || !step.splits) throw new Error('fixture');
+    const rows = [
+      ...step.taken.rows,
+      ...(step.taken.replaced ?? []),
+      ...step.splits.flatMap((split) => [...split.before.rows, ...(split.before.replaced ?? [])]),
+    ];
+    for (const clip of rows) delete (clip as Partial<Segment>).addedAt;
+    const parsed = parse(legacy)!;
+    const next = parsed.future[0];
+    if (next.kind !== 'added' || !next.taken || !next.splits) throw new Error('fixture');
+    expect(next.taken.rows[0].addedAt).toBe(0);
+    expect(next.taken.replaced?.[0].addedAt).toBe(0);
+    expect(next.splits[0].before.rows[0].addedAt).toBe(0);
+    expect(parse(parsed)).toEqual(parsed);
+  });
+
+  it.each([-1, 1.5, null, '1234', Number.MAX_SAFE_INTEGER + 1])(
+    'rejects an invalid saved beat date %s',
+    (addedAt) => {
+      const invalid = compoundHistory();
+      const step = invalid.future[0];
+      if (step.kind !== 'added' || !step.taken) throw new Error('fixture');
+      Object.assign(step.taken.rows[0], { addedAt });
+      expect(() => parse(invalid)).toThrow();
+    },
+  );
+
   it('starts old drafts without history empty and round-trips both supported step types', () => {
     expect(parsePersistedHistory(null, 'd')).toBeNull();
     expect(parsePersistedHistory(undefined, 'd')).toBeNull();
@@ -207,6 +238,26 @@ describe('saved Undo data validation', () => {
 });
 
 describe('saved Undo references and copy', () => {
+  it('preserves original dates through serialization and remapping of dormant and split rows', () => {
+    const source = compoundHistory();
+    const step = source.future[0];
+    if (step.kind !== 'added' || !step.taken || !step.splits) throw new Error('fixture');
+    step.taken.rows[0].addedAt = 1234;
+    step.splits[0].before.rows[0].addedAt = 5678;
+    const copied = remapPersistedHistory(parse(source)!, {
+      draftId: 'copy',
+      mapId: (id) => `copy-${id}`,
+      mapPath: (file) => file.replace(/^drafts\/[^/]+\//, 'drafts/copy/'),
+    });
+    const copiedStep = copied.future[0];
+    if (copiedStep.kind !== 'added' || !copiedStep.taken || !copiedStep.splits)
+      throw new Error('fixture');
+    expect(copiedStep.taken.rows[0].addedAt).toBe(1234);
+    expect(copiedStep.taken.replaced?.[0].addedAt).toBe(5678);
+    expect(copiedStep.splits[0].before.rows[0].addedAt).toBe(5678);
+    expect(parsePersistedHistory(JSON.stringify(copied), 'copy')).toEqual(copied);
+  });
+
   it('parses and remaps a standalone split with no inserted clips or firstInsertedId', () => {
     const source = history(
       [{ kind: 'added', ids: [], taken: null, splits: [{ before: taken('a'), rightId: 'right' }] }],

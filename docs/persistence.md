@@ -73,7 +73,7 @@ active step stays retained even if intervening edits exceed the normal 100-step 
 the limit applies again when the batch closes. Addition Undo checks every recorded clip ID against
 storage, so a delayed live-query update cannot discard or partly undo the operation.
 
-Migration 0021 adds `drafts.undo_history`: version 1 JSON containing both stacks and a checkpoint
+Migration 0022 adds `drafts.undo_history`: version 1 JSON containing both stacks and a checkpoint
 of the current clip order, sources, edits, edited captions and draft caption position. A draft
 without the column's value starts with empty stacks. The checkpoint excludes regenerable covers
 and background transcript results, which can finish without changing the edited state. The format
@@ -101,6 +101,8 @@ checkpoint in [`src/db/undo-history.ts`](../src/db/undo-history.ts), and the per
   before its UI journal arrives; that journal groups recorder/image additions without recording
   them twice. The database-side writer is in
   [`src/db/addition-history.ts`](../src/db/addition-history.ts).
+  Creating a summary establishes its collected clips as the initial baseline with empty stacks;
+  subsequent additions and edits use the same durable history as other drafts.
 - **Ordinary edits:** edits, reorder and caption writes finish before the stacks are checkpointed.
   A failed queued write invalidates that draft's optimistic stacks. If Pulse is interrupted after a row
   changes but before the checkpoint commits, the stored checkpoint no longer matches the draft:
@@ -141,6 +143,51 @@ history as well as live rows and active holds. The launch cleanup list also chec
 references, so closing the editor or restarting cannot delete a file that Redo still needs.
 History eviction only cleans up files explicitly retained for history; there is no general sweep
 of unreferenced library files.
+
+## Summary projects
+
+Home’s **+ → Summary** collects beats from checked projects, an inclusive **From / Through**
+calendar date range, or **Since last summary**. The screen previews the included projects
+with the same first-clip cover thumbnails as Home, plus their beat count and duration.
+With no earlier summary, choose projects or dates first. The last
+summary reminder opens that project in the recorder; a new summary opens there too, ready
+to edit, record more beats or export as one update. Blank project creation opens the usual
+recorder immediately when **Blank project** is tapped, without another submit step.
+
+The source query excludes every summary project, including duplicates of summaries. Beats
+are grouped by source project and keep that project’s timeline order. Files, edit settings,
+clip captions and transcripts are copied under fresh IDs and paths; edits and deletion in
+either project do not affect the other’s copies. A summary is a collection of existing beats,
+with an editable name; this first pass does not generate a written or AI summary.
+
+`segments.addedAt` records when a beat was added. Renaming, editing, reordering, splitting
+and Undo/Redo preserve this timestamp; copying a beat into an ordinary project is a new
+addition. Date boundaries use the device’s native time zone, including daylight saving
+changes. Migration `0021` approximates older beats’ addition dates using their project’s
+last-modified timestamp at upgrade, because earlier versions did not record beat timestamps.
+Legacy draft imports use the available saved draft date. Exact historical dates cannot be
+reconstructed.
+
+`drafts.isSummary` identifies collected projects. A successful collection also stores
+`summaryCutoffAt`, frozen when collection starts. **Since last summary** uses the greatest
+saved cutoff and includes beat additions in `[previous cutoff, new cutoff)`, so a beat added
+in the cutoff’s millisecond waits for the next summary. All collection modes stop at the new
+cutoff; their selected project/date restrictions still apply. Creating a summary from only
+some projects advances the same checkpoint. Editing that summary does not advance it.
+A duplicate keeps the summary marker without a new cutoff. Deleting the most recent summary
+falls back to the latest remaining checkpoint; there is no separate hidden checkpoint.
+
+`src/db/summaries.ts` stages all selected media using the recorder’s clip-copy routine, then
+commits the new draft, beats, transcripts and cutoff in one SQLite transaction. Missing source
+videos, a failed copy or a failed transaction reject the entire collection and clean up the
+copies; the previous checkpoint remains. Killing the app while staging may leave unreferenced
+files, but cannot leave a partial summary or advance its checkpoint. As with other media,
+unreferenced files are preserved for recovery rather than removed by a general sweep.
+
+These schema columns travel automatically in `.pulse` project transfers and library backups.
+Imported summary checkpoints participate in the restored library’s next collection.
+The first-pass request is tracked in [#331](https://github.com/mieweb/pulse/issues/331);
+native UI checks and screenshots are in the [Summary verification record](../screenshots/validation/summary/README.md).
 
 ## Launch and recovery
 

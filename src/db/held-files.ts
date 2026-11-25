@@ -6,11 +6,10 @@ import { db } from './client';
 import { settings } from './schema';
 
 /**
- * The files of clips the editor's undo took out (`takeOutSegments`), kept on disk for a redo. The
- * history checkpoint can be interrupted or evicted, so they're noted here as they're taken out,
- * and the next launch deletes those no live row or saved undo checkpoint uses
- * (`dropHeldFiles`). Only these: a file is never deleted just for lacking a row (a library
- * recovered from an older copy has files of clips its rows lost).
+ * Explicit cleanup candidates: clips taken out for Redo, discarded history, or deletion deferred
+ * by an active operation/shared source. They are noted when removed or deferred, and the next
+ * launch deletes only candidates no live row or saved undo checkpoint uses (`dropHeldFiles`).
+ * A file is never deleted just for lacking a row: a recovered library can have files its rows lost.
  */
 const HELD_KEY = 'drafts.heldForRedo';
 
@@ -25,7 +24,7 @@ function read(value: string | null | undefined): string[] {
   }
 }
 
-/** Note `files` as held for a redo, in the take-out's own transaction (synchronous). */
+/** Note explicit deletion candidates in the owning mutation's transaction (synchronous). */
 export function noteHeldFiles(tx: Tx, files: readonly string[]): void {
   const row = tx.select().from(settings).where(eq(settings.key, HELD_KEY)).get();
   const value = JSON.stringify([...new Set([...read(row?.value), ...files])]);

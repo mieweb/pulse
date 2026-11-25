@@ -2,7 +2,7 @@
 # iOS Expo Build & Upload
 #
 # Composes mieweb/actions building blocks (pinned to v2.5.0):
-#   prepare-expo-env → stamp build number → expo prebuild
+#   prepare-expo-env → verify SDK 27 → stamp build number → expo prebuild
 #   → sign-archive-upload-ios (match) → upload to TestFlight
 #
 # Signing mode: match
@@ -24,11 +24,11 @@ on:
   workflow_dispatch:
     inputs:
       upload_to_testflight:
-        description: "Upload the build to TestFlight"
+        description: 'Upload the build to TestFlight'
         type: boolean
         default: true
       match_readonly:
-        description: "Keep match read-only. Turn off once to let match create the App Store profile for a bundle ID that is not in the signing repo yet, then leave it on."
+        description: 'Keep match read-only. Turn off once to let match create the App Store profile for a bundle ID that is not in the signing repo yet, then leave it on.'
         type: boolean
         default: true
 
@@ -38,14 +38,19 @@ permissions:
 
 jobs:
   ios:
-    runs-on: macos-latest
+    runs-on: xcode-27
     steps:
       # ── Checkout, Xcode, Node, JS deps ────────────────────────────────────
       - name: Setup Expo environment
         uses: mieweb/actions/prepare-expo-env@df2ee7b96f5631bfedf22b0b6ecc43ab02fe6757 # v2.5.0
         with:
           package_manager: npm
-          node_version: "24"
+          node_version: '24'
+          xcode_path: /Applications/Xcode_27.2.app
+
+      # The setup action can fall back when its requested Xcode isn't installed.
+      - name: Verify selected Xcode and iPhoneOS SDK
+        run: node scripts/check-ios-sdk.mjs
 
       # prepare-expo-env checks out without submodules; the native module under modules/ is
       # autolinked from there, so fetch it before prebuild.
@@ -92,20 +97,20 @@ jobs:
         # v2.5.0: per-target signing for the broadcast extension (`extension_identifiers`).
         uses: mieweb/actions/sign-archive-upload-ios@df2ee7b96f5631bfedf22b0b6ecc43ab02fe6757 # v2.5.0
         with:
-          signing_mode:                  match
-          app_identifier:                com.mieweb.pulse
+          signing_mode: match
+          app_identifier: com.mieweb.pulse
           # The screen recorder's broadcast upload extension: its own App ID and profile.
-          extension_identifiers:         com.mieweb.pulse.BroadcastExtension
-          apple_team_id:                 ${{ secrets.APPLE_TEAM_ID }}
+          extension_identifiers: com.mieweb.pulse.BroadcastExtension
+          apple_team_id: ${{ secrets.APPLE_TEAM_ID }}
           match_git_basic_authorization: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
-          match_password:                ${{ secrets.MATCH_PASSWORD }}
-          match_readonly:                ${{ inputs.match_readonly }}
-          apple_api_key_id:              ${{ secrets.APPLE_API_KEY_ID }}
-          apple_api_issuer_id:           ${{ secrets.APPLE_API_ISSUER_ID }}
-          apple_api_key_p8_base64:       ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
-          ios_build_dir:                 ios
-          run_pod_install:               "true"
-          upload_to_testflight:          ${{ inputs.upload_to_testflight }}
+          match_password: ${{ secrets.MATCH_PASSWORD }}
+          match_readonly: ${{ inputs.match_readonly }}
+          apple_api_key_id: ${{ secrets.APPLE_API_KEY_ID }}
+          apple_api_issuer_id: ${{ secrets.APPLE_API_ISSUER_ID }}
+          apple_api_key_p8_base64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          ios_build_dir: ios
+          run_pod_install: 'true'
+          upload_to_testflight: ${{ inputs.upload_to_testflight }}
 
       # ── Tag the release (feeds the compatibility page) ────────────────────
       # app-v<version> marks the commit this store build came from. The Pages site reads each

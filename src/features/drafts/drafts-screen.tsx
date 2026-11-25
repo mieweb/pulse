@@ -36,7 +36,7 @@ const DATE_LABEL_REFRESH_MS = 60_000;
 
 /**
  * Home: the drafts, newest first, with rename, duplicate, delete and `.pulse` import and export,
- * and + for a new recording. No router: where a draft, + and About go is the caller's
+ * and + for a new project. No router: where a draft, + and About go is the caller's
  * (`DraftsScreenProps`), and whether the screen is the one on top comes through the focus port.
  */
 export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: DraftsScreenProps) {
@@ -317,7 +317,7 @@ export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: Drafts
           <StateMessage
             icon="video.badge.plus"
             title="No drafts yet"
-            message="Tap + to record your first video."
+            message="Tap + to start a blank project or collect beats into a summary."
           />
         </View>
       ) : (
@@ -405,7 +405,7 @@ export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: Drafts
         <Pressable
           onPress={onRecord}
           accessibilityRole="button"
-          accessibilityLabel="New recording"
+          accessibilityLabel="New project"
           testID="drafts.record"
           style={({ pressed }) => [
             styles.fab,

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "77208335-2f7e-4c55-9fe4-445e247ca734",
+  "id": "e978e6a8-be0b-40d3-8567-902be2567988",
   "prevId": "7484ba51-e0cd-484e-b2d6-2569f3659ef0",
   "tables": {
     "clip_transcripts": {
@@ -178,6 +178,21 @@
           "notNull": false,
           "autoincrement": false
         },
+        "is_summary": {
+          "name": "is_summary",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "summary_cutoff_at": {
+          "name": "summary_cutoff_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "upload_server": {
           "name": "upload_server",
           "type": "text",
@@ -307,13 +322,6 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
-        },
-        "undo_history": {
-          "name": "undo_history",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         }
       },
       "indexes": {
@@ -377,6 +385,14 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "added_at": {
+          "name": "added_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         },
         "label": {
           "name": "label",

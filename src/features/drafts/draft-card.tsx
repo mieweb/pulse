@@ -1,9 +1,9 @@
-import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
 import { type ReactNode } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ProgressRing } from '@/components/progress-ring';
+import { PROJECT_THUMB_RADIUS, ProjectThumbnail } from '@/components/project-thumbnail';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, MaxTextScale, Radius, Spacing } from '@/constants/theme';
 import { draftDisplayName } from '@/db/drafts';
@@ -12,7 +12,6 @@ import type { WatchLink } from '@/features/upload/core/upload-manager';
 import { useDraftUploadState, useWatchLink } from '@/features/upload/core/use-uploads';
 import { uploadPhaseLabel } from '@/features/upload/core/phase-label';
 import { useTheme } from '@/hooks/use-theme';
-import { useThumbnail } from '@/hooks/use-thumbnail';
 import { DRAFT_NAME_MAX_LENGTH, dropSplitSurrogate } from '@/utils/draft-name';
 import { formatClipCount, formatDuration } from '@/utils/format';
 import { formatRelativeDate } from '@/utils/relative-date';
@@ -73,11 +72,6 @@ export function DraftCard({
   onSubmitName,
 }: Props) {
   const theme = useTheme();
-  const thumbnail = useThumbnail(
-    firstSegmentThumbnail,
-    firstSegmentFilename,
-    firstSegmentEditState,
-  );
 
   // An upload in progress is a ring on the cover — from the live state, or the persisted status
   // until the launch check settles a draft a killed app left `uploading`. A finished one gets a
@@ -99,19 +93,10 @@ export function DraftCard({
           backgroundColor: pressed && !editing ? theme.backgroundSelected : theme.card,
         },
       ]}>
-      <View
-        style={[
-          styles.thumb,
-          {
-            backgroundColor: theme.backgroundSelected,
-            borderColor: theme.border,
-          },
-        ]}>
-        {thumbnail ? (
-          <Image source={thumbnail} style={styles.thumbImage} contentFit="cover" />
-        ) : (
-          <Icon name="video.fill" size={18} tintColor={theme.textSecondary} />
-        )}
+      <ProjectThumbnail
+        filename={firstSegmentFilename}
+        thumbnail={firstSegmentThumbnail}
+        editState={firstSegmentEditState}>
         {uploading && (
           <View
             style={styles.uploadScrim}
@@ -127,7 +112,7 @@ export function DraftCard({
             />
           </View>
         )}
-      </View>
+      </ProjectThumbnail>
 
       <View style={styles.body}>
         {editing ? (
@@ -246,7 +231,6 @@ function cardDuration(ms: number): number {
 }
 
 /** Concentric with the card: its radius less the padding between them. */
-const THUMB_RADIUS = Radius.card - Spacing.two;
 
 const styles = StyleSheet.create({
   uploadScrim: {
@@ -258,7 +242,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius: THUMB_RADIUS,
+    borderRadius: PROJECT_THUMB_RADIUS,
     borderCurve: 'continuous',
   },
   card: {
@@ -270,31 +254,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.card,
     borderCurve: 'continuous',
     ...CardShadow,
-  },
-  thumb: {
-    width: 44,
-    height: 60,
-    alignItems: 'center',
-    justifyContent: 'center',
-    // Rounded without `overflow: 'hidden'` (which would clip its shadow): the image and the
-    // upload scrim round their own corners to match.
-    borderRadius: THUMB_RADIUS,
-    borderCurve: 'continuous',
-    // Lift the cover off the card so it pops a little. A hairline ring carries the separation
-    // in dark mode (where a black shadow is invisible against the dark card); the shadow does
-    // the lifting in light mode. Black in both: a white shadow glowed around the cover in dark.
-    borderWidth: StyleSheet.hairlineWidth,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  thumbImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: THUMB_RADIUS,
-    borderCurve: 'continuous',
   },
   body: {
     flex: 1,

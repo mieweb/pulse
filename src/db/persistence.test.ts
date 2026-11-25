@@ -185,7 +185,15 @@ function seedFixture(conn: SQLiteDatabase) {
         hostConfirmedAt: 1790000000800,
         sentAt: 1790000000750,
       },
-      { id: D2, name: 'Other', lastClipNumber: 1, createdAt: 1, lastModified: 2 },
+      {
+        id: D2,
+        name: 'Other',
+        isSummary: true,
+        summaryCutoffAt: 2,
+        lastClipNumber: 1,
+        createdAt: 1,
+        lastModified: 2,
+      },
     ])
     .run();
   d.insert(schema.segments)

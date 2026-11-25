@@ -90,6 +90,7 @@ function validRow(value: unknown, draftId: string): value is Segment {
       'id',
       'draftId',
       'order',
+      'addedAt',
       'label',
       'originalFilename',
       'durationMs',
@@ -106,6 +107,7 @@ function validRow(value: unknown, draftId: string): value is Segment {
     value.draftId === draftId &&
     integer(value.order) &&
     value.order >= 0 &&
+    (value.addedAt === undefined || (integer(value.addedAt) && value.addedAt >= 0)) &&
     nullableString(value.label) &&
     safePath(value.originalFilename) &&
     finite(value.durationMs) &&
@@ -235,7 +237,15 @@ export function parsePersistedHistory(
     !parsed.future.every((step) => validStep(step, draftId, 'future'))
   )
     throw new Error(BAD_HISTORY);
-  return parsed as PersistedHistory;
+  const history = parsed as PersistedHistory;
+  // Early v1 checkpoints predate beat timestamps. Unknown dates use the schema's 0 fallback;
+  // replay must never stamp them as newly recorded beats when the user presses Redo.
+  for (const step of [...history.past, ...history.future]) {
+    for (const taken of takenFrom(step)) {
+      for (const row of [...taken.rows, ...(taken.replaced ?? [])]) row.addedAt ??= 0;
+    }
+  }
+  return history;
 }
 
 function takenFrom(step: Step): TakenOutClips[] {
@@ -348,6 +358,7 @@ export function remapPersistedHistory(
   };
   const row = (value: Segment): Segment => ({
     ...value,
+    addedAt: value.addedAt ?? 0,
     id: mapId(value.id),
     draftId: remap.draftId,
     originalFilename: mapPath(value.originalFilename),

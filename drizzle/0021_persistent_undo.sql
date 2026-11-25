@@ -1,1 +1,0 @@
-ALTER TABLE `drafts` ADD `undo_history` text;

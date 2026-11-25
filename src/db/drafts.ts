@@ -503,6 +503,7 @@ async function commitSegments(
         .values(
           newSegments.map((segment, i) => ({
             id: segment.id,
+            addedAt: Date.now(),
             draftId,
             order: at.order + i,
             label: String(firstLabel + i),
@@ -1400,6 +1401,7 @@ export async function duplicateDraft(draftId: string): Promise<string> {
       const caption = parseCaptionEdit(seg.captionEdit);
       segmentRows.push({
         ...seg,
+        addedAt: Date.now(),
         id: newIds.get(seg.id)!,
         draftId: copyId,
         originalFilename: remap(seg.originalFilename),
@@ -1414,6 +1416,7 @@ export async function duplicateDraft(draftId: string): Promise<string> {
           id: copyId,
           name: `${source.draft.name || 'Untitled'} copy`,
           captionY: source.draft.captionY,
+          isSummary: source.draft.isSummary,
           lastClipNumber: source.draft.lastClipNumber,
           createdVia: source.draft.createdVia,
         })
@@ -1495,7 +1498,55 @@ export async function copyClipsInto(
   };
   let targetDraftId = typeof target === 'string' ? target : null;
   if (targetDraftId !== null) await checkTarget(targetDraftId);
+  const prepared = await prepareClipsCopy(
+    async () => {
+      if (targetDraftId === null) {
+        targetDraftId = await (target as () => Promise<string>)();
+        await checkTarget(targetDraftId);
+      }
+      return targetDraftId;
+    },
+    sourceDraftId,
+    segmentIds,
+    onProgress,
+  );
+  if (prepared.copies.length === 0 || targetDraftId === null) {
+    return { draftId: targetDraftId, segmentIds: [], skipped: prepared.skipped };
+  }
+  try {
+    const added = await insertSegments(
+      targetDraftId,
+      anchor,
+      prepared.copies,
+      prepared.transcripts,
+    );
+    return { draftId: targetDraftId, segmentIds: added, skipped: prepared.skipped };
+  } catch (e) {
+    prepared.cleanup();
+    throw e;
+  }
+}
 
+/** File copies ready for a single metadata commit. The caller cleans them up on failure. */
+export type PreparedClips = {
+  copies: NewSegment[];
+  transcripts: (typeof clipTranscripts.$inferInsert)[];
+  skipped: number;
+  cleanup: () => void;
+};
+
+/**
+ * Stage the same independent media/caption copies used by `copyClipsInto`, without inserting
+ * any rows. A Summary stages every source first, then commits its entire draft in one SQLite
+ * transaction: a failed copy or a killed app can never leave a partial summary checkpoint.
+ */
+export async function prepareClipsCopy(
+  target: () => Promise<string>,
+  sourceDraftId: string,
+  segmentIds: readonly string[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<PreparedClips> {
+  assertEditable();
   const wanted = new Set(segmentIds);
   const rows = (await segmentsForDraft(sourceDraftId)).filter((s) => wanted.has(s.id));
   const transcripts =
@@ -1519,8 +1570,8 @@ export async function copyClipsInto(
     if (!newIds.has(stem)) otherStems.set(stem, id);
     return id;
   };
-  // The target's paths, once it's known: a function target is called (and checked) just before
-  // the first file is copied, so nothing to copy makes no draft.
+  // Resolve lazily: the recorder need not make an empty draft when all sources are missing.
+  let targetDraftId: string | null = null;
   let remapInto: ((rel: string) => string) | null = null;
   const remap = (rel: string) => {
     if (!remapInto) throw new Error('copyClipsInto: no target yet');
@@ -1528,8 +1579,7 @@ export async function copyClipsInto(
   };
   const resolveTarget = async () => {
     if (targetDraftId === null) {
-      targetDraftId = await (target as () => Promise<string>)();
-      await checkTarget(targetDraftId);
+      targetDraftId = await target();
     }
     remapInto ??= clipFileRemap(targetDraftId, stemFor);
   };
@@ -1603,23 +1653,17 @@ export async function copyClipsInto(
   deleteWritten(used);
   const skipped = wanted.size - copies.length;
   if (copies.length === 0 || targetDraftId === null) {
-    return { draftId: targetDraftId, segmentIds: [], skipped };
+    return { copies: [], transcripts: [], skipped, cleanup: () => deleteWritten() };
   }
 
-  try {
-    const added = await insertSegments(
-      targetDraftId,
-      anchor,
-      copies,
-      transcripts
-        .filter((t) => copiedFrom.has(t.segmentId))
-        .map((t) => ({ ...t, segmentId: newIds.get(t.segmentId)!, file: remap(t.file) })),
-    );
-    return { draftId: targetDraftId, segmentIds: added, skipped };
-  } catch (e) {
-    deleteWritten();
-    throw e;
-  }
+  return {
+    copies,
+    transcripts: transcripts
+      .filter((t) => copiedFrom.has(t.segmentId))
+      .map((t) => ({ ...t, segmentId: newIds.get(t.segmentId)!, file: remap(t.file) })),
+    skipped,
+    cleanup: () => deleteWritten(),
+  };
 }
 
 /** Delete a draft (segments cascade), its on-disk directory (clips + export) and its saved link. */
@@ -1766,6 +1810,14 @@ export async function insertImportedDraft(
   assertEditable();
   db.transaction((tx) => {
     tx.insert(drafts).values(draft).run();
-    if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
+    if (segmentRows.length > 0)
+      tx.insert(segments)
+        .values(
+          segmentRows.map((segment) => ({
+            ...segment,
+            addedAt: segment.addedAt ?? draft.lastModified ?? draft.createdAt ?? Date.now(),
+          })),
+        )
+        .run();
   });
 }

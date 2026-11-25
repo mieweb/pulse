@@ -3,7 +3,7 @@
  * (src/app/index.tsx) maps them to router pushes.
  */
 export type DraftsScreenProps = {
-  /** + : a new recording. */
+  /** + : choose a blank project or gather beats into a summary. */
   onRecord: () => void;
   /** A draft's card was tapped (never while it uploads): open it in the recorder. */
   onOpenDraft: (draftId: string) => void;

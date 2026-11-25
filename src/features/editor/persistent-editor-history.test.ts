@@ -380,9 +380,10 @@ describe('persistent editor Undo on a migrated library', () => {
       words: [{ text: 'kept', t0: 0, t1: 40 }],
     });
     conn.runSync(
-      'UPDATE segments SET edit_state = ?, caption_edit = ? WHERE id = ?',
+      'UPDATE segments SET edit_state = ?, caption_edit = ?, added_at = ? WHERE id = ?',
       speedEdit,
       captionEdit,
+      123456789,
       x.id,
     );
     conn.runSync(
@@ -401,6 +402,9 @@ describe('persistent editor Undo on a migrated library', () => {
     await waitForUndoHistory();
     expect(clipRows(draftId)).toEqual([]);
     expect(hasRetainedUndo(draftId)).toBe(true);
+    const dormant = saved(draftId)?.future.at(-1);
+    if (dormant?.kind !== 'added' || !dormant.taken) throw new Error('Expected dormant addition.');
+    expect(dormant.taken.rows[0].addedAt).toBe(123456789);
     await first.close();
     dropHeldFiles(referencedMediaPaths(expoDb));
     expect(existsSync(x.absolute)).toBe(true);
@@ -410,6 +414,12 @@ describe('persistent editor Undo on a migrated library', () => {
     reopened.store.redo(present(draftId), (diff) => apply(draftId, diff));
     await waitForUndoHistory();
     expect(clipRows(draftId)).toEqual([{ id: x.id, editState: speedEdit, captionEdit }]);
+    expect(
+      conn.getFirstSync<{ addedAt: number }>(
+        'SELECT added_at AS addedAt FROM segments WHERE id = ?',
+        x.id,
+      )?.addedAt,
+    ).toBe(123456789);
     expect(
       conn.getFirstSync<{ words: string }>(
         'SELECT words FROM clip_transcripts WHERE segment_id = ?',
