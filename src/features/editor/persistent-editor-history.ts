@@ -12,7 +12,7 @@ import {
   createEditorHistory,
   type EditorHistoryStore,
 } from '@/features/editor/editor-history-store';
-import { hasRestorableClips, type Step } from '@/features/editor/editor-history';
+import { hasRestorableClips, type AddedStep, type Step } from '@/features/editor/editor-history';
 import { emptyHistory, type History } from '@/features/transcription/edit-history';
 import {
   historyMediaPaths,
@@ -138,12 +138,36 @@ function createSession(draftId: string) {
     else db.transaction((target) => replaceCheckpoint(target, next));
     return next;
   };
-  const checkpointAddition = (history: History<Step>, tx: Tx) => {
+  const checkpointAddition = (
+    history: History<Step>,
+    tx: Tx,
+    step: AddedStep,
+    direction: 'past' | 'future',
+  ) => {
+    const splits = step.splits ?? [];
+    const includesStep = (stack: readonly Step[]) =>
+      stack.some(
+        (candidate) =>
+          candidate.kind === 'added' &&
+          splits.every((split) => candidate.splits?.some((item) => item.rightId === split.rightId)),
+      );
+    // Later ASR/cache results can enlarge replay data after the cut's initial preflight. A
+    // structural Undo/Redo must not commit while silently evicting its reciprocal operation.
+    const required = splits.length > 0 && includesStep(history[direction]);
     // A concurrent optimistic change has not landed yet. Invalidate the old checkpoint in the
     // row transaction, then checkpoint the final stacks once every queued change settles.
     if (hasPendingDraftWrites(draftId) || failureVersion !== draftWriteFailureVersion(draftId)) {
+      if (required)
+        throw new Error('Wait for the current edits to finish before undoing this cut.');
       replaceCheckpoint(tx, null);
-    } else checkpoint(history, tx);
+    } else {
+      const retained = checkpoint(history, tx);
+      if (required && !includesStep(retained[direction])) {
+        throw new Error(
+          'This change is too large to keep Undo and Redo. The timeline was not changed.',
+        );
+      }
+    }
   };
 
   const store: EditorHistoryStore = createEditorHistory({
@@ -158,12 +182,12 @@ function createSession(draftId: string) {
     },
     takeOut: (ids, splits) => takeOutSegments(ids, splits, undefined, draftId),
     restore: (taken) => restoreSegments(taken, undefined, draftId),
-    takeOutAndCheckpoint: async (ids, splits, next) => {
+    takeOutAndCheckpoint: async (ids, splits, next, step) => {
       const taken = await takeOutSegments(
         ids,
         splits,
         (tx, value) => {
-          checkpointAddition(next(value), tx);
+          checkpointAddition(next(value), tx, step, 'future');
         },
         draftId,
       );
@@ -175,11 +199,11 @@ function createSession(draftId: string) {
       }
       return taken;
     },
-    restoreAndCheckpoint: (taken, next) =>
+    restoreAndCheckpoint: (taken, next, step) =>
       restoreSegments(
         taken,
         (tx) => {
-          checkpointAddition(next(), tx);
+          checkpointAddition(next(), tx, step, 'past');
         },
         draftId,
       ),

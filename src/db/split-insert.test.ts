@@ -61,6 +61,7 @@ import {
 } from '@/core/clip-anchor';
 import { env, File } from '@/test-support/expo-fs-node';
 import { registerUndoAdditionOwner } from '@/core/undo-additions';
+import { heldMediaPaths } from '@/core/media-holds';
 import { setClipWriteBarrier } from '@/core/draft-write-barrier';
 // eslint-disable-next-line import/no-restricted-paths -- exercise the real DB/history integration
 import { createEditorHistory } from '@/features/editor/editor-history-store';
@@ -595,9 +596,107 @@ describe('bulk transcript source cuts', () => {
       ),
     ).toEqual(saved);
   });
+
+  it('rolls back a whole-beat cleanup whose applied Undo fits but restored Redo cannot fit', async () => {
+    const t = await setup();
+    const caption = JSON.stringify({
+      file: t.video,
+      words: [{ text: 'x'.repeat(800 * 1024), t0: 100, t1: 200 }],
+    });
+    conn.runSync('UPDATE segments SET caption_edit = ? WHERE id = ?', caption, t.a);
+    const before = await segmentsForDraft(t.d);
+    const beforeTranscript = transcript(t.a);
+    const saved = conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d);
+    const journal = conn.getFirstSync(
+      "SELECT value FROM settings WHERE key = 'drafts.heldForRedo'",
+    );
+    const held = heldMediaPaths();
+    const committed = jest.fn();
+    const unregister = registerUndoAdditionOwner(t.d, {
+      snapshot: () => ({ past: [], future: [] }),
+      committed,
+    });
+    const cover = jest.spyOn(video, 'generateThumbnailFile');
+    try {
+      await expect(
+        cutTranscriptRanges(t.d, [
+          {
+            clipId: t.a,
+            sourceKey: renderKey(before[0]),
+            captionKey: caption,
+            fps: 30,
+            ranges: [{ startMs: 500, endMs: 3500 }],
+          },
+        ]),
+      ).rejects.toThrow('too large to keep Undo and Redo');
+      expect(await segmentsForDraft(t.d)).toEqual(before);
+      expect(transcript(t.a)).toEqual(beforeTranscript);
+      expect(conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d)).toEqual(saved);
+      expect(
+        conn.getFirstSync("SELECT value FROM settings WHERE key = 'drafts.heldForRedo'"),
+      ).toEqual(journal);
+      expect(heldMediaPaths()).toEqual(held);
+      expect(committed).not.toHaveBeenCalled();
+      expect(cover).not.toHaveBeenCalled();
+      expect(bytes(t.video)).toBe('original video bytes');
+    } finally {
+      unregister();
+      cover.mockRestore();
+    }
+  });
 });
 
 describe('transcript-driven source cut', () => {
+  it('rolls back a single-word cut when its saved Undo receipt would be evicted', async () => {
+    const t = await setup();
+    conn.runSync(
+      'UPDATE segments SET caption_edit = ? WHERE id = ?',
+      JSON.stringify({
+        file: t.video,
+        words: [{ text: 'x'.repeat(HISTORY_MAX_JSON_BYTES), t0: 100, t1: 200 }],
+      }),
+      t.a,
+    );
+    const before = await segmentsForDraft(t.d);
+    const beforeTranscript = transcript(t.a);
+    const saved = conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d);
+    const journal = conn.getFirstSync(
+      "SELECT value FROM settings WHERE key = 'drafts.heldForRedo'",
+    );
+    const held = heldMediaPaths();
+    const committed = jest.fn();
+    const unregister = registerUndoAdditionOwner(t.d, {
+      snapshot: () => ({ past: [], future: [] }),
+      committed,
+    });
+    const cover = jest.spyOn(video, 'generateThumbnailFile');
+    try {
+      await expect(
+        cutSegmentRange(t.d, {
+          clipId: t.a,
+          sourceKey: renderKey(before[0]),
+          startMs: 1500,
+          endMs: 2000,
+          rightId: `${t.d}-speech-right`,
+          fps: 30,
+        }),
+      ).rejects.toThrow('too large to keep Undo');
+      expect(await segmentsForDraft(t.d)).toEqual(before);
+      expect(transcript(t.a)).toEqual(beforeTranscript);
+      expect(conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d)).toEqual(saved);
+      expect(
+        conn.getFirstSync("SELECT value FROM settings WHERE key = 'drafts.heldForRedo'"),
+      ).toEqual(journal);
+      expect(heldMediaPaths()).toEqual(held);
+      expect(committed).not.toHaveBeenCalled();
+      expect(cover).not.toHaveBeenCalled();
+      expect(bytes(t.video)).toBe('original video bytes');
+    } finally {
+      unregister();
+      cover.mockRestore();
+    }
+  });
+
   it('cuts spoken media, projects captions and exports the same retained ranges', async () => {
     const t = await setup();
     const words = [
@@ -1491,6 +1590,84 @@ describe('exact split + insert', () => {
       }
     },
   );
+
+  it('skips a queued cleanup cover when a newer user edit is rendering', async () => {
+    const t = await setup();
+    let finishFirst!: (ok: boolean) => void;
+    let finishUser!: (ok: boolean) => void;
+    let reachedFirst!: () => void;
+    let reachedUser!: () => void;
+    let reachedTail!: () => void;
+    const first = new Promise<boolean>((resolve) => {
+      finishFirst = resolve;
+    });
+    const user = new Promise<boolean>((resolve) => {
+      finishUser = resolve;
+    });
+    const enteredFirst = new Promise<void>((resolve) => {
+      reachedFirst = resolve;
+    });
+    const enteredUser = new Promise<void>((resolve) => {
+      reachedUser = resolve;
+    });
+    const enteredTail = new Promise<void>((resolve) => {
+      reachedTail = resolve;
+    });
+    let calls = 0;
+    let userCovers = 0;
+    let targetId: string | undefined;
+    let tailId: string | undefined;
+    const thumbnail = jest.spyOn(video, 'generateThumbnailFile').mockImplementation((_, output) => {
+      if (++calls === 1) {
+        reachedFirst();
+        return first;
+      }
+      if (targetId && output.includes(`${targetId}.cover.`)) {
+        if (++userCovers === 1) {
+          reachedUser();
+          return user;
+        }
+      }
+      if (tailId && output.includes(`${tailId}.cover.`)) reachedTail();
+      return Promise.resolve(true);
+    });
+    let saving: Promise<void> | undefined;
+    try {
+      const result = await cutTranscriptRanges(t.d, [
+        {
+          clipId: t.a,
+          sourceKey: renderKey(t.before),
+          captionKey: t.before.captionEdit,
+          fps: 30,
+          ranges: [
+            { startMs: 1000, endMs: 1200 },
+            { startMs: 2000, endMs: 2200 },
+          ],
+        },
+      ]);
+      retained.push(...result.splits.map((split) => split.before));
+      await enteredFirst;
+      [targetId, tailId] = result.ids.slice(1);
+      expect(targetId).toBeDefined();
+      expect(tailId).toBeDefined();
+      const target = (await segmentsForDraft(t.d)).find((row) => row.id === targetId)!;
+      saving = setClipEdit(target.id, { ...parseEdit(target.editState)!, speed: 3, rotation: 2 });
+      await enteredUser;
+      finishFirst(true);
+      // The last cover proves the serial worker has passed the actively edited middle clip.
+      await enteredTail;
+      finishUser(true);
+      await saving;
+      const saved = (await segmentsForDraft(t.d)).find((row) => row.id === targetId)!;
+      expect(clipRender(saved)).toMatchObject({ speed: 3, rotation: 2 });
+      expect(userCovers).toBe(1);
+    } finally {
+      finishFirst(true);
+      finishUser(true);
+      await saving;
+      thumbnail.mockRestore();
+    }
+  });
 
   it('renders the right cover at its cut and ignores a late pre-undo cover after redo', async () => {
     const t = await setup();

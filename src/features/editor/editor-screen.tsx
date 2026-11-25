@@ -4,7 +4,6 @@ import { setAudioModeAsync } from 'expo-audio';
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  BackHandler,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -76,6 +75,7 @@ import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
+import { useEditorBack } from '@/features/editor/use-editor-back';
 import { keepEmptyEditorOpen, shouldLeaveEmptyEditor } from '@/features/editor/editor-history';
 import { useCanSplitAtPlayhead, usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { clipSplitAnchor } from '@/features/editor/clip-split';
@@ -339,20 +339,17 @@ export function EditorScreen({
 
   // Android back leaves crop, typing, the speed row or a mode first, then the editor (only while
   // the editor is on screen: a screen pushed over it handles its own back).
-  useScreenFocusEffect(
-    useCallback(() => {
-      if (!cropping && !typing && tools === 'clip' && mode === 'main') return;
-      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        if (splitBusy || voiceover.busy) return true;
-        if (cropping) setCropping(null);
-        else if (typing) setTyping(null);
-        else if (tools !== 'clip') setTools('clip');
-        else setMode('main');
-        return true;
-      });
-      return () => sub.remove();
-    }, [cropping, typing, tools, mode, splitBusy, voiceover.busy]),
-  );
+  useEditorBack({
+    busy: splitBusy || voiceover.busy,
+    cropping: cropping !== null,
+    typing: typing !== null,
+    tools,
+    mode,
+    setCropping,
+    setTyping,
+    setTools,
+    setMode,
+  });
 
   // Once per app run: the filmstrip's disk cache keeps only frames of files a clip still plays.
   useEffect(() => {

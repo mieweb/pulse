@@ -8,7 +8,7 @@ export type CleanupCandidate = SourceRange & {
   kind: 'filler' | 'silence';
   label: string;
   wordIndexes?: number[];
-  /** No audible frame was found in this source; never preselect automatic deletion. */
+  /** No audible frame was found in the played window; never preselect automatic deletion. */
   requiresReview?: boolean;
 };
 
@@ -16,7 +16,7 @@ export type CleanupCandidate = SourceRange & {
 export const DEFAULT_FILLER_WORDS = ['um', 'umm', 'uh', 'uhh', 'er', 'erm', 'hm', 'hmm'] as const;
 
 export type QuietPauseOptions = {
-  /** Only propose quiet spans at least this long before retaining their edges. */
+  /** Only propose played quiet spans at least this long before retaining their edges. */
   minPauseMs?: number;
   /** Quiet audio retained at each side of a pause, protecting nearby word boundaries. */
   keepMs?: number;
@@ -126,62 +126,47 @@ export function findFillerCandidates(
   return candidatesInWindow(out, window);
 }
 
-/**
- * Find quiet pauses in signed 16-bit little-endian mono PCM, independently of ASR timestamps.
- * This measures audio energy, not semantic speech: background music can hide pauses and very
- * quiet speech can resemble silence. Proposals need preview/review before applying media cuts.
- */
-export function findQuietPauseCandidates(
+/** Raw quiet spans can be reused by split beats without retaining the decoded PCM. */
+export type QuietAudioScan = {
+  durationMs: number;
+  spans: (SourceRange & { id: string })[];
+};
+
+/** Measure signed 16-bit little-endian mono PCM independently of transcript timestamps. */
+export function scanQuietAudio(
   pcm: ArrayBuffer,
   sampleRate = 16000,
-  options: QuietPauseOptions = {},
-): CleanupCandidate[] {
+  options: Pick<QuietPauseOptions, 'thresholdDb' | 'peakDb'> = {},
+): QuietAudioScan {
   const {
-    minPauseMs = DEFAULT_QUIET_PAUSE_OPTIONS.minPauseMs,
-    keepMs = DEFAULT_QUIET_PAUSE_OPTIONS.keepMs,
     thresholdDb = DEFAULT_QUIET_PAUSE_OPTIONS.thresholdDb,
     peakDb = DEFAULT_QUIET_PAUSE_OPTIONS.peakDb,
   } = options;
   if (
     !Number.isInteger(sampleRate) ||
     sampleRate <= 0 ||
-    ![minPauseMs, keepMs, thresholdDb, peakDb].every(Number.isFinite) ||
-    minPauseMs < 0 ||
-    keepMs < 0 ||
+    ![thresholdDb, peakDb].every(Number.isFinite) ||
     thresholdDb > 0 ||
     peakDb > 0 ||
     peakDb < thresholdDb ||
     pcm.byteLength % 2 !== 0
   )
     throw new Error('Invalid quiet-pause audio or settings.');
-  if (pcm.byteLength === 0) return [];
+  if (pcm.byteLength === 0) return { durationMs: 0, spans: [] };
   const samples = new DataView(pcm);
   const length = pcm.byteLength / 2;
   const frameSamples = Math.max(1, Math.round((sampleRate * FRAME_MS) / 1000));
   const rmsSquared = (32768 * 10 ** (thresholdDb / 20)) ** 2;
   const peakLimit = 32768 * 10 ** (peakDb / 20);
-  const out: CleanupCandidate[] = [];
+  const spans: QuietAudioScan['spans'] = [];
   let quietStart = -1;
   const flush = (end: number) => {
     if (quietStart < 0) return;
-    const rawStartMs = (quietStart / sampleRate) * 1000;
-    const rawEndMs = (end / sampleRate) * 1000;
-    if (rawEndMs - rawStartMs >= minPauseMs) {
-      const startMs = rawStartMs + keepMs;
-      const endMs = rawEndMs - keepMs;
-      if (endMs > startMs)
-        out.push({
-          id: `silence:${quietStart}:${end}`,
-          kind: 'silence',
-          label:
-            quietStart === 0 && end === length
-              ? 'Quiet source — review before removing'
-              : 'Quiet pause',
-          startMs,
-          endMs,
-          ...(quietStart === 0 && end === length && { requiresReview: true }),
-        });
-    }
+    spans.push({
+      id: `silence:${quietStart}:${end}`,
+      startMs: (quietStart / sampleRate) * 1000,
+      endMs: (end / sampleRate) * 1000,
+    });
     quietStart = -1;
   };
   for (let start = 0; start < length; start += frameSamples) {
@@ -198,5 +183,63 @@ export function findQuietPauseCandidates(
     if (!quiet) flush(start);
   }
   flush(length);
-  return candidatesInWindow(out, options.window);
+  return { durationMs: (length / sampleRate) * 1000, spans };
+}
+
+/**
+ * Qualify and pad the raw pause within the played window, rather than clipping a full-file cut.
+ * Energy is not semantic speech: very quiet speech can resemble silence and needs review.
+ */
+export function quietPauseCandidates(
+  scan: QuietAudioScan,
+  options: Pick<QuietPauseOptions, 'minPauseMs' | 'keepMs' | 'window'> = {},
+): CleanupCandidate[] {
+  const {
+    minPauseMs = DEFAULT_QUIET_PAUSE_OPTIONS.minPauseMs,
+    keepMs = DEFAULT_QUIET_PAUSE_OPTIONS.keepMs,
+    window,
+  } = options;
+  if (![minPauseMs, keepMs].every(Number.isFinite) || minPauseMs < 0 || keepMs < 0)
+    throw new Error('Invalid quiet-pause audio or settings.');
+  if (
+    window &&
+    (!Number.isFinite(window.startMs) ||
+      !Number.isFinite(window.endMs) ||
+      window.startMs < 0 ||
+      window.endMs <= window.startMs)
+  )
+    return [];
+  const playedStartMs = window?.startMs ?? 0;
+  const playedEndMs = Math.min(window?.endMs ?? scan.durationMs, scan.durationMs);
+  return scan.spans.flatMap((span) => {
+    const rawStartMs = Math.max(span.startMs, playedStartMs);
+    const rawEndMs = Math.min(span.endMs, playedEndMs);
+    if (rawEndMs <= rawStartMs || rawEndMs - rawStartMs < minPauseMs) return [];
+    const startMs = rawStartMs + keepMs;
+    const endMs = rawEndMs - keepMs;
+    if (endMs <= startMs) return [];
+    // Analysis frames can straddle trim boundaries. Conservatively review an almost-wholly
+    // quiet beat too; raw spans make this independent of playback-speed-scaled edge padding.
+    const requiresReview =
+      rawStartMs - playedStartMs <= FRAME_MS && playedEndMs - rawEndMs <= FRAME_MS;
+    return [
+      {
+        id: span.id,
+        kind: 'silence' as const,
+        label: requiresReview ? 'Quiet source — review before removing' : 'Quiet pause',
+        startMs,
+        endMs,
+        ...(requiresReview && { requiresReview: true }),
+      },
+    ];
+  });
+}
+
+/** Find reviewed pause proposals without retaining the raw scan beyond this call. */
+export function findQuietPauseCandidates(
+  pcm: ArrayBuffer,
+  sampleRate = 16000,
+  options: QuietPauseOptions = {},
+): CleanupCandidate[] {
+  return quietPauseCandidates(scanQuietAudio(pcm, sampleRate, options), options);
 }

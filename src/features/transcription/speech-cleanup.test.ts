@@ -122,13 +122,46 @@ describe('quiet audio proposals', () => {
     expect(findQuietPauseCandidates(pcm([1000, -32768]))).toEqual([]);
   });
 
-  it('limits quiet-source candidates to the current trim while retaining source identities', () => {
+  it('qualifies only the quiet duration actually played by a trimmed beat', () => {
     const source = pcm([500, 6000], [1000, 0], [500, 6000]);
     const full = findQuietPauseCandidates(source);
     expect(
       findQuietPauseCandidates(source, 16000, { window: { startMs: 1000, endMs: 2000 } }),
-    ).toEqual([{ ...full[0], startMs: 1000 }]);
+    ).toEqual([]); // Only 500 ms of the full source's qualifying one-second pause is played.
     expect(candidatesInWindow(full, { startMs: 1600, endMs: 2000 })).toEqual([]);
+  });
+
+  it('retains breathing space at the trim edge after intersecting the raw quiet span', () => {
+    const source = pcm([500, 6000], [2000, 0], [500, 6000]);
+    expect(
+      findQuietPauseCandidates(source, 16000, { window: { startMs: 1000, endMs: 3000 } }),
+    ).toEqual([expect.objectContaining({ startMs: 1120, endMs: 2380, label: 'Quiet pause' })]);
+  });
+
+  it('requires explicit review for a wholly quiet played beat at 2x speed', () => {
+    const source = pcm([500, 6000], [2000, 0], [500, 6000]);
+    // The UI expresses 700 ms minimum and 120 ms edge padding in playback time.
+    expect(
+      findQuietPauseCandidates(source, 16000, {
+        window: { startMs: 700, endMs: 2300 },
+        minPauseMs: 700 * 2,
+        keepMs: 120 * 2,
+      }),
+    ).toEqual([expect.objectContaining({ startMs: 940, endMs: 2060, requiresReview: true })]);
+    expect(
+      findQuietPauseCandidates(source, 16000, {
+        window: { startMs: 1000, endMs: 2000 },
+        minPauseMs: 700 * 2,
+        keepMs: 120 * 2,
+      }),
+    ).toEqual([]); // This beat plays for only 500 ms, below the selected 700 ms minimum.
+  });
+
+  it('conservatively reviews quiet beats whose trim edges straddle an analysis frame', () => {
+    const source = pcm([520, 6000], [960, 0], [520, 6000]);
+    expect(
+      findQuietPauseCandidates(source, 16000, { window: { startMs: 500, endMs: 1500 } }),
+    ).toEqual([expect.objectContaining({ startMs: 640, endMs: 1360, requiresReview: true })]);
   });
 
   it('handles leading/trailing and wholly quiet audio conservatively, plus a missing track', () => {

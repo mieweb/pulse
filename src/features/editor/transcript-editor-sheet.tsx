@@ -246,11 +246,7 @@ export function TranscriptEditorSheet({
               ...candidate,
               source,
               id: `${source.segment.id}:${candidate.id}`,
-              reviewOnly:
-                !!candidate.requiresReview ||
-                (candidate.kind === 'silence' &&
-                  candidate.startMs <= rendered.inMs + 140 &&
-                  candidate.endMs >= rendered.outMs - 140),
+              reviewOnly: !!candidate.requiresReview,
             });
         }
         if (controller.signal.aborted) return;

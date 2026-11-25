@@ -65,12 +65,21 @@ conservative transcript fillers and actual low-energy audio pauses, with adjusta
 length and retained breathing space. Transcription models may omit fillers; meaningful words such
 as “like” and “so” are not selected by default. Muted/no-audio beats are skipped, and entirely quiet
 sources require explicit review. Each candidate can be excluded or auditioned before applying.
+Pause duration and retained breathing space are checked inside each beat's played source window,
+including trims and speed changes. Beats sharing a source reuse its raw audio-energy scan;
+they do not reuse already-qualified/padded cuts from another beat.
 
 Applying unions overlapping, frame-snapped source cuts and stores every retained range in one
 SQLite transaction and one persistent Undo step. Source/render, caption-edit and model-transcript
 snapshots are checked before any write. A changed review input rejects the whole operation.
 Original rows and media remain retained even when every live clip is removed, so Undo still works
 after reopening or `.pulse` transfer. Reset cannot expand a retained range through a removed gap.
+Both the applied Undo checkpoint and its prospective Redo form must fit the retention limits;
+otherwise the cut rolls back without changing the timeline. Queued derived covers yield to newer
+clip edits, so thumbnail work cannot invalidate a pending trim, speed or crop save.
+Generated range covers are regenerated on Redo rather than duplicated in its receipt. If later
+transcript results enlarge the replay beyond retention limits, the actual Undo/Redo transaction
+also refuses without changing the timeline or discarding its recovery history.
 Separate draft narration remains anchored as above. Quiet-audio detection is not a semantic speech
 classifier; review very quiet speech and music-backed recordings before applying its proposals.
 

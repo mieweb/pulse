@@ -23,6 +23,22 @@ import { historyCheckpoint, historyOwners } from './undo-history';
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type AdditionHistory = { stacks: UndoStacks; removed: string[] };
 
+/** Apply the same persisted limits when committing an addition or checking its Undo form. */
+export function trimAdditionHistory(
+  conn: SQLiteDatabase,
+  draftId: string,
+  stacks: UndoStacks,
+): PersistedHistory {
+  return trimPersistedHistory(
+    { version: 1, checkpoint: historyCheckpoint(conn, draftId), ...stacks },
+    (path) => {
+      const file = new File(absolutize(path));
+      return file.exists ? file.size : null;
+    },
+    liveDraftMediaPaths(conn, draftId),
+  );
+}
+
 /** Read before changing rows; a stale or invalid checkpoint can never supply replay state. */
 export function additionHistoryBefore(
   conn: SQLiteDatabase,
@@ -74,14 +90,7 @@ export function checkpointInsertedClips(
   if (at >= 0) past[at] = step;
   else past.push(step);
   const stacks: UndoStacks = { past, future: [] };
-  const next = trimPersistedHistory(
-    { version: 1, checkpoint: historyCheckpoint(conn, draftId), ...stacks },
-    (path) => {
-      const file = new File(absolutize(path));
-      return file.exists ? file.size : null;
-    },
-    liveDraftMediaPaths(conn, draftId),
-  );
+  const next = trimAdditionHistory(conn, draftId, stacks);
   const retained = historyMediaPaths(next);
   const removed = before
     ? [...historyMediaPaths(before)].filter((path) => !retained.has(path))

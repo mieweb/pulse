@@ -1,9 +1,11 @@
 import { extractAudio } from '@mieweb/pulse-editor';
 
 import {
-  candidatesInWindow,
-  findQuietPauseCandidates,
+  DEFAULT_QUIET_PAUSE_OPTIONS,
+  quietPauseCandidates,
+  scanQuietAudio,
   type CleanupCandidate,
+  type QuietAudioScan,
   type QuietPauseOptions,
 } from './speech-cleanup';
 
@@ -12,30 +14,35 @@ const checkCancelled = (signal?: AbortSignal) => {
 };
 
 /**
- * One analysis job caches only proposal arrays, never decoded PCM. Split beats sharing a file
- * reuse the audio scan. Create a new analyzer when beginning another review so stale source
- * files/settings are never kept in a process-wide cache.
+ * One analysis job caches raw quiet spans, never decoded PCM. Split beats sharing a file reuse
+ * the energy scan, but qualify and pad each played window separately. Start a new analyzer for
+ * another review so changed source files are never kept in a process-wide cache.
  */
 export function createQuietPauseAnalyzer(signal?: AbortSignal) {
-  const jobs = new Map<string, Promise<CleanupCandidate[]>>();
+  const jobs = new Map<string, Promise<QuietAudioScan>>();
   return async (uri: string, options: QuietPauseOptions = {}): Promise<CleanupCandidate[]> => {
     checkCancelled(signal);
-    const { window, ...settings } = options;
-    const key = JSON.stringify([uri, settings]);
+    const {
+      thresholdDb = DEFAULT_QUIET_PAUSE_OPTIONS.thresholdDb,
+      peakDb = DEFAULT_QUIET_PAUSE_OPTIONS.peakDb,
+    } = options;
+    const key = JSON.stringify([uri, thresholdDb, peakDb]);
     let job = jobs.get(key);
     if (!job) {
       job = (async () => {
         const audio = await extractAudio(uri);
         checkCancelled(signal);
-        return findQuietPauseCandidates(audio.data, audio.sampleRate, settings);
+        return scanQuietAudio(audio.data, audio.sampleRate, { thresholdDb, peakDb });
       })();
       jobs.set(key, job);
       // A transient decoding failure can be retried during the same analysis job.
-      void job.catch(() => jobs.delete(key));
+      void job.catch(() => {
+        if (jobs.get(key) === job) jobs.delete(key);
+      });
     }
-    const candidates = await job;
+    const scan = await job;
     checkCancelled(signal);
-    return candidatesInWindow(candidates, window);
+    return quietPauseCandidates(scan, options);
   };
 }
 

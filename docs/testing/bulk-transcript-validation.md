@@ -100,6 +100,48 @@ announcements, Android native UI, variable-frame-rate footage and naturally spok
 quality still need verification. The phone handoff is an installation/launch check, not a
 physical replay of the synthetic simulator tests.
 
+## Review regressions
+
+The merge review identified additional cases beyond the original native fixture:
+
+- A delayed cleanup-cover job must yield to a newer user edit. The regression holds the first
+  cover, starts a speed/rotation save on a later clip, advances the cover queue past that clip,
+  and verifies the user's save persists. It reproduced lost edits before the fix.
+- Android Back must remain consumed during a cut even if a toolbar interaction returns the
+  editor to main mode. Event/focus tests cover busy transitions, dismissal priority and cleanup;
+  this is source-level coverage, not an Android device test.
+- Single-word and bulk cuts must retain both durable Undo and Redo. Oversized originals are
+  rejected atomically when either form exceeds history limits, including caption data duplicated
+  in the restored checkpoint. A later transcription result that overflows replay also causes
+  the actual Undo/Redo transaction to roll back, preserving current rows and recovery history.
+  No retention budget or schema is expanded.
+- Quiet analysis qualifies and pads raw spans separately inside every played window. A full-file
+  pause cannot authorize a shorter trimmed overlap, and wholly quiet trimmed beats require an
+  explicit selection at 2× speed as well as normal speed.
+
+On the final review-fix source, `npm test -- --runInBand` passed **168 suites / 2,453 tests**;
+one integration suite / eight tests were skipped locally. Root/embed TypeScript, full lint,
+protocol generation, changed-file formatting, `git diff --check` and `npm run check:embed`
+also passed. Independent review found no remaining blocker in these fixes. The earlier native
+fixture and phone installation retain their recorded runtime fingerprints.
+
+The final review-fix runtime passed **19 focused native checks** on the same iOS Simulator.
+Two beats share one audible eight-second source: the first plays a 500 ms quiet trim at 2× and
+produces no proposal; the second plays a 750 ms quiet trim and produces one unchecked proposal.
+Explicit selection enables Apply, and cancelling leaves the stored trims unchanged.
+
+| Quiet trim requires review | Explicit selection enables Apply |
+| --- | --- |
+| ![Quiet trim remains unchecked](../../screenshots/validation/bulk-transcript-review/quiet-trim-unchecked.png) | ![Reviewed quiet trim selected](../../screenshots/validation/bulk-transcript-review/quiet-trim-selected.png) |
+
+The original two-beat cleanup was repeated on this runtime, including exclusion/reselection,
+Listen, Apply, Undo/Redo, process restart, persistent Undo/Redo and actual native export.
+The [new export](../../screenshots/validation/bulk-transcript-review/edited.mp4) again contains
+346 correctly ordered frames, no filler-color frames and aligned audio (0.99242 correlation).
+The [review report](../../screenshots/validation/bulk-transcript-review/report.json) records the
+runtime/config fingerprints, source hashes, checks and verified simulator-runner cleanup.
+No physical device was attached for the review fixes.
+
 ## Phone installation
 
 The matching signed Pulse **2.8.0 (1)** build was installed in place, with a private library
