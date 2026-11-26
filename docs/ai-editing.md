@@ -77,9 +77,19 @@ timing reject the save and clean up the staged destination. No schema migration 
 ## Limits and verification
 
 This first experiment targets English spoken video, foreground execution and projects under
-twenty minutes. Muted source clips require unmuting; projects with separate voiceover takes or a
-muted source track are rejected explicitly. The simulator verifies native UI and
-unavailability handling; it cannot establish Apple Intelligence generation quality or phone
+twenty minutes. Muted playable source clips require unmuting. Projects with a muted source track
+or any saved voiceover take are rejected, including when the voiceover track itself is muted.
+These guards prevent the source-speech-only pipeline from silently discarding narration or
+changing the saved audio mix. They run before analysis and are rechecked during draft creation;
+see [audio support guards](../src/db/ai-edits.ts) and [analysis](../src/features/ai-edit/run-ai-edit.ts).
+
+Beats with zero effective duration are excluded from analysis and the generated cut. They remain
+in the original project and in the complete source-change signature checked before saving. This
+is intentional: a zero-length beat has no playable interval and can represent a failed native
+duration read. It follows the editor's existing [playable timeline rule](../src/utils/segment-window.ts).
+If every beat is empty, AI editing stops with an actionable message instead of creating an empty cut.
+
+The simulator verifies native UI and unavailability handling; it cannot establish Apple Intelligence generation quality or phone
 performance. The model can omit important context: review the result before sharing. A
 punctuation-free transcript may require passage breaks at word boundaries. Excerpt exports use
 the existing native rendering path and usually re-encode.
@@ -90,3 +100,33 @@ rollback. For acceptance, use an 8–12 minute recording with 5–8 preselected 
 compare the cut with a human reference, measure the actual exported duration and record ASR,
 selection and export latency separately. Cold-launch offline execution, thermal behavior and
 semantic quality require target-phone evidence.
+
+## Audio support follow-up — proposed, not implemented
+
+The audio restrictions above are MVP limits. The following plan supplements the broader
+[#341](https://github.com/mieweb/pulse/issues/341) effort; these tasks have no committed delivery
+date, and the current guards remain in place until the relevant behavior is verified.
+
+- [ ] **Analyze the audible timeline.** Build on the compatible voiceover/history schema described
+      in the [phone handoff](testing/ai-edit-phone-build.md). Define the AI input from the saved audio
+      mix, honoring clip mute, source-track mute and voiceover-track mute. Transcribe audible speech
+      with timing mapped to the original timeline. Include audio settings and narration edits in cache
+      keys and source-change checks. Use the same composed timeline clock and frame-snapped clip
+      starts as native preview/export so joins do not drift. Do not select speech that the user has muted; report when no
+      audible speech is available.
+- [ ] **Preserve narration through the cuts.** Map selected timeline ranges to the new project's
+      video and audio. Intersect, split, trim and retime voiceover takes across removed ranges, retain
+      mute settings, and keep muted picture when it accompanies selected narration. Voiceovers are
+      already timed on the draft clock: map them from the old draft to the new draft without applying
+      source-clip speed a second time. Copy required
+      media independently and save video, narration, transcripts and editable state atomically using
+      the existing ownership, recovery and history conventions.
+- [ ] **Verify before widening support.** Cover muted clips, both track-level mutes, mixed source
+      speech/narration, overlapping takes, speed changes and narration crossing a cut boundary.
+      Check cancellation, source changes during analysis, rollback, reopening and undo/redo. Verify
+      offline preview/export on a phone with preserved audio and an exported duration below 120 seconds.
+      Remove each rejection only when its supported cases pass.
+- [ ] **Keep empty-beat handling explicit.** Retain zero-length skipping. Add a clear notice when
+      beats are skipped and distinguish intentionally empty beats from failed duration reads; offer
+      metadata retry/recovery for the latter. Do not invent duration or delete the original beat.
+      Extend regressions for mixed empty/playable beats, all-empty input and source changes to skipped beats.
