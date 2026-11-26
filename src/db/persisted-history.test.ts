@@ -277,6 +277,63 @@ describe('saved Undo references and copy', () => {
     expect(split.splits?.[0]).toMatchObject({ rightId: 'copy-right', before: { draftId: 'copy' } });
     expect(split.splits?.[0]).not.toHaveProperty('firstInsertedId');
     expect(historyClipIds(copy)).toEqual(new Set(['copy-a', 'copy-deleted', 'copy-right']));
+    expect(split.splits?.[0]).not.toHaveProperty('fullyRemoved');
+    expect(split.splits?.[0]).not.toHaveProperty('appliedIds');
+  });
+
+  it.each([true, false])(
+    'preserves explicit full-removal outcome %s and bulk identities when remapping',
+    (fullyRemoved) => {
+      const appliedIds = fullyRemoved ? [] : ['right', 'third'];
+      const source = history(
+        [
+          {
+            kind: 'added',
+            ids: appliedIds,
+            taken: null,
+            splits: [{ before: taken('a'), rightId: 'right', fullyRemoved, appliedIds }],
+          },
+        ],
+        [],
+      );
+      expect(parse(source)).toEqual(source);
+      const copy = remapPersistedHistory(source, {
+        draftId: 'copy',
+        mapId: (id) => `copy-${id}`,
+        mapPath: (file) => file.replace('drafts/d/', 'drafts/copy/'),
+      });
+      expect(parsePersistedHistory(JSON.stringify(copy), 'copy')).toEqual(copy);
+      const step = copy.past[0];
+      if (step.kind !== 'added') throw new Error('Expected structural step.');
+      expect(step.splits?.[0]).toMatchObject({
+        fullyRemoved,
+        appliedIds: appliedIds.map((id) => `copy-${id}`),
+      });
+    },
+  );
+
+  it.each([
+    { fullyRemoved: 'true' },
+    { fullyRemoved: null },
+    { fullyRemoved: true, firstInsertedId: 'x' },
+    { fullyRemoved: true, appliedIds: ['right'] },
+    { fullyRemoved: false, appliedIds: [] },
+    { fullyRemoved: false, appliedIds: ['right', 'right'] },
+    { fullyRemoved: false, appliedIds: ['right', 'unrecorded'] },
+    { appliedIds: ['right'] },
+  ])('rejects inconsistent whole-removal or applied identities %j', (fields) => {
+    const source = history(
+      [
+        {
+          kind: 'added',
+          ids: ['right'],
+          taken: null,
+          splits: [{ before: taken('a'), rightId: 'right', ...fields } as never],
+        },
+      ],
+      [],
+    );
+    expect(() => parse(source)).toThrow();
   });
 
   it('lists snapshot-only, dormant, replaced and split IDs and files once', () => {

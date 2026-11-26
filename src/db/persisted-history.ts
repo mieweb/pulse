@@ -166,9 +166,18 @@ function validTaken(value: unknown, draftId: string): value is TakenOutClips {
 function validSplit(value: unknown, draftId: string): value is SplitReceipt {
   return (
     object(value) &&
-    keys(value, ['before', 'rightId', 'firstInsertedId']) &&
+    keys(value, ['before', 'rightId', 'firstInsertedId', 'fullyRemoved', 'appliedIds']) &&
     validTaken(value.before, draftId) &&
     isId(value.rightId) &&
+    (value.fullyRemoved === undefined || typeof value.fullyRemoved === 'boolean') &&
+    (value.appliedIds === undefined ||
+      (ids(value.appliedIds) && value.fullyRemoved !== undefined)) &&
+    (value.fullyRemoved !== true ||
+      (value.firstInsertedId === undefined &&
+        (value.appliedIds === undefined || value.appliedIds.length === 0))) &&
+    (value.fullyRemoved !== false ||
+      value.appliedIds === undefined ||
+      value.appliedIds.includes(value.rightId)) &&
     (value.firstInsertedId === undefined ||
       (isId(value.firstInsertedId) && value.rightId !== value.firstInsertedId)) &&
     value.before.rows.length > 0 &&
@@ -200,6 +209,16 @@ function validReplayRows(step: AddedStep): boolean {
   const originals = new Set<string>();
   for (const split of step.splits ?? []) {
     if (split.firstInsertedId !== undefined && !additions.has(split.firstInsertedId)) return false;
+    if (split.appliedIds?.some((id) => !additions.has(id))) return false;
+    if (
+      split.fullyRemoved === true &&
+      (additions.has(split.rightId) ||
+        step.taken?.rows.some(
+          (row) =>
+            row.id === split.rightId || split.before.rows.some((before) => before.id === row.id),
+        ))
+    )
+      return false;
     generated.add(split.rightId);
     for (const row of split.before.rows) originals.add(row.id);
   }
@@ -266,6 +285,7 @@ export function historyClipIds(history: PersistedHistory): Set<string> {
       step.ids.forEach((id) => out.add(id));
       for (const split of step.splits ?? []) {
         out.add(split.rightId);
+        split.appliedIds?.forEach((id) => out.add(id));
         if (split.firstInsertedId !== undefined) out.add(split.firstInsertedId);
       }
       for (const taken of takenFrom(step)) {
@@ -405,6 +425,10 @@ export function remapPersistedHistory(
                 splits: value.splits.map((split) => ({
                   before: taken(split.before),
                   rightId: mapId(split.rightId),
+                  ...(split.fullyRemoved !== undefined ? { fullyRemoved: split.fullyRemoved } : {}),
+                  ...(split.appliedIds !== undefined
+                    ? { appliedIds: split.appliedIds.map(mapId) }
+                    : {}),
                   ...(split.firstInsertedId !== undefined
                     ? { firstInsertedId: mapId(split.firstInsertedId) }
                     : {}),

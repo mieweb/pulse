@@ -4,7 +4,6 @@ import { setAudioModeAsync } from 'expo-audio';
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  BackHandler,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -27,7 +26,7 @@ import { END, timeAtAnchor } from '@/core/clip-anchor';
 import { useScreenFocused, useScreenFocusEffect } from '@/core/navigation/focus';
 import Sortable from 'react-native-sortables';
 
-import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
+import { CaptionStatus, CaptionTools, CaptionWordPicker } from '@/features/editor/caption-tools';
 import { ADD_SIZE, EditorAddMenu } from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
 import { CommandButton, ViewSwitcher } from '@/features/editor/editor-controls';
@@ -63,13 +62,20 @@ import {
   timelineLayout,
 } from '@/features/editor/timeline-geometry';
 import { captionYQuery, setCaptionY } from '@/db/captions';
-import { allSegments, splitSegment } from '@/db/drafts';
+import {
+  allSegments,
+  cutSegmentRange,
+  cutTranscriptRanges,
+  splitSegment,
+  type TranscriptCutRequest,
+} from '@/db/drafts';
 import { pruneFrameCache } from '@/features/editor/filmstrip';
 import { toMergeClip } from '@/features/export/editor-merge';
 import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
+import { useEditorBack } from '@/features/editor/use-editor-back';
 import { keepEmptyEditorOpen, shouldLeaveEmptyEditor } from '@/features/editor/editor-history';
 import { useCanSplitAtPlayhead, usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { clipSplitAnchor } from '@/features/editor/clip-split';
@@ -107,6 +113,8 @@ import { haptics } from '@/utils/haptics';
 import { userMessage } from '@/utils/user-message';
 import { TILE_HEIGHT } from '@/features/editor/clip-tile';
 import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
+import { interiorCutWindow } from '@/utils/transcript-cut';
+import { TranscriptEditorSheet, type TranscriptSource } from './transcript-editor-sheet';
 
 import type { EditorScreenProps } from './contract';
 
@@ -240,6 +248,21 @@ export function EditorScreen({
   // last switched to, remembered across sessions (Clips the first time).
   const [view, setView] = useState<EditorView>(() => getEditorView() ?? openView ?? 'clips');
   const [tools, setTools] = useState<'clip' | 'speed'>('clip');
+  const splitting = useRef(false);
+  const [splitBusy, setSplitBusy] = useState(false);
+  const [transcriptSession, setTranscriptSession] = useState<{
+    sources: TranscriptSource[];
+    initialClipId: string | null;
+  } | null>(null);
+  const audition = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const auditionSequence = useRef(0);
+  const stopTranscriptPreview = useCallback(() => {
+    auditionSequence.current++;
+    if (audition.current) clearTimeout(audition.current);
+    audition.current = null;
+    ctl.pause();
+  }, [ctl]);
+  useEffect(() => () => stopTranscriptPreview(), [stopTranscriptPreview]);
   // Each editor opens the timeline at its usual scale (a pinch's scale is kept across views).
   useState(resetTimelineZoom);
   // The bottom bar: the main tools, edit mode (the tools of the clip under the playhead) or the
@@ -316,20 +339,17 @@ export function EditorScreen({
 
   // Android back leaves crop, typing, the speed row or a mode first, then the editor (only while
   // the editor is on screen: a screen pushed over it handles its own back).
-  useScreenFocusEffect(
-    useCallback(() => {
-      if (!cropping && !typing && tools === 'clip' && mode === 'main') return;
-      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        if (voiceover.busy) return true;
-        if (cropping) setCropping(null);
-        else if (typing) setTyping(null);
-        else if (tools !== 'clip') setTools('clip');
-        else setMode('main');
-        return true;
-      });
-      return () => sub.remove();
-    }, [cropping, typing, tools, mode, voiceover.busy]),
-  );
+  useEditorBack({
+    busy: splitBusy || voiceover.busy,
+    cropping: cropping !== null,
+    typing: typing !== null,
+    tools,
+    mode,
+    setCropping,
+    setTyping,
+    setTools,
+    setMode,
+  });
 
   // Once per app run: the filmstrip's disk cache keeps only frames of files a clip still plays.
   useEffect(() => {
@@ -640,7 +660,7 @@ export function EditorScreen({
     void flushDraftWrites().then(go);
   };
   const openExport = () => {
-    if (voiceoverMode || voiceover.busy) return;
+    if (voiceoverMode || voiceover.busy || splitting.current) return;
     if (clips.length > 0) openOver(() => onExport(draftId));
   };
 
@@ -669,8 +689,6 @@ export function EditorScreen({
   });
   const { screen, screenLive } = add;
 
-  const splitting = useRef(false);
-  const [splitBusy, setSplitBusy] = useState(false);
   /** Split the current source window without adding media; one history step rejoins it. */
   const split = () => {
     if (splitting.current || history.busy || add.busy) return;
@@ -846,6 +864,156 @@ export function EditorScreen({
       shown.map((l) => l.from),
       shown.length ? shown[shown.length - 1].to : 0,
     );
+  };
+
+  // Use the selected word's source timing, never its composed (trimmed/speed-adjusted)
+  // position. The first pass keeps footage on both sides, sharing the existing split receipt.
+  const speechSegment = captionTools && picked ? segmentOf(picked.clipId) : undefined;
+  const speechClip = speechSegment && clips.find((c) => c.id === speechSegment.id);
+  const speechWord =
+    speechSegment && picked
+      ? clipWords(speechSegment, captions.clipRows)?.words[picked.i]
+      : undefined;
+  const speechFps = speechClip && fpsOf(speechClip.uri);
+  const speechWindow =
+    speechSegment && speechWord && speechFps && selWord >= 0
+      ? interiorCutWindow(
+          clipRender(speechSegment),
+          speechWord.t0 * 10,
+          speechWord.t1 * 10,
+          speechFps,
+        )
+      : null;
+  const speechCut =
+    speechClip && speechWord && speechFps && speechWindow
+      ? { clip: speechClip, word: speechWord, fps: speechFps, window: speechWindow }
+      : null;
+
+  const cutSpeech = () => {
+    if (!speechCut || splitting.current || history.busy || add.busy) return;
+    const { clip, word, fps, window } = speechCut;
+    const cutTimeMs =
+      (layout.starts[clips.findIndex((c) => c.id === clip.id)] ?? 0) +
+      (window.startMs - clip.merge.startMs) / clip.merge.speed;
+    ctl.pause();
+    splitting.current = true;
+    setSplitBusy(true);
+    haptics.tap();
+    const key = randomUUID();
+    void (async () => {
+      try {
+        await history.beginBatch(key);
+        const receipt = await cutSegmentRange(draftId, {
+          clipId: clip.id,
+          sourceKey: clip.sourceKey,
+          startMs: word.t0 * 10,
+          endMs: word.t1 * 10,
+          rightId: randomUUID(),
+          fps,
+        });
+        history.recordAdded([], [receipt]);
+        letGo();
+        ctl.seekTo(cutTimeMs);
+        showToast({
+          kind: 'success',
+          title: `Cut “${word.text}” from video`,
+          message: 'Undo restores the audio, video and captions.',
+        });
+      } catch (error) {
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t cut the word',
+          message: userMessage(error, 'Select a word inside the beat and try again.', 'cut speech'),
+        });
+      } finally {
+        history.endBatch(key);
+        splitting.current = false;
+        setSplitBusy(false);
+      }
+    })();
+  };
+
+  const openTranscript = () => {
+    if (splitting.current || history.busy || add.busy || voiceover.busy) return;
+    ctl.pause();
+    const sources: TranscriptSource[] = clips.flatMap((clip) => {
+      const segment = segmentOf(clip.id);
+      if (!segment) return [];
+      const own = clipWords(segment, captions.clipRows);
+      const row = captions.clipRows.get(clip.id);
+      return [
+        {
+          segment: { ...segment },
+          sourceKey: clip.sourceKey,
+          uri: clip.uri,
+          sourceMuted: voiceover.sourceMuted,
+          label: `Beat ${clip.label ?? clips.indexOf(clip) + 1}`,
+          words: (own?.words ?? []).map((word) => ({ ...word })),
+          fps: fpsOf(clip.uri),
+          transcript:
+            !own?.edited && row && !row.failed && captions.model
+              ? { model: captions.model.id, file: row.file, words: JSON.stringify(row.words) }
+              : undefined,
+        },
+      ];
+    });
+    setTranscriptSession({
+      sources,
+      initialClipId: picked?.clipId ?? clips[clipIndexAt(layout.starts, ctl.lastMs)]?.id ?? null,
+    });
+  };
+
+  const previewTranscriptCut = (clipId: string, startMs: number, endMs: number) => {
+    stopTranscriptPreview();
+    const clip = clips.find((c) => c.id === clipId);
+    const frozen = transcriptSession?.sources.find((s) => s.segment.id === clipId);
+    if (!clip || clip.sourceKey !== frozen?.sourceKey) {
+      showToast({
+        kind: 'error',
+        title: 'The beat changed',
+        message: 'Close and reopen the transcript.',
+      });
+      return;
+    }
+    const index = clips.indexOf(clip);
+    const start = Math.max(clip.merge.startMs, startMs - 300);
+    const end = Math.min(clip.merge.endMs, endMs + 300);
+    const seq = auditionSequence.current;
+    ctl.seekTo((layout.starts[index] ?? 0) + (start - clip.merge.startMs) / clip.merge.speed);
+    void ctl.waitUntilSettled().then((ready) => {
+      if (!ready || seq !== auditionSequence.current) return;
+      ctl.play();
+      audition.current = setTimeout(
+        stopTranscriptPreview,
+        Math.min(5000, (end - start) / clip.merge.speed),
+      );
+    });
+  };
+
+  const applyTranscriptCuts = async (requests: TranscriptCutRequest[]) => {
+    if (splitting.current || history.busy || add.busy)
+      throw new Error('Wait for the current edit to finish.');
+    stopTranscriptPreview();
+    splitting.current = true;
+    setSplitBusy(true);
+    const key = randomUUID();
+    try {
+      await history.beginBatch(key);
+      const result = await cutTranscriptRanges(draftId, requests);
+      history.recordAdded(result.ids, result.splits);
+      letGo();
+      // Review the new sequence from its start; cuts may be before or after the old playhead.
+      ctl.seekTo(0);
+      showToast({
+        kind: 'success',
+        title: `Removed ${(result.removedMs / 1000).toFixed(1)} seconds from video`,
+        message: 'One Undo restores all of these cuts.',
+      });
+    } finally {
+      history.endBatch(key);
+      splitting.current = false;
+      setSplitBusy(false);
+    }
   };
   /** Store a clip's caption words, in the file it plays (one undo step). */
   const saveCaptionWords = (clipId: string, words: CaptionWord[]) => {
@@ -1182,6 +1350,27 @@ export function EditorScreen({
           </View>
         )}
 
+        {captionTools && !typing && (
+          <CaptionWordPicker
+            lines={lines}
+            picked={picked}
+            timeMs={values.timeMs}
+            busy={splitBusy || history.busy || add.busy}
+            canCutSpeech={!!speechCut}
+            onOpenTranscript={openTranscript}
+            onPick={(lineIndex, wordIndex) => {
+              const line = lines[lineIndex];
+              const word = line?.words?.[wordIndex];
+              if (!word) return;
+              ctl.pause();
+              setPicked({ clipId: line.clipId, i: line.from + wordIndex });
+              zoomToCaption(lineIndex, wordIndex);
+              ctl.seekTo(word.t0 * 10);
+            }}
+            onCutSpeech={cutSpeech}
+          />
+        )}
+
         <View
           // Full-width tools above the lower commands; caption entry replaces both rows.
           // Keep the home inset once and allow enlarged labels to grow without clipping.
@@ -1220,6 +1409,7 @@ export function EditorScreen({
                     lines={lines}
                     timeMs={values.timeMs}
                     hasWord={selWord >= 0}
+                    busy={splitBusy || history.busy || add.busy}
                     edited={captionsEdited}
                     onDone={() => setMode('main')}
                     onEdit={editCaption}
@@ -1242,6 +1432,7 @@ export function EditorScreen({
                     }}
                     captionsBusy={captionsBusy}
                     onCaptions={openCaptions}
+                    onTranscript={openTranscript}
                     tip={
                       captionsTip.mounted && (
                         <TipAnchor
@@ -1280,7 +1471,13 @@ export function EditorScreen({
                 )}
               </View>
               <View style={styles.toolbar}>
-                <CommandButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
+                <CommandButton
+                  icon="xmark"
+                  label="Close"
+                  onPress={onClose}
+                  disabled={splitBusy}
+                  testID="editor.close"
+                />
                 {/* Keep command slots fixed when disabled, including an empty draft awaiting Redo. */}
                 <CommandButton
                   icon="arrow.uturn.backward"
@@ -1298,7 +1495,7 @@ export function EditorScreen({
                 />
                 <ExportButton
                   onPress={openExport}
-                  disabled={clips.length === 0}
+                  disabled={clips.length === 0 || splitBusy}
                   testID="editor.export"
                   compact
                 />
@@ -1319,6 +1516,19 @@ export function EditorScreen({
           />
         )}
         {add.anotherPulseSheet}
+        {transcriptSession && (
+          <TranscriptEditorSheet
+            sources={transcriptSession.sources}
+            initialClipId={transcriptSession.initialClipId}
+            onApply={applyTranscriptCuts}
+            onPreview={previewTranscriptCut}
+            onStopPreview={stopTranscriptPreview}
+            onClose={() => {
+              stopTranscriptPreview();
+              setTranscriptSession(null);
+            }}
+          />
+        )}
         {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
         <TipLayer />
       </KeyboardAvoidingView>

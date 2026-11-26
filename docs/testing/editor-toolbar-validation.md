@@ -1,8 +1,9 @@
 # Editor toolbar (#337)
 
-[Issue #337](https://github.com/mieweb/pulse/issues/337), based on main
-`6e74151dfcfd1c465228b929d9f00090a461c18b` (2026-11-25), including the merged navigation,
-persistent history, export, Voiceover and 2.8.0 release changes.
+[PR #340](https://github.com/mieweb/pulse/pull/340) fixes [issue #337](https://github.com/mieweb/pulse/issues/337).
+The original toolbar and device checks below used the 2.8.0 base `6e74151`. The PR now includes
+`main` at `d68aab2`, which added Bulk Transcript in [#339](https://github.com/mieweb/pulse/pull/339).
+The PR description records checks on the merged sources.
 
 The clip tools occupy a full-width lower row above Close, Undo, Redo and Export. Their order is
 **Delete, Split, Speed, Reset, Crop, Mute/Unmute, Flip, Rotate**. Done scrolls with the tools.

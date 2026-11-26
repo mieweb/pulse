@@ -1,0 +1,103 @@
+{
+  "date": "2026-11-25",
+  "applicationCommit": "a46cfce7a686d2594dae11fa89c1ab47c516742e",
+  "mainBase": "2cfe6fb58862bad1e9cf91e009419ce7cdea2a1b",
+  "nativeEngine": "306ff1d999589be6615275c60567ba371f073efd",
+  "bundleSHA256": "c8d820a6b0c9cf09e38ff22838205d1c1986e3831fa6cfe2ca4918f7f0920abc",
+  "platform": "iPhone 17 Pro / iOS 26 Simulator",
+  "fixture": {
+    "text": "Please remove this extra word from the video",
+    "words": [
+      {
+        "text": "Please",
+        "t0": 0,
+        "t1": 100,
+        "start": true
+      },
+      {
+        "text": "remove",
+        "t0": 100,
+        "t1": 200
+      },
+      {
+        "text": "this",
+        "t0": 200,
+        "t1": 300
+      },
+      {
+        "text": "extra",
+        "t0": 300,
+        "t1": 400
+      },
+      {
+        "text": "word",
+        "t0": 400,
+        "t1": 500
+      },
+      {
+        "text": "from",
+        "t0": 500,
+        "t1": 600
+      },
+      {
+        "text": "the",
+        "t0": 600,
+        "t1": 700
+      },
+      {
+        "text": "video",
+        "t0": 700,
+        "t1": 800
+      }
+    ],
+    "cutWord": "extra",
+    "cutSourceMs": [3000, 4000],
+    "sourceDurationMs": 8000,
+    "expectedDurationMs": 7000,
+    "colors": [
+      "0x244a8f",
+      "0x298f5a",
+      "0x8f7a24",
+      "0xff2424",
+      "0x6c3494",
+      "0x248b8f",
+      "0x8f6424",
+      "0x344c74"
+    ]
+  },
+  "keptSourceRangesMs": [
+    [0, 3000],
+    [4000, 8000]
+  ],
+  "exportDurationMs": 7000,
+  "media": {
+    "sourceVideoFrames": 240,
+    "exportVideoFrames": 210,
+    "removedRedFrames": 30,
+    "remainingRedFrames": 0,
+    "maxRGBErrorAgainstExpectedSourceSequence": 14,
+    "allFramesMatchExpectedSourceColorOrder": true,
+    "audioCorrelationAgainstSourceWith3to4SecondsRemoved": 0.9995568310702667,
+    "audioAlignmentOffsetMs": 0,
+    "sourceSHA256": "ef094591ee257313f4f82f34d1f483f8e359663f98c7ff111144347b5e4d7f84",
+    "exportSHA256": "4e3cf14cc127804e3719437f4f60749944423057e78b64fc9b135fcaddcba3db"
+  },
+  "localChecks": {
+    "suitesPassed": 163,
+    "testsPassed": 2394,
+    "suitesSkipped": 1,
+    "testsSkipped": 8,
+    "rootTypecheck": "pass",
+    "embeddedTypecheck": "pass",
+    "lint": "pass",
+    "protocol": "pass",
+    "embedBundleChecks": ["ios", "android"]
+  },
+  "limits": [
+    "One interior timed source word per operation",
+    "Boundary and whole-beat cuts disabled",
+    "Separate narration remains anchored to draft time",
+    "No physical-device or Android UI verification",
+    "VFR and natural-speech cut quality unverified"
+  ]
+}

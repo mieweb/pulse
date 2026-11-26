@@ -1,0 +1,327 @@
+{
+  "date": "2026-11-25",
+  "platform": "iOS 26 Simulator, iPhone 17 Pro, default text size",
+  "appVersion": "2.8.0",
+  "baseCommit": "6ad75d26a03d34a035a16de0c5b4a80b753b2257",
+  "nativeEngine": "306ff1d999589be6615275c60567ba371f073efd",
+  "runtimeBundleSHA256": "0caf6f02b5c4f9327740d06bd1b3a1cd384698ee2d4bdead8f686d1fab6f0cb2",
+  "runtimeConfigSHA256": "106a286032aad3a6f19fc4d8865dcb580c9d238621be040440f2be6529d7c9b0",
+  "testNotesSHA256": "438ecd93d8206f080fbe5bacc081a962fadb041087c2ba021d0010ba406d9ee6",
+  "sourceTreeHashesSHA256": "264a2183599ef065c21bae0ba9b2c28481f0da3ebac76c4d1b6e96075c2f6be6",
+  "featureFileSHA256": {
+    "src/features/editor/transcript-editor-sheet.tsx": "db1043d6f74484c41618d0a2ed730099aa397b9e782dab9d6ce683b7b8ff14d6",
+    "src/features/editor/transcript-selection.test.ts": "56092b6a3a351f0b31970708321247d975d0adee1ee1d51374840a0a11a22eb5",
+    "src/features/editor/transcript-selection.ts": "a42e6891352d37ebf2c3eb5d3f074676287e66386afae5dbc2b09370259a1955",
+    "src/features/transcription/audio-pause-analysis.test.ts": "783f4b9338e71a48fa026f9435d27a6921c2ad1a065f9eabcb07cfd029a8d02e",
+    "src/features/transcription/audio-pause-analysis.ts": "a658dbf825862061eacf1fa2712677bcbc3f419d19cfc77dc109e2afa8be0f2f",
+    "src/features/transcription/speech-cleanup.test.ts": "b24e2931b43e9d20abd047759540afeac6b0a1607b7c1c3ffe220da590965d4b",
+    "src/features/transcription/speech-cleanup.ts": "8f2542fe98a112e64012b753ea59699ad659053213e2045e811685f160755528",
+    "src/utils/bulk-transcript-cut.test.ts": "5a6723ab715fe23135bbb8313c5a99a16832d9ef00f5fcc534eec85d5d20f8c1",
+    "src/utils/bulk-transcript-cut.ts": "8c63f79715b97b3f8b1551f8d720c892daab00ebd728b6a025eddc9d87941bdf"
+  },
+  "fixture": {
+    "beatCount": 2,
+    "sourceBeatDurationMs": 8000,
+    "fps": 30,
+    "transcripts": ["We um ship this release today", "It uh works really very well"],
+    "fillerRangeMs": [1200, 2200],
+    "quietRangeMs": [3200, 4700],
+    "timedWordsSupplied": true
+  },
+  "nativeChecks": [
+    {
+      "check": "Whole Pulse exposes twelve native word checkboxes",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Two nonadjacent checkbox words can be selected",
+      "passed": true,
+      "details": "2 cuts \u00b7 2.0s shorter"
+    },
+    {
+      "check": "Enabling Range clears prior checkbox selection",
+      "passed": true,
+      "details": "0 cuts \u00b7 0.0s shorter"
+    },
+    {
+      "check": "Range selects four words across two beats",
+      "passed": true,
+      "details": [
+        "Beat 1, word 5: release",
+        "Beat 1, word 6: today",
+        "Beat 2, word 1: It",
+        "Beat 2, word 2: uh"
+      ]
+    },
+    {
+      "check": "Range summary includes edge pauses across beat boundary",
+      "passed": true,
+      "details": "2 cuts \u00b7 4.5s shorter"
+    },
+    {
+      "check": "One batch removes a 4.5 second passage across beats",
+      "passed": true,
+      "details": {
+        "durationMs": 11500,
+        "clipCount": 2
+      }
+    },
+    {
+      "check": "One Undo restores both original beats",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "One Redo restores manual batch",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Native PCM and transcript analysis finds two fillers and two quiet pauses",
+      "passed": true,
+      "details": [
+        {
+          "label": "Beat 1: um, 1.0s",
+          "value": "checkbox, checked"
+        },
+        {
+          "label": "Beat 1: Quiet pause, 1.3s",
+          "value": "checkbox, checked"
+        },
+        {
+          "label": "Beat 2: uh, 1.0s",
+          "value": "checkbox, checked"
+        },
+        {
+          "label": "Beat 2: Quiet pause, 1.3s",
+          "value": "checkbox, checked"
+        }
+      ]
+    },
+    {
+      "check": "All four non-destructive proposals initially selected",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Cleanup summary measures 4.5 seconds shorter",
+      "passed": true,
+      "details": "4 cuts \u00b7 4.5s shorter"
+    },
+    {
+      "check": "Excluding one quiet candidate updates union savings",
+      "passed": true,
+      "details": "3 cuts \u00b7 3.2s shorter"
+    },
+    {
+      "check": "Reselecting candidate restores all proposed cuts",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Listen preview leaves saved source rows unchanged",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Apply cuts commits both source beats in one batch",
+      "passed": true,
+      "details": {
+        "durationMs": 11532,
+        "clipCount": 6,
+        "ranges": [
+          {
+            "id": "53f909ad-5a88-45d3-8e3f-db81d5b7b63c",
+            "original_filename": "drafts/bulk-transcript-demo/segments/bulk-beat-1.mp4",
+            "duration_ms": 8000,
+            "edited_duration_ms": 1200,
+            "edit_state": "{\"v\":1,\"startMs\":0,\"endMs\":1200,\"rotation\":0,\"flipped\":false,\"crop\":null,\"muted\":false,\"speed\":1,\"baseWindow\":{\"startMs\":0,\"endMs\":1200}}"
+          },
+          {
+            "id": "bede6ac0-5b03-4b14-881d-7e26a973024a",
+            "original_filename": "drafts/bulk-transcript-demo/segments/bulk-beat-1.mp4",
+            "duration_ms": 8000,
+            "edited_duration_ms": 1133,
+            "edit_state": "{\"v\":1,\"startMs\":2200,\"endMs\":3333,\"rotation\":0,\"flipped\":false,\"crop\":null,\"muted\":false,\"speed\":1,\"baseWindow\":{\"startMs\":2200,\"endMs\":3333}}"
+          },
+          {
+            "id": "4a3bc122-3fae-4808-9c7c-829bb0589a37",
+            "original_filename": "drafts/bulk-transcript-demo/segments/bulk-beat-1.mp4",
+            "duration_ms": 8000,
+            "edited_duration_ms": 3433,
+            "edit_state": "{\"v\":1,\"startMs\":4567,\"endMs\":8000,\"rotation\":0,\"flipped\":false,\"crop\":null,\"muted\":false,\"speed\":1,\"baseWindow\":{\"startMs\":4567,\"endMs\":8000}}"
+          },
+          {
+            "id": "d1c8f019-a451-4356-bd46-b859baebecf5",
+            "original_filename": "drafts/bulk-transcript-demo/segments/bulk-beat-2.mp4",
+            "duration_ms": 8000,
+            "edited_duration_ms": 1200,
+            "edit_state": "{\"v\":1,\"startMs\":0,\"endMs\":1200,\"rotation\":0,\"flipped\":false,\"crop\":null,\"muted\":false,\"speed\":1,\"baseWindow\":{\"startMs\":0,\"endMs\":1200}}"
+          },
+          {
+            "id": "90f7ef2d-c1a2-4eb8-8122-56136135f33f",
+            "original_filename": "drafts/bulk-transcript-demo/segments/bulk-beat-2.mp4",
+            "duration_ms": 8000,
+            "edited_duration_ms": 1133,
+            "edit_state": "{\"v\":1,\"startMs\":2200,\"endMs\":3333,\"rotation\":0,\"flipped\":false,\"crop\":null,\"muted\":false,\"speed\":1,\"baseWindow\":{\"startMs\":2200,\"endMs\":3333}}"
+          },
+          {
+            "id": "961e7876-4124-4ff1-bd60-9e8fed50bd45",
+            "original_filename": "drafts/bulk-transcript-demo/segments/bulk-beat-2.mp4",
+            "duration_ms": 8000,
+            "edited_duration_ms": 3433,
+            "edit_state": "{\"v\":1,\"startMs\":4567,\"endMs\":8000,\"rotation\":0,\"flipped\":false,\"crop\":null,\"muted\":false,\"speed\":1,\"baseWindow\":{\"startMs\":4567,\"endMs\":8000}}"
+          }
+        ]
+      }
+    },
+    {
+      "check": "One Undo restores all cleanup cuts and original two beats",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "One Redo reapplies all cleanup cuts",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Cleanup survives process restart",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Persistent Undo and Redo restore complete cleanup batch",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Actual native MP4 export matches shortened timeline",
+      "passed": true,
+      "details": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_type": "video",
+            "duration": "11.532031",
+            "nb_frames": "346"
+          },
+          {
+            "codec_type": "audio",
+            "duration": "11.531958",
+            "nb_frames": "543"
+          }
+        ],
+        "format": {
+          "duration": "11.532031"
+        }
+      }
+    },
+    {
+      "check": "Original bulk-beat-1 source bytes preserved",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Original bulk-beat-2 source bytes preserved",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Direct Transcript opens without selected model or timed transcript",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "At 2x, a 1.5 s source pause is below the 1.0 s playback threshold",
+      "passed": true,
+      "details": "0 cuts \u00b7 0.0s shorter"
+    },
+    {
+      "check": "Quiet PCM analysis works with no model and no transcript",
+      "passed": true,
+      "details": "1 cut \u00b7 0.5s shorter"
+    }
+  ],
+  "media": {
+    "sourceDurationMs": 16000,
+    "exportDurationMs": 11532,
+    "sourceVideoFrames": 480,
+    "exportVideoFrames": 346,
+    "expectedRetainedFrames": 346,
+    "remainingRedFillerFrames": 0,
+    "remainingMagentaFillerFrames": 0,
+    "maxRGBErrorAgainstCommittedSourceSequence": 0,
+    "allRetainedFramesMatchCommittedOrder": true,
+    "audioCorrelationAgainstCommittedSourceSequence": 0.9924221221644252,
+    "audioAlignmentOffsetMs": 0.0,
+    "keptSourceRanges": [
+      {
+        "source": "bulk-beat-1",
+        "startMs": 0,
+        "endMs": 1200,
+        "timelineMs": 1200
+      },
+      {
+        "source": "bulk-beat-1",
+        "startMs": 2200,
+        "endMs": 3333,
+        "timelineMs": 1133
+      },
+      {
+        "source": "bulk-beat-1",
+        "startMs": 4567,
+        "endMs": 8000,
+        "timelineMs": 3433
+      },
+      {
+        "source": "bulk-beat-2",
+        "startMs": 0,
+        "endMs": 1200,
+        "timelineMs": 1200
+      },
+      {
+        "source": "bulk-beat-2",
+        "startMs": 2200,
+        "endMs": 3333,
+        "timelineMs": 1133
+      },
+      {
+        "source": "bulk-beat-2",
+        "startMs": 4567,
+        "endMs": 8000,
+        "timelineMs": 3433
+      }
+    ],
+    "sourceHashes": {
+      "bulk-beat-1": "aecf96abd8f382e4d67fc14129470066f0c866026aead2b23d25ccf76e43830e",
+      "bulk-beat-2": "993504e503768a7eaa3d775fb1e58f7c521f5a8d056f44d18c6450383e5a4dc0"
+    },
+    "exportSHA256": "34e4d4c05e67a57b83784c4a636268b9f295068516bcb1f4447def04f6131c3b"
+  },
+  "evidenceSHA256": {
+    "passage-selection.png": "915edaefaf11378fe5b106f676809fd955e675b3628b72e9c59a0dce143dd744",
+    "passage-applied.png": "7803d2742ee1d6452639dc286452ad5fcaf67022ee67272f5c40adec96c50468",
+    "cleanup-review.png": "c0faac709f7ef368481cd412c0807f2464ba496bbf2282f455425814fd4b5333",
+    "cleanup-applied.png": "8fa8179430bca1a7cb3dfa19768f820d3e97bc6723c8a346bd67b2e661126a60",
+    "test-notes.png": "6fad0539c01661358667f94f8e69d3e3d48318f473eec9e9baa4d97f1b83ce97",
+    "source-beat-1.mp4": "aecf96abd8f382e4d67fc14129470066f0c866026aead2b23d25ccf76e43830e",
+    "source-beat-2.mp4": "993504e503768a7eaa3d775fb1e58f7c521f5a8d056f44d18c6450383e5a4dc0",
+    "edited.mp4": "34e4d4c05e67a57b83784c4a636268b9f295068516bcb1f4447def04f6131c3b"
+  },
+  "validatedSourceCommit": "cd4ce7737058c5e762fb2d627365a144ba4040b9",
+  "phoneHandoff": {
+    "version": "2.8.0",
+    "build": "1",
+    "installedInPlace": true,
+    "privateLibraryBackup": true,
+    "launchVerified": false,
+    "launchBlocker": "iOS device locked",
+    "postLaunchLibraryComparison": "not completed",
+    "guardStatus": "released",
+    "physicalAutomationStarted": false,
+    "captureStarted": false
+  }
+}
