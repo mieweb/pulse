@@ -96,6 +96,17 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+it('snapshots the visible playhead between native playback reports', () => {
+  const { ctl, values } = usePreviewTransport();
+  ctl.onTime(4000, true);
+  // The UI frame advances the ruler between native reports without updating JS lastMs.
+  values.timeMs.set(4072.375);
+  expect(ctl.lastMs).toBe(4000);
+  expect(ctl.getPlayheadMs()).toBe(4072.375);
+  ctl.onTime(4075, false);
+  expect(ctl.getPlayheadMs()).toBe(4075);
+});
+
 describe('preview initial placement', () => {
   it('cannot replay the opening position over an append queued during its first seek', async () => {
     const opening = gate();

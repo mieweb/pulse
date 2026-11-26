@@ -273,6 +273,7 @@ function seedFixture(conn: SQLiteDatabase) {
       draftId: D,
       filename: VOICEOVER,
       startMs: 350,
+      recordStartMs: 349.75,
       durationMs: 2000,
       trimStartMs: 100,
       trimEndMs: 1800,

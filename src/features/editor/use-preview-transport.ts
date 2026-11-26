@@ -76,6 +76,8 @@ export function usePreviewTransport(recordingSession = false, active = true) {
       playing: false,
       lastMs: 0,
       totalMs: 0,
+      /** Snapshot the visible playhead, including UI-thread interpolation during playback. */
+      getPlayheadMs: () => timeMs.get(),
       /** Seek here once the next timeline is built (a trim's new edge). */
       afterBuild: null as number | null,
       /** Where the editor opened (a clip's start): the preview's first seek goes there. */

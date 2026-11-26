@@ -59,7 +59,7 @@ export function useVoiceover(
       stop: () => native().stopVoiceover(),
       cancel: () => ctl.ref?.cancelVoiceover(),
       discard: (take) => deleteQuietly(take.uri),
-      save: async (take) => {
+      save: async (take, recordStartMs) => {
         const trimEndMs = Math.min(
           take.durationMs,
           take.sourceStartMs + (take.endMs - take.startMs),
@@ -68,6 +68,7 @@ export function useVoiceover(
           draftId,
           cacheUri: take.uri,
           startMs: take.startMs,
+          recordStartMs,
           durationMs: take.durationMs,
           trimStartMs: take.sourceStartMs,
           trimEndMs,
@@ -127,7 +128,9 @@ export function useVoiceover(
     voiceoverMuted,
     retry: () => void session.current?.retry(),
     press: () => {
-      if (!undoing.current && ctl.lastMs < ctl.totalMs - 1) session.current?.press();
+      const recordStartMs = ctl.getPlayheadMs();
+      if (!undoing.current && recordStartMs < ctl.totalMs - 1)
+        session.current?.press(recordStartMs);
     },
     release: () => void release(),
     onTime: (ms: number, playing: boolean) => {

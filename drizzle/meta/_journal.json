@@ -169,6 +169,13 @@
       "when": 1795593422003,
       "tag": "0023_voiceover_takes",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1795709488905,
+      "tag": "0024_voiceover_record_start",
+      "breakpoints": true
     }
   ]
 }

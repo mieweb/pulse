@@ -1,0 +1,1 @@
+ALTER TABLE `voiceover_takes` ADD `record_start_ms` real;
