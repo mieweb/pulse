@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
-import { Appearance } from 'react-native';
+import { Appearance, Platform } from 'react-native';
 
 import { Colors, SystemColors, type ThemeColor } from '@/constants/theme';
 import { setThemePreference, themePreferenceQuery, type ThemePreference } from '@/db/settings';
@@ -52,7 +52,7 @@ const ThemeStateContext = createContext<ThemeState | null>(null);
  * live-queries the `settings` table, which doesn't exist until schema migrations have run on a
  * fresh install. With a `mode` it reads nothing, so it may sit outside the gate and theme the
  * gate's own screens too.
- * `useTheme()`/`useThemeToggle()` are called from very frequently-rendered leaf components
+ * `useTheme()`/`useThemePreference()` are called from very frequently-rendered leaf components
  * (`ThemedText`, `ThemedView`, cue rows, …), so resolving the scheme here — a single
  * `useLiveQuery` subscription — avoids each of those instances opening its own Drizzle
  * live-query subscription.
@@ -90,7 +90,10 @@ function StoredThemeProvider({ children, accent, destructive, buttonRadius }: Pr
   // a form sheet, alerts, menus, the system paste button. Without this they kept the phone's own
   // mode under a pinned one (light glass under dark text). 'unspecified' goes back to the OS.
   useEffect(() => {
-    Appearance.setColorScheme(preference === 'system' ? 'unspecified' : preference);
+    // React Native Web follows matchMedia and has no native appearance setter.
+    if (Platform.OS !== 'web') {
+      Appearance.setColorScheme(preference === 'system' ? 'unspecified' : preference);
+    }
   }, [preference]);
 
   return <ThemeStateContext.Provider value={value}>{children}</ThemeStateContext.Provider>;
@@ -184,19 +187,16 @@ export function useButtonRadius(): number | undefined {
   return useContext(ThemeStateContext)?.buttonRadius;
 }
 
-/** The three-state appearance control on the home header. `preference` is the stored choice
- * ('system' follows the OS live); `mode` is what's actually rendering. Cycling order:
- * System → Light → Dark → System. Under a mode the shell passed, `toggle` changes nothing. */
-export function useThemeToggle() {
+/** The home header's appearance choice. System is the default and follows the device live;
+ * Light and Dark stay pinned. A shell-supplied mode cannot be changed here. */
+export function useThemePreference() {
   const state = useContext(ThemeStateContext);
   const preference = state?.preference ?? 'system';
   const explicit = state?.explicit ?? false;
   const mode = useResolvedScheme();
-  const toggle = () => {
+  const setPreference = async (preference: ThemePreference): Promise<void> => {
     if (explicit) return;
-    void setThemePreference(
-      preference === 'system' ? 'light' : preference === 'light' ? 'dark' : 'system',
-    );
+    await setThemePreference(preference);
   };
-  return { preference, mode, toggle };
+  return { preference, mode, setPreference };
 }

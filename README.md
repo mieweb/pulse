@@ -109,6 +109,7 @@ flowchart TB
 
 ### Drafts & library
 
+- Home’s appearance control opens **System (device)**, **Always light**, and **Always dark**, with the current choice checked. System is the default and mirrors device changes immediately; either locked mode stays fixed until changed. The choice survives app restarts.
 - Local-first draft library on Drizzle ORM + SQLite — create, rename, delete, with live-updating thumbnails
 - Home’s **+** opens **New project**: start a blank recording or create a **Summary** from checked projects, a calendar date range, or beats added since the last summary. The previous summary stays one tap away; collected beats become independent, editable copies. See [summary collection and timestamps](docs/persistence.md#summary-projects).
 - Device-to-device draft sharing as `.pulse` bundles (zip + manifest, with unpack safety limits)

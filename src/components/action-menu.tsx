@@ -16,6 +16,8 @@ export type MenuAction = {
   icon: SymbolViewProps['name'];
   /** Renders the row in the accent (red) tint for irreversible actions. */
   destructive?: boolean;
+  /** A mutually exclusive choice; omitted for ordinary menu actions. */
+  selected?: boolean;
   onPress: () => void;
 };
 
@@ -31,7 +33,6 @@ const MENU_WIDTH = 220;
 const GAP = Spacing.one;
 /** Approximate row height — used only to decide whether the menu opens up or down. */
 const EST_ROW_HEIGHT = 48;
-
 
 /**
  * A popover menu anchored to a control (e.g. a ⋯ button) rather than a bottom sheet. Pops
@@ -56,9 +57,15 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
   return (
     // The card animates itself (`MENU_ENTERING`); a Modal fade would only fade it in place.
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Dismiss">
-        {/* Swallow taps on the menu itself so they don't reach the backdrop. */}
-        <Pressable onPress={() => {}} style={[styles.menu, { top, right, width: MENU_WIDTH }]}>
+      <View style={StyleSheet.absoluteFill}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
+        {/* A sibling of the backdrop, so its accessible rows stay individually reachable. */}
+        <View style={[styles.menu, { top, right, width: MENU_WIDTH }]}>
           {/* `cardRaised`: white in light, and in dark one gray above the cards it floats over —
               the card fill itself left the menu indistinguishable from the card under it. */}
           <View
@@ -75,8 +82,11 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
                 <Pressable
                   key={action.key}
                   onPress={action.onPress}
-                  accessibilityRole="button"
+                  accessibilityRole={action.selected === undefined ? 'button' : 'radio'}
                   accessibilityLabel={action.label}
+                  accessibilityState={
+                    action.selected === undefined ? undefined : { checked: action.selected }
+                  }
                   style={({ pressed }) => [
                     styles.row,
                     i > 0 && {
@@ -88,13 +98,18 @@ export function ActionMenu({ visible, anchor, actions, onClose }: ActionMenuProp
                   <ThemedText type="body" style={{ color: tint }}>
                     {action.label}
                   </ThemedText>
-                  <Icon name={action.icon} size={18} tintColor={tint} scalesWithText />
+                  <Icon
+                    name={action.selected ? 'checkmark' : action.icon}
+                    size={18}
+                    tintColor={tint}
+                    scalesWithText
+                  />
                 </Pressable>
               );
             })}
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
