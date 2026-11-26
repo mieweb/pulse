@@ -48,6 +48,7 @@ jest.mock('expo-crypto', () => {
   let n = 0;
   return { randomUUID: () => `split-draft-${++n}` };
 });
+jest.mock('@mieweb/pulse-editor', () => ({}), { virtual: true });
 
 /* eslint-disable import/first -- native stand-ins must load before the database */
 import {
@@ -58,16 +59,24 @@ import {
   type ClipAnchor,
   type ClipsAdded,
 } from '@/core/clip-anchor';
-import { env } from '@/test-support/expo-fs-node';
+import { env, File } from '@/test-support/expo-fs-node';
+import { registerUndoAdditionOwner } from '@/core/undo-additions';
+import { heldMediaPaths } from '@/core/media-holds';
 import { setClipWriteBarrier } from '@/core/draft-write-barrier';
 // eslint-disable-next-line import/no-restricted-paths -- exercise the real DB/history integration
 import { createEditorHistory } from '@/features/editor/editor-history-store';
+// eslint-disable-next-line import/no-restricted-paths -- verify caption projection after a stored cut
+import { composeCaptions } from '@/features/transcription/compose';
+// eslint-disable-next-line import/no-restricted-paths -- verify the real native export contract
+import { toMergeClip } from '@/features/export/editor-merge';
 import { clipRender, effMs, parseEdit, renderKey } from '@/utils/segment-window';
 import * as video from '@/utils/video';
 import { expoDb } from './client';
 import {
   addSegment,
   createDraft,
+  cutSegmentRange,
+  cutTranscriptRanges,
   deleteSegment,
   dropTakenOut,
   insertSegments,
@@ -82,6 +91,12 @@ import {
   type TakenOutClips,
 } from './drafts';
 import type { Segment } from './schema';
+import { getClipTranscripts } from './clip-transcripts';
+import {
+  HISTORY_MAX_JSON_BYTES,
+  HISTORY_MAX_MEDIA_BYTES,
+  parsePersistedHistory,
+} from './persisted-history';
 /* eslint-enable import/first */
 
 const conn = expoDb as unknown as {
@@ -194,7 +209,10 @@ const presentRows = (rows: readonly Segment[]) => ({
 });
 
 /** Run actual row mutations for both addition steps and the intervening edit snapshots. */
-function databaseHistory(draftId: string) {
+function databaseHistory(
+  draftId: string,
+  initial?: Parameters<typeof createEditorHistory>[0]['initial'],
+) {
   const writes: Promise<void>[] = [];
   const flush = async () => {
     await Promise.all(writes.splice(0));
@@ -202,6 +220,7 @@ function databaseHistory(draftId: string) {
   const failed = jest.fn();
   const takeOut = jest.fn<typeof takeOutSegments>(takeOutSegments);
   const history = createEditorHistory({
+    initial,
     flush,
     takeOut,
     restore: restoreSegments,
@@ -230,7 +249,665 @@ function databaseHistory(draftId: string) {
   };
 }
 
+describe('bulk transcript source cuts', () => {
+  it('restores an intentional whole-beat removal without resurrecting a deleted sibling cut', async () => {
+    const t = await setup();
+    const before = await segmentsForDraft(t.d);
+    put(before[1].originalFilename, 'second beat video bytes');
+    const cut = await cutTranscriptRanges(
+      t.d,
+      before.map((row, i) => ({
+        clipId: row.id,
+        sourceKey: renderKey(row),
+        captionKey: row.captionEdit,
+        fps: 30,
+        ranges: i === 0 ? [{ startMs: 500, endMs: 3500 }] : [{ startMs: 100, endMs: 300 }],
+      })),
+    );
+    retained.push(...cut.splits.map((split) => split.before));
+    expect(cut.splits.map((split) => split.fullyRemoved)).toEqual([true, false]);
+    for (const id of cut.ids) await deleteSegment(id);
+    expect(await segmentsForDraft(t.d)).toEqual([]);
+    const taken = await takeOutSegments(cut.ids, cut.splits, undefined, t.d);
+    expect(taken).not.toBeNull();
+    retained.push(taken!);
+    expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a]);
+    expect(taken!.replaced?.map((row) => row.id)).toEqual([t.a]);
+    await restoreSegments(taken!, undefined, t.d);
+    expect(await segmentsForDraft(t.d)).toEqual([]);
+  });
+
+  it('still undoes a bulk cut when only a later retained range survives', async () => {
+    const t = await setup();
+    const cut = await cutTranscriptRanges(t.d, [
+      {
+        clipId: t.a,
+        sourceKey: renderKey(t.before),
+        captionKey: t.before.captionEdit,
+        fps: 30,
+        ranges: [
+          { startMs: 1000, endMs: 1500 },
+          { startMs: 2000, endMs: 2500 },
+        ],
+      },
+    ]);
+    retained.push(...cut.splits.map((split) => split.before));
+    expect(cut.ids).toHaveLength(3);
+    expect(cut.splits[0].appliedIds).toEqual(cut.ids);
+    await deleteSegment(cut.ids[0]);
+    await deleteSegment(cut.ids[1]);
+    const taken = await takeOutSegments(cut.ids, cut.splits, undefined, t.d);
+    expect(taken).not.toBeNull();
+    retained.push(taken!);
+    expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a, t.b]);
+    await restoreSegments(taken!, undefined, t.d);
+    expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([cut.ids[2], t.b]);
+  });
+
+  it('atomically applies multiple edge/interior cuts and persists one reversible step', async () => {
+    const t = await setup();
+    const original = (await segmentsForDraft(t.d))[0];
+    const beforeHistory = parsePersistedHistory(
+      conn.getFirstSync<{ value: string }>(
+        'SELECT undo_history AS value FROM drafts WHERE id = ?',
+        t.d,
+      )?.value,
+      t.d,
+    );
+    const result = await cutTranscriptRanges(t.d, [
+      {
+        clipId: t.a,
+        sourceKey: renderKey(original),
+        captionKey: original.captionEdit,
+        fps: 30,
+        ranges: [
+          { startMs: 500, endMs: 1000 },
+          { startMs: 1500, endMs: 2000 },
+          { startMs: 3000, endMs: 3500 },
+        ],
+        transcript: { model: 'base', file: t.video, words: '[{"t1":200,"t0":100,"text":"hello"}]' },
+      },
+    ]);
+    const applied = await segmentsForDraft(t.d);
+    expect(applied.map((row) => row.id)).toEqual([...result.ids, t.b]);
+    expect(applied.slice(0, 2).map((row) => [clipRender(row).inMs, clipRender(row).outMs])).toEqual(
+      [
+        [1000, 1500],
+        [2000, 3000],
+      ],
+    );
+    expect(result.removedMs).toBe(750);
+    expect(applied.slice(0, 2).map((row) => JSON.parse(row.captionEdit!).words)).toEqual([[], []]);
+    expect(applied.slice(0, 2).map((row) => transcript(row.id))).toEqual([
+      transcript(result.ids[0]),
+      transcript(result.ids[0]),
+    ]);
+    expect(bytes(t.video)).toBe('original video bytes');
+    const stored = conn.getFirstSync<{ value: string }>(
+      'SELECT undo_history AS value FROM drafts WHERE id = ?',
+      t.d,
+    );
+    const persisted = parsePersistedHistory(stored?.value, t.d)!;
+    expect(persisted.past).toHaveLength((beforeHistory?.past.length ?? 0) + 1);
+    const h = databaseHistory(t.d, { ...persisted, lastOp: null });
+    try {
+      for (let i = 0; i < 2; i++) {
+        h.history.undo(await h.present(), h.apply);
+        await h.settled();
+        expect((await segmentsForDraft(t.d))[0]).toEqual(original);
+        h.history.redo(await h.present(), h.apply);
+        await h.settled();
+        expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(applied));
+      }
+      expect(h.failed).not.toHaveBeenCalled();
+    } finally {
+      h.history.dispose();
+    }
+  });
+
+  it('removes every beat and still restores/replays the batch from durable history', async () => {
+    const t = await setup();
+    const before = await segmentsForDraft(t.d);
+    put(before[1].originalFilename, 'second beat video bytes');
+    const result = await cutTranscriptRanges(
+      t.d,
+      before.map((row) => ({
+        clipId: row.id,
+        sourceKey: renderKey(row),
+        captionKey: row.captionEdit,
+        fps: 30,
+        ranges: [{ startMs: clipRender(row).inMs, endMs: clipRender(row).outMs }],
+      })),
+    );
+    expect(result.ids).toEqual([]);
+    expect(result.splits).toHaveLength(2);
+    expect(await segmentsForDraft(t.d)).toEqual([]);
+    const stored = conn.getFirstSync<{ value: string }>(
+      'SELECT undo_history AS value FROM drafts WHERE id = ?',
+      t.d,
+    );
+    const persisted = parsePersistedHistory(stored?.value, t.d)!;
+    const h = databaseHistory(t.d, { ...persisted, lastOp: null });
+    try {
+      for (let i = 0; i < 2; i++) {
+        h.history.undo(await h.present(), h.apply);
+        await h.settled();
+        expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(before));
+        h.history.redo(await h.present(), h.apply);
+        await h.settled();
+        expect(await segmentsForDraft(t.d)).toEqual([]);
+      }
+      expect(h.failed).not.toHaveBeenCalled();
+      expect(bytes(t.video)).toBe('original video bytes');
+    } finally {
+      h.history.dispose();
+    }
+  });
+
+  it('keeps transcript storage linear across many cuts and preserves visible corrections and replay', async () => {
+    const t = await setup();
+    const words = Array.from({ length: 1200 }, (_, i) => ({
+      text: `word-${i}-${'x'.repeat(30)}`,
+      t0: i * 5,
+      t1: i * 5 + 4,
+      ...(i === 0 && { start: true }),
+    }));
+    const edited = words.map((word) => ({ ...word, text: `Corrected-${word.text}` }));
+    const caption = JSON.stringify({ file: t.video, words: edited, customTopLevel: 'preserved' });
+    const longEdit = JSON.stringify({ ...edit, startMs: 0, endMs: 60000, speed: 1 });
+    conn.runSync(
+      'UPDATE segments SET duration_ms = 60000, edited_duration_ms = 60000, edit_state = ?, caption_edit = ? WHERE id = ?',
+      longEdit,
+      caption,
+      t.a,
+    );
+    conn.runSync(
+      'UPDATE clip_transcripts SET words = ? WHERE segment_id = ?',
+      JSON.stringify(words),
+      t.a,
+    );
+    const original = (await segmentsForDraft(t.d))[0];
+    const result = await cutTranscriptRanges(t.d, [
+      {
+        clipId: t.a,
+        sourceKey: renderKey(original),
+        captionKey: caption,
+        fps: 30,
+        ranges: Array.from({ length: 50 }, (_, i) => ({
+          startMs: i * 1000 + 250,
+          endMs: i * 1000 + 500,
+        })),
+      },
+    ]);
+    const applied = await segmentsForDraft(t.d);
+    const clones = applied.filter((row) => result.ids.includes(row.id));
+    expect(clones).toHaveLength(51);
+    const transcriptRows = await getClipTranscripts(
+      clones.map((row) => row.id),
+      'base',
+    );
+    expect([...transcriptRows.values()].reduce((n, row) => n + row.words.length, 0)).toBeLessThan(
+      words.length,
+    );
+    expect(clones.reduce((n, row) => n + row.captionEdit!.length, 0)).toBeLessThan(
+      caption.length * 2,
+    );
+    expect(clones.every((row) => JSON.parse(row.captionEdit!).customTopLevel === 'preserved')).toBe(
+      true,
+    );
+    const actual = composeCaptions(clones, transcriptRows);
+    const uncompacted = composeCaptions(
+      clones.map((row) => ({ ...row, captionEdit: caption })),
+      transcriptRows,
+    );
+    const visible = (lines: typeof actual.lines) =>
+      lines.map(({ clipId, text, t0, t1, words }) => ({ clipId, text, t0, t1, words }));
+    expect(visible(actual.lines)).toEqual(visible(uncompacted.lines));
+    expect(result.splits[0].before.rows[0].captionEdit).toBe(caption);
+    expect(result.splits[0].before.transcripts[0].words).toBe(JSON.stringify(words));
+    const persisted = parsePersistedHistory(
+      conn.getFirstSync<{ value: string }>(
+        'SELECT undo_history AS value FROM drafts WHERE id = ?',
+        t.d,
+      )?.value,
+      t.d,
+    )!;
+    const h = databaseHistory(t.d, { ...persisted, lastOp: null });
+    try {
+      h.history.undo(await h.present(), h.apply);
+      await h.settled();
+      expect((await segmentsForDraft(t.d))[0]).toEqual(original);
+      const afterUndo = h.history.getState();
+      const redoDocument = JSON.stringify({
+        version: 1,
+        checkpoint: 'checked-format',
+        past: afterUndo.past,
+        future: afterUndo.future,
+      });
+      expect(Buffer.byteLength(redoDocument)).toBeLessThan(HISTORY_MAX_JSON_BYTES);
+      expect(parsePersistedHistory(redoDocument, t.d)?.future).toHaveLength(1);
+      h.history.redo(await h.present(), h.apply);
+      await h.settled();
+      expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(applied));
+      expect(h.failed).not.toHaveBeenCalled();
+    } finally {
+      h.history.dispose();
+    }
+  });
+
+  it('rejects a stale caption/model or any stale beat without partial changes', async () => {
+    const t = await setup();
+    const before = await segmentsForDraft(t.d);
+    const request = {
+      clipId: t.a,
+      sourceKey: renderKey(before[0]),
+      captionKey: before[0].captionEdit,
+      fps: 30,
+      ranges: [{ startMs: 1000, endMs: 1500 }],
+    };
+    await expect(cutTranscriptRanges(t.d, [{ ...request, captionKey: null }])).rejects.toThrow(
+      /changed/,
+    );
+    await expect(
+      cutTranscriptRanges(t.d, [
+        {
+          ...request,
+          transcript: {
+            model: 'base',
+            file: t.video,
+            words: '[{"text":"wrong","t0":100,"t1":200}]',
+          },
+        },
+      ]),
+    ).rejects.toThrow(/transcript changed/);
+    await expect(
+      cutTranscriptRanges(t.d, [
+        request,
+        {
+          clipId: t.b,
+          sourceKey: 'stale',
+          captionKey: null,
+          fps: 30,
+          ranges: [{ startMs: 0, endMs: 500 }],
+        },
+      ]),
+    ).rejects.toThrow(/changed/);
+    expect(await segmentsForDraft(t.d)).toEqual(before);
+  });
+
+  it('rolls back every row, transcript and history when a later beat insert fails', async () => {
+    const t = await setup();
+    const before = await segmentsForDraft(t.d);
+    put(before[1].originalFilename, 'second beat video bytes');
+    const saved = conn.getFirstSync(
+      'SELECT last_clip_number,undo_history,last_modified FROM drafts WHERE id = ?',
+      t.d,
+    );
+    const beforeTranscript = transcript(t.a);
+    const quoted = before[1].originalFilename.replace(/'/g, "''");
+    conn.runSync(`CREATE TEMP TRIGGER cleanup_insert_failure BEFORE INSERT ON segments
+      WHEN NEW.original_filename = '${quoted}' BEGIN SELECT RAISE(ABORT,'cleanup forced failure'); END`);
+    try {
+      await expect(
+        cutTranscriptRanges(
+          t.d,
+          before.map((row, i) => ({
+            clipId: row.id,
+            sourceKey: renderKey(row),
+            captionKey: row.captionEdit,
+            fps: 30,
+            ranges: i === 0 ? [{ startMs: 1000, endMs: 1500 }] : [{ startMs: 0, endMs: 200 }],
+          })),
+        ),
+      ).rejects.toThrow(/cleanup forced failure/);
+    } finally {
+      conn.runSync('DROP TRIGGER cleanup_insert_failure');
+    }
+    expect(await segmentsForDraft(t.d)).toEqual(before);
+    expect(transcript(t.a)).toEqual(beforeTranscript);
+    expect(
+      conn.getFirstSync(
+        'SELECT last_clip_number,undo_history,last_modified FROM drafts WHERE id = ?',
+        t.d,
+      ),
+    ).toEqual(saved);
+    expect(bytes(t.video)).toBe('original video bytes');
+  });
+
+  it('refuses removal when media-only Undo exceeds retention, even with an active editor', async () => {
+    const t = await setup();
+    const before = await segmentsForDraft(t.d);
+    const saved = conn.getFirstSync(
+      'SELECT last_clip_number,undo_history,last_modified FROM drafts WHERE id = ?',
+      t.d,
+    );
+    const committed = jest.fn();
+    const unregister = registerUndoAdditionOwner(t.d, {
+      snapshot: () => ({ past: [], future: [] }),
+      committed,
+    });
+    const getSize = Object.getOwnPropertyDescriptor(File.prototype, 'size')!.get!;
+    const size = jest.spyOn(File.prototype, 'size', 'get').mockImplementation(function (
+      this: File,
+    ) {
+      return this.path.endsWith(t.video) ? HISTORY_MAX_MEDIA_BYTES + 1 : getSize.call(this);
+    });
+    try {
+      await expect(
+        cutTranscriptRanges(t.d, [
+          {
+            clipId: t.a,
+            sourceKey: renderKey(before[0]),
+            captionKey: before[0].captionEdit,
+            fps: 30,
+            ranges: [{ startMs: 500, endMs: 3500 }],
+          },
+        ]),
+      ).rejects.toThrow('too large to keep Undo');
+    } finally {
+      size.mockRestore();
+      unregister();
+    }
+    expect(await segmentsForDraft(t.d)).toEqual(before);
+    expect(
+      conn.getFirstSync(
+        'SELECT last_clip_number,undo_history,last_modified FROM drafts WHERE id = ?',
+        t.d,
+      ),
+    ).toEqual(saved);
+    expect(committed).not.toHaveBeenCalled();
+    expect(bytes(t.video)).toBe('original video bytes');
+  });
+
+  it('refuses cleanup when preserving the original captions exceeds the history JSON budget', async () => {
+    const t = await setup();
+    const caption = JSON.stringify({
+      file: t.video,
+      words: [{ text: 'x'.repeat(HISTORY_MAX_JSON_BYTES), t0: 100, t1: 200 }],
+    });
+    conn.runSync('UPDATE segments SET caption_edit = ? WHERE id = ?', caption, t.a);
+    const before = await segmentsForDraft(t.d);
+    const saved = conn.getFirstSync(
+      'SELECT last_clip_number,undo_history,last_modified FROM drafts WHERE id = ?',
+      t.d,
+    );
+    await expect(
+      cutTranscriptRanges(t.d, [
+        {
+          clipId: t.a,
+          sourceKey: renderKey(before[0]),
+          captionKey: caption,
+          fps: 30,
+          ranges: [{ startMs: 1000, endMs: 2000 }],
+        },
+      ]),
+    ).rejects.toThrow('too large to keep Undo');
+    expect(await segmentsForDraft(t.d)).toEqual(before);
+    expect(
+      conn.getFirstSync(
+        'SELECT last_clip_number,undo_history,last_modified FROM drafts WHERE id = ?',
+        t.d,
+      ),
+    ).toEqual(saved);
+  });
+
+  it('rolls back a whole-beat cleanup whose applied Undo fits but restored Redo cannot fit', async () => {
+    const t = await setup();
+    const caption = JSON.stringify({
+      file: t.video,
+      words: [{ text: 'x'.repeat(800 * 1024), t0: 100, t1: 200 }],
+    });
+    conn.runSync('UPDATE segments SET caption_edit = ? WHERE id = ?', caption, t.a);
+    const before = await segmentsForDraft(t.d);
+    const beforeTranscript = transcript(t.a);
+    const saved = conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d);
+    const journal = conn.getFirstSync(
+      "SELECT value FROM settings WHERE key = 'drafts.heldForRedo'",
+    );
+    const held = heldMediaPaths();
+    const committed = jest.fn();
+    const unregister = registerUndoAdditionOwner(t.d, {
+      snapshot: () => ({ past: [], future: [] }),
+      committed,
+    });
+    const cover = jest.spyOn(video, 'generateThumbnailFile');
+    try {
+      await expect(
+        cutTranscriptRanges(t.d, [
+          {
+            clipId: t.a,
+            sourceKey: renderKey(before[0]),
+            captionKey: caption,
+            fps: 30,
+            ranges: [{ startMs: 500, endMs: 3500 }],
+          },
+        ]),
+      ).rejects.toThrow('too large to keep Undo and Redo');
+      expect(await segmentsForDraft(t.d)).toEqual(before);
+      expect(transcript(t.a)).toEqual(beforeTranscript);
+      expect(conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d)).toEqual(saved);
+      expect(
+        conn.getFirstSync("SELECT value FROM settings WHERE key = 'drafts.heldForRedo'"),
+      ).toEqual(journal);
+      expect(heldMediaPaths()).toEqual(held);
+      expect(committed).not.toHaveBeenCalled();
+      expect(cover).not.toHaveBeenCalled();
+      expect(bytes(t.video)).toBe('original video bytes');
+    } finally {
+      unregister();
+      cover.mockRestore();
+    }
+  });
+});
+
+describe('transcript-driven source cut', () => {
+  it('rolls back a single-word cut when its saved Undo receipt would be evicted', async () => {
+    const t = await setup();
+    conn.runSync(
+      'UPDATE segments SET caption_edit = ? WHERE id = ?',
+      JSON.stringify({
+        file: t.video,
+        words: [{ text: 'x'.repeat(HISTORY_MAX_JSON_BYTES), t0: 100, t1: 200 }],
+      }),
+      t.a,
+    );
+    const before = await segmentsForDraft(t.d);
+    const beforeTranscript = transcript(t.a);
+    const saved = conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d);
+    const journal = conn.getFirstSync(
+      "SELECT value FROM settings WHERE key = 'drafts.heldForRedo'",
+    );
+    const held = heldMediaPaths();
+    const committed = jest.fn();
+    const unregister = registerUndoAdditionOwner(t.d, {
+      snapshot: () => ({ past: [], future: [] }),
+      committed,
+    });
+    const cover = jest.spyOn(video, 'generateThumbnailFile');
+    try {
+      await expect(
+        cutSegmentRange(t.d, {
+          clipId: t.a,
+          sourceKey: renderKey(before[0]),
+          startMs: 1500,
+          endMs: 2000,
+          rightId: `${t.d}-speech-right`,
+          fps: 30,
+        }),
+      ).rejects.toThrow('too large to keep Undo');
+      expect(await segmentsForDraft(t.d)).toEqual(before);
+      expect(transcript(t.a)).toEqual(beforeTranscript);
+      expect(conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d)).toEqual(saved);
+      expect(
+        conn.getFirstSync("SELECT value FROM settings WHERE key = 'drafts.heldForRedo'"),
+      ).toEqual(journal);
+      expect(heldMediaPaths()).toEqual(held);
+      expect(committed).not.toHaveBeenCalled();
+      expect(cover).not.toHaveBeenCalled();
+      expect(bytes(t.video)).toBe('original video bytes');
+    } finally {
+      unregister();
+      cover.mockRestore();
+    }
+  });
+
+  it('cuts spoken media, projects captions and exports the same retained ranges', async () => {
+    const t = await setup();
+    const words = [
+      { text: 'before', t0: 100, t1: 140 },
+      { text: 'remove', t0: 150, t1: 200 },
+      { text: 'after', t0: 210, t1: 250 },
+    ];
+    const captionEdit = JSON.stringify({ file: t.video, words });
+    conn.runSync('UPDATE segments SET caption_edit = ? WHERE id = ?', captionEdit, t.a);
+    conn.runSync(
+      'UPDATE clip_transcripts SET words = ? WHERE segment_id = ?',
+      JSON.stringify(words),
+      t.a,
+    );
+    const original = (await segmentsForDraft(t.d))[0];
+    const receipt = await cutSegmentRange(t.d, {
+      clipId: t.a,
+      sourceKey: renderKey(original),
+      startMs: 1500,
+      endMs: 2000,
+      rightId: `${t.d}-speech-right`,
+      fps: 30,
+    });
+    const applied = await segmentsForDraft(t.d);
+    expect(applied.map((row) => row.id)).toEqual([t.a, receipt.rightId, t.b]);
+    expect(clipRender(applied[0])).toMatchObject({
+      file: t.video,
+      inMs: 500,
+      outMs: 1500,
+      speed: 2,
+    });
+    expect(clipRender(applied[1])).toMatchObject({
+      file: t.video,
+      inMs: 2000,
+      outMs: 3500,
+      speed: 2,
+    });
+    expect(applied.slice(0, 2).reduce((ms, row) => ms + effMs(row), 0)).toBe(effMs(original) - 250);
+    expect(applied.slice(0, 2).map(toMergeClip)).toEqual([
+      expect.objectContaining({
+        uri: expect.stringContaining(t.video),
+        startMs: 500,
+        endMs: 1500,
+        speed: 2,
+      }),
+      expect.objectContaining({
+        uri: expect.stringContaining(t.video),
+        startMs: 2000,
+        endMs: 3500,
+        speed: 2,
+      }),
+    ]);
+    const captions = composeCaptions(
+      applied,
+      await getClipTranscripts(
+        applied.map((row) => row.id),
+        'base',
+      ),
+    );
+    expect(captions.lines.flatMap((line) => line.words?.map((word) => word.text) ?? [])).toEqual([
+      'before',
+      'after',
+    ]);
+    expect(transcript(receipt.rightId)).toEqual(transcript(t.a));
+    expect(bytes(t.video)).toBe('original video bytes');
+
+    // Restore the operation from the on-disk format rather than relying on the returned receipt.
+    const stored = conn.getFirstSync<{ value: string }>(
+      'SELECT undo_history AS value FROM drafts WHERE id = ?',
+      t.d,
+    );
+    const persisted = parsePersistedHistory(stored?.value, t.d)!;
+    expect(persisted.past.at(-1)).toMatchObject({ kind: 'added', ids: [], splits: [receipt] });
+    const h = databaseHistory(t.d, {
+      past: persisted.past,
+      future: persisted.future,
+      lastOp: null,
+    });
+    try {
+      for (let cycle = 0; cycle < 2; cycle++) {
+        h.history.undo(await h.present(), h.apply);
+        await h.settled();
+        expect((await segmentsForDraft(t.d))[0]).toEqual(original);
+        expect((await segmentsForDraft(t.d)).map((row) => row.id)).toEqual([t.a, t.b]);
+        h.history.redo(await h.present(), h.apply);
+        await h.settled();
+        expect(contentRows(await segmentsForDraft(t.d))).toEqual(contentRows(applied));
+      }
+      expect(h.failed).not.toHaveBeenCalled();
+    } finally {
+      h.history.dispose();
+    }
+  });
+
+  it('rejects a changed source and edge/sliver selections without changing rows or history', async () => {
+    const t = await setup();
+    const request = {
+      clipId: t.a,
+      sourceKey: renderKey(t.before),
+      startMs: 1500,
+      endMs: 2000,
+      rightId: `${t.d}-right`,
+      fps: 30,
+    };
+    await setClipEdit(t.a, { ...edit, speed: 1 });
+    const before = await segmentsForDraft(t.d);
+    const saved = conn.getFirstSync(
+      'SELECT last_clip_number, undo_history FROM drafts WHERE id = ?',
+      t.d,
+    );
+    await expect(cutSegmentRange(t.d, request)).rejects.toThrow(/changed/);
+    for (const [startMs, endMs] of [
+      [500, 1000],
+      [510, 1000],
+      [1000, 3500],
+      [1000, 1001],
+    ]) {
+      await expect(
+        cutSegmentRange(t.d, { ...request, sourceKey: renderKey(before[0]), startMs, endMs }),
+      ).rejects.toThrow(/both sides/);
+    }
+    expect(await segmentsForDraft(t.d)).toEqual(before);
+    expect(
+      conn.getFirstSync('SELECT last_clip_number, undo_history FROM drafts WHERE id = ?', t.d),
+    ).toEqual(saved);
+  });
+});
+
 describe('standalone split at playhead', () => {
+  it.each(['split', 'speech cut'])(
+    'skips a deleted %s after both applied halves are gone',
+    async (kind) => {
+      const t = await setup();
+      const receipt =
+        kind === 'split'
+          ? await splitSegment(t.d, t.anchor())
+          : await cutSegmentRange(t.d, {
+              clipId: t.a,
+              sourceKey: renderKey(t.before),
+              startMs: 1500,
+              endMs: 2000,
+              rightId: `${t.d}-cut-right`,
+              fps: 30,
+            });
+      retained.push(receipt.before);
+      expect(receipt.fullyRemoved).toBe(false);
+      await deleteSegment(t.a);
+      await deleteSegment(receipt.rightId);
+      const before = await segmentsForDraft(t.d);
+      const draft = conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d);
+      expect(await takeOutSegments([], [receipt], undefined, t.d)).toBeNull();
+      expect(await segmentsForDraft(t.d)).toEqual(before);
+      expect(before.map((row) => row.id)).toEqual([t.b]);
+      expect(conn.getFirstSync('SELECT * FROM drafts WHERE id = ?', t.d)).toEqual(draft);
+    },
+  );
+
   it.each(['standalone', 'split + insert'])(
     'rejects a floating-point recut at the same playhead atomically (%s)',
     async (operation) => {
@@ -995,6 +1672,84 @@ describe('exact split + insert', () => {
       }
     },
   );
+
+  it('skips a queued cleanup cover when a newer user edit is rendering', async () => {
+    const t = await setup();
+    let finishFirst!: (ok: boolean) => void;
+    let finishUser!: (ok: boolean) => void;
+    let reachedFirst!: () => void;
+    let reachedUser!: () => void;
+    let reachedTail!: () => void;
+    const first = new Promise<boolean>((resolve) => {
+      finishFirst = resolve;
+    });
+    const user = new Promise<boolean>((resolve) => {
+      finishUser = resolve;
+    });
+    const enteredFirst = new Promise<void>((resolve) => {
+      reachedFirst = resolve;
+    });
+    const enteredUser = new Promise<void>((resolve) => {
+      reachedUser = resolve;
+    });
+    const enteredTail = new Promise<void>((resolve) => {
+      reachedTail = resolve;
+    });
+    let calls = 0;
+    let userCovers = 0;
+    let targetId: string | undefined;
+    let tailId: string | undefined;
+    const thumbnail = jest.spyOn(video, 'generateThumbnailFile').mockImplementation((_, output) => {
+      if (++calls === 1) {
+        reachedFirst();
+        return first;
+      }
+      if (targetId && output.includes(`${targetId}.cover.`)) {
+        if (++userCovers === 1) {
+          reachedUser();
+          return user;
+        }
+      }
+      if (tailId && output.includes(`${tailId}.cover.`)) reachedTail();
+      return Promise.resolve(true);
+    });
+    let saving: Promise<void> | undefined;
+    try {
+      const result = await cutTranscriptRanges(t.d, [
+        {
+          clipId: t.a,
+          sourceKey: renderKey(t.before),
+          captionKey: t.before.captionEdit,
+          fps: 30,
+          ranges: [
+            { startMs: 1000, endMs: 1200 },
+            { startMs: 2000, endMs: 2200 },
+          ],
+        },
+      ]);
+      retained.push(...result.splits.map((split) => split.before));
+      await enteredFirst;
+      [targetId, tailId] = result.ids.slice(1);
+      expect(targetId).toBeDefined();
+      expect(tailId).toBeDefined();
+      const target = (await segmentsForDraft(t.d)).find((row) => row.id === targetId)!;
+      saving = setClipEdit(target.id, { ...parseEdit(target.editState)!, speed: 3, rotation: 2 });
+      await enteredUser;
+      finishFirst(true);
+      // The last cover proves the serial worker has passed the actively edited middle clip.
+      await enteredTail;
+      finishUser(true);
+      await saving;
+      const saved = (await segmentsForDraft(t.d)).find((row) => row.id === targetId)!;
+      expect(clipRender(saved)).toMatchObject({ speed: 3, rotation: 2 });
+      expect(userCovers).toBe(1);
+    } finally {
+      finishFirst(true);
+      finishUser(true);
+      await saving;
+      thumbnail.mockRestore();
+    }
+  });
 
   it('renders the right cover at its cut and ignores a late pre-undo cover after redo', async () => {
     const t = await setup();

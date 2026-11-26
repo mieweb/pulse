@@ -1,0 +1,12 @@
+{
+  "version": "2.8.0",
+  "date": "2026-11-25",
+  "notes": [
+    "Transcript drag test build (PR #339). Open Edit → Transcript → Words. Drag from one word to another, including down wrapped lines, to highlight the passage. Start on a highlighted word to deselect a span; drag back to shrink it.",
+    "Choose This beat or Whole Pulse. Hold near the top or bottom edge to scroll while selecting. Swipe a blank margin to scroll without selecting. Individual taps, Range with two endpoints, and the lower Previous/Next controls remain available.",
+    "Apply cuts removes the selected recorded picture and sound together. One Undo restores the batch; Redo reapplies it, including after restarting Pulse. Oversized operations refuse safely if Undo or Redo cannot be retained. Undo entries for completely removed clips from older test builds may show a recovery message; their source video is kept.",
+    "Clean up → Analyze proposes transcribed um/uh-style fillers and measured quiet pauses. Pause length follows playback time. Review, uncheck and Listen before applying; wholly quiet, muted and no-audio material is protected from automatic selection.",
+    "Filler matching only finds words present in the transcript; speech models may omit ums. Like and so are kept by default. Caption Edit and Hide word remain caption-only. Separate narration keeps its timeline position.",
+    "Try dragging forward/backward, across beats, back toward the starting word, and into either scrolling edge; lift, then tap a word. Please test natural speech cut quality and one-hand reach. Android UI, large text/RTL and variable-frame-rate footage still need verification."
+  ]
+}

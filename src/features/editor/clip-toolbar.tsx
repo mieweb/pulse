@@ -22,6 +22,7 @@ type Tool = {
   key: string;
   label: string;
   accessibilityLabel?: string;
+  accessibilityHint?: string;
   icon?: IconName;
   /** A text glyph instead of an icon (the speed). */
   text?: string;
@@ -43,6 +44,7 @@ function ToolButton({ tool }: { tool: Tool }) {
       disabled={tool.disabled}
       accessibilityRole="button"
       accessibilityLabel={tool.accessibilityLabel ?? tool.label}
+      accessibilityHint={tool.accessibilityHint}
       accessibilityState={{ disabled: !!tool.disabled, busy: !!tool.busy }}
       style={({ pressed }) => [
         styles.tool,
@@ -155,13 +157,23 @@ export function ClipToolbar(p: Props) {
 }
 
 /** ✓: back to the main tools. */
-function DoneButton({ label, onPress }: { label: string; onPress: () => void }) {
+function DoneButton({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
       style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
       <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.text} />
     </Pressable>
@@ -218,6 +230,7 @@ export function MainToolbar({
   onSplit,
   captionsBusy,
   onCaptions,
+  onTranscript,
   tip,
 }: {
   /** Some clip can be edited (the draft has clips). */
@@ -230,10 +243,18 @@ export function MainToolbar({
   /** The model downloading, or clips being transcribed. */
   captionsBusy: boolean;
   onCaptions: () => void;
+  onTranscript: () => void;
   tip?: ReactNode;
 }) {
   const tools: Tool[] = [
     { key: 'edit', label: 'Edit', icon: 'pencil', onPress: onEdit, disabled: !canEdit },
+    {
+      key: 'transcript',
+      label: 'Transcript',
+      icon: 'text.alignleft',
+      onPress: onTranscript,
+      disabled: !canEdit,
+    },
     splitTool(canSplit, onSplit),
     {
       key: 'captions',
@@ -266,6 +287,7 @@ export function MainToolbar({
 export function CaptionToolbar(p: {
   /** A word is selected (tapped): what Edit and Delete act on. */
   hasWord: boolean;
+  busy: boolean;
   canSplit: boolean;
   canMerge: boolean;
   /** Some clip's captions were edited. */
@@ -298,7 +320,9 @@ export function CaptionToolbar(p: {
     },
     {
       key: 'delete',
-      label: 'Delete',
+      label: 'Hide word',
+      accessibilityLabel: 'Hide selected caption word',
+      accessibilityHint: 'Changes captions only. Keeps the recorded audio and video.',
       icon: 'trash',
       onPress: p.onDelete,
       disabled: !p.hasWord,
@@ -307,13 +331,13 @@ export function CaptionToolbar(p: {
   ];
   return (
     <View style={styles.row}>
-      <DoneButton label="Done with captions" onPress={p.onDone} />
+      <DoneButton label="Done with captions" onPress={p.onDone} disabled={p.busy} />
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollTools}>
         {tools.map((t) => (
-          <ToolButton key={t.key} tool={t} />
+          <ToolButton key={t.key} tool={{ ...t, disabled: p.busy || t.disabled }} />
         ))}
       </ScrollView>
     </View>

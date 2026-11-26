@@ -10,6 +10,7 @@ import {
   planStep,
   snapshotOf,
   takenOut,
+  hasRestorableClips,
   type AddedStep,
   type Present,
   type SnapshotDiff,
@@ -26,8 +27,13 @@ export type HistoryDeps = {
     ids: string[],
     splits: readonly SplitReceipt[],
     next: (taken: TakenOutClips | null) => History<Step>,
+    step: AddedStep,
   ) => Promise<TakenOutClips | null>;
-  restoreAndCheckpoint?: (taken: TakenOutClips, next: () => History<Step>) => Promise<void>;
+  restoreAndCheckpoint?: (
+    taken: TakenOutClips,
+    next: () => History<Step>,
+    step: AddedStep,
+  ) => Promise<void>;
   /** Every edit asked for is stored (draft-writes.ts): an addition's rows are read after them. */
   flush: () => Promise<void>;
   /** Take an addition's clips out (`takeOutSegments`, then their transcription jobs dropped). */
@@ -65,7 +71,7 @@ export function createEditorHistory(deps: HistoryDeps) {
   const openBatches = new Set<string>();
   let snapshot = {
     ...history,
-    keepEmptyOpen: takenOut(history.future).length > 0,
+    keepEmptyOpen: hasRestorableClips(history),
     batchOpen: false,
     busy: false,
   };
@@ -77,7 +83,7 @@ export function createEditorHistory(deps: HistoryDeps) {
     history = next;
     snapshot = {
       ...history,
-      keepEmptyOpen: pendingAddition || openBatches.size > 0 || takenOut(history.future).length > 0,
+      keepEmptyOpen: pendingAddition || openBatches.size > 0 || hasRestorableClips(history),
       batchOpen: openBatches.size > 0,
       busy: pendingAddition,
     };
@@ -141,10 +147,14 @@ export function createEditorHistory(deps: HistoryDeps) {
       try {
         await deps.flush();
         taken = deps.takeOutAndCheckpoint
-          ? await deps.takeOutAndCheckpoint(ids, step.splits ?? [], (value) =>
-              value && !discarded() && changes === at
-                ? { ...history, future: [...history.future, { ...step, taken: value }] }
-                : history,
+          ? await deps.takeOutAndCheckpoint(
+              ids,
+              step.splits ?? [],
+              (value) =>
+                value && !discarded() && changes === at
+                  ? { ...history, future: [...history.future, { ...step, taken: value }] }
+                  : history,
+              step,
             )
           : step.splits?.length
             ? await deps.takeOut(ids, step.splits)
@@ -182,11 +192,15 @@ export function createEditorHistory(deps: HistoryDeps) {
       try {
         await deps.flush();
         if (deps.restoreAndCheckpoint) {
-          await deps.restoreAndCheckpoint(step.taken, () => {
-            const past = [...history.past];
-            past.splice(below ? past.lastIndexOf(below) + 1 : 0, 0, { ...step, taken: null });
-            return { ...history, past };
-          });
+          await deps.restoreAndCheckpoint(
+            step.taken,
+            () => {
+              const past = [...history.past];
+              past.splice(below ? past.lastIndexOf(below) + 1 : 0, 0, { ...step, taken: null });
+              return { ...history, past };
+            },
+            step,
+          );
         } else await deps.restore(step.taken);
       } catch (e) {
         // Not back: still redoable, unless a change came in (then its files go).

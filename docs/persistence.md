@@ -47,6 +47,55 @@ Their `editState` includes a `baseWindow` source interval: trim handles and Rese
 half. Reset clears transforms and speed while preserving this interval. Splitting a legacy baked
 clip uses its effective baked file as the halves' source; the original row is retained for Undo.
 
+**Cut speech** in Captions uses the same transaction and history receipt to remove one selected
+word's source interval. Previous/Next word buttons provide a native accessible selection path.
+The kept ranges share the unchanged media file, retain effects and caption corrections, and have
+separate `baseWindow` bounds so Reset cannot reveal the removed speech. Source word timing is
+converted from centiseconds to milliseconds and snapped to the probed source frame rate. This
+quick action requires at least one frame on each side of the cut; use **Transcript** for larger
+selections, edge cuts and whole-beat removal.
+Caption **Edit** and **Hide word** continue to change captions only. Preview and export consume
+the saved kept ranges, and one Undo/Redo restores/reapplies the cut across reopening and transfer.
+Separate draft narration keeps its timeline placement, following the existing voiceover contract;
+the speech cut affects the selected source video's picture and sound.
+
+**Transcript** opens a frozen review of the current source words. Select multiple words or use
+**Range** to select a passage, in **This beat** or **Whole Pulse**. **Clean up → Analyze** proposes
+conservative transcript fillers and actual low-energy audio pauses, with adjustable minimum pause
+length and retained breathing space. Transcription models may omit fillers; meaningful words such
+as “like” and “so” are not selected by default. Muted/no-audio beats are skipped, and entirely quiet
+sources require explicit review. Each candidate can be excluded or auditioned before applying.
+Pause duration and retained breathing space are checked inside each beat's played source window,
+including trims and speed changes. Beats sharing a source reuse its raw audio-energy scan;
+they do not reuse already-qualified/padded cuts from another beat.
+
+Dragging from one transcript word to another selects the continuous span in reading order,
+including wrapped lines and beat boundaries. Starting on a selected word deselects that span;
+reversing or shrinking the gesture restores the pre-drag selection outside its current endpoints.
+Each contiguous highlighted run is a passage, so pauses and intervening untimed beats are included
+without cutting unchecked gaps. Holding at the viewport edges scrolls while selecting; drags
+starting in blank margins scroll normally. Taps, two-endpoint Range and the lower Previous/Next
+controls remain available. Dragging changes only the review selection until **Apply cuts**.
+
+Applying unions overlapping, frame-snapped source cuts and stores every retained range in one
+SQLite transaction and one persistent Undo step. Source/render, caption-edit and model-transcript
+snapshots are checked before any write. A changed review input rejects the whole operation.
+Original rows and media remain retained even when every live clip is removed, so Undo still works
+after reopening or `.pulse` transfer. Reset cannot expand a retained range through a removed gap.
+Both the applied Undo checkpoint and its prospective Redo form must fit the retention limits;
+otherwise the cut rolls back without changing the timeline. Queued derived covers yield to newer
+clip edits, so thumbnail work cannot invalidate a pending trim, speed or crop save.
+Generated range covers are regenerated on Redo rather than duplicated in its receipt. If later
+transcript results enlarge the replay beyond retention limits, the actual Undo/Redo transaction
+also refuses without changing the timeline or discarding its recovery history.
+Receipts distinguish intentional whole-beat removal from later deletion of the applied ranges.
+Only an explicitly fully removed beat can restore its original with no surviving applied rows;
+missing ordinary split ranges are skipped. Bulk receipts track every generated range, so a later
+surviving fragment still identifies its operation. Older unmarked entries with no surviving rows
+report a recovery error and keep their history/media rather than guessing which intent occurred.
+Separate draft narration remains anchored as above. Quiet-audio detection is not a semantic speech
+classifier; review very quiet speech and music-backed recordings before applying its proposals.
+
 One Undo step owns a Timeline split and insertion together. Undo takes the inserted clips and
 halves out and restores the unsplit original in one transaction; Redo restores the applied rows,
 including their edits, captions and transcripts. Media needed by either form stays held while a

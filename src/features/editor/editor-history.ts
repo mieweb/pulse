@@ -122,6 +122,16 @@ export function keepEmptyEditorOpen(
   return historyKeepsOpen || (clipCount === 0 && retained);
 }
 
+/** A cleanup can remove the final beat while its original remains on the Undo stack. */
+export function hasRestorableClips(history: Pick<History<Step>, 'past' | 'future'>): boolean {
+  return (
+    history.future.some((step) => step.kind === 'added' && step.taken != null) ||
+    history.past.some(
+      (step) => step.kind === 'added' && step.splits?.some((split) => split.before.rows.length > 0),
+    )
+  );
+}
+
 /**
  * A library draft can be empty and still offer Add. Only a successful parent-row read establishes
  * that it is missing; `undefined` means loading or a failed read. Other callers leave when empty
