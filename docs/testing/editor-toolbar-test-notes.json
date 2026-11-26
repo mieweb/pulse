@@ -1,0 +1,12 @@
+{
+  "version": "2.8.0",
+  "date": "2026-11-25",
+  "notes": [
+    "Toolbar #337 phone test: Home → open a project → Edit. Delete, Split, Speed and Reset should appear first in a full-width row above Close, Undo, Redo and Export. Please try holding the phone in each hand.",
+    "Swipe the tools to reveal Crop, Mute, Flip and Rotate, then swipe back to Done. Scrolling or tapping the gaps should keep Edit open. You can also tap More to show the remaining tools and First to return, without swiping.",
+    "On a spare clip, try Delete. On another clip, move the playhead inside it and try Split, then Undo and Redo. Change Speed, tap Done, then Reset. The controls should stay easy to reach and existing edits should behave as before; Delete still has no Undo.",
+    "Try larger text and light/dark appearance. Tool labels should fit vertically, horizontal overflow should remain reachable through scrolling or More/First, and the lower commands should remain accessible.",
+    "This build uses the latest merged main and retains Summary, persistent editor Undo/Redo, Voiceover and the paused export preview. Voiceover also has Start recording and Stop recording button alternatives alongside hold-to-record.",
+    "Native simulator checks cover toolbar layout and controls. Please check actual thumb reach in both hands and normal recording/playback on this iPhone. Notes for this exact test build are in About → Release notes."
+  ]
+}
