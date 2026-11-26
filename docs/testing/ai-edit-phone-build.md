@@ -1,9 +1,9 @@
 # AI editing phone test build
 
 Installed on 2026-11-25: **Pulse 2.8.0 (1)**, developer integration `e5e8069`.
-Installation and library preservation passed. iOS rejected the initial launch because the phone
-was locked. The device guard returned `released`; no phone UI automation or screen sharing was
-started. Unlock and open Pulse to begin testing.
+Reinstalled and launched successfully after the initial lock-screen rejection. The app was
+verified running and left open for testing. Library preservation passed and the device guard
+returned `released`; no phone UI automation or screen sharing was started.
 
 Start at **open a project → editor → AI edit** (the sparkle beside Export). A successful run opens
 a separate **AI cut** project in Timeline view. The original remains available. Exact test notes
@@ -47,7 +47,7 @@ source/build hashes and verification without device identifiers or library conte
   and all six release notes. [Screenshots and platform details](../../screenshots/validation/ai-edit/README.md).
 - A brief guarded installation privately backed up SQLite outside the repository. Every existing
   draft and segment metadata hash, persistent-history hash and schema version matched afterward.
-  The phone was locked, so launch verification remains unperformed.
+  A subsequent guarded deployment verified launch and the running app, then released the device.
 
 ## Remaining phone acceptance
 

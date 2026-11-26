@@ -53,8 +53,8 @@
   },
   "physicalChecks": {
     "installed": true,
-    "launched": false,
-    "launchBlockedByDeviceLock": true,
+    "launched": true,
+    "launchBlockedByDeviceLock": false,
     "libraryPreserved": true,
     "originalDraftMetadataUnchanged": true,
     "originalSegmentMetadataUnchanged": true,
@@ -62,7 +62,9 @@
     "schemaVersionUnchanged": true,
     "privateSQLiteBackupSavedOutsideRepository": true,
     "physicalInferenceVerified": false,
-    "physicalExportVerified": false
+    "physicalExportVerified": false,
+    "initialLaunchWasBlockedByDeviceLock": true,
+    "handoffAppRunning": true
   },
   "release": {
     "guardStatus": "released",
@@ -77,7 +79,6 @@
     "EXConstants.bundle/app.config": "31829bbd6e70aa496237ea2f062a86eae72a67c93a36c3e26cb72db5cb487795"
   },
   "remainingUserChecks": [
-    "Unlock and open Pulse; the initial launch check was blocked by the lock screen.",
     "Run a real 8–12 minute English recording through AI edit and review retained meaning and joins.",
     "After model setup, cold launch and complete editing/export in airplane mode.",
     "Measure real exported duration, latency, peak memory and thermal behavior."
