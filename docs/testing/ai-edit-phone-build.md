@@ -38,19 +38,20 @@ The published feature checkpoint is [AI branch commit `6ee6c27`][feature]. Its h
 checks below used that checkpoint and its committed submodule pins, excluding unrelated
 shared-workspace changes.
 
-The phone library already contained persistent-history and voiceover migrations newer than the
-feature branch's base. The handoff therefore used local branch `codex/ai-prompt-phone-test` at
+At the 2026-11-25 handoff, the phone library contained persistent-history and voiceover migrations
+newer than the feature checkpoint’s base. The handoff therefore used local branch `codex/ai-prompt-phone-test` at
 `7cf0425`, combining compatible bases `646f309` and `d3a853e` with the AI changes. It retained
 `0022_persistent_undo`, `0023_voiceover_takes` and native editor `306ff1d`; these identities are
 recorded in the [handoff][handoff]. The clean feature checkout and compatible phone integration
 are distinct validation targets.
 
-The compatible editor puts AI edit in its lower command row; the older feature editor places the
-same gated callback in its header. Compare the [compatible editor image](../../screenshots/validation/ai-edit/after-editor.png)
-with the [feature editor button][editor-button] and [route wiring][editor-route]. Future phone updates must retain the installed
-history/voiceover schema and recovery inputs. Use a compatible integration or newer base and the
-[persistence rules](../persistence.md), rather than deploying the older feature base over that
-library.
+The original feature checkpoint placed the gated action in the header. The phone integration used
+the lower command row, as does the feature branch after merging main. That branch now includes
+the persistent-history and voiceover migrations needed for the phone library. The results below
+apply to the recorded handoff build. [Original feature button][editor-button] ·
+[Original route wiring][editor-route] · [Phone integration screenshot](../../screenshots/validation/ai-edit/after-editor.png) ·
+[Current editor entry](../ai-editing.md#enable-and-test) · [Migration list](../../drizzle/migrations.js) ·
+[Persistence and recovery](../persistence.md)
 
 The 7cf0425 artifact contained freshly compiled native AI code, a Hermes bundle, six exact test
 notes and the explicit developer-build flag. App/extension entitlements and signatures were

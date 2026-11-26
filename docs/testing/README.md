@@ -20,3 +20,7 @@ The explicit file replaces only the current build's notes; earlier release
 history is retained. Missing, malformed or wrong-version input fails configuration
 instead of silently shipping stale notes. Without the setting, notes continue to
 come from Git. CI ignores the local override and uses the normal release notes.
+
+For the one-handed navigation handoff, use `docs/testing/thumb-navigation-test-notes.json` with
+the same `PULSE_TEST_NOTES_FILE` setting for the simulator and signed phone build. It covers
+the combined toolbar, existing-project entry, Summary and persistent Undo/Redo on the current main.

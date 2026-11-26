@@ -1,8 +1,11 @@
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  I18nManager,
+  Platform,
   Pressable,
   ScrollView,
+  type ScrollViewProps,
   StyleSheet,
   Text,
   TextInput,
@@ -10,7 +13,7 @@ import {
 } from 'react-native';
 
 import { Icon, type IconName } from '@/components/icon';
-import { Accent } from '@/constants/theme';
+import { Accent, MaxTextScale } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 import { speedLabel } from './timeline-geometry';
@@ -22,6 +25,7 @@ type Tool = {
   key: string;
   label: string;
   accessibilityLabel?: string;
+  accessibilityHint?: string;
   icon?: IconName;
   /** A text glyph instead of an icon (the speed). */
   text?: string;
@@ -43,8 +47,8 @@ function ToolButton({ tool }: { tool: Tool }) {
       disabled={tool.disabled}
       accessibilityRole="button"
       accessibilityLabel={tool.accessibilityLabel ?? tool.label}
+      accessibilityHint={tool.accessibilityHint}
       accessibilityState={{ disabled: !!tool.disabled, busy: !!tool.busy }}
-      hitSlop={4}
       style={({ pressed }) => [
         styles.tool,
         tool.disabled && styles.disabled,
@@ -54,16 +58,79 @@ function ToolButton({ tool }: { tool: Tool }) {
         {tool.busy ? (
           <ActivityIndicator size="small" color={color} />
         ) : tool.text ? (
-          <Text style={[styles.glyphText, { color }]}>{tool.text}</Text>
+          <Text style={[styles.glyphText, { color }]} maxFontSizeMultiplier={1.3}>
+            {tool.text}
+          </Text>
         ) : (
           tool.icon && <Icon name={tool.icon} size={20} weight="medium" tintColor={color} />
         )}
         {tool.tip}
       </View>
-      <Text style={[styles.label, { color }]} numberOfLines={1}>
+      <Text
+        style={[styles.label, { color }]}
+        numberOfLines={1}
+        maxFontSizeMultiplier={MaxTextScale}>
         {tool.label}
       </Text>
     </Pressable>
+  );
+}
+
+/** Scroll with a gesture or a button; Done remains reachable without a required swipe. */
+function ScrollableTools({
+  children,
+  contentContainerStyle = styles.scrollTools,
+}: {
+  children: ReactNode;
+  contentContainerStyle?: ScrollViewProps['contentContainerStyle'];
+}) {
+  const scroll = useRef<ScrollView>(null);
+  const offset = useRef(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [atEnd, setAtEnd] = useState(false);
+  const androidRTL = Platform.OS === 'android' && I18nManager.isRTL;
+  return (
+    <>
+      <ScrollView
+        ref={scroll}
+        horizontal
+        style={styles.scroll}
+        contentContainerStyle={contentContainerStyle}
+        onLayout={(event) => setViewportWidth(event.nativeEvent.layout.width)}
+        onContentSizeChange={(width) => setContentWidth(width)}
+        onScroll={({ nativeEvent }) => {
+          const end = Math.max(
+            0,
+            nativeEvent.contentSize.width - nativeEvent.layoutMeasurement.width,
+          );
+          // Android uses physical offsets; iOS Fabric already reports logical RTL offsets.
+          offset.current = androidRTL
+            ? end - nativeEvent.contentOffset.x
+            : nativeEvent.contentOffset.x;
+          setAtEnd(offset.current >= end - 4);
+        }}
+        scrollEventThrottle={16}>
+        {children}
+      </ScrollView>
+      {contentWidth > viewportWidth + 1 && (
+        <ToolButton
+          tool={{
+            key: 'scroll',
+            label: atEnd ? 'First' : 'More',
+            accessibilityLabel: atEnd ? 'Show first tools' : 'Show more tools',
+            icon: 'ellipsis',
+            onPress: () => {
+              const end = Math.max(0, contentWidth - viewportWidth);
+              // Half-page overlap keeps enlarged labels fully reachable between pages.
+              const next = Math.min(end, offset.current + Math.max(44, viewportWidth / 2));
+              const target = atEnd ? 0 : next;
+              scroll.current?.scrollTo({ x: androidRTL ? end - target : target, animated: true });
+            },
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -98,27 +165,11 @@ type Props = {
   onDone: () => void;
 };
 
-/** The clip tools: split, flip, rotate, crop, mute, speed, then reset and delete (✓ leaves edit mode).
- * They scroll sideways when the screen is too narrow for all of them. */
+/** Frequent edits come first; ✓ and the tools scroll together across the full row. */
 export function ClipToolbar(p: Props) {
   const tools: Tool[] = [
+    { key: 'delete', label: 'Delete', icon: 'trash', onPress: p.onDelete, destructive: true },
     splitTool(p.canSplit, p.onSplit),
-    { key: 'flip', label: 'Flip', icon: FLIP_ICON, onPress: p.onFlip, disabled: !p.editable },
-    {
-      key: 'rotate',
-      label: 'Rotate',
-      icon: 'rotate.left',
-      onPress: p.onRotate,
-      disabled: !p.editable,
-    },
-    { key: 'crop', label: 'Crop', icon: 'crop', onPress: p.onCrop, disabled: !p.editable },
-    {
-      key: 'mute',
-      label: p.muted ? 'Unmute' : 'Mute',
-      icon: p.muted ? 'speaker.slash.fill' : 'speaker.wave.2.fill',
-      onPress: p.onMute,
-      disabled: !p.editable,
-    },
     {
       key: 'speed',
       label: 'Speed',
@@ -133,32 +184,53 @@ export function ClipToolbar(p: Props) {
       onPress: p.onReset,
       disabled: !p.edited,
     },
-    { key: 'delete', label: 'Delete', icon: 'trash', onPress: p.onDelete, destructive: true },
+    { key: 'crop', label: 'Crop', icon: 'crop', onPress: p.onCrop, disabled: !p.editable },
+    {
+      key: 'mute',
+      label: p.muted ? 'Unmute' : 'Mute',
+      icon: p.muted ? 'speaker.slash.fill' : 'speaker.wave.2.fill',
+      onPress: p.onMute,
+      disabled: !p.editable,
+    },
+    { key: 'flip', label: 'Flip', icon: FLIP_ICON, onPress: p.onFlip, disabled: !p.editable },
+    {
+      key: 'rotate',
+      label: 'Rotate',
+      icon: 'rotate.left',
+      onPress: p.onRotate,
+      disabled: !p.editable,
+    },
   ];
   return (
     <View style={styles.row}>
-      <DoneButton label="Done editing" onPress={p.onDone} />
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollTools}>
+      <ScrollableTools>
+        <DoneButton label="Done editing" onPress={p.onDone} />
         {tools.map((t) => (
           <ToolButton key={t.key} tool={{ ...t, disabled: p.busy || t.disabled }} />
         ))}
-      </ScrollView>
+      </ScrollableTools>
     </View>
   );
 }
 
 /** ✓: back to the main tools. */
-function DoneButton({ label, onPress }: { label: string; onPress: () => void }) {
+function DoneButton({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
   const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}
-      hitSlop={6}
+      accessibilityState={{ disabled: !!disabled }}
       style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
       <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.text} />
     </Pressable>
@@ -180,11 +252,8 @@ export function SpeedRow({
   const theme = useTheme();
   return (
     <View style={styles.row}>
-      <DoneButton label="Done" onPress={onDone} />
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chips}>
+      <ScrollableTools contentContainerStyle={styles.chips}>
+        <DoneButton label="Done" onPress={onDone} />
         {speeds.map((s) => {
           const on = Math.abs(s - speed) < 0.0001;
           return (
@@ -194,13 +263,15 @@ export function SpeedRow({
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
               style={[styles.chip, { backgroundColor: on ? theme.text : theme.backgroundElement }]}>
-              <Text style={[styles.chipText, { color: on ? theme.background : theme.text }]}>
+              <Text
+                style={[styles.chipText, { color: on ? theme.background : theme.text }]}
+                maxFontSizeMultiplier={MaxTextScale}>
                 {speedLabel(s)}
               </Text>
             </Pressable>
           );
         })}
-      </ScrollView>
+      </ScrollableTools>
     </View>
   );
 }
@@ -213,6 +284,7 @@ export function MainToolbar({
   onSplit,
   captionsBusy,
   onCaptions,
+  onTranscript,
   tip,
 }: {
   /** Some clip can be edited (the draft has clips). */
@@ -225,10 +297,18 @@ export function MainToolbar({
   /** The model downloading, or clips being transcribed. */
   captionsBusy: boolean;
   onCaptions: () => void;
+  onTranscript: () => void;
   tip?: ReactNode;
 }) {
   const tools: Tool[] = [
     { key: 'edit', label: 'Edit', icon: 'pencil', onPress: onEdit, disabled: !canEdit },
+    {
+      key: 'transcript',
+      label: 'Transcript',
+      icon: 'text.alignleft',
+      onPress: onTranscript,
+      disabled: !canEdit,
+    },
     splitTool(canSplit, onSplit),
     {
       key: 'captions',
@@ -240,10 +320,15 @@ export function MainToolbar({
     },
   ];
   return (
-    <View style={[styles.row, styles.rowStart]}>
-      {tools.map((t) => (
-        <ToolButton key={t.key} tool={t} />
-      ))}
+    <View style={styles.row}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.mainTools}>
+        {tools.map((t) => (
+          <ToolButton key={t.key} tool={t} />
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -256,6 +341,7 @@ export function MainToolbar({
 export function CaptionToolbar(p: {
   /** A word is selected (tapped): what Edit and Delete act on. */
   hasWord: boolean;
+  busy: boolean;
   canSplit: boolean;
   canMerge: boolean;
   /** Some clip's captions were edited. */
@@ -288,7 +374,9 @@ export function CaptionToolbar(p: {
     },
     {
       key: 'delete',
-      label: 'Delete',
+      label: 'Hide word',
+      accessibilityLabel: 'Hide selected caption word',
+      accessibilityHint: 'Changes captions only. Keeps the recorded audio and video.',
       icon: 'trash',
       onPress: p.onDelete,
       disabled: !p.hasWord,
@@ -297,15 +385,12 @@ export function CaptionToolbar(p: {
   ];
   return (
     <View style={styles.row}>
-      <DoneButton label="Done with captions" onPress={p.onDone} />
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollTools}>
+      <ScrollableTools>
+        <DoneButton label="Done with captions" onPress={p.onDone} disabled={p.busy} />
         {tools.map((t) => (
-          <ToolButton key={t.key} tool={t} />
+          <ToolButton key={t.key} tool={{ ...t, disabled: p.busy || t.disabled }} />
         ))}
-      </ScrollView>
+      </ScrollableTools>
     </View>
   );
 }
@@ -331,7 +416,6 @@ export function CaptionTextBar({
         onPress={onCancel}
         accessibilityRole="button"
         accessibilityLabel="Cancel"
-        hitSlop={6}
         style={[styles.done, { backgroundColor: theme.backgroundElement }]}>
         <Icon name="xmark" size={16} weight="semibold" tintColor={theme.text} />
       </Pressable>
@@ -354,7 +438,6 @@ export function CaptionTextBar({
         onPress={() => onDone(text)}
         accessibilityRole="button"
         accessibilityLabel="Done"
-        hitSlop={6}
         style={[styles.done, styles.doneEnd, { backgroundColor: theme.text }]}>
         <Icon name="checkmark" size={18} weight="semibold" tintColor={theme.background} />
       </Pressable>
@@ -364,38 +447,46 @@ export function CaptionTextBar({
 
 const styles = StyleSheet.create({
   row: {
-    height: TOOLBAR_HEIGHT,
+    minHeight: TOOLBAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-evenly',
     paddingHorizontal: 4,
   },
-  rowStart: { justifyContent: 'flex-start', paddingHorizontal: 12, gap: 16 },
-  scrollTools: { flexGrow: 1, justifyContent: 'space-evenly', alignItems: 'center' },
+  mainTools: { flexGrow: 1, alignItems: 'center', gap: 4 },
+  scroll: { flex: 1, minWidth: 0 },
+  scrollTools: { flexGrow: 1, gap: 8, justifyContent: 'space-evenly', alignItems: 'center' },
   input: { flex: 1, height: 40, borderRadius: 20, paddingHorizontal: 16, fontSize: 16 },
   doneEnd: { marginRight: 0, marginLeft: 8 },
-  // Each tool's own size (not a stretched share of the row), so the space between tools is
-  // off-tool: a tap there lets the selection go instead of firing a tool.
-  tool: { minWidth: 44, alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 2 },
+  // Gaps let a swipe begin without activating a tool.
+  tool: {
+    minWidth: 52,
+    minHeight: 44,
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
   disabled: { opacity: 0.35 },
   pressed: { opacity: 0.6 },
-  glyph: { height: 24, justifyContent: 'center', alignItems: 'center' },
+  glyph: { minHeight: 24, justifyContent: 'center', alignItems: 'center' },
   glyphText: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
   label: { fontSize: 11, fontWeight: '500' },
   done: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    flexShrink: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 8,
   },
   chips: { gap: 8, alignItems: 'center', paddingRight: 8 },
   chip: {
-    height: 34,
+    minHeight: 44,
     minWidth: 52,
     paddingHorizontal: 12,
-    borderRadius: 17,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },

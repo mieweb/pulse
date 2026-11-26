@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
+import { eq } from 'drizzle-orm';
+import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 
-import { mergedSignature } from '@/core/media/merge-signature';
+import { mergedSignature, voiceoverSignature } from '@/core/media/merge-signature';
+import { db } from '@/db/client';
+import { drafts } from '@/db/schema';
+import { voiceoverTakesQuery } from '@/db/voiceovers';
 import type { Segment } from '@/db/schema';
 import { getRecorderFormat } from '@/features/recorder/recorder-format';
 import { describeError } from '@/features/upload/core/upload-log';
@@ -20,6 +25,9 @@ export type ExportState =
  * across deletes and reorders, and zero-length clips are left out of the merge.
  */
 function exportFailureCopy(why: string, segments: Segment[]): string {
+  if (why.includes('Voiceover export is currently supported on iOS only.')) {
+    return 'This draft has voiceover audio. Open it on an iPhone to export.';
+  }
   // "Clip 3 (<file>): …", or iOS's "Clip 3 rendered in the wrong format."
   const position = Number(/\bClip (\d+)\b/.exec(why)?.[1]);
   const seg = Number.isInteger(position) ? segments[position - 1] : undefined;
@@ -51,7 +59,21 @@ export function useExport(draftId: string, segments: Segment[]) {
 
   // Stable across re-renders that don't change the actual clips, so the live query re-emitting
   // the same data doesn't kick off a second merge.
-  const signature = mergedSignature(segments);
+  const { data: takes } = useLiveQuery(voiceoverTakesQuery(draftId), [draftId]);
+  const { data: audioRows } = useLiveQuery(
+    db
+      .select({ sourceMuted: drafts.sourceAudioMuted, voiceoverMuted: drafts.voiceoverMuted })
+      .from(drafts)
+      .where(eq(drafts.id, draftId)),
+    [draftId],
+  );
+  const signature =
+    mergedSignature(segments) +
+    voiceoverSignature({
+      takes,
+      sourceMuted: audioRows[0]?.sourceMuted ?? false,
+      voiceoverMuted: audioRows[0]?.voiceoverMuted ?? false,
+    });
 
   useEffect(() => {
     if (segments.length === 0) return;
@@ -73,10 +95,16 @@ export function useExport(draftId: string, segments: Segment[]) {
           draftId,
           segments,
           exportAudio(recorder),
-          () =>
-            mergeWithEditor(segments, recorder, abort.signal, (progress) => {
-              if (current) setState({ status: 'merging', progress });
-            }),
+          (voiceover) =>
+            mergeWithEditor(
+              segments,
+              recorder,
+              abort.signal,
+              (progress) => {
+                if (current) setState({ status: 'merging', progress });
+              },
+              voiceover,
+            ),
         );
         if (current) setState({ status: 'done', outputPath: path, durationMs });
       } catch (e) {

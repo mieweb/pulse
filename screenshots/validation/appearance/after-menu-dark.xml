@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Pulse" label="Pulse" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="" processId="36338" bundleId="com.mieweb.pulse">
+  <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+    <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+              <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                  <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                    <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                              <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits=""/>
+                                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="1" traits=""/>
+                                <XCUIElementTypeButton type="XCUIElementTypeButton" name="Import drafts" label="Import drafts" enabled="true" visible="false" accessible="true" x="151" y="78" width="54" height="44" index="2" traits="Button"/>
+                                <XCUIElementTypeButton type="XCUIElementTypeButton" name="Export drafts" label="Export drafts" enabled="false" visible="false" accessible="true" x="212" y="78" width="53" height="44" index="3" traits="NotEnabled, Button"/>
+                                <XCUIElementTypeButton type="XCUIElementTypeButton" value="expanded, System (dark)" name="Appearance" label="Appearance" enabled="true" visible="false" accessible="true" x="272" y="78" width="57" height="44" index="4" traits="Button"/>
+                                <XCUIElementTypeButton type="XCUIElementTypeButton" name="About" label="About" enabled="true" visible="false" accessible="true" x="337" y="78" width="49" height="44" index="5" traits="Button"/>
+                                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="177" y="435" width="48" height="49" index="6" traits="">
+                                  <XCUIElementTypeImage type="XCUIElementTypeImage" name="video.badge.plus" label="video.badge.plus" enabled="true" visible="false" accessible="false" x="177" y="435" width="48" height="49" index="0" traits="Image"/>
+                                </XCUIElementTypeOther>
+                                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="No drafts yet" name="No drafts yet" label="No drafts yet" enabled="true" visible="false" accessible="false" x="141" y="491" width="120" height="26" index="7" traits="StaticText">
+                                  <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="No drafts yet" name="No drafts yet" label="No drafts yet" enabled="true" visible="false" accessible="true" x="141" y="491" width="120" height="26" index="0" traits="StaticText"/>
+                                </XCUIElementTypeStaticText>
+                                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Tap + to start a blank project or collect beats into a summary." name="Tap + to start a blank project or collect beats into a summary." label="Tap + to start a blank project or collect beats into a summary." enabled="true" visible="false" accessible="false" x="32" y="524" width="338" height="45" index="8" traits="StaticText">
+                                  <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Tap + to start a blank project or collect beats into a summary." name="Tap + to start a blank project or collect beats into a summary." label="Tap + to start a blank project or collect beats into a summary." enabled="true" visible="false" accessible="true" x="32" y="524" width="338" height="45" index="0" traits="StaticText"/>
+                                </XCUIElementTypeStaticText>
+                                <XCUIElementTypeButton type="XCUIElementTypeButton" name="drafts.record" label="New project" enabled="true" visible="false" accessible="true" x="318" y="756" width="60" height="60" index="9" traits="Button"/>
+                              </XCUIElementTypeOther>
+                            </XCUIElementTypeOther>
+                          </XCUIElementTypeOther>
+                        </XCUIElementTypeOther>
+                      </XCUIElementTypeOther>
+                      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="1" traits="">
+                        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="402" height="874" index="0" traits=""/>
+                      </XCUIElementTypeOther>
+                    </XCUIElementTypeOther>
+                  </XCUIElementTypeOther>
+                </XCUIElementTypeOther>
+              </XCUIElementTypeOther>
+            </XCUIElementTypeOther>
+          </XCUIElementTypeOther>
+        </XCUIElementTypeOther>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeOther>
+    <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="1" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+          <XCUIElementTypeButton type="XCUIElementTypeButton" name="Dismiss" label="Dismiss" enabled="true" visible="true" accessible="true" x="0" y="0" width="402" height="874" index="0" traits="Button"/>
+          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="109" y="126" width="220" height="163" index="1" traits="">
+            <XCUIElementTypeOther type="XCUIElementTypeOther" value="radio button, checked" name="System (device)" label="System (device)" enabled="true" visible="true" accessible="true" x="109" y="126" width="220" height="54" index="0" traits=""/>
+            <XCUIElementTypeOther type="XCUIElementTypeOther" value="radio button, unchecked" name="Always light" label="Always light" enabled="true" visible="true" accessible="true" x="109" y="180" width="220" height="55" index="1" traits=""/>
+            <XCUIElementTypeOther type="XCUIElementTypeOther" value="radio button, unchecked" name="Always dark" label="Always dark" enabled="true" visible="true" accessible="true" x="109" y="234" width="220" height="55" index="2" traits=""/>
+          </XCUIElementTypeOther>
+        </XCUIElementTypeOther>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeOther>
+  </XCUIElementTypeWindow>
+</XCUIElementTypeApplication>

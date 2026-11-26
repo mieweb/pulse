@@ -4,7 +4,6 @@ import { setAudioModeAsync } from 'expo-audio';
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  BackHandler,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -27,12 +26,12 @@ import { END, timeAtAnchor } from '@/core/clip-anchor';
 import { useScreenFocused, useScreenFocusEffect } from '@/core/navigation/focus';
 import Sortable from 'react-native-sortables';
 
-import { CaptionStatus, CaptionTools } from '@/features/editor/caption-tools';
+import { CaptionStatus, CaptionTools, CaptionWordPicker } from '@/features/editor/caption-tools';
 import { ADD_SIZE, EditorAddMenu } from '@/features/editor/editor-add-menu';
 import { ClipRow } from '@/features/editor/clip-row';
-import { HeaderButton, ViewSwitcher } from '@/features/editor/editor-controls';
+import { CommandButton, ViewSwitcher } from '@/features/editor/editor-controls';
 import { useFrameRates } from '@/features/editor/use-frame-rates';
-import { flushDraftWrites } from '@/features/editor/draft-writes';
+import { flushDraftWrites, trackDraftWrite } from '@/features/editor/draft-writes';
 import {
   CaptionTextBar,
   ClipToolbar,
@@ -63,18 +62,27 @@ import {
   timelineLayout,
 } from '@/features/editor/timeline-geometry';
 import { captionYQuery, setCaptionY } from '@/db/captions';
-import { allSegments, splitSegment } from '@/db/drafts';
+import {
+  allSegments,
+  cutSegmentRange,
+  cutTranscriptRanges,
+  splitSegment,
+  type TranscriptCutRequest,
+} from '@/db/drafts';
 import { pruneFrameCache } from '@/features/editor/filmstrip';
 import { toMergeClip } from '@/features/export/editor-merge';
 import { getEditorView, setEditorView, type EditorView } from '@/db/settings';
 import { useEditorDraft, type EditorClip } from '@/features/editor/use-editor-draft';
 import { useEditorAdditions } from '@/features/editor/use-editor-additions';
 import { useEditorHistory } from '@/features/editor/use-editor-history';
-import { keepEmptyEditorOpen } from '@/features/editor/editor-history';
+import { useEditorBack } from '@/features/editor/use-editor-back';
+import { keepEmptyEditorOpen, shouldLeaveEmptyEditor } from '@/features/editor/editor-history';
 import { useCanSplitAtPlayhead, usePlayheadClip } from '@/features/editor/use-playhead-clip';
 import { clipSplitAnchor } from '@/features/editor/clip-split';
 import { usePreviewTransport } from '@/features/editor/use-preview-transport';
 import { useWaveforms } from '@/features/editor/use-waveforms';
+import { useVoiceover } from '@/features/editor/use-voiceover';
+import { VoiceoverControls, VOICEOVER_CONTROLS_HEIGHT } from '@/features/editor/voiceover-controls';
 import { loadCustomSpeeds, speedMenu } from '@/features/editor/editor-speeds';
 import { TipAnchor } from '@/features/tips/tip-anchor';
 import { TipLayer } from '@/features/tips/tip-callout';
@@ -105,6 +113,8 @@ import { haptics } from '@/utils/haptics';
 import { userMessage } from '@/utils/user-message';
 import { TILE_HEIGHT } from '@/features/editor/clip-tile';
 import { clipRender, type ClipCrop, type ParsedEdit } from '@/utils/segment-window';
+import { interiorCutWindow } from '@/utils/transcript-cut';
+import { TranscriptEditorSheet, type TranscriptSource } from './transcript-editor-sheet';
 
 import type { EditorScreenProps } from './contract';
 
@@ -121,10 +131,11 @@ const PLAYBACK_SESSION_RETRY_MS = 250;
  * mixed with other apps) would otherwise stay: the preview muted by the silent switch. Claimed
  * first, so that restore, if it's still to run, leaves the session alone.
  */
-function usePlaybackSessionOnReturn() {
+function usePlaybackSessionOnReturn(enabled = true) {
   const returned = useRef(false);
   useScreenFocusEffect(
     useCallback(() => {
+      if (!enabled) return;
       if (!returned.current) {
         returned.current = true;
         return;
@@ -148,14 +159,15 @@ function usePlaybackSessionOnReturn() {
         live = false;
         clearTimeout(retry);
       };
-    }, []),
+    }, [enabled]),
   );
 }
 
 /**
  * The timeline editor: the draft playing as it will export (<PulsePreview>), a strip of its
  * clips under a centre playhead, and a bottom bar of tools. Every edit applies at once (no Save),
- * with undo/redo in the header; trims snap to source frames as the engine does.
+ * with Close, undo/redo and Export in the bottom toolbar; trims snap to source frames as the
+ * engine does.
  *
  * The bottom bar offers Split directly; Edit and Captions open a mode until its ✓.
  * Edit (or a tap on a clip) edits the clip
@@ -178,6 +190,7 @@ function usePlaybackSessionOnReturn() {
  */
 export function EditorScreen({
   draftId,
+  allowEmpty = false,
   clipId,
   anchor: openAnchor,
   view: openView,
@@ -196,18 +209,32 @@ export function EditorScreen({
   const theme = useTheme();
   const draft = useEditorDraft(draftId);
   const { clips, covers, options } = draft;
-  const { ctl, values, playing, status } = usePreviewTransport();
-  usePlaybackSessionOnReturn();
-  const { data: captionRows } = useLiveQuery(captionYQuery(draftId), [draftId]);
+  const [mode, setMode] = useState<'main' | 'edit' | 'captions' | 'voiceover'>('main');
+  const voiceoverMode = mode === 'voiceover';
+  const focused = useScreenFocused();
+  const { ctl, values, playing, status } = usePreviewTransport(voiceoverMode, focused);
+  usePlaybackSessionOnReturn(!voiceoverMode);
+  const voiceover = useVoiceover(draftId, ctl, voiceoverMode, focused);
+  const previewOptions = useMemo(
+    () => (options ? { ...options, ...voiceover.mix } : null),
+    [options, voiceover.mix],
+  );
+  const {
+    data: captionRows,
+    updatedAt: draftRowUpdatedAt,
+    error: captionError,
+  } = useLiveQuery(captionYQuery(draftId), [draftId]);
   const captionYValue = captionRows[0]?.captionY;
   const history = useEditorHistory(
+    draftId,
+    draft.ready && draftRowUpdatedAt !== undefined && captionError === undefined,
     clips,
     draft.setValue,
     draft.reorder,
     draft.captionEdits,
     draft.setCaptions,
     captionYValue ?? null,
-    (y) => void setCaptionY(draftId, y).catch(() => {}),
+    (y) => void trackDraftWrite(draftId, setCaptionY(draftId, y)).catch(() => {}),
   );
   // The same object until the place changes, so the caption on the video doesn't re-render.
   const captionStyle = useMemo(() => captionStyleFor(captionYValue), [captionYValue]);
@@ -222,12 +249,26 @@ export function EditorScreen({
   // last switched to, remembered across sessions (Clips the first time).
   const [view, setView] = useState<EditorView>(() => getEditorView() ?? openView ?? 'clips');
   const [tools, setTools] = useState<'clip' | 'speed'>('clip');
+  const splitting = useRef(false);
+  const [splitBusy, setSplitBusy] = useState(false);
+  const [transcriptSession, setTranscriptSession] = useState<{
+    sources: TranscriptSource[];
+    initialClipId: string | null;
+  } | null>(null);
+  const audition = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const auditionSequence = useRef(0);
+  const stopTranscriptPreview = useCallback(() => {
+    auditionSequence.current++;
+    if (audition.current) clearTimeout(audition.current);
+    audition.current = null;
+    ctl.pause();
+  }, [ctl]);
+  useEffect(() => () => stopTranscriptPreview(), [stopTranscriptPreview]);
   // Each editor opens the timeline at its usual scale (a pinch's scale is kept across views).
   useState(resetTimelineZoom);
   // The bottom bar: the main tools, edit mode (the tools of the clip under the playhead) or the
   // captions tools (for the caption under it). Always the main tools on open (a clip tapped in the
   // recorder opens paused on it, nothing selected).
-  const [mode, setMode] = useState<'main' | 'edit' | 'captions'>('main');
   const captionTools = mode === 'captions';
   // The word being typed (its clip and index in the clip's words), and its text as it was.
   const [typing, setTyping] = useState<{ clipId: string; i: number; text: string } | null>(null);
@@ -299,19 +340,17 @@ export function EditorScreen({
 
   // Android back leaves crop, typing, the speed row or a mode first, then the editor (only while
   // the editor is on screen: a screen pushed over it handles its own back).
-  useScreenFocusEffect(
-    useCallback(() => {
-      if (!cropping && !typing && tools === 'clip' && mode === 'main') return;
-      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        if (cropping) setCropping(null);
-        else if (typing) setTyping(null);
-        else if (tools !== 'clip') setTools('clip');
-        else setMode('main');
-        return true;
-      });
-      return () => sub.remove();
-    }, [cropping, typing, tools, mode]),
-  );
+  useEditorBack({
+    busy: splitBusy || voiceover.busy,
+    cropping: cropping !== null,
+    typing: typing !== null,
+    tools,
+    mode,
+    setCropping,
+    setTyping,
+    setTools,
+    setMode,
+  });
 
   // Once per app run: the filmstrip's disk cache keeps only frames of files a clip still plays.
   useEffect(() => {
@@ -320,10 +359,10 @@ export function EditorScreen({
       .catch(() => {});
   }, []);
 
-  // Leave an empty draft once, except when undo retains clips for redo. Keep that session through
-  // database/live-query timing gaps until restored clips reach the screen. Only close while on
-  // top: otherwise a recorder over this editor would be closed instead.
-  const focused = useScreenFocused();
+  // The standalone library keeps persisted empty drafts editable through Add. Other callers
+  // leave once empty, except when history retains clips for Redo. Wait for the draft row as well
+  // as its clips so a loading query cannot close a valid empty draft. Only close while on top:
+  // otherwise a recorder over this editor would be closed instead.
   const left = useRef(false);
   const retainedEmpty = useRef(false);
   useEffect(() => {
@@ -332,11 +371,27 @@ export function EditorScreen({
       clips.length,
       history.keepEmptyOpen,
     );
-    if (left.current || !focused || !draft.loaded || clips.length > 0 || retainedEmpty.current)
+    // Drizzle can retain an earlier error after a successful read; updatedAt marks usable rows.
+    const draftExists = draftRowUpdatedAt === undefined ? undefined : captionRows.length > 0;
+    if (
+      left.current ||
+      !focused ||
+      !draft.loaded ||
+      !shouldLeaveEmptyEditor(clips.length, retainedEmpty.current, allowEmpty, draftExists)
+    )
       return;
     left.current = true;
     onClose();
-  }, [focused, draft.loaded, clips.length, history.keepEmptyOpen, onClose]);
+  }, [
+    focused,
+    draft.loaded,
+    clips.length,
+    history.keepEmptyOpen,
+    allowEmpty,
+    captionRows.length,
+    draftRowUpdatedAt,
+    onClose,
+  ]);
 
   // Opened on a clip or at a boundary: the playhead starts there. Placed once the clips are known,
   // before the strip or row is shown (they stay hidden until then, on the UI thread, so no frame
@@ -345,7 +400,12 @@ export function EditorScreen({
   const placed = useSharedValue(opensPlaced ? 0 : 1);
   const placedOnce = useRef(!opensPlaced);
   useLayoutEffect(() => {
-    if (placedOnce.current || clips.length === 0) return;
+    if (placedOnce.current) return;
+    if (clips.length === 0) {
+      // An allowed empty draft still needs its Add button, even with an opening anchor/clip id.
+      if (allowEmpty && draft.loaded) placed.set(1);
+      return;
+    }
     placedOnce.current = true;
     const ids = clips.map((c) => c.id);
     const i = clipId ? ids.indexOf(clipId) : -1;
@@ -358,7 +418,17 @@ export function EditorScreen({
       : timeAtAnchor(openAnchor ?? END, ids, layout.starts, layout.totalMs);
     ctl.place(Math.min(at, Math.max(0, layout.totalMs - 1)));
     placed.set(1);
-  }, [clips, clipId, openAnchor, ctl, layout.starts, layout.totalMs, placed]);
+  }, [
+    clips,
+    clipId,
+    openAnchor,
+    ctl,
+    layout.starts,
+    layout.totalMs,
+    placed,
+    allowEmpty,
+    draft.loaded,
+  ]);
   // The scale the timeline opens at, once the clips are known: the clip it was opened on fitted
   // (`clipZoom`, ready to trim), or the whole draft when it's short (`draftZoom`).
   const openedZoom = useRef(false);
@@ -402,6 +472,10 @@ export function EditorScreen({
   /** A tap on a clip (either view): edit mode, on that clip. The playhead moves onto it if it
    * isn't there (to where the tap was on the timeline, to its start in the row). */
   const tapClip = (i: number, ms?: number) => {
+    if (voiceoverMode) {
+      if (!voiceover.busy && ms != null) ctl.seekTo(ms);
+      return;
+    }
     const c = clips[i];
     if (!c) {
       deselect();
@@ -587,6 +661,7 @@ export function EditorScreen({
     void flushDraftWrites().then(go);
   };
   const openExport = () => {
+    if (voiceoverMode || voiceover.busy || splitting.current) return;
     if (clips.length > 0) openOver(() => onExport(draftId));
   };
 
@@ -615,8 +690,6 @@ export function EditorScreen({
   });
   const { screen, screenLive } = add;
 
-  const splitting = useRef(false);
-  const [splitBusy, setSplitBusy] = useState(false);
   /** Split the current source window without adding media; one history step rejoins it. */
   const split = () => {
     if (splitting.current || history.busy || add.busy) return;
@@ -755,6 +828,10 @@ export function EditorScreen({
    * lets the selection go, the playhead to where it was tapped). On the lane (`toggle`), a tap on
    * the selected word lets it go. */
   const onCaptionTap = (ms: number, toggle = false) => {
+    if (voiceoverMode) {
+      if (!voiceover.busy) ctl.seekTo(ms);
+      return;
+    }
     // A tap while typing finishes the word (keeping what's typed); the next tap selects.
     if (keepTyped()) return;
     if (!captionTools) setMode('captions');
@@ -788,6 +865,156 @@ export function EditorScreen({
       shown.map((l) => l.from),
       shown.length ? shown[shown.length - 1].to : 0,
     );
+  };
+
+  // Use the selected word's source timing, never its composed (trimmed/speed-adjusted)
+  // position. The first pass keeps footage on both sides, sharing the existing split receipt.
+  const speechSegment = captionTools && picked ? segmentOf(picked.clipId) : undefined;
+  const speechClip = speechSegment && clips.find((c) => c.id === speechSegment.id);
+  const speechWord =
+    speechSegment && picked
+      ? clipWords(speechSegment, captions.clipRows)?.words[picked.i]
+      : undefined;
+  const speechFps = speechClip && fpsOf(speechClip.uri);
+  const speechWindow =
+    speechSegment && speechWord && speechFps && selWord >= 0
+      ? interiorCutWindow(
+          clipRender(speechSegment),
+          speechWord.t0 * 10,
+          speechWord.t1 * 10,
+          speechFps,
+        )
+      : null;
+  const speechCut =
+    speechClip && speechWord && speechFps && speechWindow
+      ? { clip: speechClip, word: speechWord, fps: speechFps, window: speechWindow }
+      : null;
+
+  const cutSpeech = () => {
+    if (!speechCut || splitting.current || history.busy || add.busy) return;
+    const { clip, word, fps, window } = speechCut;
+    const cutTimeMs =
+      (layout.starts[clips.findIndex((c) => c.id === clip.id)] ?? 0) +
+      (window.startMs - clip.merge.startMs) / clip.merge.speed;
+    ctl.pause();
+    splitting.current = true;
+    setSplitBusy(true);
+    haptics.tap();
+    const key = randomUUID();
+    void (async () => {
+      try {
+        await history.beginBatch(key);
+        const receipt = await cutSegmentRange(draftId, {
+          clipId: clip.id,
+          sourceKey: clip.sourceKey,
+          startMs: word.t0 * 10,
+          endMs: word.t1 * 10,
+          rightId: randomUUID(),
+          fps,
+        });
+        history.recordAdded([], [receipt]);
+        letGo();
+        ctl.seekTo(cutTimeMs);
+        showToast({
+          kind: 'success',
+          title: `Cut “${word.text}” from video`,
+          message: 'Undo restores the audio, video and captions.',
+        });
+      } catch (error) {
+        showToast({
+          kind: 'error',
+          title: 'Couldn’t cut the word',
+          message: userMessage(error, 'Select a word inside the beat and try again.', 'cut speech'),
+        });
+      } finally {
+        history.endBatch(key);
+        splitting.current = false;
+        setSplitBusy(false);
+      }
+    })();
+  };
+
+  const openTranscript = () => {
+    if (splitting.current || history.busy || add.busy || voiceover.busy) return;
+    ctl.pause();
+    const sources: TranscriptSource[] = clips.flatMap((clip) => {
+      const segment = segmentOf(clip.id);
+      if (!segment) return [];
+      const own = clipWords(segment, captions.clipRows);
+      const row = captions.clipRows.get(clip.id);
+      return [
+        {
+          segment: { ...segment },
+          sourceKey: clip.sourceKey,
+          uri: clip.uri,
+          sourceMuted: voiceover.sourceMuted,
+          label: `Beat ${clip.label ?? clips.indexOf(clip) + 1}`,
+          words: (own?.words ?? []).map((word) => ({ ...word })),
+          fps: fpsOf(clip.uri),
+          transcript:
+            !own?.edited && row && !row.failed && captions.model
+              ? { model: captions.model.id, file: row.file, words: JSON.stringify(row.words) }
+              : undefined,
+        },
+      ];
+    });
+    setTranscriptSession({
+      sources,
+      initialClipId: picked?.clipId ?? clips[clipIndexAt(layout.starts, ctl.lastMs)]?.id ?? null,
+    });
+  };
+
+  const previewTranscriptCut = (clipId: string, startMs: number, endMs: number) => {
+    stopTranscriptPreview();
+    const clip = clips.find((c) => c.id === clipId);
+    const frozen = transcriptSession?.sources.find((s) => s.segment.id === clipId);
+    if (!clip || clip.sourceKey !== frozen?.sourceKey) {
+      showToast({
+        kind: 'error',
+        title: 'The beat changed',
+        message: 'Close and reopen the transcript.',
+      });
+      return;
+    }
+    const index = clips.indexOf(clip);
+    const start = Math.max(clip.merge.startMs, startMs - 300);
+    const end = Math.min(clip.merge.endMs, endMs + 300);
+    const seq = auditionSequence.current;
+    ctl.seekTo((layout.starts[index] ?? 0) + (start - clip.merge.startMs) / clip.merge.speed);
+    void ctl.waitUntilSettled().then((ready) => {
+      if (!ready || seq !== auditionSequence.current) return;
+      ctl.play();
+      audition.current = setTimeout(
+        stopTranscriptPreview,
+        Math.min(5000, (end - start) / clip.merge.speed),
+      );
+    });
+  };
+
+  const applyTranscriptCuts = async (requests: TranscriptCutRequest[]) => {
+    if (splitting.current || history.busy || add.busy)
+      throw new Error('Wait for the current edit to finish.');
+    stopTranscriptPreview();
+    splitting.current = true;
+    setSplitBusy(true);
+    const key = randomUUID();
+    try {
+      await history.beginBatch(key);
+      const result = await cutTranscriptRanges(draftId, requests);
+      history.recordAdded(result.ids, result.splits);
+      letGo();
+      // Review the new sequence from its start; cuts may be before or after the old playhead.
+      ctl.seekTo(0);
+      showToast({
+        kind: 'success',
+        title: `Removed ${(result.removedMs / 1000).toFixed(1)} seconds from video`,
+        message: 'One Undo restores all of these cuts.',
+      });
+    } finally {
+      history.endBatch(key);
+      splitting.current = false;
+      setSplitBusy(false);
+    }
   };
   /** Store a clip's caption words, in the file it plays (one undo step). */
   const saveCaptionWords = (clipId: string, words: CaptionWord[]) => {
@@ -867,7 +1094,7 @@ export function EditorScreen({
     // One undo step per drag (it reports once, when let go).
     history.record('captionY');
     history.close();
-    return setCaptionY(draftId, y).catch((e: unknown) => {
+    return trackDraftWrite(draftId, setCaptionY(draftId, y)).catch((e: unknown) => {
       showToast({ kind: 'error', title: 'Couldn’t move the captions', message: 'Try again.' });
       throw e;
     });
@@ -890,6 +1117,17 @@ export function EditorScreen({
     if (!clean) setPicked(null);
     if (clean !== t.text)
       saveCaptionWords(t.clipId, replaceWordText(wordsOf(t.clipId), t.i, clean));
+  };
+
+  const voiceoverEntryDisabled = add.busy || history.busy || splitBusy || voiceover.busy;
+  /** The existing take and the + menu enter the same workflow; neither adds a recording. */
+  const openVoiceover = (at?: number) => {
+    if (voiceoverEntryDisabled) return;
+    keepTyped();
+    ctl.pause();
+    setMode('voiceover');
+    setView('timeline');
+    if (at != null) ctl.seekTo(at);
   };
 
   const { timeMs } = values;
@@ -923,52 +1161,15 @@ export function EditorScreen({
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={[styles.root, { paddingTop: insets.top, backgroundColor: theme.background }]}>
-        {/* Off-clip space, like every black area around the controls: a tap lets a selection go. */}
-        <Pressable style={styles.header} onPress={deselect} accessible={false}>
-          <HeaderButton icon="xmark" label="Close" onPress={onClose} testID="editor.close" />
-          <View style={styles.headerRight}>
-            {onAiEdit && (
-              <HeaderButton
-                icon="sparkles"
-                label="AI edit"
-                testID="editor.ai-edit"
-                disabled={clips.length === 0 || add.busy || history.busy || splitBusy}
-                onPress={() => {
-                  ctl.pause();
-                  void flushDraftWrites().then(() => onAiEdit(draftId));
-                }}
-              />
-            )}
-            <HeaderButton
-              icon="arrow.uturn.backward"
-              label="Undo"
-              onPress={undo}
-              disabled={!history.canUndo}
-            />
-            <HeaderButton
-              icon="arrow.uturn.forward"
-              label="Redo"
-              onPress={redo}
-              disabled={!history.canRedo}
-            />
-            {/* Finished editing: on to the export screen (back returns here). */}
-            <View style={styles.export}>
-              <ExportButton
-                onPress={openExport}
-                disabled={clips.length === 0}
-                testID="editor.export"
-              />
-            </View>
-          </View>
-        </Pressable>
-
         <Pressable
           style={[styles.preview, { backgroundColor: theme.background }]}
           onLayout={(e) =>
             setStage({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
           }
           // Plays or pauses, in any mode (watch an edit without leaving edit mode).
-          onPress={ctl.toggle}
+          onPress={() => {
+            if (!voiceoverMode || !voiceover.busy) ctl.toggle();
+          }}
           accessibilityRole="button"
           accessibilityLabel={playing ? 'Pause' : 'Play'}>
           {/* Created once the area is measured, at the picture's size. */}
@@ -976,9 +1177,9 @@ export function EditorScreen({
             <PulsePreview
               style={picture}
               clips={previewClips}
-              options={options}
-              onTime={ctl.onTime}
-              onStatus={ctl.onStatus}
+              options={previewOptions!}
+              onTime={voiceover.onTime}
+              onStatus={voiceover.onStatus}
               onReady={ctl.onReady}
             />
           )}
@@ -988,7 +1189,9 @@ export function EditorScreen({
             pointerEvents="none"
           />
           {fitW > 0 && captions.lines.length > 0 && (
-            <View style={[styles.cover, picture]} pointerEvents="box-none">
+            <View
+              style={[styles.cover, picture]}
+              pointerEvents={voiceoverMode ? 'none' : 'box-none'}>
               <SkiaCaption
                 lines={captions.lines}
                 timeMs={values.timeMs}
@@ -1001,24 +1204,15 @@ export function EditorScreen({
               />
             </View>
           )}
-          <CaptionStatus
-            captions={captions}
-            open={captionTools}
-            onOpenModelSheet={onOpenModelSheet}
-          />
+          {!voiceoverMode && (
+            <CaptionStatus
+              captions={captions}
+              open={captionTools}
+              onOpenModelSheet={onOpenModelSheet}
+            />
+          )}
           {status?.error && (
             <Text style={[styles.error, { color: theme.textSecondary }]}>{status.error}</Text>
-          )}
-          {/* A screen take for this draft (from the "+"): its Stop, over the top of the preview. */}
-          {screenCapture && add.screenHere && (
-            <View style={styles.screenStop} pointerEvents="box-none">
-              <screenCapture.StopPill
-                began={screen.began}
-                starting={screen.starting && !screenLive}
-                stopping={screen.phase === 'stopping'}
-                onStop={() => void screenCapture.stop()}
-              />
-            </View>
           )}
         </Pressable>
 
@@ -1039,6 +1233,7 @@ export function EditorScreen({
           </View>
           <Pressable
             onPress={ctl.toggle}
+            disabled={voiceoverMode && voiceover.busy}
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={playing ? 'Pause' : 'Play'}
@@ -1047,19 +1242,27 @@ export function EditorScreen({
             <Icon name={playing ? 'pause.fill' : 'play.fill'} size={22} tintColor={theme.text} />
           </Pressable>
           <View style={styles.switchSlot}>
-            <ViewSwitcher
-              view={view}
-              onChange={(v) => {
-                setView(v);
-                void setEditorView(v).catch(() => {});
-              }}
-            />
+            {!voiceoverMode && (
+              <ViewSwitcher
+                view={view}
+                onChange={(v) => {
+                  setView(v);
+                  void setEditorView(v).catch(() => {});
+                }}
+              />
+            )}
           </View>
         </Pressable>
 
         {/* One container for both views: hidden until the playhead is placed (its style stays on one
             view, never moved between two). */}
-        <Animated.View style={[styles.track, trackStyle]}>
+        <Animated.View
+          style={[
+            styles.track,
+            trackStyle,
+            (voiceoverMode || voiceover.takes.length > 0) && { height: STRIP_HEIGHT + 30 },
+          ]}
+          pointerEvents={voiceoverMode && voiceover.busy ? 'none' : 'auto'}>
           {view === 'timeline' ? (
             <TimelineStrip
               clips={clips}
@@ -1070,6 +1273,10 @@ export function EditorScreen({
               trim={trim}
               values={values}
               captions={captions.lines}
+              voiceovers={voiceover.takes}
+              showVoiceovers={voiceoverMode || voiceover.takes.length > 0}
+              onVoiceoverTap={Platform.OS === 'ios' ? openVoiceover : undefined}
+              voiceoversDisabled={voiceoverEntryDisabled}
               captionSelected={selLine}
               captionWord={selWord}
               captionDrag={captionDrag}
@@ -1104,32 +1311,88 @@ export function EditorScreen({
           {/* Add at the playhead: over the clips at the right edge, outside their scroll and gestures, so it
               stays put while they scroll under it (each view pads half its width at the end, so
               the last clip scrolls clear of it) and while a clip is selected. */}
-          <View style={styles.add} pointerEvents="box-none">
-            <EditorAddMenu
-              actions={add.actions}
-              view={view}
-              busy={add.busy || history.busy || splitBusy}
-              progress={add.progress}
-              progressText={add.progressText}
-              progressCount={add.progressCount}
-              onOpen={ctl.pause}
-            />
-          </View>
+          {!voiceoverMode && (
+            <View style={styles.add} pointerEvents="box-none">
+              <EditorAddMenu
+                actions={
+                  Platform.OS === 'ios'
+                    ? [
+                        ...add.actions,
+                        {
+                          key: 'voiceover',
+                          label: 'Voiceover',
+                          icon: 'mic.fill',
+                          onPress: () => openVoiceover(),
+                        },
+                      ]
+                    : add.actions
+                }
+                view={view}
+                busy={add.busy || history.busy || splitBusy}
+                progress={add.progress}
+                progressText={add.progressText}
+                progressCount={add.progressCount}
+                onOpen={ctl.pause}
+              />
+            </View>
+          )}
         </Animated.View>
 
-        <Pressable
-          // One height whether it holds the tools or the hint, so selecting never moves the layout.
-          // Above the keyboard while typing, it needs no room for the home indicator.
+        {/* The take's Stop has its own lower row, clear of the clip gestures and sticky "+". */}
+        {screenCapture && add.screenHere && (
+          <View style={styles.screenStop}>
+            <screenCapture.StopPill
+              overVideo={false}
+              began={screen.began}
+              starting={screen.starting && !screenLive}
+              stopping={screen.phase === 'stopping'}
+              onStop={() => void screenCapture.stop()}
+            />
+          </View>
+        )}
+
+        {captionTools && !typing && (
+          <CaptionWordPicker
+            lines={lines}
+            picked={picked}
+            timeMs={values.timeMs}
+            busy={splitBusy || history.busy || add.busy}
+            canCutSpeech={!!speechCut}
+            onOpenTranscript={openTranscript}
+            onPick={(lineIndex, wordIndex) => {
+              const line = lines[lineIndex];
+              const word = line?.words?.[wordIndex];
+              if (!word) return;
+              ctl.pause();
+              setPicked({ clipId: line.clipId, i: line.from + wordIndex });
+              zoomToCaption(lineIndex, wordIndex);
+              ctl.seekTo(word.t0 * 10);
+            }}
+            onCutSpeech={cutSpeech}
+          />
+        )}
+
+        <View
+          // Full-width tools above the lower commands; caption entry replaces both rows.
+          // Keep the home inset once and allow enlarged labels to grow without clipping.
           style={[
             styles.tools,
             {
-              height: TOOLBAR_HEIGHT + 8 + (typing ? 8 : insets.bottom + 4),
-              paddingBottom: typing ? 8 : insets.bottom + 4,
+              minHeight:
+                (voiceoverMode ? VOICEOVER_CONTROLS_HEIGHT : TOOLBAR_HEIGHT) +
+                (typing ? 0 : insets.bottom),
+              paddingBottom: typing ? 0 : insets.bottom,
             },
-          ]}
-          onPress={deselect}
-          accessible={false}>
-          {typing ? (
+          ]}>
+          {voiceoverMode ? (
+            <VoiceoverControls
+              voiceover={voiceover}
+              onDone={() => {
+                ctl.pause();
+                setMode('main');
+              }}
+            />
+          ) : typing ? (
             <CaptionTextBar
               key={`${typing.clipId}:w${typing.i}`}
               initial={typing.text}
@@ -1139,70 +1402,117 @@ export function EditorScreen({
                 typed.current = t;
               }}
             />
-          ) : captionTools ? (
-            <CaptionTools
-              lines={lines}
-              timeMs={values.timeMs}
-              hasWord={selWord >= 0}
-              edited={captionsEdited}
-              onDone={() => setMode('main')}
-              onEdit={editCaption}
-              onDelete={deleteCaption}
-              onSplit={splitCaption}
-              onMerge={mergeCaption}
-              onModel={onOpenModelSheet}
-              onReset={resetCaptions}
-            />
-          ) : !sel ? (
-            <MainToolbar
-              canEdit={clips.length > 0 && !splitBusy && !history.busy}
-              canSplit={canSplit && !add.busy && !splitBusy && !history.busy}
-              onSplit={split}
-              onEdit={() => {
-                haptics.tap();
-                const i = clipIndexAt(layout.starts, ctl.lastMs);
-                enterEdit(i);
-                zoomToClip(i);
-              }}
-              captionsBusy={captionsBusy}
-              onCaptions={openCaptions}
-              tip={
-                captionsTip.mounted && (
-                  <TipAnchor
-                    id="captions"
-                    shown={captionsTip.shown}
-                    onDismiss={captionsTip.dismiss}
-                  />
-                )
-              }
-            />
-          ) : tools === 'speed' ? (
-            <SpeedRow
-              speeds={speedMenu(customSpeeds)}
-              speed={sel.edit.speed}
-              onPick={(s) => edit('speed', (e) => ({ ...e, speed: s }))}
-              onDone={() => setTools('clip')}
-            />
           ) : (
-            <ClipToolbar
-              muted={sel.edit.muted}
-              speed={sel.edit.speed}
-              editable={sel.editable}
-              edited={sel.canReset}
-              canSplit={canSplit && !add.busy}
-              busy={splitBusy || history.busy}
-              onSplit={split}
-              onFlip={() => edit(null, flippedEdit)}
-              onRotate={() => edit('rotate', rotated)}
-              onCrop={startCrop}
-              onMute={() => edit(null, (e) => ({ ...e, muted: !e.muted }))}
-              onSpeed={() => setTools('speed')}
-              onReset={reset}
-              onDelete={remove}
-              onDone={() => setMode('main')}
-            />
+            <>
+              <View style={styles.contextTools}>
+                {captionTools ? (
+                  <CaptionTools
+                    lines={lines}
+                    timeMs={values.timeMs}
+                    hasWord={selWord >= 0}
+                    busy={splitBusy || history.busy || add.busy}
+                    edited={captionsEdited}
+                    onDone={() => setMode('main')}
+                    onEdit={editCaption}
+                    onDelete={deleteCaption}
+                    onSplit={splitCaption}
+                    onMerge={mergeCaption}
+                    onModel={onOpenModelSheet}
+                    onReset={resetCaptions}
+                  />
+                ) : !sel ? (
+                  <MainToolbar
+                    canEdit={clips.length > 0 && !splitBusy && !history.busy}
+                    canSplit={canSplit && !add.busy && !splitBusy && !history.busy}
+                    onSplit={split}
+                    onEdit={() => {
+                      haptics.tap();
+                      const i = clipIndexAt(layout.starts, ctl.lastMs);
+                      enterEdit(i);
+                      zoomToClip(i);
+                    }}
+                    captionsBusy={captionsBusy}
+                    onCaptions={openCaptions}
+                    onTranscript={openTranscript}
+                    tip={
+                      captionsTip.mounted && (
+                        <TipAnchor
+                          id="captions"
+                          shown={captionsTip.shown}
+                          onDismiss={captionsTip.dismiss}
+                        />
+                      )
+                    }
+                  />
+                ) : tools === 'speed' ? (
+                  <SpeedRow
+                    speeds={speedMenu(customSpeeds)}
+                    speed={sel.edit.speed}
+                    onPick={(s) => edit('speed', (e) => ({ ...e, speed: s }))}
+                    onDone={() => setTools('clip')}
+                  />
+                ) : (
+                  <ClipToolbar
+                    muted={sel.edit.muted}
+                    speed={sel.edit.speed}
+                    editable={sel.editable}
+                    edited={sel.canReset}
+                    canSplit={canSplit && !add.busy}
+                    busy={splitBusy || history.busy}
+                    onSplit={split}
+                    onFlip={() => edit(null, flippedEdit)}
+                    onRotate={() => edit('rotate', rotated)}
+                    onCrop={startCrop}
+                    onMute={() => edit(null, (e) => ({ ...e, muted: !e.muted }))}
+                    onSpeed={() => setTools('speed')}
+                    onReset={reset}
+                    onDelete={remove}
+                    onDone={() => setMode('main')}
+                  />
+                )}
+              </View>
+              <View style={styles.toolbar}>
+                <CommandButton
+                  icon="xmark"
+                  label="Close"
+                  onPress={onClose}
+                  disabled={splitBusy}
+                  testID="editor.close"
+                />
+                {/* Keep command slots fixed when disabled, including an empty draft awaiting Redo. */}
+                <CommandButton
+                  icon="arrow.uturn.backward"
+                  label="Undo"
+                  onPress={undo}
+                  disabled={!history.canUndo}
+                  testID="editor.undo"
+                />
+                <CommandButton
+                  icon="arrow.uturn.forward"
+                  label="Redo"
+                  onPress={redo}
+                  disabled={!history.canRedo}
+                  testID="editor.redo"
+                />
+                {onAiEdit && (
+                  <CommandButton
+                    icon="sparkles"
+                    label="AI edit"
+                    testID="editor.ai-edit"
+                    disabled={clips.length === 0 || add.busy || history.busy || splitBusy}
+                    onPress={() => openOver(() => onAiEdit(draftId))}
+                  />
+                )}
+                <ExportButton
+                  onPress={openExport}
+                  disabled={clips.length === 0 || splitBusy}
+                  testID="editor.export"
+                  compact
+                />
+              </View>
+            </>
           )}
-        </Pressable>
+        </View>
 
         {cropping && cropClip && (
           <CropEditor
@@ -1216,6 +1526,19 @@ export function EditorScreen({
           />
         )}
         {add.anotherPulseSheet}
+        {transcriptSession && (
+          <TranscriptEditorSheet
+            sources={transcriptSession.sources}
+            initialClipId={transcriptSession.initialClipId}
+            onApply={applyTranscriptCuts}
+            onPreview={previewTranscriptCut}
+            onStopPreview={stopTranscriptPreview}
+            onClose={() => {
+              stopTranscriptPreview();
+              setTranscriptSession(null);
+            }}
+          />
+        )}
         {/* Android draws its tips as callouts, over everything (iOS uses the system popover). */}
         <TipLayer />
       </KeyboardAvoidingView>
@@ -1225,21 +1548,20 @@ export function EditorScreen({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    height: 48,
-    paddingHorizontal: 12,
+  toolbar: {
+    minHeight: TOOLBAR_HEIGHT,
+    paddingHorizontal: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'space-evenly',
+    gap: 4,
   },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  export: { marginLeft: 8 },
+  contextTools: { minWidth: 0 },
   switchSlot: { flex: 1, alignItems: 'flex-end' },
   track: { height: STRIP_HEIGHT },
   // Centred on the clip tiles, which both views draw under the ruler.
   add: { position: 'absolute', right: 12, top: RULER_HEIGHT + (TILE_HEIGHT - ADD_SIZE) / 2 },
-  screenStop: { position: 'absolute', top: 8, left: 0, right: 0, alignItems: 'center' },
-  dim: { opacity: 0.35 },
+  screenStop: { alignItems: 'center', paddingVertical: 4 },
   preview: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   cover: { position: 'absolute' },
   error: { textAlign: 'center', padding: 16 },

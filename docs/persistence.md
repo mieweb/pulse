@@ -22,7 +22,7 @@ receipts of sent videos and this install's own settings. Those are covered from
 
 The app logs the values it reads back as `[db] durability`.
 
-## Editor operations and session history
+## Editor operations and Undo
 
 The editor has **one sticky + at the right edge of the clip row**, visible in both editor views
 and while a clip is selected. Its target is captured when an action is chosen and depends on the
@@ -47,12 +47,62 @@ Their `editState` includes a `baseWindow` source interval: trim handles and Rese
 half. Reset clears transforms and speed while preserving this interval. Splitting a legacy baked
 clip uses its effective baked file as the halves' source; the original row is retained for Undo.
 
-One session history step owns a Timeline split and insertion together. Undo takes the inserted clips and
+**Cut speech** in Captions uses the same transaction and history receipt to remove one selected
+word's source interval. Previous/Next word buttons provide a native accessible selection path.
+The kept ranges share the unchanged media file, retain effects and caption corrections, and have
+separate `baseWindow` bounds so Reset cannot reveal the removed speech. Source word timing is
+converted from centiseconds to milliseconds and snapped to the probed source frame rate. This
+quick action requires at least one frame on each side of the cut; use **Transcript** for larger
+selections, edge cuts and whole-beat removal.
+Caption **Edit** and **Hide word** continue to change captions only. Preview and export consume
+the saved kept ranges, and one Undo/Redo restores/reapplies the cut across reopening and transfer.
+Separate draft narration keeps its timeline placement, following the existing voiceover contract;
+the speech cut affects the selected source video's picture and sound.
+
+**Transcript** opens a frozen review of the current source words. Select multiple words or use
+**Range** to select a passage, in **This beat** or **Whole Pulse**. **Clean up → Analyze** proposes
+conservative transcript fillers and actual low-energy audio pauses, with adjustable minimum pause
+length and retained breathing space. Transcription models may omit fillers; meaningful words such
+as “like” and “so” are not selected by default. Muted/no-audio beats are skipped, and entirely quiet
+sources require explicit review. Each candidate can be excluded or auditioned before applying.
+Pause duration and retained breathing space are checked inside each beat's played source window,
+including trims and speed changes. Beats sharing a source reuse its raw audio-energy scan;
+they do not reuse already-qualified/padded cuts from another beat.
+
+Dragging from one transcript word to another selects the continuous span in reading order,
+including wrapped lines and beat boundaries. Starting on a selected word deselects that span;
+reversing or shrinking the gesture restores the pre-drag selection outside its current endpoints.
+Each contiguous highlighted run is a passage, so pauses and intervening untimed beats are included
+without cutting unchecked gaps. Holding at the viewport edges scrolls while selecting; drags
+starting in blank margins scroll normally. Taps, two-endpoint Range and the lower Previous/Next
+controls remain available. Dragging changes only the review selection until **Apply cuts**.
+
+Applying unions overlapping, frame-snapped source cuts and stores every retained range in one
+SQLite transaction and one persistent Undo step. Source/render, caption-edit and model-transcript
+snapshots are checked before any write. A changed review input rejects the whole operation.
+Original rows and media remain retained even when every live clip is removed, so Undo still works
+after reopening or `.pulse` transfer. Reset cannot expand a retained range through a removed gap.
+Both the applied Undo checkpoint and its prospective Redo form must fit the retention limits;
+otherwise the cut rolls back without changing the timeline. Queued derived covers yield to newer
+clip edits, so thumbnail work cannot invalidate a pending trim, speed or crop save.
+Generated range covers are regenerated on Redo rather than duplicated in its receipt. If later
+transcript results enlarge the replay beyond retention limits, the actual Undo/Redo transaction
+also refuses without changing the timeline or discarding its recovery history.
+Receipts distinguish intentional whole-beat removal from later deletion of the applied ranges.
+Only an explicitly fully removed beat can restore its original with no surviving applied rows;
+missing ordinary split ranges are skipped. Bulk receipts track every generated range, so a later
+surviving fragment still identifies its operation. Older unmarked entries with no surviving rows
+report a recovery error and keep their history/media rather than guessing which intent occurred.
+Separate draft narration remains anchored as above. Quiet-audio detection is not a semantic speech
+classifier; review very quiet speech and music-backed recordings before applying its proposals.
+
+One Undo step owns a Timeline split and insertion together. Undo takes the inserted clips and
 halves out and restores the unsplit original in one transaction; Redo restores the applied rows,
-including their edits, captions and transcripts. Media needed by either form stays held until the
-history step is discarded or the editor closes. A batch uses one split and keeps its additions in
-order. Removing the last added clips through Undo keeps the editor open for Redo, with export
-disabled while empty.
+including their edits, captions and transcripts. Media needed by either form stays held while a
+live clip or retained Undo/Redo step references it. A batch uses one split and keeps its additions
+in order. Removing the last added clips through Undo keeps the editor open for Redo, with video
+export disabled while empty. Draft transfer still carries an empty draft when its Redo stack
+retains an addition.
 
 The main toolbar's **Split** tool commits just the two halves at the exact playhead in either
 view, without inserting media or entering Edit. It is also available in the selected clip's toolbar.
@@ -72,9 +122,76 @@ active step stays retained even if intervening edits exceed the normal 100-step 
 the limit applies again when the batch closes. Addition Undo checks every recorded clip ID against
 storage, so a delayed live-query update cannot discard or partly undo the operation.
 
-The Undo/Redo stacks are in memory for the editor session. The saved current rows, including split
-bounds, travel in `.pulse` files; the session stacks and media held only for Redo do not. Persistent
-history and its transfer are deferred to [#325](https://github.com/mieweb/pulse/issues/325).
+Migration 0022 adds `drafts.undo_history`: version 1 JSON containing both stacks and a checkpoint
+of the current clip order, sources, edits, edited captions and draft caption position. A draft
+without the column's value starts with empty stacks. The checkpoint excludes regenerable covers
+and background transcript results, which can finish without changing the edited state. The format
+and retention rules live in [`src/db/persisted-history.ts`](../src/db/persisted-history.ts), the
+checkpoint in [`src/db/undo-history.ts`](../src/db/undo-history.ts), and the per-draft session in
+[`src/features/editor/persistent-editor-history.ts`](../src/features/editor/persistent-editor-history.ts).
+
+- **Close and reopen:** completed stacks survive editor close and app restart. An editor reopened
+  while its writes, an image batch or an addition Undo/Redo are still running reuses the same
+  per-draft store. Closing the screen does not abandon a partly committed image batch's Undo step.
+  PulseKit waits for pending Undo/Redo checkpoints before returning a file-mode project or closing
+  its namespace's database. A failed shutdown checkpoint leaves the library open for a retry.
+  Automatic close or failure cleanup keeps an empty draft with a retained Redo addition and names
+  it in the host result. Explicitly discarding a draft made by the current flow still deletes it.
+  A recorder can reopen that empty draft in the editor for Redo; video export requires live clips.
+- **Addition Undo/Redo:** the clip rows, their transcripts and the resulting stacks commit in the
+  same SQLite transaction. A failed transaction leaves both at the previous state. Dormant Redo
+  rows retain their edits, labels, captions and transcripts; split receipts also retain the
+  original rows needed to reverse the compound insertion. If another optimistic edit is still
+  queued, the row transaction clears the older checkpoint instead of binding the new stacks to
+  uncommitted changes; the session saves the resulting stacks once all queued writes settle.
+- **Creating additions:** inserting clips or splitting a clip also records its Undo step in the
+  row transaction, including recording into an existing draft while its editor is closed. Earlier
+  Undo steps survive and the new addition clears Redo. An open editor adopts the committed stacks
+  before its UI journal arrives; that journal groups recorder/image additions without recording
+  them twice. The database-side writer is in
+  [`src/db/addition-history.ts`](../src/db/addition-history.ts).
+  Creating a summary establishes its collected clips as the initial baseline with empty stacks;
+  subsequent additions and edits use the same durable history as other drafts.
+- **Ordinary edits:** edits, reorder and caption writes finish before the stacks are checkpointed.
+  A failed queued write invalidates that draft's optimistic stacks. If Pulse is interrupted after a row
+  changes but before the checkpoint commits, the stored checkpoint no longer matches the draft:
+  the next open discards that stack and keeps the current rows. It never replays a stack against
+  different stored edits. This interruption can lose Undo/Redo, but does not roll back saved edits.
+- **Transfer:** `.pulse` draft files and library backups carry the saved stacks and every source
+  file they require. Export waits for editor checkpoints. A copied/imported draft gets fresh IDs
+  throughout the live rows, snapshots, dormant rows and split receipts, and new media references,
+  then gets a checkpoint of those new rows in the import transaction. Its Undo/Redo affects only
+  the copy. Older files without history remain importable.
+
+The parser rejects unsupported history versions, malformed steps, unsafe paths and dormant rows
+owned by another draft. History references are also checked against the owners of live and dormant
+clip IDs, so a valid checkpoint for one draft cannot authorize Undo against another draft's clips.
+An addition's dormant replay rows must belong to its recorded additions or split receipts;
+unrelated rows cannot be replayed under another clip's identity. Recorded additions may already
+have been deleted, so a valid replay can contain fewer rows than its original ID list.
+A draft transfer with history but missing required video, caption or
+transcript source media is refused. Optional thumbnails may be regenerated. When loading or saving
+local history, a missing required source removes its step and the farther steps on that stack,
+leaving a contiguous usable chain closest to the current draft.
+
+### Undo retention
+
+Each draft retains at most **100 steps across both stacks**, **256 MiB of unique media referenced
+only by history**, and **2 MiB of UTF-8 JSON including its checkpoint**. Shared media is counted
+once, and a file still used by live rows does not consume the history-only media budget. Eviction
+removes the oldest Undo step first, then the farthest Redo step, until all limits hold. An open
+image batch can temporarily exceed the step limit in memory; saved checkpoints still enforce all
+limits, and the in-memory limit applies again when the batch closes. A single addition that
+exceeds the media budget can therefore lose its Redo.
+
+The replacement checkpoint commits before evicted or invalidated history releases its files.
+It records eviction candidates in the cleanup list in that same transaction, so a kill before
+file deletion leaves a cleanup retry for the next launch.
+`referencedMediaPaths` includes the saved stacks, and explicit file deletion checks retained
+history as well as live rows and active holds. The launch cleanup list also checks these durable
+references, so closing the editor or restarting cannot delete a file that Redo still needs.
+History eviction only cleans up files explicitly retained for history; there is no general sweep
+of unreferenced library files.
 
 ## Summary projects
 
@@ -82,8 +199,8 @@ Home’s **+ → Summary** collects beats from checked projects, an inclusive **
 calendar date range, or **Since last summary**. The screen previews the included projects
 with the same first-clip cover thumbnails as Home, plus their beat count and duration.
 With no earlier summary, choose projects or dates first. The last
-summary reminder opens that project in the recorder; a new summary opens there too, ready
-to edit, record more beats or export as one update. Blank project creation opens the usual
+summary reminder opens that existing project in the editor; a new summary opens in the recorder,
+ready to record more beats or export as one update. Blank project creation opens the usual
 recorder immediately when **Blank project** is tapped, without another submit step.
 
 The source query excludes every summary project, including duplicates of summaries. Beats
@@ -134,6 +251,13 @@ The save checks source timing and cancellation during staging and again before i
 destination rows. A rejected save cleans up its staged files. [Source and audio checks](../src/db/ai-edits.ts#L114-L140) ·
 [Transaction and cleanup](../src/db/ai-edits.ts#L186-L234) · [Rollback and cancellation tests](../src/db/ai-edits.test.ts)
 
+## Voiceover takes
+
+iOS editor **+ → Voiceover** stores narration as independent draft-level audio takes with source
+trims and saved video/narration track mutes. Migration `0023`, whole-take Undo, full-draft transfer
+and recovery behavior are described in [voiceover.md](voiceover.md). Video clip edits retain the
+take's absolute draft position; copying selected clips does not copy narration.
+
 ## Launch and recovery
 
 `openLibrary` (`src/db/snapshots.ts`) runs as `src/db/client.ts` loads, before migrations. Nothing
@@ -167,10 +291,14 @@ flowchart TD
 paths, derived ones (thumbnails, edited thumbnails, covers, `export.mp4`; see
 `src/utils/media-paths.ts`), and the clip files that transcripts and caption edits were timed against.
 It decides what goes into a `.pulse` file, and protects referenced files from the RNVT leftover
-sweep. Explicit clip edits/deletions and discarded session history remove obsolete media only
-after checking the live rows and active history holds; split siblings can share a file. Files
-held for an abandoned session are recorded for cleanup on a later launch. Draft deletion and,
-in PulseKit, [retirement](#retirement-receipt-driven-deletion) remove the draft's media. There is
+sweep. Explicit clip edits/deletions and discarded Undo/Redo steps remove obsolete media only
+after checking the live rows, saved Undo/Redo stacks and active history holds; split siblings can
+share a file. Files explicitly retained for history are recorded for cleanup on a later launch,
+which preserves those still referenced by a saved stack. Draft deletion and, in PulseKit,
+[retirement](#retirement-receipt-driven-deletion) remove only unreferenced files in that draft's
+folder: another draft can still use its sources in live rows or saved Redo. Active Undo operations
+and archives also hold their captured paths. A named deletion journals protected files for a
+precise cleanup retry after their last owner releases them. There is
 no general deletion sweep for files lacking a row: a damaged, empty or restored database must not
 cause videos to be deleted.
 
@@ -201,6 +329,12 @@ if a schema column is missing from the export.
 - library backups leave it out and clear the copy's export signatures, so a restored draft merges
   its export again;
 - going back to a snapshot also clears the signatures, since a newer export may be on disk.
+
+Draft and library archives hold their exact captured source set before hashing yields to the UI,
+through completion of native ZIP creation. Concurrent history eviction or draft deletion cannot
+remove those files. Cover generation, including Reset, writes a fresh revision rather than
+overwriting a thumbnail already captured by an archive. Deferred explicit deletion candidates
+are retried by the launch cleanup journal; unrelated recovery files are never swept.
 
 **Restore order:**
 1. The current library is snapshotted. From the recovery screen, where there's no sound library,
@@ -244,7 +378,10 @@ Library/PulseKit/.shared/models/  captions models, shared by every namespace
   Pulse's JavaScript writes, and `npm run check:embed` fails on `sqlite3_open` in native code.
 - **Purge** (`purge({ namespace })`) deletes a namespace's two folders. If the runtime has that
   library open, the facade first asks Pulse's JavaScript to close it (`releaseLibrary`) and starts a
-  fresh runtime for whatever comes next. The shared models go only with the last namespace.
+  fresh runtime for whatever comes next. Release pauses uploads, waits for every upload pass
+  (including one awaiting a host reply), then flushes edits and Undo checkpoints before closing
+  SQLite. A failed checkpoint leaves the library open for retry. The shared models go only with
+  the last namespace.
 - **PR1's `<hostId>-local`** (the single namespace before accounts) is never adopted into an
   account. It is deleted when empty, and otherwise listed by `listNamespaces` for the host to purge.
 
@@ -349,15 +486,17 @@ A sent draft's media is deleted only after PulseVault's status route reports the
 ```mermaid
 flowchart TD
   outcome[Status route reports done or kept] --> tx[One transaction: insert the receipt, delete the draft; the cascade takes its clips, transcripts and job]
-  tx --> folder[Delete drafts/id/]
+  tx --> folder[Delete unreferenced files in drafts/id/]
   folder -- deleted --> mark[Receipt records media_deleted_at]
-  folder -- fails or the app is killed --> launch[Next launch: delete the folder of every receipt without media_deleted_at, then record it]
-  launch --> mark
+  folder -- shared files remain, deletion fails or app is killed --> launch[Next launch: retry every receipt without media_deleted_at]
+  launch --> folder
   mark --> expire[After 7 days the receipt is deleted]
 ```
 
 - Nothing deletes a folder that no receipt names, and nothing retires a draft before the host has
   the video. A kill between the transaction and the folder is finished at the next launch.
+  Shared sources and active archive/Undo holds keep cleanup pending until those references are
+  gone; `media_deleted_at` is recorded only when the folder is completely removed.
 - In `uploadMode: 'file'`, the host's `retireDraft` retires the draft the same way, with outcome
   `done`, as soon as it asks; in `'pulse'` mode it is only a hint, and the status route decides.
 - `dismissReceipt` stops a `kept` receipt counting for attention; it doesn't shorten its 7 days.

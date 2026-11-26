@@ -48,7 +48,7 @@ const AUDIO_MODE_ATTEMPTS = 20;
  * Nothing on JS runs per frame. Also sets the audio session for playback (sound with the silent
  * switch on) and pauses when the app leaves the foreground.
  */
-export function usePreviewTransport() {
+export function usePreviewTransport(recordingSession = false, active = true) {
   const timeMs = useSharedValue(0);
   const totalMs = useSharedValue(0);
   const mode = useSharedValue<number>(Mode.idle);
@@ -233,6 +233,15 @@ export function usePreviewTransport() {
         c.totalMs = ms;
         totalMs.set(ms);
       },
+      /** A saved narration option swap must land before another hold can anchor to the player. */
+      waitUntilSettled: async () => {
+        const deadline = Date.now() + SEEK_GIVE_UP_MS;
+        while (c.afterBuild != null || c.inflight || c.pending != null) {
+          if (Date.now() >= deadline) return false;
+          await new Promise<void>((resolve) => setTimeout(resolve, 16));
+        }
+        return true;
+      },
       play: () => {
         const ref = c.ref;
         if (!ref) return;
@@ -357,6 +366,7 @@ export function usePreviewTransport() {
   // Playback session: sound even with the silent switch on, other apps' audio paused. The
   // recorder re-applies its own (record) session when it's back on screen.
   useEffect(() => {
+    if (recordingSession || !active) return;
     claimAudioSession();
     // Refused while the recorder's camera still holds the mic (as the editor opens over it,
     // '!pri'): retried until the camera lets go. Plays before that sound in the camera's session.
@@ -382,7 +392,7 @@ export function usePreviewTransport() {
       sub.remove();
       ctl.pause();
     };
-  }, [ctl]);
+  }, [ctl, recordingSession, active]);
 
   const values: PlayheadValues = {
     timeMs,

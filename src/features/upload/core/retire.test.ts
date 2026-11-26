@@ -56,6 +56,8 @@ import { getReceipt, RECEIPT_TTL_MS } from '@/db/receipts';
 import { getUploadJob, subscribeUploadJobs } from '@/db/upload-jobs';
 import { env } from '@/test-support/expo-fs-node';
 import { deleteDraftDir } from '@/utils/file-store';
+import { dropTakenOut, takeOutSegments } from '@/db/drafts';
+import { historyCheckpoint } from '@/db/undo-history';
 
 import { finishRetirements, retireDelivered, retireSentFile } from './retire';
 /* eslint-enable import/first */
@@ -122,6 +124,92 @@ const rows = (table: string, id: string) =>
   )?.n;
 
 describe('retirement', () => {
+  it.each(['live', 'saved Redo', 'active Undo'] as const)(
+    'retains a source shared with another draft’s %s and finishes cleanup after its last owner releases it',
+    async (owner) => {
+      const donor = `shared-donor-${owner.replaceAll(' ', '-')}`;
+      const receiver = `shared-receiver-${owner.replaceAll(' ', '-')}`;
+      addDraft(donor);
+      addDraft(receiver, null);
+      const source = `drafts/${donor}/segments/0.mp4`;
+      let release = async () => {};
+      if (owner === 'saved Redo') {
+        const id = `${receiver}-redo`;
+        conn.runSync(
+          'UPDATE drafts SET undo_history = ? WHERE id = ?',
+          JSON.stringify({
+            version: 1,
+            checkpoint: historyCheckpoint(expoDb, receiver),
+            past: [],
+            future: [
+              {
+                kind: 'added',
+                ids: [id],
+                taken: {
+                  draftId: receiver,
+                  order: [id],
+                  rows: [
+                    {
+                      id,
+                      draftId: receiver,
+                      order: 0,
+                      label: null,
+                      originalFilename: source,
+                      durationMs: 1000,
+                      editedFilename: null,
+                      editedDurationMs: null,
+                      editState: null,
+                      thumbnail: null,
+                      captionEdit: null,
+                    },
+                  ],
+                  transcripts: [],
+                },
+              },
+            ],
+          }),
+          receiver,
+        );
+        release = async () => {
+          conn.runSync('UPDATE drafts SET undo_history = NULL WHERE id = ?', receiver);
+        };
+      } else {
+        conn.runSync(
+          'UPDATE segments SET original_filename = ? WHERE id = ?',
+          source,
+          `${receiver}-s0`,
+        );
+        if (owner === 'active Undo') {
+          const taken = await takeOutSegments([`${receiver}-s0`]);
+          if (!taken) throw new Error('Expected retained addition');
+          release = () => dropTakenOut(taken);
+        } else
+          release = async () => {
+            conn.runSync(
+              'UPDATE segments SET original_filename = ? WHERE id = ?',
+              `drafts/${receiver}/segments/0.mp4`,
+              `${receiver}-s0`,
+            );
+          };
+      }
+      try {
+        expect(retireDelivered(donor, { state: 'done' }, NOW)).toBe(true);
+        expect(rows('drafts', donor)).toBe(0);
+        expect(existsSync(join(env.docDir, source))).toBe(true);
+        expect(existsSync(join(folder(donor), 'export.mp4'))).toBe(false);
+        expect(getReceipt(donor)?.mediaDeletedAt).toBeNull();
+        finishRetirements(NOW + 1);
+        expect(existsSync(join(env.docDir, source))).toBe(true);
+        await release();
+        finishRetirements(NOW + 10);
+        expect(existsSync(folder(donor))).toBe(false);
+        expect(getReceipt(donor)?.mediaDeletedAt).toBe(NOW + 10);
+      } finally {
+        await release();
+      }
+    },
+  );
+
   it('writes the receipt and deletes the draft in one transaction, then its folder', () => {
     addDraft('d1');
     const changed: string[][] = [];

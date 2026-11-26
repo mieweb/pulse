@@ -74,3 +74,42 @@ describe('currentExportDuration', () => {
     expect(currentExportDuration({ ...stored, durationMs: null }, clips, AUDIO)).toBeNull();
   });
 });
+
+describe('narration export freshness', () => {
+  const audio = { sampleRate: 48000, channels: 1 };
+  const take = {
+    filename: 'drafts/d1/voiceover/take.caf',
+    startMs: 1000,
+    durationMs: 6000,
+    trimStartMs: 100,
+    trimEndMs: 5100,
+  } as import('@/db/schema').VoiceoverTake;
+  const mix = { takes: [take], sourceMuted: false, voiceoverMuted: false };
+  const signature = exportSignature(clips, audio, mix);
+
+  it('includes narration placement, source trim and both saved track mute settings', () => {
+    for (const changed of [
+      { ...mix, sourceMuted: true },
+      { ...mix, voiceoverMuted: true },
+      { ...mix, takes: [] },
+      { ...mix, takes: [{ ...take, startMs: 1500 }] },
+      { ...mix, takes: [{ ...take, trimStartMs: 200 }] },
+      { ...mix, takes: [{ ...take, trimEndMs: 5000 }] },
+      { ...mix, takes: [{ ...take, filename: 'another.caf' }] },
+    ]) {
+      expect(exportSignature(clips, audio, changed)).not.toBe(signature);
+    }
+    expect(
+      currentExportDuration({ fileExists: true, signature, durationMs: 2000 }, clips, audio, mix),
+    ).toBe(2000);
+    expect(
+      currentExportDuration({ fileExists: true, signature, durationMs: 2000 }, clips, audio),
+    ).toBeNull();
+  });
+
+  it('keeps existing no-narration exports current', () => {
+    expect(
+      exportSignature(clips, audio, { takes: [], sourceMuted: false, voiceoverMuted: false }),
+    ).toBe(exportSignature(clips, audio));
+  });
+});

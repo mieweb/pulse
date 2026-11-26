@@ -155,6 +155,20 @@
       "when": 1795587191229,
       "tag": "0021_summary_projects",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1795590597121,
+      "tag": "0022_persistent_undo",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1795593422003,
+      "tag": "0023_voiceover_takes",
+      "breakpoints": true
     }
   ]
 }

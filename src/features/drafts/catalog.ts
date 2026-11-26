@@ -273,6 +273,11 @@ export function projectCatalog(
         },
         clips,
         audio,
+        {
+          takes: rows.voiceoverTakes.filter((take) => take.draftId === d.id),
+          sourceMuted: d.sourceAudioMuted,
+          voiceoverMuted: d.voiceoverMuted,
+        },
       ) != null;
     return {
       id: d.id,

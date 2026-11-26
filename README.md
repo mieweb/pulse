@@ -80,6 +80,14 @@ flowchart TB
 ### Editing & export
 
 - Developer documentation for **AI edit** covers [setup, prompts and the cut pipeline](docs/ai-editing.md), [the native model API](modules/expo-ai-editor/README.md), [iPhone testing and evidence](docs/testing/ai-edit-phone-build.md), and [on-device visual models for finding beats](docs/on-device-visual-models.md).
+- Existing library cards and **View last summary** open the editor. Home’s **+** opens **New
+  project**: **Blank project** opens the camera, while creating a new **Summary** opens its
+  collected beats in the recorder. Use the editor’s Add menu to record more into the same draft.
+  An empty existing draft stays in Edit so you can add media or restore clips retained for Redo.
+- Editor Close, contextual tools (including Split), Undo/Redo and compact Export share one lower toolbar.
+  Recorder Close/Export and export Close are lower too. See the
+  [one-handed navigation audit](docs/one-handed-navigation.md) for scope, remaining gesture/sheet
+  work and validation requirements.
 - Per-clip trim and transforms are saved as settings over the untouched source and rendered at export
 - The editor has **one sticky + at the right edge of the clip row**, visible in both views and while editing a clip. **Clips (beat list)** inserts at the nearest clip boundary without splitting: before the clip in its first half, after it in its second half, and after it at the midpoint. **Timeline** inserts at the exact playhead. At the end, either view appends a new clip/beat to the existing Pulse.
 - In Timeline, adding X inside A produces **A-left → X → A-right**, with both halves sharing the source video. One Undo restores A and removes X; Redo restores the insertion. Canceling or failing before the first new clip commits leaves A unsplit.
@@ -87,7 +95,7 @@ flowchart TB
 - To split without adding media, move the playhead inside a clip and tap **Split** on the main toolbar; opening Edit or selecting a clip is unnecessary. Split is also available in the clip toolbar. It works in Clips and Timeline views, preserves the clip's edits and captions, and supports one-step Undo/Redo. Split is disabled at clip boundaries and the end.
 - An image batch registers one history step when its first clip commits and extends it as later images arrive. Edits remain available; Undo/Redo waits until the batch finishes or is canceled. A canceled partial batch keeps its committed clips in that step.
 - Undoing an addition can remove the last remaining clips. The editor stays open for Redo, which restores those clips with their edits; export stays disabled while the draft is empty.
-- Undo/Redo history lasts for the editor session. Current edits travel in `.pulse` files; persisting the history is tracked separately in [#325](https://github.com/mieweb/pulse/issues/325). See [persistence](docs/persistence.md#editor-operations-and-session-history).
+- Undo/Redo survives reopening and app restarts, and travels with its retained media in `.pulse` files, including an empty draft with clips available for Redo. History has bounded step, media and JSON retention; see [persistence](docs/persistence.md#editor-operations-and-undo) for limits and interruption recovery.
 - Smart merge on export: clips with matching formats are concatenated losslessly (passthrough); mixed resolution/fps/codec/orientation drafts conform only the outlier clips, with a full re-encode fallback
 - Save to Photos or Files, share anywhere, or upload — with a live progress ring
 
@@ -102,6 +110,7 @@ flowchart TB
 
 ### Drafts & library
 
+- Home’s appearance control opens **System (device)**, **Always light**, and **Always dark**, with the current choice checked. System is the default and mirrors device changes immediately; either locked mode stays fixed until changed. The choice survives app restarts.
 - Local-first draft library on Drizzle ORM + SQLite — create, rename, delete, with live-updating thumbnails
 - Home’s **+** opens **New project**: start a blank recording or create a **Summary** from checked projects, a calendar date range, or beats added since the last summary. The previous summary stays one tap away; collected beats become independent, editable copies. See [summary collection and timestamps](docs/persistence.md#summary-projects).
 - Device-to-device draft sharing as `.pulse` bundles (zip + manifest, with unpack safety limits)

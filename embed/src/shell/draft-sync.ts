@@ -12,6 +12,7 @@ export type DraftSeen = {
   draftId: string;
   clipCount: number;
   lastModified: number;
+  retainedUndo?: boolean;
 };
 
 /**
@@ -28,23 +29,27 @@ export function syncEvents(
   // The flow's draft, or the one the recorder just made for a new recording.
   if (state.draftId !== null && seen.draftId !== state.draftId) return [];
   const before = last?.draftId === seen.draftId ? last : null;
+  const retainedUndo = seen.retainedUndo === true;
+  const retention: FlowEvent[] =
+    retainedUndo === state.retainedUndo ? [] : [{ type: 'undoRetention', retainedUndo }];
   switch (topScreen(state)) {
     case 'recorder':
-      if (seen.draftId === state.draftId && seen.clipCount === state.clipCount) return [];
+      if (seen.draftId === state.draftId && seen.clipCount === state.clipCount) return retention;
       // A new recording's draft row lands before its first clip (and stays empty if that take or
       // import is dropped; the recorder removes it as it unmounts): no take until a clip is there.
-      if (state.draftId === null && seen.clipCount === 0) return [];
+      if (state.draftId === null && seen.clipCount === 0 && !retainedUndo) return retention;
       return [
+        ...retention,
         { type: 'record' },
         { type: 'stop', draftId: seen.draftId, clipCount: seen.clipCount },
       ];
     case 'editor':
-      if (state.draftId === null) return [];
+      if (state.draftId === null) return retention;
       return seen.clipCount !== state.clipCount ||
         (before !== null && seen.lastModified !== before.lastModified)
-        ? [{ type: 'edited', clipCount: seen.clipCount }]
-        : [];
+        ? [...retention, { type: 'edited', clipCount: seen.clipCount }]
+        : retention;
     case 'export':
-      return [];
+      return retention;
   }
 }

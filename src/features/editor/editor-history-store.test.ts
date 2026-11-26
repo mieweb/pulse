@@ -65,6 +65,21 @@ const splitReceipt = (): SplitReceipt => ({
 });
 
 describe('createEditorHistory: split and insert', () => {
+  it('keeps an emptied cleanup editable when its originals are only on the Undo stack', () => {
+    const split = splitReceipt();
+    delete split.firstInsertedId;
+    const { deps } = fakes({
+      initial: {
+        past: [{ kind: 'added', ids: [], taken: null, splits: [split] }],
+        future: [],
+        lastOp: null,
+      },
+    });
+    const h = createEditorHistory(deps);
+    expect(h.getState().keepEmptyOpen).toBe(true);
+    h.dispose();
+  });
+
   it('passes the same original snapshot through repeated compound undo and redo', async () => {
     const split = splitReceipt();
     const takeOut = jest.fn<HistoryDeps['takeOut']>(async () => takenOf(['a', 'x', 'right']));
@@ -152,6 +167,19 @@ describe('createEditorHistory: split and insert', () => {
 });
 
 describe('createEditorHistory: additions', () => {
+  it('ignores a delayed addition journal event after that committed addition was undone', async () => {
+    const { deps, log } = fakes();
+    const history = createEditorHistory(deps);
+    history.recordAdded(['x']);
+    history.undo(present(['a', 'x']), apply);
+    await history.settled();
+    const undone = history.getState();
+    history.recordAdded(['x']);
+    expect(history.getState()).toBe(undone);
+    expect(history.getState().future).toHaveLength(1);
+    expect(log.some((entry) => entry.startsWith('drop:'))).toBe(false);
+  });
+
   it('skips a storage-confirmed missing addition and undoes the older edit on the same tap', async () => {
     const takeOut = jest.fn<HistoryDeps['takeOut']>(async () => null);
     const { deps } = fakes({ takeOut });

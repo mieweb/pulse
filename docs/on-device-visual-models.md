@@ -16,7 +16,7 @@ Pulse’s native editor already takes a local video file and a list of source ti
 upright JPEG frames with their times. The batch API shows the original picture, before the user’s
 crop, flip or rotation edits. It can skip undecodable frames and can substitute the requested time
 when the decoder omits its actual time. For precise beat boundaries, verify the surrounding frames
-with presentation timestamps. [Pinned iOS frame extractor](https://github.com/morepriyam/pulse-editor/blob/2422db288b0e7e0babb55c99dd69fd25bd20cb9f/ios/FrameGrab.swift#L73-L132)
+with presentation timestamps. [Pinned iOS frame extractor](https://github.com/morepriyam/pulse-editor/blob/306ff1d999589be6615275c60567ba371f073efd/ios/FrameGrab.swift#L73-L132)
 · [Apple’s saved-video frame API](https://developer.apple.com/documentation/avfoundation/creating-images-from-a-video-asset)
 
 The current **AI edit** button sends the editable prompt and timed **transcript passages** to

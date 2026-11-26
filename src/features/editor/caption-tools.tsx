@@ -1,12 +1,14 @@
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, I18nManager, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
 
 import { lineAt, type CaptionLine } from '@/features/transcription/compose';
 import type { DraftCaptions } from '@/features/transcription/use-draft-captions';
 import { useTheme } from '@/hooks/use-theme';
 import { formatClipCount } from '@/utils/format';
+import { Icon } from '@/components/icon';
 
 import { CaptionToolbar } from './clip-toolbar';
+import { CommandButton } from './editor-controls';
 import { usePlayheadCaption } from './use-playhead-caption';
 
 /**
@@ -24,6 +26,7 @@ export function CaptionTools({
   lines: readonly CaptionLine[];
   timeMs: SharedValue<number>;
   hasWord: boolean;
+  busy: boolean;
   edited: boolean;
   onDone: () => void;
   onEdit: () => void;
@@ -68,6 +71,118 @@ export function CaptionTools({
       onSplit={split}
       onMerge={() => mergeLine && onMerge(mergeLine.clipId, mergeLine.to)}
     />
+  );
+}
+
+/** A button path to each transcript word, including words painted in the timeline canvas. */
+export function CaptionWordPicker({
+  lines,
+  picked,
+  timeMs,
+  busy,
+  canCutSpeech,
+  onPick,
+  onCutSpeech,
+  onOpenTranscript,
+}: {
+  lines: readonly CaptionLine[];
+  picked: { clipId: string; i: number } | null;
+  timeMs: SharedValue<number>;
+  busy: boolean;
+  canCutSpeech: boolean;
+  onPick: (line: number, word: number) => void;
+  onCutSpeech: () => void;
+  onOpenTranscript: () => void;
+}) {
+  const theme = useTheme();
+  const words = lines.flatMap((line, l) =>
+    (line.words ?? []).map((word, w) => ({ ...word, clipId: line.clipId, i: line.from + w, l, w })),
+  );
+  const selected = words.findIndex((w) => w.clipId === picked?.clipId && w.i === picked.i);
+  const select = (direction: -1 | 1) => {
+    let index = selected + direction;
+    if (selected < 0) {
+      const after = words.findIndex((w) => w.t0 * 10 >= timeMs.get());
+      index = direction === 1 ? (after < 0 ? 0 : after) : after <= 0 ? words.length - 1 : after - 1;
+    }
+    const word = words[index];
+    if (word) onPick(word.l, word.w);
+  };
+  const label =
+    selected < 0
+      ? 'Choose a transcript word'
+      : `Word ${selected + 1} of ${words.length}: ${words[selected].text}`;
+  return (
+    <View style={styles.wordPicker}>
+      <CommandButton
+        icon={I18nManager.isRTL ? 'chevron.right' : 'chevron.left'}
+        label="Select previous word"
+        disabled={busy || words.length === 0 || selected === 0}
+        onPress={() => select(-1)}
+        testID="editor.previousWord"
+      />
+      <View style={styles.wordActions}>
+        <Text
+          style={[styles.selectedWord, { color: theme.text }]}
+          accessibilityLiveRegion="polite"
+          testID="editor.selectedWord"
+          numberOfLines={2}>
+          {label}
+        </Text>
+        <View style={styles.wordButtons}>
+          <Pressable
+            onPress={onOpenTranscript}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="Edit transcript and clean up speech"
+            accessibilityState={{ disabled: busy }}
+            testID="editor.openTranscript"
+            style={[
+              styles.cutSpeech,
+              { backgroundColor: theme.backgroundElement },
+              busy && styles.dim,
+            ]}>
+            <Icon name="pencil" size={16} tintColor={theme.text} />
+            <Text style={[styles.cutLabel, { color: theme.text }]} maxFontSizeMultiplier={1.3}>
+              Transcript
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={onCutSpeech}
+            disabled={busy || !canCutSpeech}
+            accessibilityRole="button"
+            accessibilityLabel="Cut selected word from video"
+            accessibilityHint={
+              canCutSpeech
+                ? 'Removes its audio and video. Undo restores the word.'
+                : 'Select a word with video before and after it.'
+            }
+            accessibilityState={{ disabled: busy || !canCutSpeech, busy }}
+            testID="editor.cutSpeech"
+            style={({ pressed }) => [
+              styles.cutSpeech,
+              { backgroundColor: theme.backgroundElement },
+              (busy || !canCutSpeech || pressed) && styles.dim,
+            ]}>
+            {busy ? (
+              <ActivityIndicator size="small" color={theme.text} />
+            ) : (
+              <Icon name="scissors" size={16} tintColor={theme.text} />
+            )}
+            <Text style={[styles.cutLabel, { color: theme.text }]} maxFontSizeMultiplier={1.3}>
+              Cut speech
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+      <CommandButton
+        icon={I18nManager.isRTL ? 'chevron.left' : 'chevron.right'}
+        label="Select next word"
+        disabled={busy || words.length === 0 || selected === words.length - 1}
+        onPress={() => select(1)}
+        testID="editor.nextWord"
+      />
+    </View>
   );
 }
 
@@ -126,6 +241,20 @@ export function CaptionStatus({
 }
 
 const styles = StyleSheet.create({
+  wordPicker: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, gap: 4 },
+  wordActions: { flex: 1, alignItems: 'center', paddingVertical: 4 },
+  wordButtons: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 },
+  selectedWord: { fontSize: 13, textAlign: 'center', paddingBottom: 4 },
+  cutSpeech: {
+    minHeight: 44,
+    borderRadius: 22,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  cutLabel: { fontSize: 12, fontWeight: '600' },
   status: {
     position: 'absolute',
     top: 8,

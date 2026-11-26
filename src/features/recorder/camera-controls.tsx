@@ -144,6 +144,7 @@ function ControlButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={hint}
+      accessibilityState={{ disabled }}
       style={styles.wrap}>
       {({ pressed }) => (
         <>
@@ -201,17 +202,12 @@ function Dim({
 }
 
 const styles = StyleSheet.create({
-  // Spans the full height with the buttons centered, then nudged up a bit — dead center
-  // reads too low against the bottom-heavy recorder UI (segment bar + record button).
+  // Expanded from the recorder's lower Tools control, above its command row.
   rail: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    right: Spacing.three,
+    flexDirection: 'row',
     justifyContent: 'center',
     gap: Spacing.three,
-    alignItems: 'center',
-    paddingBottom: 120,
+    alignItems: 'flex-start',
   },
   wrap: { alignItems: 'center', gap: 2 },
   button: {

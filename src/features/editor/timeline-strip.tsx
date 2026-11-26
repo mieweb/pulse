@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Dimensions, StyleSheet, View } from 'react-native';
+import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   scrollTo,
@@ -11,6 +11,7 @@ import Animated, {
   useFrameCallback,
   useSharedValue,
   withTiming,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
 
@@ -19,6 +20,7 @@ import { Accent, SystemColors } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
 import { EaseOut } from '@/constants/motion';
 import { haptics } from '@/utils/haptics';
+import type { VoiceoverTake } from '@/db/schema';
 
 import { ClipTile, TILE_GAP, TILE_HEIGHT, TILE_RADIUS, type TilePalette } from './clip-tile';
 import {
@@ -46,6 +48,7 @@ import {
 import type { EditorClip } from './use-editor-draft';
 import { Mode, type PlayheadValues } from './use-preview-transport';
 import type { Peaks } from './use-waveforms';
+import { voiceoverTapTime, voiceoverWidth } from './voiceover-lane';
 
 /** The time ruler, above the clips. */
 export const RULER_HEIGHT = 16;
@@ -55,6 +58,8 @@ const STRIP_PAD = 8;
 const LANE_GAP = 4;
 const LANE_HEIGHT = 22;
 const LANE_TOP = TILE_HEIGHT + LANE_GAP;
+const VOICEOVER_TOP = LANE_TOP + LANE_HEIGHT + 4;
+const VOICEOVER_HEIGHT = 24;
 export const STRIP_HEIGHT = RULER_HEIGHT + LANE_TOP + LANE_HEIGHT + STRIP_PAD;
 /** How far a pinch moves the scale before the strip re-renders for it (asks for the frames and
  * the scroll width of the new scale): a factor of √2, so the frame step (a power of two) is never
@@ -134,6 +139,11 @@ type Props = {
   values: PlayheadValues;
   /** The draft's captions, drawn on a lane under the clips. */
   captions: readonly CanvasCaption[];
+  voiceovers?: readonly VoiceoverTake[];
+  showVoiceovers?: boolean;
+  /** Open narration controls at a tapped take's timeline position. */
+  onVoiceoverTap?: (ms: number) => void;
+  voiceoversDisabled?: boolean;
   /** The selected caption (index in `captions`), or -1; its selected word, or -1. */
   captionSelected: number;
   captionWord: number;
@@ -252,6 +262,12 @@ export function TimelineStrip(props: Props) {
     scrubEnd: (ms: number) => latest.current.onScrubEnd(ms),
     tap: (ms: number) => latest.current.onTap(ms),
     captionTap: (ms: number, z: number) => latest.current.onCaptionTap(ms, z),
+    voiceoverTap: (ms: number, z: number) => {
+      const current = latest.current;
+      if (!current.showVoiceovers || current.voiceoversDisabled || !current.onVoiceoverTap) return;
+      const at = voiceoverTapTime(current.voiceovers ?? [], ms, z);
+      if (at != null) current.onVoiceoverTap(at);
+    },
     capStart: () => {
       haptics.pickUp();
       latest.current.onCaptionDragStart();
@@ -334,6 +350,7 @@ export function TimelineStrip(props: Props) {
     scrubEnd,
     tap: tapAt,
     captionTap,
+    voiceoverTap,
     trimStart,
     trimEnd,
     limit,
@@ -477,6 +494,12 @@ export function TimelineStrip(props: Props) {
         if (stopped.get() || mode.get() !== Mode.idle) return;
         const ms = timeMs.get() + (e.x - half.get()) / zoomNow.get();
         const y = e.y - RULER_HEIGHT;
+        // Narration stays on the scroll view's gesture surface: a drag still scrubs and a
+        // pinch still zooms. Only a stationary tap on a rendered take opens its controls.
+        if (y >= VOICEOVER_TOP && y < VOICEOVER_TOP + VOICEOVER_HEIGHT) {
+          scheduleOnRN(voiceoverTap, ms, zoomNow.get());
+          return;
+        }
         // The captions lane (with a little slack into the gap above it).
         if (y >= LANE_TOP - LANE_GAP && y <= LANE_TOP + LANE_HEIGHT + 4) {
           scheduleOnRN(captionTap, ms, zoomNow.get());
@@ -758,7 +781,7 @@ export function TimelineStrip(props: Props) {
   return (
     <GestureDetector gesture={gestures.strip}>
       <View
-        style={styles.strip}
+        style={[styles.strip, props.showVoiceovers && { height: STRIP_HEIGHT + 30 }]}
         onLayout={(e) => {
           const w = e.nativeEvent.layout.width;
           setWidth(w);
@@ -788,12 +811,18 @@ export function TimelineStrip(props: Props) {
         <GestureDetector gesture={gestures.native}>
           <Animated.ScrollView
             ref={scrollRef}
+            testID="editor.timeline"
             horizontal
             style={StyleSheet.absoluteFill}
             showsHorizontalScrollIndicator={false}
             onScroll={onScroll}
             scrollEventThrottle={16}>
-            <View style={{ width: layout.totalMs * zoom + width, height: STRIP_HEIGHT }} />
+            <View
+              style={{
+                width: layout.totalMs * zoom + width,
+                height: STRIP_HEIGHT + (props.showVoiceovers ? 30 : 0),
+              }}
+            />
           </Animated.ScrollView>
         </GestureDetector>
         <Animated.View
@@ -803,6 +832,17 @@ export function TimelineStrip(props: Props) {
           {clips.map((c, i) => (
             <ClipTile key={c.id} index={i} edit={c.edit} motion={motion} palette={palette} />
           ))}
+          {props.showVoiceovers &&
+            (props.voiceovers ?? []).map((take, i) => (
+              <VoiceoverBlock
+                key={take.id}
+                take={take}
+                index={i}
+                zoom={zoomNow}
+                disabled={props.voiceoversDisabled}
+                onOpen={props.onVoiceoverTap}
+              />
+            ))}
           {/* The selected word's grips (the canvas draws them). The word between takes no
               touches: a drag there scrubs, a tap lets the word go (the strip's tap). */}
           {captionDrag && (
@@ -851,10 +891,58 @@ export function TimelineStrip(props: Props) {
   );
 }
 
+/** Uses the filmstrip's scale and translation, including live pinch zoom and playback. */
+function VoiceoverBlock({
+  take,
+  index,
+  zoom,
+  disabled,
+  onOpen,
+}: {
+  take: VoiceoverTake;
+  index: number;
+  zoom: SharedValue<number>;
+  disabled?: boolean;
+  onOpen?: (ms: number) => void;
+}) {
+  const frame = useAnimatedStyle(() => ({
+    left: take.startMs * zoom.get(),
+    width: voiceoverWidth(take.trimEndMs - take.trimStartMs, zoom.get()),
+  }));
+  return (
+    <Animated.View
+      pointerEvents="none"
+      accessible
+      accessibilityRole={onOpen ? 'button' : 'text'}
+      accessibilityLabel={
+        onOpen ? `Edit voiceover take ${index + 1}` : `Voiceover take ${index + 1}`
+      }
+      accessibilityHint={onOpen ? 'Opens Voiceover controls at the start of this take.' : undefined}
+      accessibilityState={{ disabled: !!disabled }}
+      onAccessibilityTap={onOpen && !disabled ? () => onOpen(take.startMs) : undefined}
+      testID={`voiceover.take.${take.id}`}
+      style={[styles.voiceover, frame]}>
+      <Text numberOfLines={1} style={styles.voiceoverLabel}>
+        Take {index + 1}
+      </Text>
+    </Animated.View>
+  );
+}
+
 const styles = StyleSheet.create({
   strip: { height: STRIP_HEIGHT, paddingTop: RULER_HEIGHT, overflow: 'hidden' },
   // Tall enough to hold the captions lane's touch areas (touches outside a view never reach it).
-  content: { height: LANE_TOP + LANE_HEIGHT + 4 },
+  content: { height: LANE_TOP + LANE_HEIGHT + 34 },
+  voiceover: {
+    position: 'absolute',
+    top: VOICEOVER_TOP,
+    height: VOICEOVER_HEIGHT,
+    borderRadius: 5,
+    backgroundColor: Accent,
+    overflow: 'hidden',
+    justifyContent: 'center',
+  },
+  voiceoverLabel: { fontSize: 11, color: '#fff', paddingHorizontal: 6, fontWeight: '600' },
   capFrame: {
     position: 'absolute',
     top: LANE_TOP - 2,

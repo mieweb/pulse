@@ -8,6 +8,7 @@ import {
   keepEmptyEditorOpen,
   planStep,
   restoreOrder,
+  shouldLeaveEmptyEditor,
   snapshotOf,
   takenOut,
   type Present,
@@ -188,5 +189,41 @@ describe('empty editor after addition undo', () => {
 
   it('does not retain an empty draft with no recoverable addition', () => {
     expect(keepEmptyEditorOpen(false, 0, false)).toBe(false);
+  });
+});
+
+describe('empty draft navigation', () => {
+  it('keeps an existing library draft open after its last clip is deleted and after reopening', () => {
+    expect(shouldLeaveEmptyEditor(1, false, true, true)).toBe(false);
+    expect(shouldLeaveEmptyEditor(0, false, true, true)).toBe(false);
+    // A new editor session has no retained history, but the empty parent draft still exists.
+    expect(shouldLeaveEmptyEditor(0, false, true, true)).toBe(false);
+    expect(shouldLeaveEmptyEditor(1, false, true, true)).toBe(false); // Add committed a clip
+  });
+
+  it('waits for a successful parent-row read before leaving a missing library draft', () => {
+    expect(shouldLeaveEmptyEditor(0, false, true, undefined)).toBe(false); // loading
+    expect(shouldLeaveEmptyEditor(0, false, true, undefined)).toBe(false); // initial read failed
+    expect(shouldLeaveEmptyEditor(0, false, true, true)).toBe(false); // null captionY is a row
+    expect(shouldLeaveEmptyEditor(0, false, true, false)).toBe(true); // confirmed missing
+  });
+
+  it('does not retain an allowed empty draft after its parent row disappears', () => {
+    const retainedHistory = keepEmptyEditorOpen(false, 0, false);
+    expect(shouldLeaveEmptyEditor(0, retainedHistory, true, true)).toBe(false);
+    expect(shouldLeaveEmptyEditor(0, retainedHistory, true, false)).toBe(true);
+  });
+
+  it('preserves default empty exits and active addition/history holds in either shell', () => {
+    expect(shouldLeaveEmptyEditor(0, false, false, true)).toBe(true);
+    expect(shouldLeaveEmptyEditor(0, false, false, undefined)).toBe(true);
+    for (const allowEmpty of [false, true]) {
+      let retained = keepEmptyEditorOpen(false, 0, true); // an import or Undo is running
+      expect(shouldLeaveEmptyEditor(0, retained, allowEmpty, false)).toBe(false);
+      retained = keepEmptyEditorOpen(retained, 0, false); // Redo committed; rows still lag
+      expect(shouldLeaveEmptyEditor(0, retained, allowEmpty, false)).toBe(false);
+      retained = keepEmptyEditorOpen(retained, 1, false); // restored rows reached the editor
+      expect(shouldLeaveEmptyEditor(0, retained, allowEmpty, false)).toBe(true);
+    }
   });
 });

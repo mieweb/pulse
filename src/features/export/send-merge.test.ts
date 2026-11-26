@@ -11,6 +11,13 @@ const mockRow: { signature: string | null; durationMs: number | null; failClear:
 const mockFile: { exists: boolean; from: string | null } = { exists: false, from: null };
 const mockSegments: { list: Segment[] } = { list: [] };
 
+const mockVoiceover = {
+  takes: [] as import('@/db/schema').VoiceoverTake[],
+  sourceMuted: false,
+  voiceoverMuted: false,
+};
+jest.mock('@/db/voiceovers', () => ({ getVoiceover: async () => ({ ...mockVoiceover }) }));
+
 jest.mock('@/db/drafts', () => ({
   segmentsForDraft: async () => mockSegments.list,
   getMergedExport: async () => ({ signature: mockRow.signature, durationMs: mockRow.durationMs }),
@@ -52,6 +59,7 @@ const seg = (id: string, over: Partial<Segment> = {}): Segment =>
   }) as Segment;
 
 beforeEach(() => {
+  Object.assign(mockVoiceover, { takes: [], sourceMuted: false, voiceoverMuted: false });
   Object.assign(mockRow, { signature: null, durationMs: null, failClear: false });
   Object.assign(mockFile, { exists: false, from: null });
   jest.mocked(mergeWithEditor).mockClear();
@@ -65,6 +73,19 @@ describe('mergeForSend', () => {
     // Sent again with the same clips: the saved export, no merge.
     await expect(mergeForSend('d1')).resolves.toEqual({ durationMs: 1500 });
     expect(mergeWithEditor).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes saved track mutes in a Send and invalidates the earlier export', async () => {
+    mockSegments.list = [seg('a')];
+    await mergeForSend('d1');
+    mockVoiceover.sourceMuted = true;
+    await mergeForSend('d1');
+    expect(mergeWithEditor).toHaveBeenCalledTimes(2);
+    expect(jest.mocked(mergeWithEditor).mock.calls[1]?.[4]).toMatchObject({
+      sourceMuted: true,
+      voiceoverMuted: false,
+      takes: [],
+    });
   });
 
   it('fails when the new cut could not be saved over an earlier cut’s export', async () => {

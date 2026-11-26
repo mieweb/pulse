@@ -8,6 +8,7 @@ import { deleteDraft, draftHostContext } from '@/db/drafts';
 import { buildProject } from '@/db/project';
 import { drafts, segments } from '@/db/schema';
 import { documentDir } from '@/utils/storage-root';
+import { hasRetainedUndo } from '@/features/editor/persistent-editor-history';
 
 import type { DraftSeen } from './draft-sync';
 
@@ -39,7 +40,12 @@ export function readDraft(draftId: string): DraftRead | null {
   const { contextKey, contextLabel, contextJson, uploadTypeJson, ...seen } = row;
   // Stored as the host handed it over and checked at birth (host-context.ts): its PulseContext.
   const context = draftHostContext({ contextKey, contextLabel, contextJson, uploadTypeJson });
-  return { draftId, ...seen, context: context as PulseContext | null };
+  return {
+    draftId,
+    ...seen,
+    retainedUndo: hasRetainedUndo(draftId),
+    context: context as PulseContext | null,
+  };
 }
 
 /** Calls `onChange` after a write to the drafts or their clips. */

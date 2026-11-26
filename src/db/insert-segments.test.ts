@@ -396,7 +396,7 @@ describe('taking added clips out and putting them back (the editor’s undo/redo
     try {
       const taken = await takeOutSegments([s(d, 'x')]);
       await dropTakenOut(taken!);
-      expect(del).toHaveBeenCalledWith(`drafts/x/segments/${s(d, 'x')}.mp4`);
+      expect(del).toHaveBeenCalledWith(`drafts/x/segments/${s(d, 'x')}.mp4`, expect.any(Set));
 
       del.mockClear();
       const back = await takeOutSegments([s(d, 'y')]);
@@ -419,10 +419,10 @@ describe('taking added clips out and putting them back (the editor’s undo/redo
       // q taken out (its redo needs the shared file), then p deleted: the file stays.
       const taken = await takeOutSegments([s(d, 'q')]);
       await deleteSegment(s(d, 'p'));
-      expect(del).not.toHaveBeenCalledWith(shared.originalFilename);
+      expect(del.mock.calls.map(([path]) => path)).not.toContain(shared.originalFilename);
       // Nothing can put q back now: the file goes.
       await dropTakenOut(taken!);
-      expect(del).toHaveBeenCalledWith(shared.originalFilename);
+      expect(del).toHaveBeenCalledWith(shared.originalFilename, expect.any(Set));
 
       // Dropping a take-out whose sharer is still in the draft keeps the file.
       del.mockClear();
@@ -430,7 +430,7 @@ describe('taking added clips out and putting them back (the editor’s undo/redo
       await addSegment(d, { id: s(d, 'v'), ...shared });
       const one = await takeOutSegments([s(d, 'u')]);
       await dropTakenOut(one!);
-      expect(del).not.toHaveBeenCalledWith(shared.originalFilename);
+      expect(del.mock.calls.map(([path]) => path)).not.toContain(shared.originalFilename);
     } finally {
       del.mockRestore();
     }
@@ -465,7 +465,7 @@ describe('taking added clips out and putting them back (the editor’s undo/redo
       expect(ids(d)).toEqual([]);
       // Not held any more: once p goes, nothing uses the file.
       await deleteSegment(s(keep, 'p'));
-      expect(del).toHaveBeenCalledWith(shared.originalFilename);
+      expect(del).toHaveBeenCalledWith(shared.originalFilename, expect.any(Set));
       // The editor closing later drops it again: nothing left to do, and no throw.
       await expect(dropTakenOut(taken!)).resolves.toBeUndefined();
     } finally {

@@ -1,14 +1,16 @@
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ActionMenu, type Anchor } from '@/components/action-menu';
 import { Icon } from '@/components/icon';
 import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FloatShadow, Opacity, Radius, Spacing } from '@/constants/theme';
 import { deleteDraft, draftListQuery, duplicateDraft, renameDraft } from '@/db/drafts';
+import type { ThemePreference } from '@/db/settings';
 import { adoptMergedCaptionEdit } from '@/db/transcripts';
 import { useDraftTransfer } from '@/features/draft-transfer/use-draft-transfer';
 import { useToast } from '@/features/toast/toast-provider';
@@ -16,7 +18,7 @@ import { dropClipJobs } from '@/features/transcription/clip-queue';
 import { DestinationsFloat } from '@/features/upload/pairing/destinations-float';
 import { usePlaceLabels } from '@/features/upload/pairing/use-destinations';
 import { useNow } from '@/hooks/use-now';
-import { useTheme, useThemeToggle } from '@/hooks/use-theme';
+import { useTheme, useThemePreference } from '@/hooks/use-theme';
 import { formatCount } from '@/utils/format';
 import { userMessage } from '@/utils/user-message';
 
@@ -66,7 +68,19 @@ export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: Drafts
 
   // Appearance preference (system-follow / pinned light / pinned dark), persisted so it
   // survives restarts (see `useTheme`).
-  const { preference: themePref, mode: themeMode, toggle: toggleTheme } = useThemeToggle();
+  const { preference: themePref, mode: themeMode, setPreference } = useThemePreference();
+  const appearanceRef = useRef<View>(null);
+  const [appearanceAnchor, setAppearanceAnchor] = useState<Anchor | null>(null);
+  const chooseAppearance = (preference: ThemePreference) => {
+    setAppearanceAnchor(null);
+    setPreference(preference).catch((error) => {
+      showToast({
+        kind: 'error',
+        title: 'Couldn’t change appearance',
+        message: userMessage(error, 'Try again.'),
+      });
+    });
+  };
 
   // Once the live query reflects the pending name, drop it so the DB value takes back over.
   if (
@@ -259,11 +273,17 @@ export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: Drafts
               </ThemedText>
             </Pressable>
             <Pressable
-              onPress={toggleTheme}
+              ref={appearanceRef}
+              onPress={() =>
+                appearanceRef.current?.measureInWindow((x, y, width, height) =>
+                  setAppearanceAnchor({ x, y, width, height }),
+                )
+              }
               hitSlop={12}
               accessibilityRole="button"
               accessibilityLabel="Appearance"
-              accessibilityHint="Cycles between system, light, and dark appearance"
+              accessibilityHint="Choose System to follow your device, or lock Light or Dark"
+              accessibilityState={{ expanded: appearanceAnchor !== null }}
               accessibilityValue={{
                 text: themePref === 'system' ? `System (${themeMode})` : themePref,
               }}
@@ -283,7 +303,7 @@ export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: Drafts
                 tintColor={theme.text}
               />
               <ThemedText type="caption2" style={styles.headerButtonLabel}>
-                {themePref === 'system' ? 'Auto' : themeMode === 'dark' ? 'Dark' : 'Light'}
+                {themePref === 'system' ? 'System' : themePref === 'dark' ? 'Dark' : 'Light'}
               </ThemedText>
             </Pressable>
             <Pressable
@@ -304,6 +324,35 @@ export function DraftsScreen({ onRecord, onOpenDraft, onAbout, onClose }: Drafts
           </View>
         </View>
       )}
+
+      <ActionMenu
+        visible={appearanceAnchor !== null}
+        anchor={appearanceAnchor}
+        actions={[
+          {
+            key: 'system',
+            label: 'System (device)',
+            icon: 'circle.lefthalf.filled',
+            selected: themePref === 'system',
+            onPress: () => chooseAppearance('system'),
+          },
+          {
+            key: 'light',
+            label: 'Always light',
+            icon: 'sun.max.fill',
+            selected: themePref === 'light',
+            onPress: () => chooseAppearance('light'),
+          },
+          {
+            key: 'dark',
+            label: 'Always dark',
+            icon: 'moon.fill',
+            selected: themePref === 'dark',
+            onPress: () => chooseAppearance('dark'),
+          },
+        ]}
+        onClose={() => setAppearanceAnchor(null)}
+      />
 
       {/* Dev-only seeding controls live on their own line so they never crowd the AI action. */}
       {DevSeedRow && (

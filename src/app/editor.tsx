@@ -9,7 +9,7 @@ import { isAiEditingEnabled } from '@/features/ai-edit/enabled';
 import { screenCapturePort } from '@/features/screen-capture/screen-capture';
 import { usePlaceLabels } from '@/features/upload/pairing/use-destinations';
 
-/** Back to the recorder (or Home, when the editor was opened by a link). */
+/** Back to the library or the recorder that opened this editor; links fall back to Home. */
 const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
 const openExport = (draftId: string) => router.push({ pathname: '/export', params: { draftId } });
 /** Record a clip here: the recorder for this draft, its cursor at `anchor`; its Edit comes back. */
@@ -44,6 +44,7 @@ export default function EditorRoute() {
     <ScreenFocusProvider focused={focused}>
       <EditorScreen
         draftId={draftId}
+        allowEmpty
         clipId={clipId}
         anchor={openAnchor}
         view={asView(view)}

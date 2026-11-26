@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+jest.mock('./addition-history', () => ({
+  additionHistoryBefore: () => null,
+  checkpointInsertedClips: () => ({ stacks: { past: [], future: [] }, removed: [] }),
+}));
+jest.mock('./media-refs', () => ({ referencedMediaPaths: () => new Set<string>() }));
 
 // The real queries against the real schema: an in-memory SQLite with every migration applied,
 // behind drizzle's proxy driver (as destinations.test.ts does). Files and secure-store are
@@ -37,6 +42,7 @@ jest.mock('@/utils/file-store', () => ({
   copyRelFile: jest.fn(),
   deleteDraftDir: jest.fn(),
   deleteSegmentFile: jest.fn(),
+  segmentFileDeletionPaths: (path: string) => [path],
   editCoverRelPath: jest.fn(),
   editedThumbRelPath: jest.fn(),
   thumbRelPath: jest.fn(),

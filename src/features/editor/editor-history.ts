@@ -1,11 +1,10 @@
-import type { SplitReceipt, TakenOutClips } from '@/db/drafts';
+import type { TakenOutClips } from '@/db/drafts';
+import type { AddedStep, Present, Snapshot, SnapshotDiff, Step } from '@/core/types/editor-history';
 import {
   redo as redoStep,
   undo as undoStep,
   type History,
 } from '@/features/transcription/edit-history';
-
-import type { EditValue } from './draft-writes';
 
 /**
  * The editor's undo steps, as pure data and rules (use-editor-history.ts runs them). A `state`
@@ -14,41 +13,7 @@ import type { EditValue } from './draft-writes';
  * the draft (from the + or a recorder over the editor): undoing takes them out, keeping what a
  * redo needs to put them back (`taken`, set while the step waits on the redo stack).
  */
-export type Snapshot = {
-  order: string[];
-  edits: Record<string, EditValue>;
-  captions: Record<string, string | null>;
-  captionY: number | null;
-};
-
-export type AddedStep = {
-  kind: 'added';
-  ids: string[];
-  taken: TakenOutClips | null;
-  /** Original clips changed by this addition, restored together with taking its clips out. */
-  splits?: readonly SplitReceipt[];
-  /** An image batch extends this same chronological step while its remaining media prepares. */
-  batchKey?: string;
-};
-
-export type Step = { kind: 'state'; snapshot: Snapshot } | AddedStep;
-
-/** What the clips are now, as far as a step can change them. */
-export type Present = {
-  clips: readonly { id: string; editKey: string | null }[];
-  captions: ReadonlyMap<string, string | null>;
-  captionY: number | null;
-};
-
-/** The writes that bring the draft back to a snapshot; empty when it already matches. */
-export type SnapshotDiff = {
-  edits: [string, EditValue][];
-  captions: Map<string, string | null>;
-  /** Undefined: leave where the captions sit. */
-  captionY?: number | null;
-  /** The full order to store, or null when it stays. */
-  order: string[] | null;
-};
+export type { AddedStep, Present, Snapshot, SnapshotDiff, Step } from '@/core/types/editor-history';
 
 export function snapshotOf(now: Present): Snapshot {
   return {
@@ -80,7 +45,7 @@ export function restoreOrder(current: readonly string[], target: readonly string
 
 /** What writing `target` back would change (a deleted clip's entries are skipped). */
 export function diffSnapshot(target: Snapshot, now: Present): SnapshotDiff {
-  const edits: [string, EditValue][] = [];
+  const edits: SnapshotDiff['edits'] = [];
   for (const c of now.clips) {
     if (!(c.id in target.edits) || target.edits[c.id] === c.editKey) continue;
     edits.push([c.id, target.edits[c.id]]);
@@ -155,6 +120,30 @@ export function keepEmptyEditorOpen(
   historyKeepsOpen: boolean,
 ): boolean {
   return historyKeepsOpen || (clipCount === 0 && retained);
+}
+
+/** A cleanup can remove the final beat while its original remains on the Undo stack. */
+export function hasRestorableClips(history: Pick<History<Step>, 'past' | 'future'>): boolean {
+  return (
+    history.future.some((step) => step.kind === 'added' && step.taken != null) ||
+    history.past.some(
+      (step) => step.kind === 'added' && step.splits?.some((split) => split.before.rows.length > 0),
+    )
+  );
+}
+
+/**
+ * A library draft can be empty and still offer Add. Only a successful parent-row read establishes
+ * that it is missing; `undefined` means loading or a failed read. Other callers leave when empty
+ * as before, while an active addition or retained history always keeps its session open.
+ */
+export function shouldLeaveEmptyEditor(
+  clipCount: number,
+  retainedHistory: boolean,
+  allowEmpty: boolean,
+  draftExists: boolean | undefined,
+): boolean {
+  return clipCount === 0 && !retainedHistory && (!allowEmpty || draftExists === false);
 }
 
 /** The clips taken out by additions on the redo stack: their files go when it's cleared. */

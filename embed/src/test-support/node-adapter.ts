@@ -245,6 +245,8 @@ export async function createNodePulse(o: NodePulseOptions): Promise<NodePulse> {
   const waitingForReady: (() => void)[] = [];
   /** PATCHes that never end, by message id (cancelled ones end `canceled`). */
   const patches = new Set<string>();
+  /** Native owns unanswered host calls until a response, deadline or adapter shutdown. */
+  const hostCalls = new Set<string>();
 
   // ── Events to the host: one fan-out; flowResult and hostRequest wait for a subscriber (§7).
   const subscribers = new Set<(e: BridgeEvent) => void>();
@@ -273,6 +275,13 @@ export async function createNodePulse(o: NodePulseOptions): Promise<NodePulse> {
         return;
       }
       case 'pulse.event':
+        if (
+          message.name === 'hostRequest' &&
+          isObject(message.payload) &&
+          typeof message.payload.hostCallId === 'string'
+        ) {
+          hostCalls.add(message.payload.hostCallId);
+        }
         emit(message.name as string, message.payload);
         return;
       case 'pulse.result':
@@ -737,6 +746,7 @@ export async function createNodePulse(o: NodePulseOptions): Promise<NodePulse> {
       case 'purge':
         throw new Refusal('busy', "This facade can't restart Pulse's runtime after a purge.");
       case 'respondHostRequest':
+        if (typeof a.hostCallId === 'string') hostCalls.delete(a.hostCallId);
         o.bus.deliver({
           type: 'pulse.respond',
           hostCallId: a.hostCallId,
@@ -816,6 +826,14 @@ export async function createNodePulse(o: NodePulseOptions): Promise<NodePulse> {
           }
         });
       });
+      // Stop new passes before canceling native-owned host calls. Keep the bus connected until
+      // release finishes: a paused pass can still write the failed request to SQLite. The test
+      // facade has no native request-deadline owner after disposal, so fail those calls now.
+      await command('accountActive', { active: false });
+      for (const hostCallId of [...hostCalls]) {
+        hostCalls.delete(hostCallId);
+        await command('hostTimeout', { hostCallId });
+      }
       await command('releaseLibrary', {});
       await released;
       stopListening();

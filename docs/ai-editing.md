@@ -58,9 +58,9 @@ model readiness and disables speech-model downloads while it reads the recording
 [Speech model catalog](../src/features/transcription/models.ts#L39-L79) ·
 [Offline run](../src/features/ai-edit/run-ai-edit.ts#L57-L98)
 
-Open a spoken-video project, tap **AI edit** in the editor, review **Editing instructions**, and tap
+Open a spoken-video project, tap **AI edit** in the editor’s lower command row, review **Editing instructions**, and tap
 **Create AI cut**. A successful run opens the new project in Timeline view for review, trimming and
-export. [Editor button](../src/features/editor/editor-screen.tsx#L930-L941) ·
+export. [Editor button](../src/features/editor/editor-screen.tsx#L1497-L1505) ·
 [Prompt screen](../src/features/ai-edit/ai-edit-screen.tsx#L221-L336) ·
 [Result navigation](../src/app/ai-edit.tsx#L9-L15) · [Editor controls](../README.md#editing--export)
 
@@ -129,11 +129,11 @@ flowchart LR
    excerpt windows, transforms and matching transcripts. The save checks that the source timeline
    still matches what was analyzed and cleans up staged files on error. Export later passes the
    saved windows to the native merger, which reports the actual rendered duration.
-   [Shared-file copy logic](../src/db/drafts.ts#L1497-L1551) ·
+   [Shared-file copy logic](../src/db/drafts.ts#L1973-L2016) ·
    [Staging and excerpt rows](../src/db/ai-edits.ts#L114-L185) ·
    [Transaction and cleanup](../src/db/ai-edits.ts#L186-L234) ·
    [Persistence tests](../src/db/ai-edits.test.ts) ·
-   [Export path](../src/features/export/editor-merge.ts#L18-L66)
+   [Export path](../src/features/export/editor-merge.ts#L20-L70)
 
 ## Limits and verification
 
@@ -177,20 +177,20 @@ extend. [Existing audio guard and rationale](../src/db/ai-edits.ts#L15-L43) ·
       when the mix contains no audible speech, and include narration placement and mute settings in
       cache and source-change checks. Align words to the composed clip starts used by
       preview/export.
-      [Compatible audio mix](https://github.com/mieweb/pulse/blob/d3a853e46005237a8cfb6c828caa82b8fa75f9e3/src/core/media/voiceover.ts#L6-L32)
+      [Saved audio mix](../src/core/media/voiceover.ts#L6-L32)
       ·
-      [Existing audio cache signature](https://github.com/mieweb/pulse/blob/d3a853e46005237a8cfb6c828caa82b8fa75f9e3/src/core/media/merge-signature.ts#L45-L66)
+      [Export audio cache signature](../src/core/media/merge-signature.ts#L42-L58)
       ·
-      [Frame snapping and draft-time narration in the phone’s native engine](https://github.com/morepriyam/pulse-editor/blob/306ff1d999589be6615275c60567ba371f073efd/ios/Merge/Timeline.swift#L20-L77)
+      [Frame snapping and draft-time narration in the pinned native engine](https://github.com/morepriyam/pulse-editor/blob/306ff1d999589be6615275c60567ba371f073efd/ios/Merge/Timeline.swift#L20-L77)
       · [Clip-start drift in the caption timeline](../src/features/transcription/compose.ts#L43-L63)
 - [ ] **Keep narration aligned through cuts.** Split and trim each intersecting voiceover take, then
       shift its placement from the original draft clock to the shortened draft clock. Preserve mute
       settings and picture under narration. Apply clip speed only to source video/audio. Stage the
       required media and save the editable result with the same ownership, recovery and history
       guarantees.
-      [Voiceover placement contract](https://github.com/mieweb/pulse/blob/d3a853e46005237a8cfb6c828caa82b8fa75f9e3/src/core/media/voiceover.ts#L19-L32)
+      [Voiceover placement contract](../src/core/media/voiceover.ts#L19-L32)
       ·
-      [Compatible narration and undo rules](https://github.com/mieweb/pulse/blob/d3a853e46005237a8cfb6c828caa82b8fa75f9e3/docs/persistence.md#voiceover-takes)
+      [Narration and undo rules](persistence.md#voiceover-takes)
       · [Current draft transaction](../src/db/ai-edits.ts#L186-L234)
 - [ ] **Verify before widening support.** Exercise clip and track mutes, mixed speech, overlapping
       takes, speed changes and narration crossing a cut. Test cancellation, stale inputs, rollback,

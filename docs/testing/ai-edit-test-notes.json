@@ -1,5 +1,5 @@
 {
-  "version": "2.7.0",
+  "version": "2.8.0",
   "date": "2026-11-25",
   "notes": [
     "Editable AI prompts: open a project's editor and tap the sparkle labelled AI edit. The screen now shows Editing instructions before anything runs. Its Default text is the same editorial prompt that produced the first successful cuts.",

@@ -9,6 +9,8 @@ import {
   settings,
   uploadJobs,
   uploadReceipts,
+  voiceoverTakes,
+  type VoiceoverTake,
   type Segment,
   type UploadJob,
   type UploadReceipt,
@@ -39,6 +41,8 @@ export type CatalogDraftRow = {
   coverThumbnail: string | null;
   /** The person turned the draft's captions off (`captions.off:<id>`, isCaptionsOff). */
   captionsOff: boolean;
+  sourceAudioMuted: boolean;
+  voiceoverMuted: boolean;
 };
 
 /** A clip transcript row for the captions model in use. */
@@ -53,6 +57,7 @@ export type CatalogRows = {
   drafts: CatalogDraftRow[];
   /** Every clip, by draft and then in timeline order. */
   segments: Segment[];
+  voiceoverTakes: VoiceoverTake[];
   /** The clip transcripts of `captionModel` (none without a model). */
   transcripts: CatalogTranscriptRow[];
   jobs: UploadJob[];
@@ -82,6 +87,8 @@ export function readCatalogRows(now: number, captionModel: string | null): Catal
         mergedSignature: drafts.mergedSignature,
         mergedDurationMs: drafts.mergedDurationMs,
         hostConfirmedAt: drafts.hostConfirmedAt,
+        sourceAudioMuted: drafts.sourceAudioMuted,
+        voiceoverMuted: drafts.voiceoverMuted,
         clipCount: count(segments.id),
         durationMs: sql<number>`coalesce(sum(coalesce(${segments.editedDurationMs}, ${segments.durationMs})), 0)`,
         coverThumbnail: sql<
@@ -97,6 +104,11 @@ export function readCatalogRows(now: number, captionModel: string | null): Catal
       .groupBy(drafts.id)
       .all(),
     segments: tx.select().from(segments).orderBy(asc(segments.draftId), asc(segments.order)).all(),
+    voiceoverTakes: tx
+      .select()
+      .from(voiceoverTakes)
+      .orderBy(asc(voiceoverTakes.draftId), asc(voiceoverTakes.sequence))
+      .all(),
     transcripts:
       captionModel == null
         ? []

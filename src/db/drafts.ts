@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import * as Crypto from 'expo-crypto';
 
 import {
@@ -10,23 +10,44 @@ import {
   editCoverRelPath,
   editedThumbRelPath,
   relFileExists,
+  segmentFileDeletionPaths,
   thumbRelPath,
+  voiceoverRelPath,
 } from '@/utils/file-store';
 import { type ClipAnchor, END, noteClipsAdded, resolveAnchor } from '@/core/clip-anchor';
 import { waitForClipWrites } from '@/core/draft-write-barrier';
+import { waitForUndoHistory } from '@/core/undo-write-barrier';
+import { acceptUndoAddition } from '@/core/undo-additions';
+import type { Step } from '@/core/types/editor-history';
+import { heldMediaPaths, holdMediaPaths, isMediaHeld } from '@/core/media-holds';
 import {
   canonicalEdit,
+  clipRender,
   editTimelineMs,
   parseEdit,
   renderKey,
   resetSegmentEdit,
   segmentEditValue,
   splitSegmentAt,
+  type ClipWindow,
   type ParsedEdit,
 } from '@/utils/segment-window';
 import { coverFailed, generateThumbnailFile, markCoverInFlight } from '@/utils/video';
+import { cutSegmentAt } from '@/utils/transcript-cut';
+import {
+  compactCaptionWords,
+  compactTranscriptWords,
+  planTranscriptCut,
+} from '@/utils/bulk-transcript-cut';
 import { isCaptionsOff, parseCaptionEdit, setCaptionsOff } from './captions';
-import { db } from './client';
+import { db, expoDb } from './client';
+import {
+  additionHistoryBefore,
+  checkpointInsertedClips,
+  trimAdditionHistory,
+  type AdditionHistory,
+} from './addition-history';
+import { referencedMediaPaths } from './media-refs';
 import type { PairedDestination } from './destinations';
 import {
   assertEditable,
@@ -37,8 +58,9 @@ import {
   type HostContextColumns,
 } from './host-context';
 import type { ClipTranscript, Draft, Segment } from './schema';
-import { clipTranscripts, drafts, segments, uploadJobs } from './schema';
+import { clipTranscripts, drafts, segments, uploadJobs, voiceoverTakes } from './schema';
 import { noteHeldFiles } from './held-files';
+import { parsePersistedHistory } from './persisted-history';
 import { deleteSavedLink } from './secure-token';
 import {
   cancelJobForChange,
@@ -387,18 +409,248 @@ export async function splitSegment(draftId: string, anchor: ClipAnchor): Promise
   return (await commitSegments(draftId, anchor, [], []))!;
 }
 
-/** Shared transaction for additions (possibly splitting) and an explicit split without media. */
+/**
+ * Remove speech inside one beat, retaining the source ranges on either side. Like a split, the
+ * receipt reverses the entire operation in one Undo/Redo step without rewriting source media.
+ */
+export async function cutSegmentRange(
+  draftId: string,
+  cut: {
+    clipId: string;
+    sourceKey: string;
+    startMs: number;
+    endMs: number;
+    rightId: string;
+    fps: number;
+  },
+): Promise<SplitReceipt> {
+  return (await commitSegments(
+    draftId,
+    {
+      before: cut.clipId,
+      split: {
+        sourceMs: cut.startMs,
+        sourceKey: cut.sourceKey,
+        rightId: cut.rightId,
+        offsetMs: 0,
+      },
+    },
+    [],
+    [],
+    { endMs: cut.endMs, fps: cut.fps },
+  ))!;
+}
+
+/** Frozen review input: a source/edit or transcript change invalidates the whole batch. */
+export type TranscriptCutRequest = {
+  clipId: string;
+  sourceKey: string;
+  captionKey: string | null;
+  ranges: readonly ClipWindow[];
+  fps: number;
+  transcript?: { model: string; file: string; words: string };
+};
+
+function canonicalJson(text: string): string {
+  const sort = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(sort)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([key, child]) => [key, sort(child)]),
+          )
+        : value;
+  return JSON.stringify(sort(JSON.parse(text)));
+}
+
+/**
+ * Apply reviewed word/silence ranges across beats in one durable transaction and Undo step.
+ * Every kept range gets its own clip identity and bound source window. A receipt also represents
+ * a fully removed beat: its dormant rightId reserves the replay identity without a live row.
+ */
+export async function cutTranscriptRanges(
+  draftId: string,
+  requests: readonly TranscriptCutRequest[],
+): Promise<{ ids: string[]; splits: SplitReceipt[]; removedMs: number }> {
+  if (
+    !requests.length ||
+    requests.length > 500 ||
+    new Set(requests.map((request) => request.clipId)).size !== requests.length ||
+    requests.reduce((n, request) => n + request.ranges.length, 0) > 5000
+  ) {
+    throw new Error('Choose a valid set of transcript cuts.');
+  }
+  await beginClipMutation(draftId);
+  await waitForClipWrites();
+  await waitForUndoHistory();
+  let additionHistory: AdditionHistory | undefined;
+  const result = db.transaction((tx) => {
+    const beforeHistory = additionHistoryBefore(expoDb, draftId);
+    const draft = tx.select().from(drafts).where(eq(drafts.id, draftId)).get();
+    if (!draft) throw new Error('This project no longer exists.');
+    const all = tx
+      .select()
+      .from(segments)
+      .where(eq(segments.draftId, draftId))
+      .orderBy(asc(segments.order))
+      .all();
+    const order = all.map((row) => row.id);
+    const plans = new Map(
+      requests.map((request) => {
+        const original = all.find((row) => row.id === request.clipId);
+        if (
+          !original ||
+          renderKey(original) !== request.sourceKey ||
+          original.captionEdit !== request.captionKey
+        ) {
+          throw new Error('A clip or its captions changed. Review the cleanup again.');
+        }
+        const transcripts = tx
+          .select()
+          .from(clipTranscripts)
+          .where(eq(clipTranscripts.segmentId, original.id))
+          .all();
+        if (request.transcript) {
+          const frozen = request.transcript;
+          const current = transcripts.find((row) => row.model === frozen.model);
+          let same = false;
+          try {
+            same =
+              !!current &&
+              current.status === 'done' &&
+              current.file === frozen.file &&
+              canonicalJson(current.words ?? '[]') === canonicalJson(frozen.words);
+          } catch {
+            /* malformed review inputs are not silently repaired */
+          }
+          if (!same) throw new Error('The transcript changed. Review the cleanup again.');
+        }
+        const plan = planTranscriptCut(original, request.ranges, request.fps);
+        if (!plan) throw new Error('Choose a cut at least one source frame long.');
+        return [original.id, { original, transcripts, plan }] as const;
+      }),
+    );
+    const ids: string[] = [];
+    const splits: SplitReceipt[] = [];
+    const nextRows: Segment[] = [];
+    let clipNumber = draft.lastClipNumber;
+    let removedMs = 0;
+    // All originals are validated before any row changes; an insert/checkpoint failure rolls back.
+    tx.delete(segments)
+      .where(
+        inArray(
+          segments.id,
+          requests.map((request) => request.clipId),
+        ),
+      )
+      .run();
+    for (const original of all) {
+      const entry = plans.get(original.id);
+      if (!entry) {
+        nextRows.push(original);
+        continue;
+      }
+      const { plan, transcripts } = entry;
+      removedMs += plan.removedMs;
+      const { file, ...settings } = clipRender(original);
+      const rightId = Crypto.randomUUID();
+      const appliedIds: string[] = [];
+      const receipt: SplitReceipt = {
+        before: { draftId, order, rows: [original], transcripts },
+        rightId,
+        fullyRemoved: plan.kept.length === 0,
+        appliedIds,
+      };
+      splits.push(receipt);
+      noteHeldFiles(tx, takenFiles(receipt.before));
+      for (const [i, window] of plan.kept.entries()) {
+        const id = i === 0 ? rightId : Crypto.randomUUID();
+        appliedIds.push(id);
+        const editState = canonicalEdit(
+          JSON.stringify({
+            ...settings,
+            startMs: window.startMs,
+            endMs: window.endMs,
+            baseWindow: window,
+          }),
+        )!;
+        const kept: Segment = {
+          ...original,
+          id,
+          originalFilename: file,
+          durationMs: original.editedFilename
+            ? (original.editedDurationMs ?? original.durationMs)
+            : original.durationMs,
+          thumbnail: null,
+          editedFilename: null,
+          editedDurationMs: editTimelineMs(editState),
+          editState,
+          captionEdit: compactCaptionWords(original.captionEdit, file, window),
+          label: i === 0 ? original.label : String(++clipNumber),
+          order: 0,
+        };
+        ids.push(id);
+        nextRows.push(kept);
+        const copied = transcripts.map((row) => ({
+          ...row,
+          segmentId: id,
+          words: row.file === file ? compactTranscriptWords(row.words, window) : row.words,
+        }));
+        // Rows are inserted below after their final dense order has been assigned.
+        tx.insert(segments)
+          .values({ ...kept, order: -nextRows.length - all.length })
+          .run();
+        if (copied.length) tx.insert(clipTranscripts).values(copied).run();
+      }
+    }
+    // Park every surviving row before assigning the final order (the index is unique).
+    tx.update(segments)
+      .set({ order: sql`-${segments.order} - ${all.length + nextRows.length + 1}` })
+      .where(and(eq(segments.draftId, draftId), sql`${segments.order} >= 0`))
+      .run();
+    nextRows.forEach((row, index) => {
+      tx.update(segments).set({ order: index }).where(eq(segments.id, row.id)).run();
+    });
+    tx.update(drafts)
+      .set({ lastClipNumber: clipNumber, lastModified: now })
+      .where(eq(drafts.id, draftId))
+      .run();
+    additionHistory = checkpointInsertedClips(expoDb, tx, draftId, beforeHistory, ids, splits);
+    assertCutHistoryRetained(tx, draftId, splits);
+    return { ids, splits, removedMs };
+  });
+  for (const split of result.splits) {
+    invalidateEditWrites(split.before.rows.map((row) => row.id));
+    hold(split.before);
+  }
+  queueSplitCovers(result.ids);
+  if (additionHistory) {
+    acceptUndoAddition(draftId, additionHistory.stacks);
+    await afterCommit('drop invalidated undo media', () =>
+      dropHistoryFiles(additionHistory!.removed),
+    );
+  }
+  return result;
+}
+
+/** Shared transaction for additions, standalone splits and bounded transcript cuts. */
 async function commitSegments(
   draftId: string,
   anchorOrGet: ClipAnchor | (() => ClipAnchor),
   newSegments: readonly NewSegment[],
   transcripts: readonly (typeof clipTranscripts.$inferInsert)[],
+  cut?: { endMs: number; fps: number },
 ): Promise<SplitReceipt | undefined> {
   await beginClipMutation(draftId);
   await waitForClipWrites();
+  await waitForUndoHistory();
   const anchor = typeof anchorOrGet === 'function' ? anchorOrGet() : anchorOrGet;
   const k = newSegments.length;
+  let additionHistory: AdditionHistory | undefined;
   const split = db.transaction((tx): SplitReceipt | undefined => {
+    const beforeHistory = additionHistoryBefore(expoDb, draftId);
     let receipt: SplitReceipt | undefined;
     let halves: { left: Segment; right: Segment } | undefined;
     let at: { order: number; shift: boolean };
@@ -433,7 +685,9 @@ async function commitSegments(
         if (renderKey(original) !== point.sourceKey) {
           throw new Error('The clip at the insertion point changed. Choose the position again.');
         }
-        halves = splitSegmentAt(original, point.sourceMs, point.rightId);
+        halves = cut
+          ? cutSegmentAt(original, point.sourceMs, cut.endMs, point.rightId, cut.fps)
+          : splitSegmentAt(original, point.sourceMs, point.rightId);
         const order = tx
           .select({ id: segments.id })
           .from(segments)
@@ -449,6 +703,7 @@ async function commitSegments(
         receipt = {
           before: { draftId, order, rows: [original], transcripts },
           rightId: point.rightId,
+          fullyRemoved: false,
           ...(k > 0 && { firstInsertedId: newSegments[0].id }),
         };
         at = { order: original.order + 1, shift: true };
@@ -508,6 +763,18 @@ async function commitSegments(
       tx.insert(clipTranscripts)
         .values([...transcripts])
         .run();
+    if (receipt) noteHeldFiles(tx, takenFiles(receipt.before));
+    if (k > 0 || receipt) {
+      additionHistory = checkpointInsertedClips(
+        expoDb,
+        tx,
+        draftId,
+        beforeHistory,
+        newSegments.map((row) => row.id),
+        receipt ? [receipt] : [],
+      );
+      if (cut && receipt) assertCutHistoryRetained(tx, draftId, [receipt]);
+    }
     return receipt;
   });
   if (split) {
@@ -515,12 +782,54 @@ async function commitSegments(
     // structural windows supersede those pre-split revisions, but only after this commit succeeds.
     invalidateEditWrites(split.before.rows.map((row) => row.id));
     hold(split.before);
-    void afterCommit('split cover', () => refreshSplitCover(split.rightId));
+    queueSplitCovers([split.rightId]);
+  }
+  if (additionHistory) {
+    acceptUndoAddition(draftId, additionHistory.stacks);
+    await afterCommit('drop invalidated undo media', () =>
+      dropHistoryFiles(additionHistory!.removed),
+    );
   }
   return split;
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * A cut promises durable Undo and Redo. Inspect the saved (possibly trimmed) applied stack,
+ * then run the same Undo row mutation in a rolled-back savepoint: restoring original captions
+ * also enlarges the checkpoint and replay receipt, which can exceed the budget only on Undo.
+ */
+function assertCutHistoryRetained(tx: Tx, draftId: string, splits: readonly SplitReceipt[]): void {
+  const tooLarge = () =>
+    new Error('This cleanup is too large to keep Undo and Redo. Select fewer words or beats.');
+  const saved = tx
+    .select({ value: drafts.undoHistory })
+    .from(drafts)
+    .where(eq(drafts.id, draftId))
+    .get();
+  const retained = parsePersistedHistory(saved?.value, draftId);
+  const includesCuts = (step: Step) =>
+    step.kind === 'added' &&
+    splits.every((split) => step.splits?.some((candidate) => candidate.rightId === split.rightId));
+  const at = retained?.past.findIndex(includesCuts) ?? -1;
+  const step = retained?.past[at];
+  if (!retained || !step || step.kind !== 'added') throw tooLarge();
+  tx.run(sql`savepoint transcript_cut_undo`);
+  try {
+    const taken = takeOutSegmentsInTransaction(tx, draftId, step.ids, step.splits ?? []);
+    if (!taken) throw tooLarge();
+    const undone = trimAdditionHistory(expoDb, draftId, {
+      past: retained.past.filter((_, index) => index !== at),
+      future: [...retained.future, { ...step, taken }],
+    });
+    if (!undone.future.some(includesCuts)) throw tooLarge();
+  } finally {
+    // Keep the actual cut and its applied checkpoint; only the preflight rows are discarded.
+    tx.run(sql`rollback to savepoint transcript_cut_undo`);
+    tx.run(sql`release savepoint transcript_cut_undo`);
+  }
+}
 
 /**
  * Move the draft's clips from slot `from` on up by `k`, in two passes (parked on distinct
@@ -687,10 +996,12 @@ export async function addSegmentCover(
   coverFailed(video);
 }
 
-async function beginClipMutation(draftId: string): Promise<void> {
+export async function beginDraftMutation(draftId: string): Promise<void> {
   assertEditable();
   await takeOutForChange(draftId, 'edited');
 }
+
+const beginClipMutation = beginDraftMutation;
 
 /** Whether a clip is still in the database (not deleted, nor its draft). */
 export async function segmentExists(segmentId: string): Promise<boolean> {
@@ -766,8 +1077,7 @@ export async function deleteSegment(segmentId: string): Promise<void> {
 async function deleteRowFiles(seg: Segment, current?: Segment): Promise<void> {
   const kept = new Set(current ? rowFiles(current) : []);
   for (const rel of rowFiles(seg)) {
-    if (kept.has(rel) || heldFiles.has(rel) || (await fileInUse(rel))) continue;
-    deleteSegmentFile(rel);
+    if (!kept.has(rel)) deleteUnreferencedFile(rel);
   }
 }
 
@@ -777,43 +1087,50 @@ function rowFiles(seg: Segment): string[] {
   const files = [seg.originalFilename, thumbRelPath(seg.draftId, seg.id)];
   if (seg.editedFilename) files.push(seg.editedFilename, editedThumbRelPath(seg.editedFilename));
   if (seg.thumbnail) files.push(seg.thumbnail);
+  const caption = parseCaptionEdit(seg.captionEdit);
+  if (caption) files.push(caption.file);
   return [...new Set(files)];
 }
 
-/** Whether any row (in any draft) still plays or shows `rel`. */
-async function fileInUse(rel: string): Promise<boolean> {
-  const [{ value }] = await db
-    .select({ value: count() })
-    .from(segments)
-    .where(
-      or(
-        eq(segments.originalFilename, rel),
-        eq(segments.editedFilename, rel),
-        eq(segments.thumbnail, rel),
-      ),
-    );
-  return value > 0;
+/** An explicit cleanup candidate survives active work, with a precise retry after a restart. */
+function deleteUnreferencedFile(rel: string): void {
+  let referenced: Set<string>;
+  try {
+    referenced = referencedMediaPaths(expoDb);
+  } catch {
+    return;
+  } // Unreadable recovery inputs never authorize deletion.
+  if (referenced.has(rel)) return;
+  const held = segmentFileDeletionPaths(rel).filter(isMediaHeld);
+  if (held.length) db.transaction((tx) => noteHeldFiles(tx, held));
+  if (isMediaHeld(rel)) return;
+  // Keep the reference check and deletion synchronous so a newly committed reference cannot
+  // land in an await gap. The same list protects live, derived, caption and saved-history files.
+  deleteSegmentFile(rel, referenced);
 }
 
 /** Files of clips taken out and not yet put back or dropped, with how many take-outs hold each. */
-const heldFiles = new Map<string, number>();
-const holding = new Set<TakenOutClips>();
+const holding = new Map<TakenOutClips, () => void>();
+function takenFiles(taken: TakenOutClips): string[] {
+  return [
+    ...new Set([
+      ...[...taken.rows, ...(taken.replaced ?? [])].flatMap(rowFiles),
+      ...taken.transcripts.map((r) => r.file),
+    ]),
+  ];
+}
 function hold(taken: TakenOutClips): void {
   if (holding.has(taken)) return;
-  holding.add(taken);
-  for (const row of taken.rows) {
-    for (const rel of rowFiles(row)) heldFiles.set(rel, (heldFiles.get(rel) ?? 0) + 1);
-  }
+  holding.set(taken, holdMediaPaths(takenFiles(taken)));
 }
 function release(taken: TakenOutClips): void {
-  if (!holding.delete(taken)) return;
-  for (const row of taken.rows) {
-    for (const rel of rowFiles(row)) {
-      const left = (heldFiles.get(rel) ?? 0) - 1;
-      if (left > 0) heldFiles.set(rel, left);
-      else heldFiles.delete(rel);
-    }
-  }
+  holding.get(taken)?.();
+  holding.delete(taken);
+}
+
+/** Durable rows now protect these files; release only the editor session's transient hold. */
+export function releaseHistoryHold(taken: TakenOutClips): void {
+  release(taken);
 }
 
 /**
@@ -838,6 +1155,10 @@ export type SplitReceipt = {
   rightId: string;
   /** Present when adding media triggered the split; absent for a standalone split. */
   firstInsertedId?: string;
+  /** True only when this operation intentionally left no range of the original clip. */
+  fullyRemoved?: boolean;
+  /** Bulk source ranges can have more than two rows; track each applied identity explicitly. */
+  appliedIds?: string[];
 };
 
 /**
@@ -849,62 +1170,29 @@ export type SplitReceipt = {
 export async function takeOutSegments(
   segmentIds: readonly string[],
   splits: readonly SplitReceipt[] = [],
+  checkpoint?: (tx: Tx, taken: TakenOutClips | null) => void,
+  expectedDraftId?: string,
 ): Promise<TakenOutClips | null> {
-  const wanted = new Set([
-    ...segmentIds,
-    ...splits.flatMap((split) => [split.rightId, ...split.before.rows.map((row) => row.id)]),
-  ]);
+  const wanted = takenSegmentIds(segmentIds, splits);
   if (wanted.size === 0) return null;
-  const [first] = await db
-    .select({ draftId: segments.draftId })
+  const found = await db
+    .select({ id: segments.id, draftId: segments.draftId })
     .from(segments)
-    .where(inArray(segments.id, [...wanted]))
-    .limit(1);
-  if (!first) return null;
-  const { draftId } = first;
-  if (splits.some((split) => split.before.draftId !== draftId)) {
+    .where(inArray(segments.id, [...wanted]));
+  if (!found.length && !splits.length) return null;
+  const draftId = expectedDraftId ?? found[0]?.draftId ?? splits[0].before.draftId;
+  if (
+    found.some((row) => row.draftId !== draftId) ||
+    splits.some((split) => split.before.draftId !== draftId)
+  ) {
     throw new Error('The clips to undo belong to different drafts.');
   }
+  const restorable = restorableSplitReceipts(splits, new Set(found.map((row) => row.id)));
+  if (!found.length && !restorable.length) return null;
   await beginClipMutation(draftId);
-  const taken = db.transaction((tx) => {
-    const all = tx
-      .select()
-      .from(segments)
-      .where(eq(segments.draftId, draftId))
-      .orderBy(asc(segments.order))
-      .all();
-    const rows = all.filter((r) => wanted.has(r.id));
-    if (rows.length === 0) return null;
-    const ids = rows.map((r) => r.id);
-    const transcripts = tx
-      .select()
-      .from(clipTranscripts)
-      .where(inArray(clipTranscripts.segmentId, ids))
-      .all();
-    tx.delete(segments).where(inArray(segments.id, ids)).run();
-    // Split + insert is one operation: put the unsplit originals back in the same commit that
-    // takes the left/right halves and inserted clips out. The held rows retain the applied form.
-    const generated = new Set([...segmentIds, ...splits.map((split) => split.rightId)]);
-    const originals = new Map<string, Segment>();
-    for (const split of splits) {
-      // Several additions can be taken together when returning from the recorder. Keep the
-      // earliest original of each clip, and never resurrect a half/object created by this group.
-      const rows = split.before.rows.filter(
-        (row) => !generated.has(row.id) && !originals.has(row.id),
-      );
-      if (rows.length === 0) continue;
-      putSegmentsBack(tx, { ...split.before, rows });
-      for (const row of rows) originals.set(row.id, row);
-    }
-    tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
-    // Noted on disk too: if Pulse dies with the redo pending, the next launch deletes them.
-    noteHeldFiles(tx, rows.flatMap(rowFiles));
-    const taken: TakenOutClips = { draftId, order: all.map((r) => r.id), rows, transcripts };
-    if (splits.length > 0) {
-      taken.replaced = [...originals.values()];
-    }
-    return taken;
-  });
+  const taken = db.transaction((tx) =>
+    takeOutSegmentsInTransaction(tx, draftId, segmentIds, splits, checkpoint),
+  );
   // Its files are kept for the redo, whatever else is deleted meanwhile.
   if (taken) {
     if (splits.length > 0) {
@@ -915,6 +1203,113 @@ export async function takeOutSegments(
   return taken;
 }
 
+function takenSegmentIds(segmentIds: readonly string[], splits: readonly SplitReceipt[]) {
+  return new Set([
+    ...segmentIds,
+    ...splits.flatMap((split) => [
+      split.rightId,
+      ...(split.appliedIds ?? []),
+      ...split.before.rows.map((row) => row.id),
+    ]),
+  ]);
+}
+
+function restorableSplitReceipts(
+  splits: readonly SplitReceipt[],
+  liveIds: ReadonlySet<string>,
+): SplitReceipt[] {
+  return splits.filter((split) => {
+    const applied = split.appliedIds ?? [split.rightId, ...split.before.rows.map((row) => row.id)];
+    if (split.fullyRemoved === true || applied.some((id) => liveIds.has(id))) return true;
+    if (split.fullyRemoved === undefined) {
+      throw new Error(
+        'This older edit has no remaining clips. Its original media is retained for recovery.',
+      );
+    }
+    return false;
+  });
+}
+
+/** Shared by real Undo and the cut's synchronous, rolled-back retention preflight. */
+function takeOutSegmentsInTransaction(
+  tx: Tx,
+  draftId: string,
+  segmentIds: readonly string[],
+  splits: readonly SplitReceipt[],
+  checkpoint?: (tx: Tx, taken: TakenOutClips | null) => void,
+): TakenOutClips | null {
+  const wanted = takenSegmentIds(segmentIds, splits);
+  if (
+    tx
+      .select({ id: segments.id })
+      .from(segments)
+      .where(and(inArray(segments.id, [...wanted]), ne(segments.draftId, draftId)))
+      .get()
+  ) {
+    throw new Error('The clips to undo belong to different drafts.');
+  }
+  const all = tx
+    .select()
+    .from(segments)
+    .where(eq(segments.draftId, draftId))
+    .orderBy(asc(segments.order))
+    .all();
+  const rows = all.filter((r) => wanted.has(r.id));
+  const restorable = restorableSplitReceipts(splits, new Set(all.map((row) => row.id)));
+  if (rows.length === 0 && !restorable.length) return null;
+  const ids = rows.map((r) => r.id);
+  const transcripts = tx
+    .select()
+    .from(clipTranscripts)
+    .where(inArray(clipTranscripts.segmentId, ids))
+    .all();
+  if (ids.length) tx.delete(segments).where(inArray(segments.id, ids)).run();
+  // Split + insert is one operation: put the unsplit originals back in the same commit that
+  // takes the left/right halves and inserted clips out. The held rows retain the applied form.
+  const generated = new Set([
+    ...segmentIds,
+    ...splits.flatMap((split) => [split.rightId, ...(split.appliedIds ?? [])]),
+  ]);
+  const originals = new Map<string, Segment>();
+  for (const split of restorable) {
+    // Several additions can be taken together when returning from the recorder. Keep the
+    // earliest original of each clip, and never resurrect a half/object created by this group.
+    const rows = split.before.rows.filter(
+      (row) => !generated.has(row.id) && !originals.has(row.id),
+    );
+    if (rows.length === 0) continue;
+    putSegmentsBack(tx, { ...split.before, rows });
+    for (const row of rows) originals.set(row.id, row);
+  }
+  tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
+  // Noted on disk too: launch reclaims them only when no durable checkpoint retains them.
+  // Covers of structural ranges are regenerable. Do not let background cover completion
+  // enlarge the Redo receipt beyond the cut's preflight; Redo queues fresh range covers.
+  const originalCovers = new Map(
+    splits.flatMap((split) => split.before.rows.map((row) => [row.id, row.thumbnail] as const)),
+  );
+  const replayRows = rows.map((row) =>
+    splits.length > 0 &&
+    parseEdit(row.editState)?.baseWindow &&
+    row.thumbnail !== originalCovers.get(row.id)
+      ? { ...row, thumbnail: null }
+      : row,
+  );
+  const taken: TakenOutClips = {
+    draftId,
+    order: all.map((r) => r.id),
+    rows: replayRows,
+    transcripts,
+  };
+  if (splits.length > 0) {
+    taken.replaced = [...originals.values()];
+  }
+  // Include omitted generated covers in the explicit cleanup journal, never a general sweep.
+  noteHeldFiles(tx, [...takenFiles(taken), ...rows.flatMap(rowFiles)]);
+  checkpoint?.(tx, taken);
+  return taken;
+}
+
 /**
  * Put clips `takeOutSegments` took out back (the redo of adding them), with their labels, edits,
  * captions and transcripts: each where it was, after the clip it followed then (or before the one
@@ -922,11 +1317,37 @@ export async function takeOutSegments(
  * is the same addition again, not a new one. A draft that has gone takes nothing back, and its
  * files are no longer held (its folder went with it).
  */
-export async function restoreSegments(taken: TakenOutClips): Promise<void> {
+export async function restoreSegments(
+  taken: TakenOutClips,
+  checkpoint?: (tx: Tx) => void,
+  expectedDraftId?: string,
+): Promise<void> {
   const { draftId } = taken;
-  if (taken.rows.length === 0) return;
+  if (
+    (expectedDraftId !== undefined && draftId !== expectedDraftId) ||
+    [...taken.rows, ...(taken.replaced ?? [])].some((row) => row.draftId !== draftId)
+  ) {
+    throw new Error('The clips to redo belong to different drafts.');
+  }
+  if (taken.rows.length === 0 && !taken.replaced?.length) return;
+  const replayIds = [...taken.rows, ...(taken.replaced ?? [])].map((row) => row.id);
+  const foreign = await db
+    .select({ id: segments.id })
+    .from(segments)
+    .where(and(inArray(segments.id, replayIds), ne(segments.draftId, draftId)))
+    .limit(1);
+  if (foreign.length) throw new Error('The clips to redo belong to different drafts.');
   await beginClipMutation(draftId);
   db.transaction((tx) => {
+    if (
+      tx
+        .select({ id: segments.id })
+        .from(segments)
+        .where(and(inArray(segments.id, replayIds), ne(segments.draftId, draftId)))
+        .get()
+    ) {
+      throw new Error('The clips to redo belong to different drafts.');
+    }
     const draft = tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, draftId)).get();
     if (!draft) return;
     if (taken.replaced?.length) {
@@ -958,15 +1379,16 @@ export async function restoreSegments(taken: TakenOutClips): Promise<void> {
     }
     putSegmentsBack(tx, taken);
     tx.update(drafts).set({ lastModified: now }).where(eq(drafts.id, draftId)).run();
+    checkpoint?.(tx);
   });
   if (taken.replaced?.length) invalidateEditWrites(taken.replaced.map((row) => row.id));
   // Its rows point at its files again, which keeps them; or nothing can put them back.
   release(taken);
-  for (const row of taken.rows) {
-    if (row.thumbnail == null && parseEdit(row.editState)?.baseWindow) {
-      void afterCommit('split cover', () => refreshSplitCover(row.id));
-    }
-  }
+  queueSplitCovers(
+    taken.rows
+      .filter((row) => row.thumbnail == null && parseEdit(row.editState)?.baseWindow)
+      .map((row) => row.id),
+  );
 }
 
 /** Restore rows and their transcripts inside a caller's existing synchronous transaction. */
@@ -1026,6 +1448,14 @@ export async function dropTakenOut(taken: TakenOutClips): Promise<void> {
     const current = await db.select().from(segments).where(eq(segments.id, row.id)).get();
     await afterCommit('drop undone clip', () => deleteRowFiles(row, current));
   }
+  await dropHistoryFiles(taken.transcripts.map((row) => row.file));
+}
+
+/** Reclaim only explicitly evicted history files, after its replacement checkpoint commits. */
+export async function dropHistoryFiles(paths: readonly string[]): Promise<void> {
+  for (const path of paths) {
+    await afterCommit('drop undo media', async () => deleteUnreferencedFile(path));
+  }
 }
 
 /**
@@ -1064,8 +1494,23 @@ function invalidateEditWrites(ids: readonly string[]): void {
   for (const id of ids) latestEditRev.set(id, coverRev());
 }
 
+// A filler cleanup can create many source ranges. Decode their covers one at a time, including
+// replay, instead of opening a native decoder for every retained word boundary at once.
+function queueSplitCovers(ids: readonly string[]): void {
+  const queued = ids.map((id) => ({ id, editRev: latestEditRev.get(id) }));
+  void (async () => {
+    for (const { id, editRev } of queued)
+      await afterCommit('split cover', () => refreshSplitCover(id, editRev));
+  })();
+}
+
 /** A split's new right half needs its own first-frame cover, never the left half's image. */
-async function refreshSplitCover(segmentId: string): Promise<void> {
+async function refreshSplitCover(
+  segmentId: string,
+  queuedEditRev: number | undefined,
+): Promise<void> {
+  // A cover waiting behind another decoder must never supersede a newer user edit.
+  if (latestEditRev.get(segmentId) !== queuedEditRev) return;
   const rev = coverRev();
   latestEditRev.set(segmentId, rev);
   const [row] = await db.select().from(segments).where(eq(segments.id, segmentId));
@@ -1142,21 +1587,11 @@ async function saveEdit(segmentId: string, value: string): Promise<void> {
       if (ok) deleteSegmentFile(coverRel);
       return;
     }
-    if (
-      previous.editedFilename &&
-      !heldFiles.has(previous.editedFilename) &&
-      !(await fileInUse(previous.editedFilename))
-    )
-      deleteSegmentFile(previous.editedFilename);
+    if (previous.editedFilename) deleteUnreferencedFile(previous.editedFilename);
     // Drop the replaced cover only now that the row points away from it; the pristine thumb
     // stays for a reset.
-    if (
-      previous.thumbnail &&
-      previous.thumbnail !== thumbRelPath(seg.draftId, segmentId) &&
-      !heldFiles.has(previous.thumbnail) &&
-      !(await fileInUse(previous.thumbnail))
-    ) {
-      deleteSegmentFile(previous.thumbnail);
+    if (previous.thumbnail && previous.thumbnail !== thumbRelPath(seg.draftId, segmentId)) {
+      deleteUnreferencedFile(previous.thumbnail);
     }
   });
 }
@@ -1179,7 +1614,9 @@ export async function resetEdit(segmentId: string): Promise<void> {
   if (latestEditRev.get(segmentId) !== rev) return;
   // As in `saveEdit`: the pristine cover first, then the cleared edit and that cover in one write,
   // unless a newer edit was asked for meanwhile.
-  const thumbRel = thumbRelPath(seg.draftId, segmentId);
+  // Reset can finish rendering after an archive starts. Its own revision never replaces the
+  // pristine thumbnail an earlier snapshot may already have captured.
+  const thumbRel = editCoverRelPath(seg.draftId, segmentId, rev);
   const ok = await generateThumbnailFile(
     absolutize(seg.originalFilename),
     absolutize(thumbRel),
@@ -1206,19 +1643,13 @@ export async function resetEdit(segmentId: string): Promise<void> {
   await afterCommit('revert edits', async () => {
     // Drop the now-orphaned edited file and thumb only after the row no longer references them.
     const edited = previous?.editedFilename ?? seg.editedFilename;
-    if (edited && !heldFiles.has(edited) && !(await fileInUse(edited))) {
-      deleteSegmentFile(edited);
-      const thumb = editedThumbRelPath(edited);
-      if (!heldFiles.has(thumb) && !(await fileInUse(thumb))) deleteSegmentFile(thumb);
+    if (edited) {
+      deleteUnreferencedFile(edited);
+      deleteUnreferencedFile(editedThumbRelPath(edited));
     }
     // The prior cover, read as it was replaced — never the fresh `thumbRel`.
-    if (
-      previous?.thumbnail &&
-      previous.thumbnail !== thumbRel &&
-      !heldFiles.has(previous.thumbnail) &&
-      !(await fileInUse(previous.thumbnail))
-    ) {
-      deleteSegmentFile(previous.thumbnail);
+    if (previous?.thumbnail && previous.thumbnail !== thumbRel) {
+      deleteUnreferencedFile(previous.thumbnail);
     }
   });
 }
@@ -1311,8 +1742,23 @@ export async function duplicateDraft(draftId: string): Promise<string> {
           .select()
           .from(clipTranscripts)
           .where(inArray(clipTranscripts.segmentId, [...newIds.keys()]));
+  const narration = await db
+    .select()
+    .from(voiceoverTakes)
+    .where(eq(voiceoverTakes.draftId, draftId))
+    .orderBy(asc(voiceoverTakes.sequence));
 
   try {
+    const narrationRows: (typeof voiceoverTakes.$inferInsert)[] = [];
+    for (const take of narration) {
+      const takeId = Crypto.randomUUID();
+      const extension = take.filename.slice(take.filename.lastIndexOf('.') + 1);
+      const filename = voiceoverRelPath(copyId, takeId, extension);
+      if (!(await copyRelFile(take.filename, filename))) {
+        throw new Error('One of its narration recordings is missing.');
+      }
+      narrationRows.push({ ...take, id: takeId, draftId: copyId, filename });
+    }
     const segmentRows: (typeof segments.$inferInsert)[] = [];
     // Clips can share an original: each file is copied once.
     const copied = new Set<string>();
@@ -1349,12 +1795,19 @@ export async function duplicateDraft(draftId: string): Promise<string> {
           id: copyId,
           name: `${source.draft.name || 'Untitled'} copy`,
           captionY: source.draft.captionY,
+          sourceAudioMuted: source.draft.sourceAudioMuted,
+          voiceoverMuted: source.draft.voiceoverMuted,
           isSummary: source.draft.isSummary,
           lastClipNumber: source.draft.lastClipNumber,
           createdVia: source.draft.createdVia,
         })
         .run();
       if (segmentRows.length > 0) tx.insert(segments).values(segmentRows).run();
+      for (let i = 0; i < narrationRows.length; i += 100) {
+        tx.insert(voiceoverTakes)
+          .values(narrationRows.slice(i, i + 100))
+          .run();
+      }
       if (transcripts.length > 0) {
         tx.insert(clipTranscripts)
           .values(
@@ -1606,8 +2059,27 @@ export async function deleteDraft(draftId: string): Promise<void> {
   // (the FK cascade would drop the row without either).
   await takeOutForChange(draftId, 'deleted');
   await db.delete(drafts).where(eq(drafts.id, draftId));
-  deleteDraftDir(draftId);
+  deleteDraftMedia(draftId);
   await deleteSavedLink(draftId);
+}
+
+/** Delete only this explicitly removed draft's unreferenced files, preserving shared sources. */
+export function deleteDraftMedia(draftId: string): boolean {
+  let referenced: Set<string>;
+  try {
+    referenced = referencedMediaPaths(expoDb);
+  } catch (error) {
+    console.warn('[drafts] retained recovery data prevented folder cleanup', error);
+    return false;
+  }
+  const prefix = `drafts/${draftId}/`;
+  const kept = [...new Set([...referenced, ...heldMediaPaths()])].filter((path) =>
+    path.startsWith(prefix),
+  );
+  // Only a named deletion creates this retry input. Once its last owner/active operation lets
+  // go, the existing launch journal reclaims it without sweeping unrelated recovery files.
+  if (kept.length) db.transaction((tx) => noteHeldFiles(tx, kept));
+  return (kept.length ? deleteDraftDir(draftId, new Set(kept)) : deleteDraftDir(draftId)) !== false;
 }
 
 // Upload pairing -------------------------------------------------------------------------------

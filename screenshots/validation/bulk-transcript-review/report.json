@@ -1,0 +1,377 @@
+{
+  "date": "2026-11-25",
+  "runtime": {
+    "productionSourceFileCount": 327,
+    "sourceHashesAfterQAUnchanged": true,
+    "jsSHA256": "3c34d6be11054c2ec2ee01d12fae487c4d602cea6aea603992d05a288e91f842",
+    "configSHA256": "7e426bad7d3666a8747560356b98cdf64b5e6bd981a03da47688fa784ee00185",
+    "nativeEngineCommit": "306ff1d999589be6615275c60567ba371f073efd",
+    "notesVersion": "2.8.0",
+    "platform": "iOS 26 simulator, iPhone 17 Pro",
+    "nativeAccessibilityDriver": "XCUITest / WebDriverAgent",
+    "physicalDevicesUsed": false,
+    "sessionRemoved": true,
+    "ownedRunnerProcessesExited": true,
+    "ownedRunnerPortClosed": true,
+    "simulatorRunnerAbsent": true,
+    "baseCommit": "34f8191d3d199d105b2ab8a0709344be0ce70136",
+    "frozenWorkingTree": true,
+    "notesMatchTrackedFile": true,
+    "nativeBinarySHA256": "bb06c9719cc8c5bd67aecedb3f140dfd544830d60c1568d6e1ff772d5b21126c",
+    "productionSourceHashesSHA256": "5381cfcdfa3b231533daf599ac6859916368bfd68599d9d2f0c1ab1cfd1c2bfb",
+    "reviewFileSHA256": {
+      "src/db/addition-history.ts": "f5dfc196103b29b35c9a43d1a5c555790908bd416871ab91a93bf5c59386615c",
+      "src/db/drafts.ts": "74b97fdb0e06124aea7cdf4d8f98fe289058c1cea81fc5d28260392d9549542a",
+      "src/features/editor/editor-history-store.ts": "1d6e25e4f1d877ebad527210bacb75aee1a7f766698d8b505e49462b1d59b6d1",
+      "src/features/editor/persistent-editor-history.ts": "422097654afd6ab1076c1e14dafa98c2874bc5cb4f6c669d0ffe16a008f0ce06",
+      "src/features/editor/transcript-editor-sheet.tsx": "68d7c702cfbd60d4b542b35fe572c7ced1bbd69b3843aa11646f9f1d6660fe84",
+      "src/features/editor/use-editor-back.ts": "6c040da100e9174075e53a767021d7182e6f165500b3050a8806c6eb80a8eb02",
+      "src/features/transcription/audio-pause-analysis.ts": "72e64ec0eb98776c0fca9815cb588da55cd665397d712fb2c205bbf7714e625a",
+      "src/features/transcription/speech-cleanup.ts": "584f1281183791b48132358aefb29e98033f9d37ad423bfed6e49d18f2c74280"
+    }
+  },
+  "sourceChecks": {
+    "testSuitesPassed": 168,
+    "testsPassed": 2453,
+    "testSuitesSkippedLocally": 1,
+    "testsSkippedLocally": 8,
+    "rootTypeScript": "passed",
+    "embedTypeScript": "passed",
+    "lint": "passed",
+    "protocolGeneration": "passed",
+    "embedBundlesAndBoundaries": "passed"
+  },
+  "nativeChecks": [
+    {
+      "check": "Half-second played quiet trim is below 0.7s pause minimum",
+      "passed": true,
+      "details": {
+        "sourceRangeMs": [3400, 4400],
+        "speed": 2,
+        "playedMs": 500,
+        "summary": "0 cuts \u00b7 0.0s shorter"
+      }
+    },
+    {
+      "check": "Shared source scan qualifies each played window independently",
+      "passed": true,
+      "details": {
+        "candidates": [
+          {
+            "label": "Beat 2: Quiet source \u2014 review before removing, 0.5s, review quiet beat",
+            "value": "checkbox, unchecked"
+          }
+        ]
+      }
+    },
+    {
+      "check": "Wholly quiet 750ms played trim requires explicit review",
+      "passed": true,
+      "details": {
+        "label": "Beat 2: Quiet source \u2014 review before removing, 0.5s, review quiet beat",
+        "checked": false,
+        "sourceRangeMs": [3200, 4700],
+        "speed": 2,
+        "playedMs": 750,
+        "summary": "0 cuts \u00b7 0.0s shorter"
+      }
+    },
+    {
+      "check": "Explicit selection enables reviewed quiet cut",
+      "passed": true,
+      "details": "1 cut \u00b7 0.5s shorter"
+    },
+    {
+      "check": "Quiet review did not mutate saved source windows",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Native PCM and transcript analysis finds two fillers and two quiet pauses",
+      "passed": true,
+      "details": [
+        {
+          "label": "Beat 1: um, 1.0s",
+          "value": "checkbox, checked"
+        },
+        {
+          "label": "Beat 1: Quiet pause, 1.3s",
+          "value": "checkbox, checked"
+        },
+        {
+          "label": "Beat 2: uh, 1.0s",
+          "value": "checkbox, checked"
+        },
+        {
+          "label": "Beat 2: Quiet pause, 1.3s",
+          "value": "checkbox, checked"
+        }
+      ]
+    },
+    {
+      "check": "All four non-destructive proposals initially selected",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Cleanup summary measures 4.5 seconds shorter",
+      "passed": true,
+      "details": "4 cuts \u00b7 4.5s shorter"
+    },
+    {
+      "check": "Excluding one quiet candidate updates union savings",
+      "passed": true,
+      "details": "3 cuts \u00b7 3.2s shorter"
+    },
+    {
+      "check": "Reselecting candidate restores all proposed cuts",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Listen preview leaves saved source rows unchanged",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Apply cuts commits both source beats in one batch",
+      "passed": true,
+      "details": {
+        "durationMs": 11532,
+        "clipCount": 6,
+        "ranges": [
+          {
+            "source": "Beat 1",
+            "originalDurationMs": 8000,
+            "editedDurationMs": 1200,
+            "edit": {
+              "v": 1,
+              "startMs": 0,
+              "endMs": 1200,
+              "rotation": 0,
+              "flipped": false,
+              "crop": null,
+              "muted": false,
+              "speed": 1,
+              "baseWindow": {
+                "startMs": 0,
+                "endMs": 1200
+              }
+            }
+          },
+          {
+            "source": "Beat 1",
+            "originalDurationMs": 8000,
+            "editedDurationMs": 1133,
+            "edit": {
+              "v": 1,
+              "startMs": 2200,
+              "endMs": 3333,
+              "rotation": 0,
+              "flipped": false,
+              "crop": null,
+              "muted": false,
+              "speed": 1,
+              "baseWindow": {
+                "startMs": 2200,
+                "endMs": 3333
+              }
+            }
+          },
+          {
+            "source": "Beat 1",
+            "originalDurationMs": 8000,
+            "editedDurationMs": 3433,
+            "edit": {
+              "v": 1,
+              "startMs": 4567,
+              "endMs": 8000,
+              "rotation": 0,
+              "flipped": false,
+              "crop": null,
+              "muted": false,
+              "speed": 1,
+              "baseWindow": {
+                "startMs": 4567,
+                "endMs": 8000
+              }
+            }
+          },
+          {
+            "source": "Beat 2",
+            "originalDurationMs": 8000,
+            "editedDurationMs": 1200,
+            "edit": {
+              "v": 1,
+              "startMs": 0,
+              "endMs": 1200,
+              "rotation": 0,
+              "flipped": false,
+              "crop": null,
+              "muted": false,
+              "speed": 1,
+              "baseWindow": {
+                "startMs": 0,
+                "endMs": 1200
+              }
+            }
+          },
+          {
+            "source": "Beat 2",
+            "originalDurationMs": 8000,
+            "editedDurationMs": 1133,
+            "edit": {
+              "v": 1,
+              "startMs": 2200,
+              "endMs": 3333,
+              "rotation": 0,
+              "flipped": false,
+              "crop": null,
+              "muted": false,
+              "speed": 1,
+              "baseWindow": {
+                "startMs": 2200,
+                "endMs": 3333
+              }
+            }
+          },
+          {
+            "source": "Beat 2",
+            "originalDurationMs": 8000,
+            "editedDurationMs": 3433,
+            "edit": {
+              "v": 1,
+              "startMs": 4567,
+              "endMs": 8000,
+              "rotation": 0,
+              "flipped": false,
+              "crop": null,
+              "muted": false,
+              "speed": 1,
+              "baseWindow": {
+                "startMs": 4567,
+                "endMs": 8000
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "check": "One Undo restores all cleanup cuts and original two beats",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "One Redo reapplies all cleanup cuts",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Cleanup survives process restart",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Persistent Undo and Redo restore complete cleanup batch",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Actual native MP4 export matches shortened timeline",
+      "passed": true,
+      "details": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_type": "video",
+            "duration": "11.532031",
+            "nb_frames": "346"
+          },
+          {
+            "codec_type": "audio",
+            "duration": "11.531958",
+            "nb_frames": "543"
+          }
+        ],
+        "format": {
+          "duration": "11.532031"
+        }
+      }
+    },
+    {
+      "check": "Original review-beat-1 source bytes preserved",
+      "passed": true,
+      "details": null
+    },
+    {
+      "check": "Original review-beat-2 source bytes preserved",
+      "passed": true,
+      "details": null
+    }
+  ],
+  "media": {
+    "sourceDurationMs": 16000,
+    "exportDurationMs": 11532,
+    "sourceVideoFrames": 480,
+    "exportVideoFrames": 346,
+    "expectedRetainedFrames": 346,
+    "remainingRedFillerFrames": 0,
+    "remainingMagentaFillerFrames": 0,
+    "maxRGBErrorAgainstCommittedSourceSequence": 0,
+    "allRetainedFramesMatchCommittedOrder": true,
+    "audioCorrelationAgainstCommittedSourceSequence": 0.9924221221644252,
+    "audioAlignmentOffsetMs": 0.0,
+    "keptSourceRanges": [
+      {
+        "source": "review-beat-1",
+        "startMs": 0,
+        "endMs": 1200,
+        "timelineMs": 1200
+      },
+      {
+        "source": "review-beat-1",
+        "startMs": 2200,
+        "endMs": 3333,
+        "timelineMs": 1133
+      },
+      {
+        "source": "review-beat-1",
+        "startMs": 4567,
+        "endMs": 8000,
+        "timelineMs": 3433
+      },
+      {
+        "source": "review-beat-2",
+        "startMs": 0,
+        "endMs": 1200,
+        "timelineMs": 1200
+      },
+      {
+        "source": "review-beat-2",
+        "startMs": 2200,
+        "endMs": 3333,
+        "timelineMs": 1133
+      },
+      {
+        "source": "review-beat-2",
+        "startMs": 4567,
+        "endMs": 8000,
+        "timelineMs": 3433
+      }
+    ],
+    "sourceHashes": {
+      "review-beat-1": "aecf96abd8f382e4d67fc14129470066f0c866026aead2b23d25ccf76e43830e",
+      "review-beat-2": "993504e503768a7eaa3d775fb1e58f7c521f5a8d056f44d18c6450383e5a4dc0"
+    },
+    "exportSHA256": "dfcf32971b52334e3e9fbab9bb9bc7d992339ad0298b3b6d345ca21f3a727534"
+  },
+  "evidenceSHA256": {
+    "short-trim-no-candidate.png": "9a645f085c597f97b66802d8ceacce5a2125d23fdacba16232de5ddd1bbc90cd",
+    "quiet-trim-unchecked.png": "a5e43e995ac43409a6b2a066e74eca88487b807e8e9690fae65b97856b7db615",
+    "quiet-trim-selected.png": "1578547cf3224289d153319729461f931907cd4cf4884574387411765e42e531",
+    "cleanup-applied.png": "94799d94c5ebad55f063e76c682fe792efc7ce10e95f624e15aad14749b6a810",
+    "edited.mp4": "dfcf32971b52334e3e9fbab9bb9bc7d992339ad0298b3b6d345ca21f3a727534"
+  }
+}

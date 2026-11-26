@@ -16,10 +16,12 @@ import {
 import {
   ActivityIndicator,
   BackHandler,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import { shareAsync } from 'expo-sharing';
@@ -30,7 +32,6 @@ import { PrimaryButton } from '@/components/primary-button';
 import { SectionHeader } from '@/components/section-header';
 import { StateMessage } from '@/components/state-message';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { CloseButton } from '@/features/recorder/close-button';
 import {
   ButtonHeight,
@@ -77,7 +78,8 @@ import { useUploadTargets } from '@/features/upload/core/target-provider';
 import { uploads } from '@/features/upload/core/upload-manager';
 import { useUpload } from '@/features/upload/core/use-upload';
 import { useUploadAnnouncement, useWatchLink } from '@/features/upload/core/use-uploads';
-import { useParkedPlayback } from '@/hooks/use-parked-playback';
+import { exportPreviewSize } from '@/features/export/preview-layout';
+import { useExportPlayback } from '@/features/export/use-export-playback';
 import { DRAFT_NAME_MAX_LENGTH, dropSplitSurrogate } from '@/utils/draft-name';
 import { toFileUri } from '@/utils/file-store';
 import { formatClipCount, formatDuration } from '@/utils/format';
@@ -159,6 +161,9 @@ export function ExportScreen({
   onReady,
 }: ExportScreenProps) {
   const insets = useSafeAreaInsets();
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [actionsHeight, setActionsHeight] = useState(0);
+  const bottomPadding = Spacing.two;
 
   const { data: segments } = useLiveQuery(segmentsForDraft(draftId), [draftId]);
   // Zero-length clips (failed native reads) can't be concatenated — drop them before merging.
@@ -394,6 +399,18 @@ export function ExportScreen({
     setBusy(false);
   };
 
+  const runShareLink = async (url: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await targets.share(url);
+    } catch {
+      // Cancelling or failing to share leaves the preview paused.
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // The pool selector + claim button, shared by every non-uploading state — including a draft
   // that was already uploaded before (claiming re-pairs it and restarts cleanly, see `claim`),
   // so a destination paired after a finished upload is always reachable.
@@ -426,383 +443,414 @@ export function ExportScreen({
   );
 
   return (
-    <ThemedView type="groupedBackground" style={styles.fill}>
-      <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-        <CloseButton onClose={close} testID="export.close" />
-      </View>
-
-      {/* Bottom padding tracks the home indicator instead of a fixed 64pt — the difference
-          goes to the preview (#196). */}
-      <View style={[styles.center, { paddingBottom: insets.bottom + Spacing.three }]}>
-        {state.status === 'merging' && (
-          <>
-            {/* The ring stands in for StateMessage's icon: it's the progress itself. */}
-            <MergeProgressRing progress={state.progress} />
-            <View style={styles.stateWrap}>
-              <StateMessage
-                title="Merging…"
-                message={`Stitching ${formatClipCount(clips.length)} into one video.`}
-              />
-            </View>
-          </>
-        )}
-
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={[
+        styles.fill,
+        { backgroundColor: theme.groupedBackground, paddingTop: insets.top + Spacing.two },
+      ]}>
+      <ScrollView
+        style={styles.fill}
+        contentContainerStyle={[styles.center, { paddingBottom: bottomPadding }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustContentInsets={false}
+        onLayout={({ nativeEvent: { layout } }) =>
+          setViewport({ width: layout.width, height: layout.height })
+        }
+        testID="export.scroll">
         {state.status === 'done' && (
-          <>
-            <MergedPreview
-              uri={state.outputPath}
-              // What the upload will carry: the captions once every clip that speaks has its
-              // words (getDraftCaptions sends none before), so the preview never shows more.
-              lines={!captionsOff && uploadCarries(captions) ? captions.lines : []}
-              captionY={captionY}
-              meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
-              note={captionsOff ? null : <CaptionsNote captions={captions} />}
-            />
-
-            {/* Embedded: captions for this video, on unless the person turns them off. */}
-            {captionsSwitch && (
-              <Pressable
-                onPress={toggleCaptions}
-                disabled={uploading || !editable}
-                accessibilityRole="switch"
-                accessibilityLabel="Captions"
-                accessibilityState={{ checked: !captionsOff, disabled: uploading || !editable }}
-                testID="export.captions"
-                // 34pt pill + 5 each side = a 44pt tap target.
-                hitSlop={5}
-                style={({ pressed }) => [
-                  styles.smallButton,
-                  elementSurface,
-                  (uploading || !editable) && styles.disabled,
-                  pressed && styles.pressed,
-                ]}>
-                <Icon
-                  name={captionsOff ? 'captions.bubble' : 'captions.bubble.fill'}
-                  size={14}
-                  tintColor={theme.text}
-                  scalesWithText
+          <MergedPreview
+            key={state.outputPath}
+            uri={state.outputPath}
+            width={Math.max(0, viewport.width - Spacing.three * 2)}
+            availableHeight={viewport.height - actionsHeight - bottomPadding - Spacing.two}
+            playbackBlocked={busy || sending}
+            // The preview shows only captions the upload will carry.
+            lines={!captionsOff && uploadCarries(captions) ? captions.lines : []}
+            captionY={captionY}
+            meta={`${formatClipCount(clips.length)} · ${formatDuration(state.durationMs)}`}
+            note={captionsOff ? null : <CaptionsNote captions={captions} />}
+          />
+        )}
+        {/* Natural-height controls reserve their space before the preview is sized. If they
+            outgrow the viewport, scrolling keeps every action reachable and Close stays put. */}
+        <View
+          style={styles.controls}
+          onLayout={({ nativeEvent: { layout } }) => setActionsHeight(layout.height)}>
+          {state.status === 'merging' && (
+            <>
+              {/* The ring stands in for StateMessage's icon: it's the progress itself. */}
+              <MergeProgressRing progress={state.progress} />
+              <View style={styles.stateWrap}>
+                <StateMessage
+                  title="Merging…"
+                  message={`Stitching ${formatClipCount(clips.length)} into one video.`}
                 />
-                <ThemedText type="subheadline">
-                  {captionsOff ? 'Captions off' : 'Captions on'}
-                </ThemedText>
-              </Pressable>
-            )}
-
-            {/* The host's type asks for a name: the field to give one. */}
-            {rules?.requireName && editable && (
-              <TextInput
-                defaultValue={draftName ?? ''}
-                placeholder="Name this video"
-                placeholderTextColor={theme.textSecondary}
-                maxLength={DRAFT_NAME_MAX_LENGTH}
-                maxFontSizeMultiplier={MaxTextScale}
-                returnKeyType="done"
-                accessibilityLabel="Video name"
-                onEndEditing={(e) => submitName(e.nativeEvent.text)}
-                style={[styles.nameInput, elementSurface, { color: theme.text }]}
-                testID="export.name"
-              />
-            )}
-
-            {/* Over the host's size cap: said before Send, with the way to make it smaller. */}
-            {sendCheck.tooLarge && (
-              <View style={styles.sendNote} accessibilityLiveRegion="polite">
-                <ThemedText type="footnote" themeColor="warning" style={styles.sendNoteText}>
-                  {sendCheck.tooLarge.text}
-                </ThemedText>
-                {/* Trim only where the shell can take the person to the editor (onTrim). A flow
-                    opened straight on Export has none: the warning stays, Send isn't blocked. */}
-                {onTrim && (
-                  <Pressable
-                    onPress={onTrim}
-                    accessibilityRole="button"
-                    hitSlop={12}
-                    testID="export.trim"
-                    style={({ pressed }) => pressed && styles.pressed}>
-                    <ThemedText type="footnote" themeColor="accent" style={styles.trimLabel}>
-                      {TRIM_LABEL}
-                    </ThemedText>
-                  </Pressable>
-                )}
               </View>
-            )}
+            </>
+          )}
 
-            {/* Inside a host: hand the video back to it. */}
-            {primaryAction.kind === 'use-video' && (
-              <PrimaryButton
-                label={actions.primary.label}
-                icon="checkmark"
-                accessibilityLabel={actions.primary.accessibilityLabel}
-                accessibilityHint={sendCheck.blockText ?? undefined}
-                disabled={sendCheck.block !== null}
-                testID="export.primary"
-                onPress={() => {
-                  if (!sendAllowedNow()) return;
-                  primaryAction.onUse({
-                    draftId,
-                    path: state.outputPath,
-                    durationMs: state.durationMs,
-                  });
-                }}
-              />
-            )}
-            {/* Inside a host, 'pulse' mode: Send through Pulse's outbox. */}
-            {primaryAction.kind === 'send' && send.phase !== 'failed' && (
-              <PrimaryButton
-                label={
-                  send.phase === 'merging'
-                    ? PREPARING_SEND_LABEL
-                    : send.phase === 'confirming'
+          {state.status === 'done' && (
+            <>
+              {/* Embedded: captions for this video, on unless the person turns them off. */}
+              {captionsSwitch && (
+                <Pressable
+                  onPress={toggleCaptions}
+                  disabled={uploading || !editable}
+                  accessibilityRole="switch"
+                  accessibilityLabel="Captions"
+                  accessibilityState={{ checked: !captionsOff, disabled: uploading || !editable }}
+                  testID="export.captions"
+                  // Extra room around the 44pt control.
+                  hitSlop={5}
+                  style={({ pressed }) => [
+                    styles.smallButton,
+                    elementSurface,
+                    (uploading || !editable) && styles.disabled,
+                    pressed && styles.pressed,
+                  ]}>
+                  <Icon
+                    name={captionsOff ? 'captions.bubble' : 'captions.bubble.fill'}
+                    size={14}
+                    tintColor={theme.text}
+                    scalesWithText
+                  />
+                  <ThemedText type="subheadline">
+                    {captionsOff ? 'Captions off' : 'Captions on'}
+                  </ThemedText>
+                </Pressable>
+              )}
+
+              {/* The host's type asks for a name: the field to give one. */}
+              {rules?.requireName && editable && (
+                <TextInput
+                  defaultValue={draftName ?? ''}
+                  placeholder="Name this video"
+                  placeholderTextColor={theme.textSecondary}
+                  maxLength={DRAFT_NAME_MAX_LENGTH}
+                  maxFontSizeMultiplier={MaxTextScale}
+                  returnKeyType="done"
+                  accessibilityLabel="Video name"
+                  onEndEditing={(e) => submitName(e.nativeEvent.text)}
+                  style={[styles.nameInput, elementSurface, { color: theme.text }]}
+                  testID="export.name"
+                />
+              )}
+
+              {/* Over the host's size cap: said before Send, with the way to make it smaller. */}
+              {sendCheck.tooLarge && (
+                <View style={styles.sendNote} accessibilityLiveRegion="polite">
+                  <ThemedText type="footnote" themeColor="warning" style={styles.sendNoteText}>
+                    {sendCheck.tooLarge.text}
+                  </ThemedText>
+                  {/* Trim only where the shell can take the person to the editor (onTrim). A flow
+                    opened straight on Export has none: the warning stays, Send isn't blocked. */}
+                  {onTrim && (
+                    <Pressable
+                      onPress={onTrim}
+                      accessibilityRole="button"
+                      hitSlop={12}
+                      testID="export.trim"
+                      style={({ pressed }) => pressed && styles.pressed}>
+                      <ThemedText type="footnote" themeColor="accent" style={styles.trimLabel}>
+                        {TRIM_LABEL}
+                      </ThemedText>
+                    </Pressable>
+                  )}
+                </View>
+              )}
+
+              {/* Inside a host: hand the video back to it. */}
+              {primaryAction.kind === 'use-video' && (
+                <PrimaryButton
+                  label={actions.primary.label}
+                  icon="checkmark"
+                  accessibilityLabel={actions.primary.accessibilityLabel}
+                  accessibilityHint={sendCheck.blockText ?? undefined}
+                  disabled={sendCheck.block !== null}
+                  testID="export.primary"
+                  onPress={() => {
+                    if (!sendAllowedNow()) return;
+                    primaryAction.onUse({
+                      draftId,
+                      path: state.outputPath,
+                      durationMs: state.durationMs,
+                    });
+                  }}
+                />
+              )}
+              {/* Inside a host, 'pulse' mode: Send through Pulse's outbox. */}
+              {primaryAction.kind === 'send' && send.phase !== 'failed' && (
+                <PrimaryButton
+                  label={
+                    send.phase === 'merging'
+                      ? PREPARING_SEND_LABEL
+                      : send.phase === 'confirming'
+                        ? copy.confirming
+                        : actions.primary.label
+                  }
+                  icon="icloud.and.arrow.up"
+                  busy={sending}
+                  accessibilityLabel={
+                    send.phase === 'confirming'
                       ? copy.confirming
-                      : actions.primary.label
-                }
-                icon="icloud.and.arrow.up"
-                busy={sending}
-                accessibilityLabel={
-                  send.phase === 'confirming' ? copy.confirming : actions.primary.accessibilityLabel
-                }
-                accessibilityHint={sendCheck.blockText ?? undefined}
-                disabled={sendCheck.block !== null || sending}
-                testID="export.primary"
-                onPress={() => void startSend()}
-              />
-            )}
-            {/* The host's confirm failed: nothing was sent and the draft is kept as it is. */}
-            {primaryAction.kind === 'send' && send.phase === 'failed' && (
-              <View style={styles.sendFailed}>
+                      : actions.primary.accessibilityLabel
+                  }
+                  accessibilityHint={sendCheck.blockText ?? undefined}
+                  disabled={sendCheck.block !== null || sending}
+                  testID="export.primary"
+                  onPress={() => void startSend()}
+                />
+              )}
+              {/* The host's confirm failed: nothing was sent and the draft is kept as it is. */}
+              {primaryAction.kind === 'send' && send.phase === 'failed' && (
+                <View style={styles.sendFailed}>
+                  <ThemedText
+                    type="footnote"
+                    themeColor="warning"
+                    accessibilityLiveRegion="polite"
+                    testID="export.sendFailed">
+                    {send.text}
+                  </ThemedText>
+                  <View style={styles.finishedRow}>
+                    {send.retry && (
+                      <PrimaryButton
+                        label={TRY_AGAIN_LABEL}
+                        icon="arrow.clockwise"
+                        disabled={sendCheck.block !== null}
+                        accessibilityHint={sendCheck.blockText ?? undefined}
+                        onPress={() => void startSend()}
+                        style={styles.rowButton}
+                        testID="export.sendRetry"
+                      />
+                    )}
+                    <PrimaryButton
+                      variant="card"
+                      label={KEEP_DRAFT_LABEL}
+                      onPress={primaryAction.onKeepDraft}
+                      style={styles.rowButton}
+                      testID="export.keepDraft"
+                    />
+                  </View>
+                </View>
+              )}
+              {/* Why the primary action is held back: a name, or a connection. */}
+              {sendCheck.blockText && (
                 <ThemedText
                   type="footnote"
-                  themeColor="warning"
+                  themeColor="textSecondary"
                   accessibilityLiveRegion="polite"
-                  testID="export.sendFailed">
-                  {send.text}
+                  testID="export.sendBlocked">
+                  {sendCheck.blockText}
                 </ThemedText>
-                <View style={styles.finishedRow}>
-                  {send.retry && (
-                    <PrimaryButton
-                      label={TRY_AGAIN_LABEL}
-                      icon="arrow.clockwise"
-                      disabled={sendCheck.block !== null}
-                      accessibilityHint={sendCheck.blockText ?? undefined}
-                      onPress={() => void startSend()}
-                      style={styles.rowButton}
-                      testID="export.sendRetry"
-                    />
-                  )}
-                  <PrimaryButton
-                    variant="card"
-                    label={KEEP_DRAFT_LABEL}
-                    onPress={primaryAction.onKeepDraft}
-                    style={styles.rowButton}
-                    testID="export.keepDraft"
-                  />
-                </View>
-              </View>
-            )}
-            {/* Why the primary action is held back: a name, or a connection. */}
-            {sendCheck.blockText && (
-              <ThemedText
-                type="footnote"
-                themeColor="textSecondary"
-                accessibilityLiveRegion="polite"
-                testID="export.sendBlocked">
-                {sendCheck.blockText}
-              </ThemedText>
-            )}
+              )}
 
-            {/* Compact inline row — these are secondary actions; the upload button(s) below
+              {/* Compact inline row — these are secondary actions; the upload button(s) below
                 own the vertical space. */}
-            {(actions.share || actions.saveToPhotos) && (
-              <View style={styles.actionsRow}>
-                {actions.share && (
-                  <Pressable
-                    onPress={runShare}
-                    disabled={busy}
-                    accessibilityRole="button"
-                    accessibilityLabel={busy ? 'Sharing' : 'Share'}
-                    testID="export.share"
-                    accessibilityState={{ disabled: busy, busy }}
-                    // 34pt pill + 5 each side = a 44pt tap target.
-                    hitSlop={5}
-                    // No disabled dimming while busy: the spinner stays at full strength, like
-                    // Photos and Files beside it.
-                    style={({ pressed }) => [
-                      styles.smallButton,
-                      elementSurface,
-                      pressed && styles.pressed,
-                    ]}>
-                    {busy ? (
-                      <ActivityIndicator size="small" color={theme.text} />
-                    ) : (
-                      <>
-                        <Icon
-                          name="square.and.arrow.up"
-                          size={14}
-                          tintColor={theme.text}
-                          scalesWithText
-                        />
-                        <ThemedText type="subheadline">Share</ThemedText>
-                      </>
-                    )}
-                  </Pressable>
-                )}
+              {(actions.share || actions.saveToPhotos) && (
+                <View style={styles.actionsRow}>
+                  {actions.share && (
+                    <Pressable
+                      onPress={runShare}
+                      disabled={busy}
+                      accessibilityRole="button"
+                      accessibilityLabel={busy ? 'Sharing' : 'Share'}
+                      testID="export.share"
+                      accessibilityState={{ disabled: busy, busy }}
+                      // Extra room around the 44pt control.
+                      hitSlop={5}
+                      // No disabled dimming while busy: the spinner stays at full strength, like
+                      // Photos and Files beside it.
+                      style={({ pressed }) => [
+                        styles.smallButton,
+                        elementSurface,
+                        pressed && styles.pressed,
+                      ]}>
+                      {busy ? (
+                        <ActivityIndicator size="small" color={theme.text} />
+                      ) : (
+                        <>
+                          <Icon
+                            name="square.and.arrow.up"
+                            size={14}
+                            tintColor={theme.text}
+                            scalesWithText
+                          />
+                          <ThemedText type="subheadline">Share</ThemedText>
+                        </>
+                      )}
+                    </Pressable>
+                  )}
 
-                {actions.saveToPhotos && (
-                  <Pressable
-                    onPress={() => void photos.save(toFileUri(state.outputPath))}
-                    disabled={photos.status !== 'idle'}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      photos.status === 'saved'
-                        ? 'Saved to Photos'
-                        : photos.status === 'saving'
-                          ? 'Saving to Photos'
-                          : 'Save to Photos'
-                    }
-                    accessibilityState={{
-                      disabled: photos.status !== 'idle',
-                      busy: photos.status === 'saving',
-                    }}
-                    testID="export.saveToPhotos"
-                    // 34pt pill + 5 each side = a 44pt tap target.
-                    hitSlop={5}
-                    style={({ pressed }) => [
-                      styles.smallButton,
-                      elementSurface,
-                      pressed && styles.pressed,
-                    ]}>
-                    {photos.status === 'saving' ? (
-                      <ActivityIndicator size="small" color={theme.text} />
-                    ) : photos.status === 'saved' ? (
-                      <>
-                        <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
-                        <ThemedText type="subheadline">Saved</ThemedText>
-                      </>
-                    ) : (
-                      <>
-                        <Icon
-                          name="square.and.arrow.down"
-                          size={14}
-                          tintColor={theme.text}
-                          scalesWithText
-                        />
-                        <ThemedText type="subheadline">Photos</ThemedText>
-                      </>
-                    )}
-                  </Pressable>
-                )}
-              </View>
-            )}
-          </>
-        )}
+                  {actions.saveToPhotos && (
+                    <Pressable
+                      onPress={() => void photos.save(toFileUri(state.outputPath))}
+                      disabled={photos.status !== 'idle'}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        photos.status === 'saved'
+                          ? 'Saved to Photos'
+                          : photos.status === 'saving'
+                            ? 'Saving to Photos'
+                            : 'Save to Photos'
+                      }
+                      accessibilityState={{
+                        disabled: photos.status !== 'idle',
+                        busy: photos.status === 'saving',
+                      }}
+                      testID="export.saveToPhotos"
+                      // Extra room around the 44pt control.
+                      hitSlop={5}
+                      style={({ pressed }) => [
+                        styles.smallButton,
+                        elementSurface,
+                        pressed && styles.pressed,
+                      ]}>
+                      {photos.status === 'saving' ? (
+                        <ActivityIndicator size="small" color={theme.text} />
+                      ) : photos.status === 'saved' ? (
+                        <>
+                          <Icon name="checkmark" size={14} tintColor={theme.text} scalesWithText />
+                          <ThemedText type="subheadline">Saved</ThemedText>
+                        </>
+                      ) : (
+                        <>
+                          <Icon
+                            name="square.and.arrow.down"
+                            size={14}
+                            tintColor={theme.text}
+                            scalesWithText
+                          />
+                          <ThemedText type="subheadline">Photos</ThemedText>
+                        </>
+                      )}
+                    </Pressable>
+                  )}
+                </View>
+              )}
+            </>
+          )}
 
-        {state.status === 'error' && (
-          <View style={styles.stateWrap}>
-            <StateMessage
-              icon="exclamationmark.triangle.fill"
-              tone="accent"
-              title="Export failed"
-              message={state.message}
-              messageLines={4}>
-              <PrimaryButton label="Try again" icon="arrow.clockwise" onPress={run} />
-            </StateMessage>
-          </View>
-        )}
+          {state.status === 'error' && (
+            <View style={styles.stateWrap}>
+              <StateMessage
+                icon="exclamationmark.triangle.fill"
+                tone="accent"
+                title="Export failed"
+                message={state.message}
+                messageLines={4}>
+                <PrimaryButton label="Try again" icon="arrow.clockwise" onPress={run} />
+              </StateMessage>
+            </View>
+          )}
 
-        {/* The UPLOAD section. The merge always runs (above) and the Upload button waits on
+          {/* The UPLOAD section. The merge always runs (above) and the Upload button waits on
             `state.status === 'done'`. Shown while there's something actionable: destinations to
             pick, or a run in flight. A failed upload is a toast, not UI here — the draft is
             unpaired again, and a new link is the retry (for a draft recorded for a place, the
             line that says to open a new link for it). A previously-uploaded draft with nothing to
             pick shows no upload UI at all (§ post-upload UX — no persistent buttons), but for
             the way back to the host its upload just came from. */}
-        {pool &&
-          (targets.available ||
-            targets.reopen ||
-            uState.status === 'uploading' ||
-            finished ||
-            back) && (
-            <View style={styles.uploadSection}>
-              <SectionHeader title="Upload" />
+          {pool &&
+            (targets.available ||
+              targets.reopen ||
+              uState.status === 'uploading' ||
+              finished ||
+              back) && (
+              <View style={styles.uploadSection}>
+                <SectionHeader title="Upload" />
 
-              {uState.status === 'uploading' ? (
-                <View style={[styles.uploadingBar, elementSurface]}>
-                  <ActivityIndicator color={theme.text} />
-                  {/* Phase-aware label — names the step in flight (preparing, captions,
+                {uState.status === 'uploading' ? (
+                  <View style={[styles.uploadingBar, elementSurface]}>
+                    <ActivityIndicator color={theme.text} />
+                    {/* Phase-aware label — names the step in flight (preparing, captions,
                     manifest, thumbnail, video) instead of sitting at a
                     generic "Uploading… 0%" through all the pre-video work. It fills the row
                     (one line, tabular digits), so the spinner stays left and the ✕ stays put
                     as the percentage ticks. */}
-                  <ThemedText numberOfLines={1} style={styles.uploadingLabel}>
-                    {uploadPhaseLabel(uState)}
-                  </ThemedText>
-                  <Pressable
-                    onPress={() => void upload.cancel()}
-                    // 16pt glyph + 14 each side = a 44pt tap target.
-                    hitSlop={14}
-                    accessibilityRole="button"
-                    accessibilityLabel="Cancel upload"
-                    style={({ pressed }) => pressed && styles.pressedIcon}>
-                    <Icon name="xmark" size={16} tintColor={theme.textSecondary} />
-                  </Pressable>
-                </View>
-              ) : finished ? (
-                // Side by side in one 52pt row — the same space the Upload button took, so the
-                // preview doesn't shrink when the upload finishes. The "link copied" toast
-                // covers what the old note under these buttons said. An upload to the draft's own
-                // place adds "Back to <app>" above them, the step the person most likely wants next.
-                <View style={styles.finishedStack}>
-                  {backButton}
-                  <View style={styles.finishedRow}>
-                    <PrimaryButton
-                      variant={back ? 'card' : 'filled'}
-                      label="Watch"
-                      icon="play.fill"
-                      onPress={() => void targets.watch(finished.link.url)}
-                      style={styles.rowButton}
-                    />
-                    {/* Only a link that's safe to share — never one carrying the upload token. */}
-                    {finished.link.shareable && (
+                    <ThemedText numberOfLines={1} style={styles.uploadingLabel}>
+                      {uploadPhaseLabel(uState)}
+                    </ThemedText>
+                    <Pressable
+                      onPress={() => void upload.cancel()}
+                      // 16pt glyph + 14 each side = a 44pt tap target.
+                      hitSlop={14}
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel upload"
+                      style={({ pressed }) => pressed && styles.pressedIcon}>
+                      <Icon name="xmark" size={16} tintColor={theme.textSecondary} />
+                    </Pressable>
+                  </View>
+                ) : finished ? (
+                  // Side by side in one 52pt row — the same space the Upload button took, so the
+                  // preview doesn't shrink when the upload finishes. The "link copied" toast
+                  // covers what the old note under these buttons said. An upload to the draft's own
+                  // place adds "Back to <app>" above them, the step the person most likely wants next.
+                  <View style={styles.finishedStack}>
+                    {backButton}
+                    <View style={styles.finishedRow}>
                       <PrimaryButton
-                        variant="card"
-                        label="Share link"
-                        icon="square.and.arrow.up"
-                        onPress={() => void targets.share(finished.link.url).catch(() => {})}
+                        variant={back ? 'card' : 'filled'}
+                        label="Watch"
+                        icon="play.fill"
+                        onPress={() => void targets.watch(finished.link.url)}
                         style={styles.rowButton}
                       />
-                    )}
+                      {/* Only a link that's safe to share — never one carrying the upload token. */}
+                      {finished.link.shareable && (
+                        <PrimaryButton
+                          variant="card"
+                          label="Share link"
+                          icon="square.and.arrow.up"
+                          busy={busy}
+                          disabled={busy}
+                          onPress={() => void runShareLink(finished.link.url)}
+                          style={styles.rowButton}
+                        />
+                      )}
+                    </View>
                   </View>
-                </View>
-              ) : back ? (
-                // An upload that finished before this screen was opened again: its way back, then
-                // whatever there is to upload to next.
-                <View style={styles.finishedStack}>
-                  {backButton}
-                  {selectorAndUpload}
-                </View>
-              ) : (
-                selectorAndUpload
-              )}
-            </View>
-          )}
+                ) : back ? (
+                  // An upload that finished before this screen was opened again: its way back, then
+                  // whatever there is to upload to next.
+                  <View style={styles.finishedStack}>
+                    {backButton}
+                    {selectorAndUpload}
+                  </View>
+                ) : (
+                  selectorAndUpload
+                )}
+              </View>
+            )}
+        </View>
+      </ScrollView>
+      <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.two }]}>
+        <CloseButton onClose={close} label="Back from export" testID="export.close" />
       </View>
-    </ThemedView>
+    </KeyboardAvoidingView>
   );
 }
 
 /**
  * Plays the merged output. Mounts only once the merge is done, so `uri` is known at first
- * render and the player never needs a source swap. Plays once (no loop); play/pause and the
- * seek bar are expo-video's native controls (#210).
+ * render and the player never needs a source swap. Starts paused and plays once (no loop).
+ * The visible Play/Pause button complements expo-video's native seek controls (#210).
  */
 function MergedPreview({
   uri,
+  width,
+  availableHeight,
+  playbackBlocked,
   lines,
   captionY,
   meta,
   note,
 }: {
   uri: string;
+  width: number;
+  availableHeight: number;
+  playbackBlocked: boolean;
   lines: readonly TranscriptLine[];
   /** Where the captions were moved to in the editor (null: the default place). */
   captionY: number | null;
@@ -814,11 +862,9 @@ function MergedPreview({
   const mode = useThemeMode();
   const player = useVideoPlayer(toFileUri(uri), (p) => {
     p.timeUpdateEventInterval = 0.1;
-    p.play();
+    p.pause();
   });
-  // Parked playback: on end the playhead reparks at 0 (while paused), so the native play button
-  // restarts cleanly instead of blipping the clip's end. Only the park side effect is used here.
-  useParkedPlayback(player);
+  const { isPlaying, togglePlay } = useExportPlayback(player, playbackBlocked);
   const timeUpdate = useEvent(player, 'timeUpdate');
   const positionMs = (timeUpdate?.currentTime ?? player.currentTime) * 1000;
   // The player's time for the caption (drawn on the UI thread, as in the editor).
@@ -828,33 +874,29 @@ function MergedPreview({
   }, [positionMs, timeMs]);
   const captionStyle = useMemo(() => captionStyleFor(captionY), [captionY]);
 
-  // Largest 9:16 rect that fits the measured frame. Yoga can't express this — a max
-  // constraint on the aspect-derived axis clamps it without re-shrinking the defined one,
-  // which is exactly the off-ratio card #196 flags — so measure and do the math.
-  const [frame, setFrame] = useState<{ width: number; height: number } | null>(null);
-  // The meta pill sits in flow above the card, so its row comes out of the height budget. Its
-  // text grows with the text size (up to META_MAX_SCALE), so the row is worked out from the
-  // scale rather than reserved at the largest size, which would leave a gap at the usual one.
-  const { fontScale } = useWindowDimensions();
-  const metaRow =
-    META_LINE_HEIGHT * Math.min(fontScale, META_MAX_SCALE) + META_PILL_PAD_V * 2 + META_GAP;
-  const cardWidth = frame ? Math.min(frame.width, ((frame.height - metaRow) * 9) / 16) : 0;
-  const cardHeight = (cardWidth * 16) / 9;
+  // Measure the metadata too: Dynamic Type and wrapping change its actual height.
+  const [metadataHeight, setMetadataHeight] = useState(0);
+  const [playbackHeight, setPlaybackHeight] = useState(0);
+  const card = exportPreviewSize(
+    width,
+    availableHeight,
+    metadataHeight + playbackHeight + META_GAP * 2,
+  );
+  const cardWidth = card.width;
+  const cardHeight = card.height;
 
   return (
-    <View
-      style={styles.previewFrame}
-      onLayout={({ nativeEvent: { layout } }) =>
-        setFrame({ width: layout.width, height: layout.height })
-      }>
-      {frame != null && (
+    <View style={styles.previewFrame} testID="export.preview">
+      <View
+        style={styles.previewMeta}
+        onLayout={({ nativeEvent: { layout } }) => setMetadataHeight(layout.height)}>
         <View style={[styles.metaPill, ControlScrim[mode]]}>
           <ThemedText maxFontSizeMultiplier={META_MAX_SCALE} style={styles.metaText}>
             {meta}
           </ThemedText>
         </View>
-      )}
-      {frame != null && (
+      </View>
+      {cardWidth > 0 && (
         <View style={[styles.previewCard, { width: cardWidth, height: cardHeight }]}>
           <View style={styles.previewSurface}>
             {/* Fullscreen/PiP off: captions are an RN overlay, not burned in, so they'd be lost. */}
@@ -883,6 +925,25 @@ function MergedPreview({
           </View>
         </View>
       )}
+      <View
+        style={styles.previewPlayback}
+        onLayout={({ nativeEvent: { layout } }) => setPlaybackHeight(layout.height)}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={isPlaying ? 'Pause preview' : 'Play preview'}
+          accessibilityState={{ disabled: playbackBlocked }}
+          disabled={playbackBlocked}
+          onPress={togglePlay}
+          testID="export.play"
+          style={({ pressed }) => [
+            styles.playButton,
+            ControlScrim[mode],
+            playbackBlocked && styles.disabled,
+            pressed && styles.pressed,
+          ]}>
+          <Icon name={isPlaying ? 'pause.fill' : 'play.fill'} size={20} tintColor="#fff" />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -925,9 +986,7 @@ function CaptionsNote({ captions }: { captions: DraftCaptions }) {
   );
 }
 
-/** The meta pill: the recorder timer pill's 4pt padding around its 16pt text (28pt at the
- * default text size), and its gap to the video — reserved out of the preview frame's height.
- * Text over video stops growing at 1.3×, so the pill can't crowd the preview out. */
+/** Metadata is measured in flow; its video text follows the recorder's 1.3× scale cap. */
 const META_LINE_HEIGHT = 20;
 const META_PILL_PAD_V = 4;
 const META_GAP = Spacing.one + Spacing.one;
@@ -935,22 +994,20 @@ const META_MAX_SCALE = 1.3;
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  header: {
+  footer: {
+    flexShrink: 0,
     paddingHorizontal: Spacing.three,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
   },
-  // All the column height the rows below don't claim — the preview grows when the upload
-  // section is absent and adapts per screen instead of fixed 90%/66% caps (#196).
   previewFrame: {
-    flex: 1,
     alignSelf: 'stretch',
     alignItems: 'center',
     justifyContent: 'center',
   },
   previewCard: {
-    // Sized inline by MergedPreview to the largest 9:16 rect fitting previewFrame — exact
+    // Sized inline by MergedPreview to the largest 9:16 rect fitting the remaining space — exact
     // ratio, so the contained video fills the card with no pillarboxing. Same corners as the
     // captions editor's preview of this video.
     overflow: 'hidden',
@@ -959,19 +1016,38 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
   },
   center: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,
-    // The same 16pt gutter as the header, so the ✕ and the content share an edge.
+    // Leave the same gutter as the lower return control.
     paddingHorizontal: Spacing.three,
-    // paddingBottom is inline — it tracks the safe-area inset.
+    // Extra space before the fixed return footer; the footer owns the bottom safe area.
+  },
+  controls: { alignSelf: 'stretch', alignItems: 'center', gap: Spacing.two },
+  previewMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    marginBottom: META_GAP,
+  },
+  previewPlayback: { marginTop: META_GAP },
+  playButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   // Full width, so StateMessage's actions (Try again) span the column instead of hugging the
   // text.
   stateWrap: { alignSelf: 'stretch' },
   actionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
     gap: Spacing.two,
     marginTop: Spacing.one,
@@ -986,7 +1062,6 @@ const styles = StyleSheet.create({
     paddingVertical: META_PILL_PAD_V,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: META_GAP,
   },
   captionsNote: {
     position: 'absolute',
@@ -1012,8 +1087,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.one,
-    // A floor, so a large text size grows the pill instead of clipping its label.
-    minHeight: 34,
+    // A full tap target even when this row wraps inside the scrolling fallback.
+    minHeight: 44,
     paddingHorizontal: Spacing.three,
     borderRadius: 17,
   },

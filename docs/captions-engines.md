@@ -133,7 +133,7 @@ Design, per clip:
    (zh-Hans vs zh-Hant, zh-TW, zh-HK), not from the audio. The audio doesn't say which script the
    viewer reads.
 4. **Store it like any other transcript.** The words go in the existing
-   [clip_transcripts table](../src/db/schema.ts#L177), keyed by an engine id
+   [clip_transcripts table](../src/db/schema.ts#L202-L215), keyed by an engine id
    (for example `apple-<locale>`) and clip, with its source file. Use the current
    [file-time centisecond word type](../src/core/types/transcription.ts), so compose and edits work
    unchanged.

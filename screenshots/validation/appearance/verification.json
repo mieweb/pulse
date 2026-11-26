@@ -1,0 +1,142 @@
+{
+  "device": "iPhone 17 Pro",
+  "runtime": "iOS 26.0",
+  "checks": [
+    {
+      "check": "after-system-dark",
+      "value": "System (dark)",
+      "pass": true
+    },
+    {
+      "check": "radio selection",
+      "selected": "System (device)",
+      "pass": true
+    },
+    {
+      "check": "after-dismissed-dark",
+      "value": "System (dark)",
+      "pass": true
+    },
+    {
+      "check": "after-system-light",
+      "value": "System (light)",
+      "pass": true
+    },
+    {
+      "check": "System (dark)",
+      "value": "System (dark)",
+      "pass": true
+    },
+    {
+      "check": "radio selection",
+      "selected": "System (device)",
+      "pass": true
+    },
+    {
+      "check": "after-light-locked-device-dark",
+      "value": "light",
+      "pass": true
+    },
+    {
+      "check": "light",
+      "value": "light",
+      "pass": true
+    },
+    {
+      "check": "after-light-still-locked",
+      "value": "light",
+      "pass": true
+    },
+    {
+      "check": "after-light-relaunch",
+      "value": "light",
+      "pass": true
+    },
+    {
+      "check": "radio selection",
+      "selected": "Always light",
+      "pass": true
+    },
+    {
+      "check": "after-system-restored-from-light",
+      "value": "System (dark)",
+      "pass": true
+    },
+    {
+      "check": "System (light)",
+      "value": "System (light)",
+      "pass": true
+    },
+    {
+      "check": "radio selection",
+      "selected": "System (device)",
+      "pass": true
+    },
+    {
+      "check": "after-dark-locked-device-light",
+      "value": "dark",
+      "pass": true
+    },
+    {
+      "check": "dark",
+      "value": "dark",
+      "pass": true
+    },
+    {
+      "check": "after-dark-still-locked",
+      "value": "dark",
+      "pass": true
+    },
+    {
+      "check": "after-dark-relaunch",
+      "value": "dark",
+      "pass": true
+    },
+    {
+      "check": "radio selection",
+      "selected": "Always dark",
+      "pass": true
+    },
+    {
+      "check": "after-system-restored-from-dark",
+      "value": "System (light)",
+      "pass": true
+    },
+    {
+      "check": "after-system-live-dark",
+      "value": "System (dark)",
+      "pass": true
+    },
+    {
+      "check": "after-system-live-light",
+      "value": "System (light)",
+      "pass": true
+    },
+    {
+      "check": "after-system-relaunch",
+      "value": "System (light)",
+      "pass": true
+    }
+  ],
+  "allPassed": true,
+  "physicalDeviceActions": false,
+  "coordinateFallbackUsed": false,
+  "storedFinalPreference": "system",
+  "freshInstallPreferenceBeforeFirstPass": null,
+  "freshUnsetPreferenceResolvedToDeviceDark": true,
+  "nativeShellReused": true,
+  "bundleSha256": "069576968b26323e6561dddd90ee9dcefeb91a56ebe5896347e3c1bac33093e1",
+  "sourceHashes": {
+    "src/components/action-menu.tsx": "fd319f79d3aecbbe6bf34a1f9560e427ba0a7ae6afadd27561afdda646f9fc1b",
+    "src/features/drafts/drafts-screen.tsx": "2b107a6ae88abb34d14be9f4d46c25789a1ba562a80114c8ac5940460507411d",
+    "src/hooks/use-theme.tsx": "92e23b5f1d85f582e494663109573e84eff9a54a45a060fd3e57830f7318f010"
+  },
+  "cleanup": {
+    "sessionDeleted": true,
+    "ownedXcodebuildExited": true,
+    "ownedRunnerAbsent": true,
+    "simulatorShutdown": true,
+    "simulatorAppearanceRestored": "light",
+    "finalSavedPreference": "system"
+  }
+}

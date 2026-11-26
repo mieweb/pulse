@@ -48,8 +48,8 @@ export function ViewSwitcher({
   );
 }
 
-/** A round header button: an icon, dimmed while pressed or disabled. */
-export function HeaderButton({
+/** A full touch target for an editor command, dimmed while pressed or disabled. */
+export function CommandButton({
   icon,
   label,
   onPress,
@@ -68,11 +68,11 @@ export function HeaderButton({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
       testID={testID}
-      style={({ pressed }) => [styles.headerButton, (disabled || pressed) && styles.dim]}>
+      style={({ pressed }) => [styles.commandButton, (disabled || pressed) && styles.dim]}>
       <Icon name={icon} size={18} weight="semibold" tintColor={theme.text} />
     </Pressable>
   );
@@ -91,10 +91,10 @@ const styles = StyleSheet.create({
     height: 30,
     borderRadius: 15,
   },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  commandButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },

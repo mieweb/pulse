@@ -129,9 +129,9 @@ export function runMigrations(mode: PulseMode, afterMigrations?: () => void): Pr
       } catch (e) {
         console.warn('[cleanup] after-migrations housekeeping failed', e);
       }
-      // Clips undone out of a draft when Pulse last closed, their redo gone with it. A library
-      // recovered or restored this launch only forgets the list: its rows may not be the ones
-      // the list was written against.
+      // Explicitly held/evicted undo media: durable history and live rows keep referenced files.
+      // A library recovered or restored this launch only forgets the list: its rows may not be
+      // the ones the list was written against.
       try {
         const fresh = library.recoveredFrom == null && !library.restored;
         const held = dropHeldFiles(fresh ? referencedMediaPaths(expoDb) : null);
