@@ -1,0 +1,64 @@
+{
+  "defaultPrefilled": true,
+  "doesNotAutoRun": true,
+  "presets": [
+    {
+      "id": "default",
+      "promptMatches": true,
+      "selectedStates": {
+        "default": true,
+        "highlights": false,
+        "work-update": false,
+        "story": false
+      }
+    },
+    {
+      "id": "highlights",
+      "promptMatches": true,
+      "selectedStates": {
+        "default": false,
+        "highlights": true,
+        "work-update": false,
+        "story": false
+      }
+    },
+    {
+      "id": "work-update",
+      "promptMatches": true,
+      "selectedStates": {
+        "default": false,
+        "highlights": false,
+        "work-update": true,
+        "story": false
+      }
+    },
+    {
+      "id": "story",
+      "promptMatches": true,
+      "selectedStates": {
+        "default": false,
+        "highlights": false,
+        "work-update": false,
+        "story": true
+      }
+    }
+  ],
+  "resetRestoresDefault": true,
+  "customTextEditable": true,
+  "customDeselectsPresets": true,
+  "keyboardVisibleAndDismissedViaAccessibleButton": true,
+  "createReachedRealNativeUnavailable": true,
+  "customPromptPreservedOnFailure": true,
+  "savedPromptSurvivesCloseReopen": true,
+  "savedPromptSurvivesFullRelaunch": true,
+  "fixturePromptRestoredToDefault": true,
+  "allSixExactNotesVerifiedInNativeAccessibility": true,
+  "lastReleaseNoteScrolledVisible": true,
+  "sameFinalJsOrdinaryReleaseAiEntryHidden": true,
+  "ownedWdaSessionEnded": true,
+  "ownedWdaHostExited": true,
+  "ownedWdaDeviceRunnerAbsent": true,
+  "ownedWdaEndpointStopped": true,
+  "physicalInferenceVerified": false,
+  "platform": "iPhone17Pro iOS26.0 Simulator"
+}

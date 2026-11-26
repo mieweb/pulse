@@ -1,5 +1,8 @@
 # AI edit developer preview verification
 
+The current [editable-prompt verification](editable-prompt/README.md) supersedes this initial
+automatic-start screen. The evidence below records the first MVP handoff.
+
 Captured on 2026-11-25 in a dedicated **iPhone 17 Pro / iOS 26.0 simulator**. The screenshots use
 an isolated synthetic 16-second project, not a user's recording. The app is the compatible phone
 integration described in the [handoff](../../../docs/testing/ai-edit-phone-build.md).

@@ -3,13 +3,10 @@
   "version": "2.8.0",
   "buildNumber": "1",
   "featureBranch": "ai-auto-edit",
-  "featureCommit": "fe06763ecdc9d27e0985e27d3f7b5f33609b2727",
-  "phoneSourceBranch": "codex/ai-auto-edit-phone-test",
-  "phoneSourceCommit": "e5e80694145a6533c77bc42fc3d56256b1f403e5",
-  "compatiblePhoneBase": [
-    "646f309",
-    "d3a853e"
-  ],
+  "featureCommit": "6ee6c27a6ea43eb17f37d273ee21d619b7c4a354",
+  "phoneSourceBranch": "codex/ai-prompt-phone-test",
+  "phoneSourceCommit": "7cf04259a3462be6d2b7bc6083bd6f88ce612775",
+  "compatiblePhoneBase": ["646f309", "d3a853e"],
   "nativeEngine": "306ff1d999589be6615275c60567ba371f073efd",
   "developerFeatures": {
     "developerBuild": true,
@@ -25,11 +22,11 @@
       "npx tsc --noEmit -p embed",
       "npx tsc --noEmit -p embed/packages/pulse-embed",
       "npm run check:embed",
-      "prettier --check <changed supported files from fe06763~2..fe06763>",
-      "git diff --check fe06763~2..fe06763"
+      "prettier --check <changed supported AI feature files>",
+      "git diff --check e3b99d5^..6ee6c27"
     ],
-    "testSuitesPassed": 159,
-    "testsPassed": 2213,
+    "testSuitesPassed": 162,
+    "testsPassed": 2230,
     "testSuitesSkipped": 1,
     "testsSkipped": 8,
     "skippedCoverage": "Opt-in PulseVault integration suite was not enabled; no integration pass is claimed.",
@@ -49,7 +46,12 @@
     "developerReleaseShowsAiAction": true,
     "nativeUnavailableStateVerifiedInSimulator": true,
     "signaturesVerified": true,
-    "entitlementsPreserved": true
+    "entitlementsPreserved": true,
+    "editablePromptBridgeRecompiled": true,
+    "defaultPrefillVerifiedInSimulator": true,
+    "promptEditingPresetsResetAndKeyboardVerifiedInSimulator": true,
+    "lastUsedPromptSurvivesFullRelaunch": true,
+    "noAutomaticStart": true
   },
   "physicalChecks": {
     "installed": true,
@@ -63,7 +65,6 @@
     "privateSQLiteBackupSavedOutsideRepository": true,
     "physicalInferenceVerified": false,
     "physicalExportVerified": false,
-    "initialLaunchWasBlockedByDeviceLock": true,
     "handoffAppRunning": true
   },
   "release": {
@@ -74,13 +75,20 @@
     "deploymentProcessesExited": true
   },
   "hashes": {
-    "Pulse": "891ea4f9f2c8fe8f412c4a48201d24ac598edd6eb659f6f85fcb4a6d8d9acd07",
-    "main.jsbundle": "ddd59ddddfc05be52385990cf1ab5554a7c14835baeda5561a8ac4be610ad581",
-    "EXConstants.bundle/app.config": "31829bbd6e70aa496237ea2f062a86eae72a67c93a36c3e26cb72db5cb487795"
+    "Pulse": "bc098e4dab25690c31fbae424dd08b7f8dd427211c8c88b7861b88a6a8dcdfe5",
+    "main.jsbundle": "ce4b56228e64ba69ba021e814fd894c39360b857d3cba66aac7d87b7496ae236",
+    "EXConstants.bundle/app.config": "b71dfc3616f1b952d86837161046ccf478ff5ddcdf4caddd05091618c0620052"
   },
   "remainingUserChecks": [
-    "Run a real 8–12 minute English recording through AI edit and review retained meaning and joins.",
+    "Compare Default, another preset and custom instructions on the same real 8–12 minute English recording; review retained meaning and joins.",
     "After model setup, cold launch and complete editing/export in airplane mode.",
-    "Measure real exported duration, latency, peak memory and thermal behavior."
-  ]
+    "Measure actual exported duration, latency, peak memory and thermal behavior; test cancellation/backgrounding."
+  ],
+  "promptBehavior": {
+    "originalDefaultPreserved": true,
+    "presets": ["Default", "Highlights", "Work update", "Story"],
+    "maximumUtf16CodeUnits": 2000,
+    "savedLocallyOnCreate": true,
+    "sameFrozenPromptAcrossAllPasses": true
+  }
 }
