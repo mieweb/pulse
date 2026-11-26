@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { requireOptionalNativeModule } from 'expo';
 
 import aiEditor, { type AiEditorPassage, type AiEditorSelection } from './AiEditorModule';
+import { DEFAULT_AI_EDIT_PROMPT, MAX_AI_EDIT_PROMPT_LENGTH } from './prompt';
 
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 jest.mock('expo', () => {
@@ -11,7 +12,12 @@ jest.mock('expo', () => {
 
 const native = requireOptionalNativeModule<{
   selectPassages: jest.Mock<
-    (passages: AiEditorPassage[], targetMs: number, id: string) => Promise<AiEditorSelection>
+    (
+      passages: AiEditorPassage[],
+      targetMs: number,
+      id: string,
+      editingPrompt: string,
+    ) => Promise<AiEditorSelection>
   >;
   cancel: jest.Mock<(id: string) => Promise<void>>;
 }>('AiEditor')!;
@@ -20,6 +26,43 @@ const passages = [{ id: 'p1', text: 'Keep this thought.', durationMs: 1_000 }];
 beforeEach(() => {
   native.selectPassages.mockReset();
   native.cancel.mockReset().mockResolvedValue(undefined);
+});
+
+describe('editable AI instructions', () => {
+  it('forwards the original default and unchanged passage/time inputs when instructions are omitted', async () => {
+    native.selectPassages.mockResolvedValue({ selectedIds: ['p1'] });
+    await aiEditor.selectPassages(passages, 2_000);
+
+    expect(native.selectPassages).toHaveBeenCalledWith(
+      passages,
+      2_000,
+      expect.any(String),
+      DEFAULT_AI_EDIT_PROMPT,
+    );
+  });
+
+  it('trims and forwards custom instructions after the cancellation request ID', async () => {
+    native.selectPassages.mockResolvedValue({ selectedIds: ['p1'] });
+    await aiEditor.selectPassages(passages, 2_000, '  Keep decisions and next steps.\n  ');
+
+    expect(native.selectPassages).toHaveBeenCalledWith(
+      passages,
+      2_000,
+      expect.any(String),
+      'Keep decisions and next steps.',
+    );
+  });
+
+  it('rejects blank and oversized instructions before calling native or reserving a request', async () => {
+    for (const prompt of [' \n\t ', 'x'.repeat(MAX_AI_EDIT_PROMPT_LENGTH + 1)]) {
+      await expect(aiEditor.selectPassages(passages, 2_000, prompt)).rejects.toThrow();
+    }
+    expect(native.selectPassages).not.toHaveBeenCalled();
+    expect(native.cancel).not.toHaveBeenCalled();
+
+    native.selectPassages.mockResolvedValue({ selectedIds: ['p1'] });
+    await expect(aiEditor.selectPassages(passages, 2_000)).resolves.toEqual({ selectedIds: ['p1'] });
+  });
 });
 
 describe('native request cancellation', () => {
@@ -42,7 +85,7 @@ describe('native request cancellation', () => {
       cancelled.add(id);
     });
 
-    const selection = aiEditor.selectPassages(passages, 2_000);
+    const selection = aiEditor.selectPassages(passages, 2_000, 'Keep the main decision.');
     const outcome = selection.catch((error: unknown) => error);
     const cancellation = aiEditor.cancel();
     let cancelSettled = false;
@@ -55,6 +98,7 @@ describe('native request cancellation', () => {
     expect(native.cancel).toHaveBeenCalledTimes(1);
     await Promise.resolve();
     expect(native.cancel.mock.calls[0][0]).toBe(native.selectPassages.mock.calls[0][2]);
+    expect(native.selectPassages.mock.calls[0][3]).toBe('Keep the main decision.');
     expect(cancelSettled).toBe(false);
     registerSelection();
 

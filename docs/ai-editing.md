@@ -29,7 +29,27 @@ leasing and verified release.
 On an Apple Intelligence-capable iPhone with iOS 26+, enable Apple Intelligence and wait for its
 system model to become available. Download the chosen speech model through On-device AI before
 going offline. Open a spoken-video project, open the editor, and tap **AI edit** (the sparkle
-button). The result opens as a new **AI cut** project. Review/trim/remove clips and export normally.
+button). Review or edit **Editing instructions**, then tap **Create AI cut**. The result opens as a
+new **AI cut** project. Review/trim/remove clips and export normally.
+
+## Editing instructions and styles
+
+The editable field starts with the successful original editorial instructions. **Default**,
+**Highlights**, **Work update** and **Story** fill that same field with a complete prompt, which can
+then be edited. **Reset to default** restores the original. The app remembers the last used
+instructions in its local settings when a cut is started; no database migration is needed.
+
+Instructions must contain text and fit within 2,000 UTF-16 code units (the field's character
+counter uses the same limit). One validated copy is captured when the job starts and used for
+every shortlist and final selection call. Changing a later run's preference cannot change an
+in-flight edit. Missing or invalid restored preferences fall back to the original default.
+
+`modules/expo-ai-editor/src/prompt.ts` is the authoritative source for the default editorial text,
+presets and JavaScript validation. Swift validates the received text independently and appends the
+existing fixed output protocol. The default editorial text plus that protocol reproduces the
+original full instructions exactly. Selection IDs, source ranges, ordering and duration remain
+enforced by the existing schema and planner. Style preferences guide selection of original speech;
+they do not synthesize a new voice or rewrite the recorded words.
 
 ## Processing and persistence
 

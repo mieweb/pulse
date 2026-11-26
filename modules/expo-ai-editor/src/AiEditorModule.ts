@@ -1,6 +1,8 @@
 import { requireOptionalNativeModule } from 'expo';
 import { Platform } from 'react-native';
 
+import { DEFAULT_AI_EDIT_PROMPT, validateAiEditPrompt } from './prompt';
+
 export type AiEditorAvailability = {
   available: boolean;
   reason:
@@ -31,6 +33,7 @@ type AiEditor = {
   selectPassages(
     passages: AiEditorPassage[],
     targetDurationMs: number,
+    editingPrompt?: string,
   ): Promise<AiEditorSelection>;
   cancel(): Promise<void>;
 };
@@ -41,6 +44,7 @@ type NativeAiEditor = {
     passages: AiEditorPassage[],
     targetDurationMs: number,
     requestId: string,
+    editingPrompt: string,
   ): Promise<AiEditorSelection>;
   cancel(requestId: string): Promise<void>;
 };
@@ -73,7 +77,7 @@ const aiEditor: AiEditor = {
   async availability() {
     return native ? native.availability() : unavailable;
   },
-  async selectPassages(passages, targetDurationMs) {
+  async selectPassages(passages, targetDurationMs, editingPrompt = DEFAULT_AI_EDIT_PROMPT) {
     if (!native) {
       throw Object.assign(new Error(unavailable.message), {
         code: 'ERR_AI_UNAVAILABLE',
@@ -84,13 +88,14 @@ const aiEditor: AiEditor = {
         code: 'ERR_AI_BUSY',
       });
     }
+    const prompt = validateAiEditPrompt(editingPrompt);
     const id = `${requestPrefix}-${++requestSequence}`;
     // Publish the ID before crossing the bridge. Native actor tasks may register
     // cancellation before selection, so both operations carry the same ID.
     const request = {
       id,
       promise: Promise.resolve().then(() =>
-        native.selectPassages(passages, targetDurationMs, id),
+        native.selectPassages(passages, targetDurationMs, id, prompt),
       ),
     };
     activeRequest = request;

@@ -18,14 +18,16 @@ public final class AiEditorModule: Module {
     }
 
     AsyncFunction("selectPassages") {
-      (records: [AiEditorPassageRecord], targetDurationMs: Double, requestId: String, promise: Promise) in
+      (records: [AiEditorPassageRecord], targetDurationMs: Double, requestId: String,
+       editingPrompt: String, promise: Promise) in
       let passages = records.map {
         AiEditorPassage(id: $0.id, text: $0.text, durationMs: $0.durationMs)
       }
       Task {
         do {
           let ids = try await self.engine.select(
-            passages, targetDurationMs: targetDurationMs, requestId: requestId
+            passages, targetDurationMs: targetDurationMs, requestId: requestId,
+            editingPrompt: editingPrompt
           )
           promise.resolve(["selectedIds": ids])
         } catch let error as AiEditorError {

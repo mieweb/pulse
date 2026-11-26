@@ -32,6 +32,10 @@ jest.mock('./enabled', () => ({ isAiEditingEnabled: jest.fn() }));
 
 /* eslint-disable import/first -- native mocks precede the service imports */
 import aiEditor from '../../../modules/expo-ai-editor/src/AiEditorModule';
+import {
+  DEFAULT_AI_EDIT_PROMPT,
+  MAX_AI_EDIT_PROMPT_LENGTH,
+} from '../../../modules/expo-ai-editor/src/prompt';
 import { aiEditSourceSignature, assertAiEditAudioSupported, createAiEdit } from '@/db/ai-edits';
 import { getClipTranscripts, saveClipTranscript } from '@/db/clip-transcripts';
 import { getDraftName, segmentsForDraft } from '@/db/drafts';
@@ -135,6 +139,7 @@ describe('foreground offline AI edit service', () => {
     const before = JSON.stringify(segment);
     await expect(run()).resolves.toMatchObject({ draftId: 'result' });
     expect(transcribe).not.toHaveBeenCalled();
+    expect(native.selectPassages.mock.calls[0][2]).toBe(DEFAULT_AI_EDIT_PROMPT);
     expect(saveClipTranscript).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -155,6 +160,43 @@ describe('foreground offline AI edit service', () => {
     expect(release.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       resume.mock.invocationCallOrder[0],
     );
+  });
+
+  it('freezes custom instructions for every shortlist and final selection call', async () => {
+    const prompt = 'Keep concrete decisions and next steps. Preserve important qualifications.';
+    const options = { editingPrompt: prompt };
+    segment.durationMs = 600_000;
+    jest.mocked(clipWords).mockReturnValue({
+      words: Array.from({ length: 50 }, (_, index) => ({
+        text: `Concrete point ${index}.`,
+        t0: index * 1200 + 10,
+        t1: index * 1200 + 1000,
+      })),
+      edited: false,
+      failed: false,
+    });
+    native.availability.mockImplementationOnce(async () => {
+      options.editingPrompt = 'Changed after the job started.';
+      return { available: true, reason: 'available', message: 'Ready' };
+    });
+    native.selectPassages.mockImplementation(async (passages) => ({
+      selectedIds: passages.slice(0, 2).map((passage) => passage.id),
+    }));
+    await runAiEdit('source', () => {}, new AbortController().signal, options);
+    expect(native.selectPassages).toHaveBeenCalledTimes(4);
+    expect(native.selectPassages.mock.calls.every((call) => call[2] === prompt)).toBe(true);
+  });
+
+  it('rejects empty or oversized instructions before model work and allows the next valid run', async () => {
+    for (const editingPrompt of ['  ', 'x'.repeat(MAX_AI_EDIT_PROMPT_LENGTH + 1)]) {
+      await expect(
+        runAiEdit('source', () => {}, new AbortController().signal, { editingPrompt }),
+      ).rejects.toThrow();
+    }
+    expect(native.availability).not.toHaveBeenCalled();
+    expect(pause).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    await expect(run()).resolves.toMatchObject({ draftId: 'result' });
   });
 
   it('uses the no-download speech path and persists source-time words when its cache is missing', async () => {

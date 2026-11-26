@@ -7,7 +7,7 @@ web, simulators, older iOS versions and builds without this module return an
 unavailable status. The module uses no cloud model or app-managed model downloads.
 
 Import `src/AiEditorModule.ts` and call `availability()` before
-`selectPassages([{ id, text, durationMs }], targetDurationMs)`. The result is
+`selectPassages([{ id, text, durationMs }], targetDurationMs, editingPrompt?)`. The result is
 `{ selectedIds: string[] }`, ranked by descending editorial importance. The caller
 restores source chronology after fitting the duration budget. Each call uses a fresh
 local session and accepts at most
@@ -15,6 +15,16 @@ local session and accepts at most
 units and finite positive durations. These bounds reduce context use but do not
 guarantee that every language fits the system model's context. The JavaScript
 planner owns batching and validates IDs, order and the actual final duration.
+
+`src/prompt.ts` is the authoritative default editorial text and exports the Default,
+Highlights, Work update and Story presets. `validateAiEditPrompt` trims outer
+whitespace, requires nonempty instructions and limits them to 2,000 UTF-16 code
+units. The wrapper uses the original default when no instructions are supplied;
+Swift independently validates the same limit. Swift appends its fixed selection
+protocol after the editable text: transcript data is not instructions, IDs must
+come from the supplied passages and be ranked by importance, source chronology is
+restored by the caller, and the existing time-budget and complete-thought goals
+still apply. The output schema and application timing checks are unchanged.
 
 One request runs at a time. `cancel()` requests Swift task cancellation and resolves
 after that request settles; the engine rejects a cancelled result and releases its

@@ -1,6 +1,10 @@
 import { Platform } from 'react-native';
 
 import aiEditor from '../../../modules/expo-ai-editor/src/AiEditorModule';
+import {
+  DEFAULT_AI_EDIT_PROMPT,
+  validateAiEditPrompt,
+} from '../../../modules/expo-ai-editor/src/prompt';
 import { aiEditSourceSignature, assertAiEditAudioSupported, createAiEdit } from '@/db/ai-edits';
 import { getClipTranscripts, saveClipTranscript } from '@/db/clip-transcripts';
 import { getDraftName, segmentsForDraft } from '@/db/drafts';
@@ -28,14 +32,19 @@ export class AiEditSetupError extends Error {
 
 let editing = false;
 
+export type AiEditOptions = { editingPrompt?: string };
+
 /** No networking: media and speech weights must already be available locally. */
 export async function runAiEdit(
   draftId: string,
   onProgress: (message: string) => void,
   signal: AbortSignal,
+  options: AiEditOptions = {},
 ) {
   if (!isAiEditingEnabled()) throw new AiEditSetupError('AI editing is a developer experiment.');
   if (editing) throw new Error('An AI edit is already running.');
+  // Freeze instructions before any asynchronous work, including every shortlist/final call.
+  const editingPrompt = validateAiEditPrompt(options.editingPrompt ?? DEFAULT_AI_EDIT_PROMPT);
   editing = true;
   let resumeCaptions: (() => void) | undefined;
   const checkCancelled = () => {
@@ -102,7 +111,12 @@ export async function runAiEdit(
     await releaseWhisper();
     checkCancelled();
     const passages = buildPassages(sources);
-    const plan = await selectCut(passages, aiEditor.selectPassages, onProgress, signal);
+    const plan = await selectCut(
+      passages,
+      (batch, targetMs) => aiEditor.selectPassages(batch, targetMs, editingPrompt),
+      onProgress,
+      signal,
+    );
     checkCancelled();
     onProgress('Saving your editable cut…');
     const sourceName = await getDraftName(draftId);

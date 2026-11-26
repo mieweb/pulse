@@ -2,11 +2,11 @@
   "version": "2.7.0",
   "date": "2026-11-25",
   "notes": [
-    "Developer AI editing preview: open a project, enter its editor and tap the sparkle button labelled AI edit. Pulse will create a separate AI cut and open it in Timeline view. Your original project stays unchanged.",
-    "Try a clear English talking-head recording around ten minutes long. The experiment selects original spoken passages to fit approximately 115 seconds; it keeps your original voice and the selected passages' order. Review the meaning and every join before sharing.",
-    "Before testing offline, download a speech model in On-device AI (Parakeet for English) and make sure Apple Intelligence is enabled and its model is ready. AI editing uses the on-device system model and never falls back to a cloud service.",
-    "After setup, try the same recording in airplane mode, with Wi-Fi off. Preview the new cuts, adjust them with the normal editor and export. Please compare essential points, sentence endings, repetition and the final MP4 duration.",
-    "Cancel or background Pulse while an AI edit runs, then try again. A canceled run should leave no partial AI-cut project. Use source-video speech with audio unmuted; separate voiceover takes are not supported yet. Unavailable models and unsupported devices show an explanation.",
-    "This is a developer-only experimental build. The AI edit button is hidden in ordinary release builds. This first implementation uses transcript selection with Apple Intelligence; OmniShotCut visual shot detection and newly written summaries are still follow-up work in issue 341."
+    "Editable AI prompts: open a project's editor and tap the sparkle labelled AI edit. The screen now shows Editing instructions before anything runs. Its Default text is the same editorial prompt that produced the first successful cuts.",
+    "Try Default, Highlights, Work update and Story. Each style fills the editable prompt field. Change the text yourself, then use Reset to default to recover the original instructions. Empty or overlong prompts cannot start a cut.",
+    "Tap Create AI cut to use the visible prompt. The app remembers your last used instructions locally for the next project or app launch. Returning from model setup or retrying an error keeps your current instructions.",
+    "Compare styles on the same spoken recording. They influence which passages are kept; the cut still uses your original voice and timeline order and fits approximately 115 seconds across all beats. A separate editable AI cut opens in Timeline view; the original stays unchanged.",
+    "Before offline testing, download a speech model in On-device AI and wait for Apple Intelligence to be ready. Try a cold launch in airplane mode with Wi-Fi off, then preview and export. Check the retained meaning, joins, actual MP4 duration and cancellation/backgrounding.",
+    "Developer preview only: ordinary release builds hide AI editing. Use unmuted source-video speech without separate voiceover takes. This build uses Apple's local transcript selection; OmniShotCut and written summaries remain follow-up work in issue 341."
   ]
 }
