@@ -1,0 +1,22 @@
+[
+  {
+    "start": 0.0,
+    "end": 2.0,
+    "reason": "opening"
+  },
+  {
+    "start": 16.0,
+    "end": 18.0,
+    "reason": "added visual coverage"
+  },
+  {
+    "start": 30.5,
+    "end": 32.5,
+    "reason": "added visual coverage"
+  },
+  {
+    "start": 53.0,
+    "end": 54.666667,
+    "reason": "closing"
+  }
+]

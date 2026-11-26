@@ -79,7 +79,7 @@ flowchart TB
 
 ### Editing & export
 
-- Developer documentation for **AI edit** covers [setup, prompts and the cut pipeline](docs/ai-editing.md), [the native model API](modules/expo-ai-editor/README.md), [iPhone testing and evidence](docs/testing/ai-edit-phone-build.md), and [on-device visual models for finding beats](docs/on-device-visual-models.md).
+- Developer documentation for **AI edit** covers [setup, prompts and the cut pipeline](docs/ai-editing.md), [the native model API](modules/expo-ai-editor/README.md), [iPhone testing and evidence](docs/testing/ai-edit-phone-build.md), and [Beatlapse, a proposed edit from visual changes](docs/on-device-visual-models.md).
 - Existing library cards and **View last summary** open the editor. Home’s **+** opens **New
   project**: **Blank project** opens the camera, while creating a new **Summary** opens its
   collected beats in the recorder. Use the editor’s Add menu to record more into the same draft.
