@@ -121,11 +121,18 @@ Imported summary checkpoints participate in the restored library’s next collec
 The first-pass request is tracked in [#331](https://github.com/mieweb/pulse/issues/331);
 native UI checks and screenshots are in the [Summary verification record](../screenshots/validation/summary/README.md).
 
-The developer [AI editing preview](ai-editing.md) creates a separate ordinary draft from selected
-source windows. It stages independent source-media copies and commits the new draft, excerpt
-segments and copied transcripts together. Source rows and files remain unchanged; no Summary
-cutoff is advanced. Cancellation, stale source timing and failed staging/transactions leave no
-partial draft. This requires no schema migration.
+## AI cut projects
+
+AI edit creates an ordinary draft from selected windows in the source media. It stages independent
+copies and commits the draft, excerpt segments and matching transcripts together using the existing
+tables. The operation preserves the source edits and Summary cutoff. Speech analysis can add a
+missing transcript to the source clip's cache. [AI editing pipeline](ai-editing.md#processing-and-persistence) ·
+[Transcript cache write](../src/features/ai-edit/run-ai-edit.ts#L85-L99) ·
+[Destination rows and transaction](../src/db/ai-edits.ts#L138-L217)
+
+The save checks source timing and cancellation during staging and again before inserting the
+destination rows. A rejected save cleans up its staged files. [Source and audio checks](../src/db/ai-edits.ts#L114-L140) ·
+[Transaction and cleanup](../src/db/ai-edits.ts#L186-L234) · [Rollback and cancellation tests](../src/db/ai-edits.test.ts)
 
 ## Launch and recovery
 

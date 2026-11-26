@@ -63,7 +63,7 @@ flowchart TB
 
 - 🎬 **Segmented recording** — build a walkthrough from multiple clips, reorder them, re-record the ones you fumbled
 - ✂️ **Non-compounding edits** — trims, crops, rotations and speed are stored as settings over the pristine original and rendered once at export, so re-editing never stacks generation loss
-- 🗣️ **On-device captions** — Whisper (whisper.cpp) transcription with word-level timing, no audio ever leaves the phone
+- 🗣️ **On-device captions** — speech recognition runs locally and supplies word timings. [Speech engines](docs/captions-engines.md) · [Transcription code](src/features/transcription/whisper.ts)
 - 📡 **Resumable uploads** — TUS v1 protocol; a two-minute capture survives signal drops, app kills, and relaunches
 - 🔐 **Self-hosted by design** — pair with your server via QR / deep link; capability tokens live in the device keychain
 - 📦 **Local-first drafts** — SQLite-backed library that works fully offline, shareable device-to-device as `.pulse` bundles
@@ -79,6 +79,7 @@ flowchart TB
 
 ### Editing & export
 
+- Developer documentation for **AI edit** covers [setup, prompts and the cut pipeline](docs/ai-editing.md), [native model API](modules/expo-ai-editor/README.md), and [iPhone testing and evidence](docs/testing/ai-edit-phone-build.md).
 - Per-clip trim and transforms are saved as settings over the untouched source and rendered at export
 - The editor has **one sticky + at the right edge of the clip row**, visible in both views and while editing a clip. **Clips (beat list)** inserts at the nearest clip boundary without splitting: before the clip in its first half, after it in its second half, and after it at the midpoint. **Timeline** inserts at the exact playhead. At the end, either view appends a new clip/beat to the existing Pulse.
 - In Timeline, adding X inside A produces **A-left → X → A-right**, with both halves sharing the source video. One Undo restores A and removes X; Redo restores the insertion. Canceling or failing before the first new clip commits leaves A unsplit.
@@ -92,12 +93,12 @@ flowchart TB
 
 ### Captions & transcription
 
-- Fully on-device speech-to-text with [whisper.rn](https://github.com/mybigday/whisper.rn) — Parakeet for English, or a multilingual Whisper (Large Turbo on iOS, Small on Android), downloaded from the editor's Captions tool
-- Each clip is transcribed once, in the background; the draft's captions are composed from the clips through their trims, speed, mutes and order, so an edit never re-runs the model
-- Silero VAD pre-gate skips silent clips and suppresses Whisper's hallucinated filler on empty audio
-- Word-level timestamps reflowed into broadcast-style cues (line-length, duration, and sentence-boundary aware; Chinese, Japanese and Thai keep their per-character timing), never across a cut
-- Captions live in the editor: shown over the preview and on a lane under the clips; tap a word to edit or delete it, split or merge sentences at the playhead, drag the caption to move them all — edits are kept per clip and undoable
-- Captions upload as WebVTT with word-level cue timestamps (karaoke-ready) and their position, alongside the video
+- Download a speech model from the editor's Captions tool. The English option uses Parakeet. Multilingual transcription uses Whisper Large Turbo on iOS and Small on Android. [Model catalog](src/features/transcription/models.ts#L39-L79) · [Speech engine guide](docs/captions-engines.md)
+- Pulse caches transcripts per clip and model, then composes captions through the current trims, playback speeds, mutes and clip order. [Background queue](src/features/transcription/clip-queue.ts) · [Caption composition](src/features/transcription/compose.ts#L66-L105)
+- The Silero voice activity detector can skip transcription when it detects no speech. [Silence detection](src/features/transcription/vad.ts)
+- Words form cues within each clip using length, duration and sentence boundaries. Scripts with no spaces, including Chinese, Japanese and Thai, retain individual token timings. [Word and cue grouping](src/features/transcription/group-lines.ts) · [Clip boundaries](src/features/transcription/compose.ts#L66-L105)
+- In the editor, use the preview and caption lane to edit or delete a word, split or merge sentences, or move captions. Word edits belong to the clip and can be undone. [Word edits and history](src/features/editor/editor-screen.tsx#L781-L892) · [Preview](src/features/editor/editor-screen.tsx#L990-L1004) · [Caption lane](src/features/editor/editor-screen.tsx#L1072-L1084)
+- Captions upload as WebVTT with word times and caption position. [WebVTT writer](src/features/transcription/vtt.ts) · [Upload assembly](src/features/upload/core/send-files.ts#L64-L74)
 
 ### Drafts & library
 
@@ -123,7 +124,7 @@ Pulse runs on **iOS and Android** from a single codebase. iOS is the original pl
 Platform notes:
 
 - **High (cinematic) stabilization** is iOS-only (VisionCamera exposes it via AVFoundation); Android offers off / on / auto
-- **Whisper transcription** uses Metal GPU acceleration on iOS; Android runs on CPU, so larger models are noticeably slower — Base (en) is the recommended starting point
+- **Speech recognition** requests GPU acceleration on iOS and uses the CPU on Android. The model menu offers Parakeet for English and a platform-specific multilingual Whisper model. [Runtime selection](src/features/transcription/whisper.ts#L43-L64) · [Platform model menu](src/features/transcription/models.ts#L95-L125)
 - **Call-aware capture** uses AVAudioSession interruptions on iOS (no CallKit — it must stay out of the binary for China App Store distribution) and an audio-mode heuristic on Android (no extra permissions), so both platforms pause the mic when the session is interrupted
 - On Android, merged exports save through MediaStore into `DCIM/`, and uploads run as a `dataSync` foreground service with a progress notification
 

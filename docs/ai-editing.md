@@ -1,132 +1,204 @@
 # Developer AI editing preview
 
-The standalone iPhone editor can create a separate editable rough cut from timed speech.
-It uses the existing Parakeet/Whisper recognizer and Apple's explicit on-device
-`SystemLanguageModel`. The language model selects supplied passage IDs; application code owns
-source timestamps, ordering, padding and the 115-second duration budget. Nothing is uploaded.
+Pulse turns speech from one or more video beats into a separate, editable iPhone draft. Pulse uses
+whisper.rn to run Parakeet or Whisper and obtain timed words. Apple's on-device
+`SystemLanguageModel` ranks passages, and Pulse fits them to one 115-second budget across the
+project.
+[Speech engine binding and Pulse’s word-timing adapter](../src/features/transcription/whisper.ts#L1-L53)
+· [whisper.rn upstream](https://github.com/mybigday/whisper.rn) ·
+[Speech and edit pipeline](../src/features/ai-edit/run-ai-edit.ts#L55-L129) ·
+[Apple model session](../modules/expo-ai-editor/ios/AiEditorEngine.swift#L165-L203) ·
+[Cut duration constant](../src/core/types/ai-edit.ts#L1-L2)
 
-This is the first cut-focused checkpoint of [#341](https://github.com/mieweb/pulse/issues/341).
-OmniShotCut conversion and written summaries remain follow-up experiments. Existing Summary
-projects collect beats and continue to work separately.
+[Project README](../README.md#editing--export) ·
+[Native module and API](../modules/expo-ai-editor/README.md) ·
+[Speech and caption engines](captions-engines.md) ·
+[Draft and media ownership](persistence.md#ai-cut-projects) ·
+[iPhone build and test guide](testing/ai-edit-phone-build.md) ·
+[Simulator screenshots and results](../screenshots/validation/ai-edit/editable-prompt/README.md)
+
+OmniShotCut detects visual shot boundaries. Issue #341 proposes evaluating it as an additional
+signal and generating written summaries in a later experiment. The shipped selector takes transcript
+passages. Pulse's separate **Summary** project feature collects existing beats.
+[OmniShotCut upstream README](https://github.com/UVA-Computer-Vision-Lab/OmniShotCut) ·
+[MVP and research scope](https://github.com/mieweb/pulse/issues/341) ·
+[Selector input](../src/features/ai-edit/selection.ts#L64-L70) ·
+[Summary collection](../src/db/summaries.ts#L100-L141)
 
 ## Enable and test
 
-The feature defaults on in iOS development sessions. Offline Release builds require
-`PULSE_DEVELOPER_BUILD=1`; CI/store builds ignore that opt-in. `PULSE_AI_EDIT=0` disables the
-experiment in either build type. Both the editor action and the execution entry point check the
-gate. Ordinary release builds expose no AI edit action.
+AI editing defaults on in iOS development sessions. For a local Release build, set
+`PULSE_DEVELOPER_BUILD=1`. The config suppresses that opt-in when `GITHUB_SHA` is set in CI. Set
+`PULSE_AI_EDIT=0` to disable the preview. Both the editor button and the job check the gate.
+[Build configuration](../app.config.ts#L44-L78) · [iOS gate](../src/features/ai-edit/enabled.ts) ·
+[Flag logic](../src/features/ai-edit/feature-flag.ts) ·
+[Editor action](../src/app/editor.tsx#L48-L54) ·
+[Job entry](../src/features/ai-edit/run-ai-edit.ts#L37-L47)
 
-The [phone handoff](testing/ai-edit-phone-build.md) records the installed build and its compatible
-source baseline, verification and remaining acceptance checks.
+Use Node 24.3 or later and Xcode and iPhoneOS SDK 27 or later to build. Rebuild the iOS app when
+changing the Swift module. For a local phone handoff, set
+`PULSE_TEST_NOTES_FILE=docs/testing/ai-edit-test-notes.json` before bundling and match the notes to
+the app version. For a phone handoff, verify the bundled notes in the simulator, use the shared iOS
+testing skill’s device lease, and verify release after installation.
+[Node requirement](../package.json#L5-L7) ·
+[iOS toolchain check](../scripts/check-ios-sdk.mjs#L14-L31) ·
+[Native module registration](../modules/expo-ai-editor/expo-module.config.json) ·
+[Build instructions](../README.md#getting-started) ·
+[Test-notes validation](../scripts/release-notes.ts#L56-L88) ·
+[App-visible test notes](testing/ai-edit-test-notes.json) ·
+[Phone handoff](testing/ai-edit-phone-build.md) ·
+[Device acceptance procedure](https://github.com/mieweb/pulse/issues/341)
 
-Build with Node 24.3+ and Xcode 27+, using the repository's native build workflow. The local
-`modules/expo-ai-editor` Expo module requires a native rebuild; a JavaScript reload cannot add it.
-On a local phone handoff, set `PULSE_TEST_NOTES_FILE=docs/testing/ai-edit-test-notes.json` before
-bundling. Notes must match that build's app version, including when integrating on a newer phone
-baseline. Follow the shared iOS testing skill for simulator checks, exact bundled notes, device
-leasing and verified release.
+On an eligible iPhone with iOS 26 or later, enable Apple Intelligence and wait for the system model
+to be ready. Download a speech model in **On-device AI** before going offline. AI edit checks local
+model readiness and disables speech-model downloads while it reads the recording.
+[Apple model availability](https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel)
+· [Pulse availability check](../modules/expo-ai-editor/ios/AiEditorEngine.swift#L30-L70) ·
+[Speech model catalog](../src/features/transcription/models.ts#L39-L79) ·
+[Offline run](../src/features/ai-edit/run-ai-edit.ts#L57-L98)
 
-On an Apple Intelligence-capable iPhone with iOS 26+, enable Apple Intelligence and wait for its
-system model to become available. Download the chosen speech model through On-device AI before
-going offline. Open a spoken-video project, open the editor, and tap **AI edit** (the sparkle
-button). Review or edit **Editing instructions**, then tap **Create AI cut**. The result opens as a
-new **AI cut** project. Review/trim/remove clips and export normally.
+Open a spoken-video project, tap **AI edit** in the editor, review **Editing instructions**, and tap
+**Create AI cut**. A successful run opens the new project in Timeline view for review, trimming and
+export. [Editor button](../src/features/editor/editor-screen.tsx#L930-L941) ·
+[Prompt screen](../src/features/ai-edit/ai-edit-screen.tsx#L221-L336) ·
+[Result navigation](../src/app/ai-edit.tsx#L9-L15) · [Editor controls](../README.md#editing--export)
 
 ## Editing instructions and styles
 
-The editable field starts with the successful original editorial instructions. **Default**,
-**Highlights**, **Work update** and **Story** fill that same field with a complete prompt, which can
-then be edited. **Reset to default** restores the original. The app remembers the last used
-instructions in its local settings when a cut is started; no database migration is needed.
+On first use the field contains the original editorial prompt. **Default**, **Highlights**, **Work
+update** and **Story** each fill the field with editable text. **Reset to default** restores the
+original. Tapping **Create AI cut** saves the validated text to local settings before the model
+runs, so even an unavailable-model error can leave that prompt saved for next time. Missing or
+invalid saved text falls back to Default.
+[Preset text and validation](../modules/expo-ai-editor/src/prompt.ts) ·
+[Save on Create](../src/features/ai-edit/ai-edit-screen.tsx#L55-L89) ·
+[Local preference](../src/features/ai-edit/preferences.ts) ·
+[Simulator interaction results](../screenshots/validation/ai-edit/editable-prompt/simulator-report.json)
 
-Instructions must contain text and fit within 2,000 UTF-16 code units (the field's character
-counter uses the same limit). One validated copy is captured when the job starts and used for
-every shortlist and final selection call. Changing a later run's preference cannot change an
-in-flight edit. Missing or invalid restored preferences fall back to the original default.
-
-`modules/expo-ai-editor/src/prompt.ts` is the authoritative source for the default editorial text,
-presets and JavaScript validation. Swift validates the received text independently and appends the
-existing fixed output protocol. The default editorial text plus that protocol reproduces the
-original full instructions exactly. Selection IDs, source ranges, ordering and duration remain
-enforced by the existing schema and planner. Style preferences guide selection of original speech;
-they do not synthesize a new voice or rewrite the recorded words.
+Pulse trims outer whitespace and accepts 1–2,000 UTF-16 code units. The job captures one copy before
+its first asynchronous operation and passes it to every shortlist and final selection. Swift
+validates it again and appends fixed rules for returning supplied IDs. With Default selected, those
+two parts reproduce the original instructions.
+[JS validation](../modules/expo-ai-editor/src/prompt.ts#L1-L14) ·
+[Job snapshot and selection calls](../src/features/ai-edit/run-ai-edit.ts#L44-L118) ·
+[Swift validation and instructions](../modules/expo-ai-editor/ios/AiEditorEngine.swift#L72-L201) ·
+[Original instructions before prompt editing](https://github.com/mieweb/pulse/blob/fe06763ecdc9d27e0985e27d3f7b5f33609b2727/modules/expo-ai-editor/ios/AiEditorEngine.swift#L162-L170)
 
 ## Processing and persistence
 
 ```mermaid
 flowchart LR
-  source[Source project] --> words[Local timed transcript]
+  source[Source project] --> words[Local timed transcript per beat]
   words --> passages[Passages with source IDs]
   passages --> model[Local passage selection]
   model --> validate[Validate IDs and fit complete passages]
   validate --> copy[Stage independent media copies]
-  copy --> commit[Atomically save a new editable draft]
+  copy --> commit[Save a new editable draft]
 ```
 
-Speech inference temporarily pauses the captions queue and waits for its in-flight job to stop.
-Existing valid transcripts and caption corrections are reused. Speech weights are released before
-language generation. Long inputs are shortlisted in bounded batches before a global selection.
-Selected passages keep their source order, speed and picture transforms. Padding stays inside
-source limits and adjacent word boundaries. Written model timestamps are never accepted.
-
-Creation stages one independent copy per selected source segment and stores the excerpt windows
-and copied transcripts in one transaction. Source changes, cancellation, copy failures and stale
-timing reject the save and clean up the staged destination. No schema migration is needed. See
-[persistence.md](persistence.md) for authoritative media ownership and recovery rules.
+1. **Read the speech.** Pulse reads playable beats in project order, pauses the background captions
+   queue and waits for its active job to settle. For each beat it prefers matching caption
+   corrections, then a cached transcript for the selected model and file. Otherwise it transcribes
+   the effective source file, which can be longer than its trimmed beat, and caches the words. It
+   releases the speech model before language generation.
+   [Orchestration](../src/features/ai-edit/run-ai-edit.ts#L68-L114) ·
+   [Speech input and decoding](../src/features/transcription/whisper.ts#L110-L148) ·
+   [Queue coordination](../src/features/transcription/clip-queue.ts#L71-L94) ·
+   [Transcript precedence](../src/features/transcription/compose.ts#L31-L41)
+2. **Build passages within each beat.** Pulse converts word times from centiseconds to milliseconds,
+   keeps whole words inside the current trim, and groups them at sentence endings, pauses or word
+   boundaries. Each ID identifies the source beat and word range.
+   [Passage construction](../src/features/ai-edit/planner.ts#L53-L151) ·
+   [Timing tests](../src/features/ai-edit/planner.test.ts)
+3. **Choose passages across beats.** The model receives text, IDs and durations. When the candidates
+   exceed the batch limits, Pulse shortlists each batch and narrows the combined candidates before a
+   final selection. A beat can contribute several passages or none. The final request aims for 110
+   seconds, leaving room for the planner to fit complete passages and padding within 115 seconds
+   total. [Batching and target calculation](../src/features/ai-edit/selection.ts#L8-L89) ·
+   [Structured model response](../modules/expo-ai-editor/ios/AiEditorEngine.swift#L179-L203) ·
+   [Multi-batch tests](../src/features/ai-edit/selection.test.ts)
+4. **Build the timeline.** Pulse checks for unknown or repeated IDs, fits passages by editorial
+   priority, then restores their source order. It applies up to 120 ms of padding per side by
+   default, bounded by the source trim and neighboring words. It merges touching excerpts from the
+   same beat and accounts for playback speed in the duration.
+   [Padding defaults](../src/features/ai-edit/planner.ts#L38-L51) ·
+   [ID validation, ordering and duration fitting](../src/features/ai-edit/planner.ts#L153-L225)
+5. **Save and export.** Pulse stages independent copies of the required source files. Excerpts that
+   reference the same file can share its destination copy. A transaction saves the new draft,
+   excerpt windows, transforms and matching transcripts. The save checks that the source timeline
+   still matches what was analyzed and cleans up staged files on error. Export later passes the
+   saved windows to the native merger, which reports the actual rendered duration.
+   [Shared-file copy logic](../src/db/drafts.ts#L1497-L1551) ·
+   [Staging and excerpt rows](../src/db/ai-edits.ts#L114-L185) ·
+   [Transaction and cleanup](../src/db/ai-edits.ts#L186-L234) ·
+   [Persistence tests](../src/db/ai-edits.test.ts) ·
+   [Export path](../src/features/export/editor-merge.ts#L18-L66)
 
 ## Limits and verification
 
-This first experiment targets English spoken video, foreground execution and projects under
-twenty minutes. Muted playable source clips require unmuting. Projects with a muted source track
-or any saved voiceover take are rejected, including when the voiceover track itself is muted.
-These guards prevent the source-speech-only pipeline from silently discarding narration or
-changing the saved audio mix. They run before analysis and are rechecked during draft creation;
-see [audio support guards](../src/db/ai-edits.ts) and [analysis](../src/features/ai-edit/run-ai-edit.ts).
-
-Beats with zero effective duration are excluded from analysis and the generated cut. They remain
-in the original project and in the complete source-change signature checked before saving. This
-is intentional: a zero-length beat has no playable interval and can represent a failed native
-duration read. It follows the editor's existing [playable timeline rule](../src/utils/segment-window.ts).
-If every beat is empty, AI editing stops with an actionable message instead of creating an empty cut.
-
-The simulator verifies native UI and unavailability handling; it cannot establish Apple Intelligence generation quality or phone
-performance. The model can omit important context: review the result before sharing. A
-punctuation-free transcript may require passage breaks at word boundaries. Excerpt exports use
-the existing native rendering path and usually re-encode.
-
-Regression coverage includes source timing, speed, padding, invalid IDs, duration fitting,
-hierarchical selection, cancellation, independent copies, transcript remapping and failed-save
-rollback. For acceptance, use an 8–12 minute recording with 5–8 preselected essential points;
-compare the cut with a human reference, measure the actual exported duration and record ASR,
-selection and export latency separately. Cold-launch offline execution, thermal behavior and
-semantic quality require target-phone evidence.
+- **Recording and runtime.** The sprint targets English spoken video. Pulse rejects projects whose
+  summed effective duration exceeds 20 minutes. Closing the screen, leaving it, or sending the app
+  to the background cancels an active edit.
+  [Sprint scope](https://github.com/mieweb/pulse/issues/341) ·
+  [Duration check](../src/features/ai-edit/run-ai-edit.ts#L68-L76) ·
+  [Cancellation handlers](../src/features/ai-edit/ai-edit-screen.tsx#L110-L160)
+- **Audio.** Any playable muted source clip, muted project source track, or saved voiceover take
+  blocks the edit, including a take on a muted voiceover track. The preview transcribes source-clip
+  audio and saves its excerpts with source audio enabled. The guards protect the user's chosen mix.
+  Pulse checks the project audio again while saving.
+  [Clip check](../src/features/ai-edit/run-ai-edit.ts#L68-L95) ·
+  [Project audio check](../src/db/ai-edits.ts#L15-L43) ·
+  [Excerpt state and final check](../src/db/ai-edits.ts#L146-L199) ·
+  [Narration race test](../src/db/ai-edits.test.ts#L158-L192)
+- **Empty beats.** A beat with zero effective duration contributes no playable interval. Pulse skips
+  it for analysis and output, but includes it in the original timeline snapshot so a source change
+  can invalidate the save. A failed native duration read is one possible cause. When all beats are
+  empty, the app asks the user to add spoken video.
+  [Filter and empty-project message](../src/features/ai-edit/run-ai-edit.ts#L68-L74) ·
+  [Playback rule](../src/utils/segment-window.ts#L314-L326) ·
+  [Snapshot regression](../src/features/ai-edit/run-ai-edit.test.ts#L258-L270)
+- **Verification.** The simulator exercised the editing controls and the real model-unavailable
+  response. The phone handoff verified installation, launch and library preservation. The acceptance
+  plan calls for an 8–12 minute recording with 5–8 essential points, a comparison to a human cut,
+  and measuring the exported duration, offline completion, latency and thermal behavior on the
+  phone.
+  [Simulator results](../screenshots/validation/ai-edit/editable-prompt/simulator-report.json) ·
+  [Phone results and remaining checks](testing/ai-edit-phone-handoff.json) ·
+  [Acceptance criteria](https://github.com/mieweb/pulse/issues/341)
 
 ## Audio support follow-up — proposed, not implemented
 
-The audio restrictions above are MVP limits. The following plan supplements the broader
-[#341](https://github.com/mieweb/pulse/issues/341) effort; these tasks have no committed delivery
-date, and the current guards remain in place until the relevant behavior is verified.
+These are proposed changes to the preview. The links identify the current behavior each change would
+extend. [Existing audio guard and rationale](../src/db/ai-edits.ts#L15-L43) ·
+[Broader MVP scope](https://github.com/mieweb/pulse/issues/341)
 
-- [ ] **Analyze the audible timeline.** Build on the compatible voiceover/history schema described
-      in the [phone handoff](testing/ai-edit-phone-build.md). Define the AI input from the saved audio
-      mix, honoring clip mute, source-track mute and voiceover-track mute. Transcribe audible speech
-      with timing mapped to the original timeline. Include audio settings and narration edits in cache
-      keys and source-change checks. Use the same composed timeline clock and frame-snapped clip
-      starts as native preview/export so joins do not drift. Do not select speech that the user has muted; report when no
-      audible speech is available.
-- [ ] **Preserve narration through the cuts.** Map selected timeline ranges to the new project's
-      video and audio. Intersect, split, trim and retime voiceover takes across removed ranges, retain
-      mute settings, and keep muted picture when it accompanies selected narration. Voiceovers are
-      already timed on the draft clock: map them from the old draft to the new draft without applying
-      source-clip speed a second time. Copy required
-      media independently and save video, narration, transcripts and editable state atomically using
-      the existing ownership, recovery and history conventions.
-- [ ] **Verify before widening support.** Cover muted clips, both track-level mutes, mixed source
-      speech/narration, overlapping takes, speed changes and narration crossing a cut boundary.
-      Check cancellation, source changes during analysis, rollback, reopening and undo/redo. Verify
-      offline preview/export on a phone with preserved audio and an exported duration below 120 seconds.
-      Remove each rejection only when its supported cases pass.
-- [ ] **Keep empty-beat handling explicit.** Retain zero-length skipping. Add a clear notice when
-      beats are skipped and distinguish intentionally empty beats from failed duration reads; offer
-      metadata retry/recovery for the latter. Do not invent duration or delete the original beat.
-      Extend regressions for mixed empty/playable beats, all-empty input and source changes to skipped beats.
+- [ ] **Analyze the audible timeline.** Honor clip and track mutes when selecting speech, report
+      when the mix contains no audible speech, and include narration placement and mute settings in
+      cache and source-change checks. Align words to the composed clip starts used by
+      preview/export.
+      [Compatible audio mix](https://github.com/mieweb/pulse/blob/d3a853e46005237a8cfb6c828caa82b8fa75f9e3/src/core/media/voiceover.ts#L6-L32)
+      ·
+      [Existing audio cache signature](https://github.com/mieweb/pulse/blob/d3a853e46005237a8cfb6c828caa82b8fa75f9e3/src/core/media/merge-signature.ts#L45-L66)
+      ·
+      [Frame snapping and draft-time narration in the phone’s native engine](https://github.com/morepriyam/pulse-editor/blob/306ff1d999589be6615275c60567ba371f073efd/ios/Merge/Timeline.swift#L20-L77)
+      · [Clip-start drift in the caption timeline](../src/features/transcription/compose.ts#L43-L63)
+- [ ] **Keep narration aligned through cuts.** Split and trim each intersecting voiceover take, then
+      shift its placement from the original draft clock to the shortened draft clock. Preserve mute
+      settings and picture under narration. Apply clip speed only to source video/audio. Stage the
+      required media and save the editable result with the same ownership, recovery and history
+      guarantees.
+      [Voiceover placement contract](https://github.com/mieweb/pulse/blob/d3a853e46005237a8cfb6c828caa82b8fa75f9e3/src/core/media/voiceover.ts#L19-L32)
+      ·
+      [Compatible narration and undo rules](https://github.com/mieweb/pulse/blob/d3a853e46005237a8cfb6c828caa82b8fa75f9e3/docs/persistence.md#voiceover-takes)
+      · [Current draft transaction](../src/db/ai-edits.ts#L186-L234)
+- [ ] **Verify before widening support.** Exercise clip and track mutes, mixed speech, overlapping
+      takes, speed changes and narration crossing a cut. Test cancellation, stale inputs, rollback,
+      reopening and undo/redo. Check audio alignment in an offline preview and an exported MP4 under
+      120 seconds before removing each guard.
+      [Existing storage regressions](../src/db/ai-edits.test.ts) ·
+      [Phone acceptance criteria](https://github.com/mieweb/pulse/issues/341)
+- [ ] **Explain skipped beats.** Keep the original beat and skip its empty interval. Add a notice,
+      distinguish genuinely empty media from a failed duration read, and offer to retry the latter.
+      Extend tests for mixed and all-empty projects and for metadata that changes on a skipped beat.
+      [Playable-segment rule](../src/utils/segment-window.ts#L314-L326) ·
+      [Current snapshot test](../src/features/ai-edit/run-ai-edit.test.ts#L258-L270)
