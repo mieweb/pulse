@@ -65,7 +65,7 @@ import { dropHeldFiles } from './held-files';
 import { holdMediaPaths } from '@/core/media-holds';
 import { createDraft, deleteDraft, duplicateDraft } from './drafts';
 import { referencedMediaPaths } from './media-refs';
-import { buildProject, checkProject, commitCopy, planCopy } from './project';
+import { buildProject, checkProject, commitCopy, planCopy, restoreProject } from './project';
 import {
   getVoiceover,
   addVoiceoverTake,
@@ -96,11 +96,12 @@ const cache = () => {
   writeFileSync(uri, `audio ${recordings}`);
   return uri;
 };
-const take = (draftId: string, startMs: number) =>
+const take = (draftId: string, startMs: number, recordStartMs = startMs) =>
   addVoiceoverTake({
     draftId,
     cacheUri: cache(),
     startMs,
+    recordStartMs,
     durationMs: 1000,
     trimStartMs: 100,
     trimEndMs: 900,
@@ -126,7 +127,10 @@ describe('voiceover take storage', () => {
     const draft = await draftWithVideo();
     const before = videoRows(draft);
     const saved = [];
-    for (let i = 0; i < 5; i++) saved.push(await take(draft, 5000 + i * 800));
+    for (let i = 0; i < 5; i++) {
+      const recordStartMs = 5000 + i * 800;
+      saved.push(await take(draft, recordStartMs + 0.25, recordStartMs));
+    }
     await setAudioTrackMuted(draft, 'source', true);
     await setAudioTrackMuted(draft, 'voiceover', true);
     const state = await getVoiceover(draft);
@@ -138,10 +142,17 @@ describe('voiceover take storage', () => {
     try {
       expect(
         reopened.getAllSync(
-          'SELECT start_ms, trim_start_ms, trim_end_ms FROM voiceover_takes WHERE draft_id = ? ORDER BY sequence',
+          'SELECT start_ms, record_start_ms, trim_start_ms, trim_end_ms FROM voiceover_takes WHERE draft_id = ? ORDER BY sequence',
           draft,
         ),
-      ).toEqual(saved.map((t) => ({ start_ms: t.startMs, trim_start_ms: 100, trim_end_ms: 900 })));
+      ).toEqual(
+        saved.map((t) => ({
+          start_ms: t.startMs,
+          record_start_ms: t.recordStartMs,
+          trim_start_ms: 100,
+          trim_end_ms: 900,
+        })),
+      );
       expect(
         reopened.getFirstSync(
           'SELECT source_audio_muted,voiceover_muted FROM drafts WHERE id = ?',
@@ -153,12 +164,14 @@ describe('voiceover take storage', () => {
     }
   });
 
-  it('immediately undoes whole takes in addition order, including one recorded after seeking backwards', async () => {
+  it('restores each removed take’s exact recording position across gaps and backward seeks', async () => {
     const draft = await draftWithVideo();
     const before = videoRows(draft);
     const saved = [];
-    for (const start of [5000, 5800, 6600, 7400, 2000]) saved.push(await take(draft, start));
-    for (const cursor of [8200, 7400, 6600, 5800, 5000]) {
+    for (const cursor of [0, 5000.125, 5800.5, 15000.75, 2000.25]) {
+      saved.push(await take(draft, cursor + 0.25, cursor));
+    }
+    for (const cursor of [2000.25, 15000.75, 5800.5, 5000.125, 0]) {
       const removed = saved.pop()!;
       expect(await undoVoiceoverTake(draft)).toEqual({ removed, playheadMs: cursor });
       expect(exists(removed.filename)).toBe(false);
@@ -184,6 +197,26 @@ describe('voiceover take storage', () => {
     expect(exists(first.filename)).toBe(false);
   });
 
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects an invalid original recording position (%s) without consuming its capture',
+    async (recordStartMs) => {
+      const draft = await draftWithVideo();
+      const first = await take(draft, 0);
+      const waiting = cache();
+      await expect(
+        addVoiceoverTake({
+          draftId: draft,
+          cacheUri: waiting,
+          startMs: 1000,
+          recordStartMs,
+          durationMs: 1000,
+        }),
+      ).rejects.toMatchObject({ code: 'invalid_options' });
+      expect(existsSync(waiting)).toBe(true);
+      expect((await getVoiceover(draft)).takes).toEqual([first]);
+    },
+  );
+
   it('preserves earlier takes on invalid timing, capture loss or failed commit', async () => {
     const draft = await draftWithVideo();
     const first = await take(draft, 0);
@@ -193,6 +226,7 @@ describe('voiceover take storage', () => {
         draftId: draft,
         cacheUri: waiting,
         startMs: 0,
+        recordStartMs: 0,
         durationMs: 100,
         trimEndMs: 200,
       }),
@@ -203,6 +237,7 @@ describe('voiceover take storage', () => {
         draftId: draft,
         cacheUri: join(env.cacheDir, 'missing.caf'),
         startMs: 800,
+        recordStartMs: 800,
         durationMs: 1000,
       }),
     ).rejects.toThrow();
@@ -216,6 +251,7 @@ describe('voiceover take storage', () => {
           draftId: draft,
           cacheUri: failedCapture,
           startMs: 800,
+          recordStartMs: 800,
           durationMs: 1000,
         }),
       ).rejects.toThrow();
@@ -231,6 +267,7 @@ describe('voiceover take storage', () => {
       draftId: draft,
       cacheUri: failedCapture,
       startMs: 800,
+      recordStartMs: 800,
       durationMs: 1000,
     });
     expect(existsSync(failedCapture)).toBe(false);
@@ -243,7 +280,13 @@ describe('voiceover take storage', () => {
     conn.runSync("UPDATE drafts SET upload_status='uploading' WHERE id=?", draft);
     const waiting = cache();
     await expect(
-      addVoiceoverTake({ draftId: draft, cacheUri: waiting, startMs: 800, durationMs: 1000 }),
+      addVoiceoverTake({
+        draftId: draft,
+        cacheUri: waiting,
+        startMs: 800,
+        recordStartMs: 800,
+        durationMs: 1000,
+      }),
     ).rejects.toThrow('uploading');
     await expect(undoVoiceoverTake(draft)).rejects.toThrow('uploading');
     await expect(setAudioTrackMuted(draft, 'source', true)).rejects.toThrow('uploading');
@@ -253,7 +296,7 @@ describe('voiceover take storage', () => {
 
   it('duplicates independent narration files, trims and mute choices; deleting the source keeps the copy', async () => {
     const draft = await draftWithVideo();
-    const first = await take(draft, 8000);
+    const first = await take(draft, 8000, 7999.75);
     await setAudioTrackMuted(draft, 'source', true);
     const copy = await duplicateDraft(draft);
     const state = await getVoiceover(copy);
@@ -263,6 +306,7 @@ describe('voiceover take storage', () => {
       expect.objectContaining({
         draftId: copy,
         startMs: 8000,
+        recordStartMs: 7999.75,
         trimStartMs: 100,
         trimEndMs: 900,
         sequence: 1,
@@ -274,13 +318,13 @@ describe('voiceover take storage', () => {
     await deleteDraft(draft);
     expect((await getVoiceover(draft)).takes).toEqual([]);
     expect(exists(state.takes[0].filename)).toBe(true);
-    await undoVoiceoverTake(copy);
+    expect(await undoVoiceoverTake(copy)).toMatchObject({ playheadMs: 7999.75 });
     expect(exists(state.takes[0].filename)).toBe(false);
   });
 
   it('carries narration through project export and copy import with fresh ids and media paths', async () => {
     const draft = await draftWithVideo();
-    const first = await take(draft, 12000);
+    const first = await take(draft, 12000, 11999.75);
     await setAudioTrackMuted(draft, 'voiceover', true);
     const document = checkProject(
       buildProject(expoDb, {
@@ -298,6 +342,7 @@ describe('voiceover take storage', () => {
     expect(copied).toMatchObject({
       draftId: plan.draftIds[0],
       startMs: 12000,
+      recordStartMs: 11999.75,
       trimStartMs: 100,
       trimEndMs: 900,
     });
@@ -314,12 +359,102 @@ describe('voiceover take storage', () => {
       voiceoverMuted: true,
     });
     expect(read(copied.filename as string)).toBe(read(first.filename));
+    expect(await undoVoiceoverTake(plan.draftIds[0])).toMatchObject({ playheadMs: 11999.75 });
     expect(() =>
       checkProject({
         ...document,
         tables: { ...document.tables, voiceover_takes: [{ ...first, draftId: 'missing' }] },
       }),
     ).toThrow('damaged');
+  });
+
+  it('restores the original recording position from a whole-library backup', async () => {
+    const draft = await draftWithVideo();
+    const first = await take(draft, 6000.25, 6000.125);
+    const document = checkProject(
+      buildProject(expoDb, {
+        now: 1,
+        byteLength: (relative) =>
+          exists(relative) ? readFileSync(join(env.docDir, relative)).length : null,
+      }),
+    );
+    conn.runSync('UPDATE voiceover_takes SET record_start_ms = 999 WHERE id = ?', first.id);
+    restoreProject(expoDb, document);
+    expect((await getVoiceover(draft)).takes).toEqual([first]);
+    expect(await undoVoiceoverTake(draft)).toEqual({ removed: first, playheadMs: 6000.125 });
+  });
+
+  it('imports an older project without recording positions and falls back to its audio start', async () => {
+    const draft = await draftWithVideo();
+    const first = await take(draft, 6000.25, 6000.125);
+    const document = buildProject(expoDb, {
+      draftIds: [draft],
+      now: 1,
+      byteLength: (relative) =>
+        exists(relative) ? readFileSync(join(env.docDir, relative)).length : null,
+    });
+    delete document.tables.voiceover_takes[0].recordStartMs;
+    document.schemaVersion = migrations.journal.entries[23].when;
+    const plan = planCopy(checkProject(document), () => 'legacy-copy');
+    for (const [to, from] of plan.files) {
+      mkdirSync(dirname(join(env.docDir, to)), { recursive: true });
+      writeFileSync(join(env.docDir, to), readFileSync(join(env.docDir, from)));
+    }
+    commitCopy(expoDb, plan);
+    expect((await getVoiceover(plan.draftIds[0])).takes).toEqual([
+      expect.objectContaining({ startMs: first.startMs, recordStartMs: null }),
+    ]);
+    expect(await undoVoiceoverTake(plan.draftIds[0])).toMatchObject({ playheadMs: first.startMs });
+  });
+});
+
+describe('existing voiceover library upgrade', () => {
+  it('preserves older takes and restores their own audio start when no recording position exists', async () => {
+    const path = join(env.docDir, 'voiceover-library.db');
+    const previous = new SQLiteDatabase(path);
+    const original = { node: conn.node, path: conn.databasePath };
+    conn.node = previous.node;
+    conn.databasePath = path;
+    const prior = migrations.journal.entries.filter((entry) => entry.idx <= 23);
+    try {
+      conn.execSync('PRAGMA foreign_keys=ON');
+      await migrate(db, { ...migrations, journal: { ...migrations.journal, entries: prior } });
+      const draft = await draftWithVideo();
+      for (const [id, start, sequence] of [
+        ['prior', 15000, 1],
+        ['latest', 2000.25, 2],
+      ] as const) {
+        const filename = `drafts/${draft}/voiceovers/${id}.caf`;
+        mkdirSync(dirname(join(env.docDir, filename)), { recursive: true });
+        writeFileSync(join(env.docDir, filename), id);
+        conn.runSync(
+          'INSERT INTO voiceover_takes(id,draft_id,filename,start_ms,duration_ms,trim_start_ms,trim_end_ms,sequence) VALUES(?,?,?,?,1000,0,1000,?)',
+          id,
+          draft,
+          filename,
+          start,
+          sequence,
+        );
+      }
+      const before = conn.getAllSync('SELECT * FROM voiceover_takes ORDER BY sequence');
+      const beforeVideo = videoRows(draft);
+      conn.node.close();
+      conn.node = new SQLiteDatabase(path).node;
+      conn.execSync('PRAGMA foreign_keys=ON');
+      await migrate(db, migrations);
+      expect(conn.getAllSync('SELECT * FROM voiceover_takes ORDER BY sequence')).toEqual(
+        before.map((row) => ({ ...row, record_start_ms: null })),
+      );
+      expect(videoRows(draft)).toEqual(beforeVideo);
+      const takes = (await getVoiceover(draft)).takes;
+      expect(takes.every((take) => exists(take.filename))).toBe(true);
+      expect(await undoVoiceoverTake(draft)).toEqual({ removed: takes[1], playheadMs: 2000.25 });
+      expect(await undoVoiceoverTake(draft)).toEqual({ removed: takes[0], playheadMs: 15000 });
+    } finally {
+      conn.node.close();
+      conn.node = original.node;
+      conn.databasePath = original.path;
+    }
   });
 });
 
@@ -415,8 +550,8 @@ describe('phone persistent-Undo library upgrade', () => {
       conn.execSync('PRAGMA foreign_keys=ON');
       await migrate(db, migrations);
       expect(migrations.journal.entries.at(-1)).toMatchObject({
-        idx: 23,
-        tag: '0023_voiceover_takes',
+        idx: 24,
+        tag: '0024_voiceover_record_start',
       });
       expect(migrations.journal.entries.at(-1)!.when).toBeGreaterThan(phoneMigration.when);
       expect(

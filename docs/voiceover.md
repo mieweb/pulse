@@ -17,8 +17,9 @@ button activation is also available to screen readers and Switch Control, withou
 touch. Both controls use the same recording and save workflow.
 
 **Undo take** removes the most recently added entire take, leaving the video unchanged. Repeated
-Undo removes earlier takes in reverse recording order. The playhead returns to the end of the
-previous retained take, or to the first removed take's start when none remain. Undo accepts a
+Undo removes earlier takes in reverse recording order. The playhead returns to the position
+where Record was pressed for the removed take, so recording again starts from the same place.
+Takes saved before this position was tracked fall back to their saved audio start. Undo accepts a
 tap while the released take is saving and applies after that commit. There is no narration Redo
 in this prototype. Narration Undo is in the lower Voiceover panel; the usual editor toolbar
 returns when that panel closes. Tapping a take does not change which take Undo removes.
@@ -38,6 +39,9 @@ Migration `0023` adds draft track mutes and `voiceover_takes`. Each take stores 
 CAF path, draft timeline start, source duration and source trim interval, plus its recording
 sequence. Video edits do not move narration: placement remains on the draft clock. Trims and
 shorter video timelines clip playback/export at the draft end without deleting narration media.
+Migration `0024` adds a nullable `recordStartMs` per take. New recordings preserve the visible
+playhead at Record separately from the sample-aligned audio start; failed-save Retry, reopening,
+duplication and transfer retain it. Older takes keep a null value and Undo uses their audio start.
 
 The file is copied into `drafts/<draftId>/voiceovers/` before its row commits. A failed commit
 keeps the original capture available for Retry, and leaves earlier takes unchanged. Undo deletes
@@ -56,7 +60,7 @@ Android refuses audible narration preview/export instead of silently dropping it
 The native microphone is prepared before enabling the hold control and stays warm between takes.
 The native player and timestamped input samples share the host clock. A press starts playback
 and selects input samples; release pauses playback and closes the sample interval. The saved
-start comes from the first included input sample, and the end is bounded by both the paused
+audio start comes from the first included input sample, and the end is bounded by both the paused
 player and available samples. File I/O runs off the main thread. A new take waits for the saved
 mix's composition swap and playhead seek before becoming recordable again.
 

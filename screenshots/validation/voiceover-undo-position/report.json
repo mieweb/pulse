@@ -1,0 +1,88 @@
+{
+  "date": "2026-11-26",
+  "issue": "https://github.com/mieweb/pulse/issues/343",
+  "platform": "iPhone 17 Pro simulator, iOS 26.0",
+  "fixture": "Owned synthetic 25-second project with an earlier-added narration take at 20 seconds; removed after testing.",
+  "interaction": "Native accessibility element actions via voiceover.toggle, voiceover.undo, Insert at playhead, and Voiceover. Exact initial position supplied by the existing editor anchor route.",
+  "readoutResolutionMs": 100,
+  "baseline": {
+    "sourceCommit": "4dbf8e7f446658678a091013cfe4100ec2641832",
+    "bundleSHA256": "c35dfcb1eedcec1fbcab087c6096e6458edf6ed1f8096f69fa2aadbb848bd758",
+    "nativeCommit": "306ff1d999589be6615275c60567ba371f073efd",
+    "recordPositionMs": 5123.75,
+    "beforeRecordDisplayedMs": 5100.0,
+    "afterUndoDisplayedMs": 20600.0,
+    "previousRetainedTakeEndMs": 20621.203081505235,
+    "bugReproduced": true
+  },
+  "fixed": {
+    "baseCommit": "f1f62ca4935d2b1e638af2e72bd37d6e6d78657e",
+    "includesUncommittedFix": true,
+    "bundleSHA256": "d3975f23f1400eb53ebd560ac14edf3dc1a142d9802949998ba1cfef9b6119a6",
+    "nativeShell": "Previously verified native Release shell at 306ff1d; refreshed JavaScript/assets/config and ad-hoc simulator signing. Native code was not rebuilt for this JavaScript/persistence change.",
+    "nativeExecutableSHA256BeforeResigning": "bc463f5cba2756880d0bd186f988d6b1fccdae8da6ab84a8bf7093dd97b5f329",
+    "sourceSHA256": {
+      "src/features/editor/use-voiceover.ts": "068510f47199ddb896e8da96e03236da67aafbe04cfe306944e9938290f3d508",
+      "src/features/editor/voiceover-session.ts": "0f769f56740eaf3e0cb3acb205d435bd342a469544001affefb61e05fdd6400a",
+      "src/features/editor/use-preview-transport.ts": "2069eafc8e0255b0fe6117845ccffdc769e02e3cf9d2d947da1f8aa198966027",
+      "src/db/voiceovers.ts": "02d773c9f10dc8160fc15a3bf7e56874e412eb4a812a5fd7d409c3fb8220c6bd",
+      "src/db/schema.ts": "513872f4b7f77ca36280b77463e19fe6d02baa4b1b58fc81c235fbe01f80697d",
+      "drizzle/0024_voiceover_record_start.sql": "cf809e7ba977cc6a8ff060bd9d5845bf4e59ef7d2f3d7d4ee68cbdc5e5a1c3e6"
+    },
+    "firstCapture": {
+      "record_start_ms": 5123.75,
+      "start_ms": 5123.752999790013,
+      "duration_ms": 1023.9583333333333,
+      "trim_start_ms": 0.0,
+      "trim_end_ms": 1023.956164209987
+    },
+    "afterUndoDisplayedMs": 5100.0,
+    "immediateRetake": {
+      "record_start_ms": 5123.75,
+      "start_ms": 5123.751832842827,
+      "duration_ms": 1004.1666666666666,
+      "trim_start_ms": 0.0,
+      "trim_end_ms": 1004.1666666666666
+    },
+    "afterReopenBeforeUndoDisplayedMs": 0.0,
+    "afterReopenUndoDisplayedMs": 5100.0,
+    "legacyNullMetadataUndoDisplayedMs": 20000.0,
+    "firstTakeAtZero": {
+      "record_start_ms": 0.0,
+      "start_ms": 0.01758430153131485,
+      "duration_ms": 1038.5208333333333,
+      "trim_start_ms": 0.0,
+      "trim_end_ms": 1038.5208333333333
+    },
+    "firstTakeUndoDisplayedMs": 0,
+    "pass": true
+  },
+  "accessibilityAndReach": {
+    "usedNativeAccessibleButtons": true,
+    "coordinateActions": false,
+    "screenReaderSpeechVerified": false,
+    "textSizeCoverage": "Default simulator text size only.",
+    "bothHandPhysicalThumbReachVerified": false,
+    "layoutChanges": "None; existing lower Voiceover controls retained.",
+    "remaining": "Physical left/right thumb reach, large text/RTL and screen-reader traversal were not retested for this behavior-only repair."
+  },
+  "cleanup": {
+    "sessionDeleted": true,
+    "hostExited": true,
+    "physicalDeviceActions": false,
+    "originalDraftSegmentAndTakeRowsPreserved": {
+      "drafts": true,
+      "segments": true,
+      "voiceover_takes": true
+    },
+    "ownedFixtureRemoved": true,
+    "ownedSimulatorRunnerExited": true,
+    "port8246Closed": true,
+    "verified": true
+  },
+  "limits": [
+    "Paused Record/Undo workflow verified in simulator; no physical microphone/acoustic timing or hardware capture claim.",
+    "Sub-frame position persistence is established by SQLite values; screenshots show the 0.1-second playhead readout and native frame rounding.",
+    "Save-retry and Undo-during-save ordering are covered by source regressions; this simulator run waited for saved takes before Undo."
+  ]
+}

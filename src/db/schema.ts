@@ -148,6 +148,8 @@ export const voiceoverTakes = sqliteTable(
       .references(() => drafts.id, { onDelete: 'cascade' }),
     filename: text('filename').notNull(),
     startMs: real('start_ms').notNull(),
+    // Original playhead position for Undo; older takes retain only their audio start.
+    recordStartMs: real('record_start_ms'),
     durationMs: real('duration_ms').notNull(),
     trimStartMs: real('trim_start_ms').notNull(),
     trimEndMs: real('trim_end_ms').notNull(),

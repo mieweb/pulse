@@ -31,7 +31,7 @@ function setup() {
     stop: jest.fn(async () => take),
     cancel: jest.fn(),
     discard: jest.fn(),
-    save: jest.fn(async (_take: CapturedVoiceover) => {}),
+    save: jest.fn(async (_take: CapturedVoiceover, _recordStartMs: number) => {}),
     changed: jest.fn(),
   };
   return { ports, session: new VoiceoverSession(ports) };
@@ -41,7 +41,7 @@ it('commits four independent holds; a duplicate release cannot save a take twice
   const { ports, session } = setup();
   await session.prepare();
   for (let i = 0; i < 4; i++) {
-    session.press();
+    session.press(12000);
     await Promise.resolve();
     expect(session.phase).toBe('recording');
     await Promise.all([session.release(), session.release()]);
@@ -50,7 +50,7 @@ it('commits four independent holds; a duplicate release cannot save a take twice
   expect(ports.start).toHaveBeenCalledTimes(4);
   expect(ports.stop).toHaveBeenCalledTimes(4);
   expect(ports.save).toHaveBeenCalledTimes(4);
-  expect(ports.save).toHaveBeenLastCalledWith(take);
+  expect(ports.save).toHaveBeenLastCalledWith(take, 12000);
 });
 
 it('stops and saves even when the finger lifts before native start answers', async () => {
@@ -58,14 +58,40 @@ it('stops and saves even when the finger lifts before native start answers', asy
   const started = deferred<number>();
   ports.start.mockReturnValueOnce(started.promise);
   await session.prepare();
-  session.press();
+  session.press(12000);
   const finished = session.release();
-  session.press(); // no second microphone capture while stopping
+  session.press(9000); // no second capture or replacement retry position while stopping
   started.resolve(12000);
   await finished;
   expect(ports.start).toHaveBeenCalledTimes(1);
   expect(ports.stop).toHaveBeenCalledTimes(1);
   expect(ports.save).toHaveBeenCalledTimes(1);
+  expect(ports.save).toHaveBeenCalledWith(take, 12000);
+});
+
+it.each([0, 4312.75])(
+  'retains the visible Record position %s independently of native audio timing',
+  async (recordStartMs) => {
+    const { ports, session } = setup();
+    await session.prepare();
+    session.press(recordStartMs);
+    session.press(19000); // a repeated activation cannot change this take's origin
+    await session.release();
+    expect(ports.save).toHaveBeenCalledWith(take, recordStartMs);
+    expect(ports.start).toHaveBeenCalledTimes(1);
+  },
+);
+
+it('gives each successive retake its own Record position', async () => {
+  const { ports, session } = setup();
+  await session.prepare();
+  for (const recordStartMs of [12000, 4025.5, 19000, 0]) {
+    session.press(recordStartMs);
+    await session.release();
+  }
+  expect(ports.save.mock.calls.map(([, recordStartMs]) => recordStartMs)).toEqual([
+    12000, 4025.5, 19000, 0,
+  ]);
 });
 
 it('cancellation during a pending stop preserves all previously saved narration', async () => {
@@ -73,7 +99,7 @@ it('cancellation during a pending stop preserves all previously saved narration'
   const stopped = deferred<CapturedVoiceover>();
   ports.stop.mockReturnValueOnce(stopped.promise);
   await session.prepare();
-  session.press();
+  session.press(12000);
   const finished = session.release();
   await Promise.resolve();
   session.cancel();
@@ -87,13 +113,17 @@ it('retries a failed save with the original captured file and clock positions', 
   const { ports, session } = setup();
   ports.save.mockRejectedValueOnce(new Error('disk full'));
   await session.prepare();
-  session.press();
+  session.press(4312.75);
   await session.release();
   expect(session.phase).toBe('failed');
   expect(session.canRetrySave).toBe(true);
+  session.press(19000); // failed saves must retain their original retry position
   await session.retry();
   expect(session.phase).toBe('ready');
-  expect(ports.save.mock.calls).toEqual([[take], [take]]);
+  expect(ports.save.mock.calls).toEqual([
+    [take, 4312.75],
+    [take, 4312.75],
+  ]);
   expect(ports.start).toHaveBeenCalledTimes(1);
 });
 
@@ -101,7 +131,7 @@ it('a refused microphone never starts playback or commits a take', async () => {
   const { ports, session } = setup();
   ports.prepare.mockRejectedValueOnce(new Error('permission denied'));
   await session.prepare();
-  session.press();
+  session.press(12000);
   await session.release();
   expect(ports.start).not.toHaveBeenCalled();
   expect(ports.save).not.toHaveBeenCalled();
@@ -113,16 +143,16 @@ it('keeps the next hold out until a durable save and its preview rebuild finish'
   const saved = deferred<void>();
   ports.save.mockReturnValueOnce(saved.promise);
   await session.prepare();
-  session.press();
+  session.press(12000);
   const finish = session.release();
   await Promise.resolve();
   await Promise.resolve();
-  session.press();
+  session.press(12000);
   expect(session.phase).toBe('saving');
   expect(ports.start).toHaveBeenCalledTimes(1);
   saved.resolve();
   await finish;
-  session.press();
+  session.press(12000);
   expect(ports.start).toHaveBeenCalledTimes(2);
   await session.release();
 });
@@ -131,7 +161,7 @@ it('rearms the microphone when retrying an unsaved take after an interruption', 
   const { ports, session } = setup();
   ports.save.mockRejectedValueOnce(new Error('disk full'));
   await session.prepare();
-  session.press();
+  session.press(12000);
   await session.release();
   session.interrupt(new Error('background'));
   await session.retry();
@@ -149,7 +179,7 @@ it('waits for an interrupted save to finish before retrying and does not save it
     await saved.promise;
   });
   await session.prepare();
-  session.press();
+  session.press(12000);
   const finish = session.release();
   await saving.promise;
   session.interrupt(new Error('background'));
@@ -179,7 +209,7 @@ it('retries the original file only after an interrupted save actually fails', as
     await retrySaved.promise;
   });
   await session.prepare();
-  session.press();
+  session.press(12000);
   const finish = session.release();
   await saving.promise;
   session.interrupt(new Error('background'));
@@ -190,7 +220,10 @@ it('retries the original file only after an interrupted save actually fails', as
   retrySaved.resolve();
   await Promise.all([finish, retry]);
   expect(writesBeforeFailure).toBe(1);
-  expect(ports.save.mock.calls).toEqual([[take], [take]]);
+  expect(ports.save.mock.calls).toEqual([
+    [take, 12000],
+    [take, 12000],
+  ]);
   expect(session.phase).toBe('ready');
 });
 
@@ -200,7 +233,7 @@ it.each(['success', 'failure'] as const)(
     const { ports, session } = setup();
     ports.save.mockRejectedValueOnce(new Error('disk full'));
     await session.prepare();
-    session.press();
+    session.press(12000);
     await session.release();
     session.interrupt(new Error('background'));
     const saving = deferred<void>();
@@ -219,7 +252,16 @@ it.each(['success', 'failure'] as const)(
     await Promise.all([firstRetry, nextRetry]);
     expect(writesBeforeCompletion).toBe(2);
     expect(ports.save.mock.calls).toEqual(
-      outcome === 'success' ? [[take], [take]] : [[take], [take], [take]],
+      outcome === 'success'
+        ? [
+            [take, 12000],
+            [take, 12000],
+          ]
+        : [
+            [take, 12000],
+            [take, 12000],
+            [take, 12000],
+          ],
     );
     expect(ports.prepare).toHaveBeenCalledTimes(2);
     expect(session.canRetrySave).toBe(false);
@@ -238,7 +280,7 @@ it.each(['interrupt', 'dispose'] as const)(
       await saved.promise;
     });
     await session.prepare();
-    session.press();
+    session.press(12000);
     const finish = session.release();
     await saving.promise;
     session.interrupt(new Error('background'));
@@ -257,7 +299,7 @@ it('retains a retrying file until its save settles when the workflow is disposed
   const { ports, session } = setup();
   ports.save.mockRejectedValueOnce(new Error('disk full'));
   await session.prepare();
-  session.press();
+  session.press(12000);
   await session.release();
   const saving = deferred<void>();
   const saved = deferred<void>();
@@ -281,7 +323,7 @@ it('does not replace a newer interruption with a stale retry rearm failure', asy
   const { ports, session } = setup();
   ports.save.mockRejectedValueOnce(new Error('disk full'));
   await session.prepare();
-  session.press();
+  session.press(12000);
   await session.release();
   session.interrupt(new Error('background'));
   const preparing = deferred<void>();

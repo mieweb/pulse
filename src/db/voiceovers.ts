@@ -47,6 +47,7 @@ export type NewVoiceoverTake = {
   draftId: string;
   cacheUri: string;
   startMs: number;
+  recordStartMs: number;
   durationMs: number;
   trimStartMs?: number;
   trimEndMs?: number;
@@ -54,12 +55,13 @@ export type NewVoiceoverTake = {
 
 /** Save one immutable source and one take. Failed storage leaves every earlier take intact. */
 export async function addVoiceoverTake(input: NewVoiceoverTake): Promise<VoiceoverTake> {
-  const { draftId, cacheUri, startMs, durationMs } = input;
+  const { draftId, cacheUri, startMs, recordStartMs, durationMs } = input;
   const trimStartMs = input.trimStartMs ?? 0;
   const trimEndMs = input.trimEndMs ?? durationMs;
   if (
-    ![startMs, durationMs, trimStartMs, trimEndMs].every(Number.isFinite) ||
+    ![startMs, recordStartMs, durationMs, trimStartMs, trimEndMs].every(Number.isFinite) ||
     startMs < 0 ||
+    recordStartMs < 0 ||
     durationMs <= 0 ||
     trimStartMs < 0 ||
     trimEndMs > durationMs ||
@@ -89,6 +91,7 @@ export async function addVoiceoverTake(input: NewVoiceoverTake): Promise<Voiceov
         draftId,
         filename: filename!,
         startMs,
+        recordStartMs,
         durationMs,
         trimStartMs,
         trimEndMs,
@@ -107,16 +110,11 @@ export async function addVoiceoverTake(input: NewVoiceoverTake): Promise<Voiceov
   }
 }
 
-/** End of the prior-added take, even when the person sought backwards before adding a take. */
+/** Restore the removed take's recording position; legacy takes know only their audio start. */
 export function voiceoverUndoPosition(
-  removed: Pick<VoiceoverTake, 'startMs'>,
-  retained: readonly Pick<VoiceoverTake, 'startMs' | 'trimStartMs' | 'trimEndMs' | 'sequence'>[],
+  removed: Pick<VoiceoverTake, 'startMs' | 'recordStartMs'>,
 ): number {
-  const previous = retained.reduce<(typeof retained)[number] | undefined>(
-    (latest, take) => (!latest || take.sequence > latest.sequence ? take : latest),
-    undefined,
-  );
-  return previous ? previous.startMs + previous.trimEndMs - previous.trimStartMs : removed.startMs;
+  return removed.recordStartMs ?? removed.startMs;
 }
 
 /** Remove one whole take, newest addition first, without mutating video or preceding takes. */
@@ -135,7 +133,7 @@ export async function undoVoiceoverTake(
     if (!removed) return null;
     tx.delete(voiceoverTakes).where(eq(voiceoverTakes.id, removed.id)).run();
     tx.update(drafts).set({ lastModified: Date.now() }).where(eq(drafts.id, draftId)).run();
-    return { removed, playheadMs: voiceoverUndoPosition(removed, takes) };
+    return { removed, playheadMs: voiceoverUndoPosition(removed) };
   });
   if (result) await dropHistoryFiles([result.removed.filename]);
   return result;

@@ -10,7 +10,7 @@ type Ports = {
   start: () => Promise<number>;
   stop: () => Promise<CapturedVoiceover>;
   cancel: () => void;
-  save: (take: CapturedVoiceover) => Promise<void>;
+  save: (take: CapturedVoiceover, recordStartMs: number) => Promise<void>;
   discard?: (take: CapturedVoiceover) => void;
   changed: (phase: VoiceoverPhase, error?: unknown) => void;
 };
@@ -26,7 +26,8 @@ export class VoiceoverSession {
   private held = false;
   private startTask: Promise<void> | null = null;
   private finishTask: Promise<void> | null = null;
-  private unsaved: CapturedVoiceover | null = null;
+  private recordStartMs = 0;
+  private unsaved: { take: CapturedVoiceover; recordStartMs: number } | null = null;
   private prepared = false;
 
   constructor(private readonly ports: Ports) {}
@@ -50,8 +51,10 @@ export class VoiceoverSession {
     }
   }
 
-  press() {
+  press(recordStartMs: number) {
     if (this.phase !== 'ready' || this.finishTask) return;
+    // Keep the visible retry position separate from native sample-aligned audio placement.
+    this.recordStartMs = recordStartMs;
     this.held = true;
     const generation = this.generation;
     this.change('starting');
@@ -73,6 +76,7 @@ export class VoiceoverSession {
     if (this.finishTask) return this.finishTask;
     if (this.phase !== 'starting' && this.phase !== 'recording') return Promise.resolve();
     const generation = this.generation;
+    const recordStartMs = this.recordStartMs;
     this.change('saving');
     const task = (async () => {
       await this.startTask;
@@ -83,7 +87,7 @@ export class VoiceoverSession {
           this.ports.discard?.(take);
           return;
         }
-        this.unsaved = take;
+        this.unsaved = { take, recordStartMs };
         await this.save(generation);
       } catch (error) {
         if (generation === this.generation) this.change('failed', error);
@@ -97,10 +101,10 @@ export class VoiceoverSession {
   }
 
   private async save(generation: number) {
-    const take = this.unsaved;
-    if (!take || generation !== this.generation) return;
-    await this.ports.save(take);
-    if (this.unsaved === take) this.unsaved = null;
+    const pending = this.unsaved;
+    if (!pending || generation !== this.generation) return;
+    await this.ports.save(pending.take, pending.recordStartMs);
+    if (this.unsaved === pending) this.unsaved = null;
     if (generation === this.generation) {
       if (!this.prepared) {
         await this.ports.prepare();
@@ -155,7 +159,7 @@ export class VoiceoverSession {
   dispose() {
     this.cancel();
     const discard = () => {
-      if (this.unsaved) this.ports.discard?.(this.unsaved);
+      if (this.unsaved) this.ports.discard?.(this.unsaved.take);
       this.unsaved = null;
     };
     if (this.finishTask) void this.finishTask.then(discard);
