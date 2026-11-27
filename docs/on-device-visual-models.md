@@ -2,14 +2,50 @@
 
 [Pulse AI editing guide](ai-editing.md) · [Project README](../README.md#editing--export)
 
-**Proposed behavior.** Tap **Make beatlapse** on a recording and get a shorter, editable sequence of
-excerpts in their original order. The phone watches how the picture evolves, keeps short stretches
-that show that progression, and skips stretches that would show the viewer much the same thing again.
-A drawing taking shape, the view from a moving train and a table being set should all work with the
-same button. The input is the visible timeline and a maximum running time. A silent recording should
-be sufficient.
+A beatlapse can show the passage of time, the work as it happens, or the result after each step.
+The same drawing supports all three. For Pulse, we propose letting the person choose what they
+want to watch and set a maximum duration. The Mac prototype below implements the choices. The
+current phone button still edits from speech. [Mac runner](../scripts/experiments/beatlapse/preview.py)
+· [Current phone workflow](ai-editing.md)
 
-## Watch the same rule cut two continuous takes
+## Choose what the viewer sees
+
+| Viewer preference                                          | What determines the edit                                                                                                                                                                                                                                                                         | Example with an eight-second budget                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Keep the whole sequence** (`continuous`)                 | Keep the entire source time range. Speed it up evenly to fit, or use the chosen speed. No frame comparison or prompt is needed.                                                                                                                                                                  | The 54.67-second NASA flyover plays in eight seconds at 6.83×, preserving the journey to sunrise. [Play the flyover](../screenshots/validation/ai-edit/beatlapse/styles/flyover-continuous.mp4) · [Edit decisions](../screenshots/validation/ai-edit/beatlapse/styles/flyover-continuous.json) · [NASA footage and credit](https://svs.gsfc.nasa.gov/30180/)                                                    |
+| **Watch the work happen** (`action`)                       | Compare adjacent images. Join nearby periods of visible change, retain brief context at each edge and skip long pauses. Play the kept ranges at the chosen speed or fit them to the budget.                                                                                                      | The drawing has four retained ranges totaling 16.6 seconds. They play at 1× in 16.6 seconds or at about 2.08× in eight. The lines forming the sails and hull are visible. [Watch alongside stages](../screenshots/validation/ai-edit/beatlapse/styles/drawing-comparison.mp4) · [Source intervals](../screenshots/validation/ai-edit/beatlapse/styles/drawing-action.json)                                      |
+| **Show completed stages** (`stages`)                       | After a change, wait for the view to settle for a second. Pick a real color frame from the middle of that pause. Skip the initial baseline and repeated views. When the viewer requests fewer cards, spread them across the detected stages, including the first and last when at least two fit. | Four stages qualified. A three-card limit kept the mountain at 7.5 s, the scene with the sun at 23.5 s and the boat at 30 s. Hold each for 2⅔ seconds. A fourth card would include the foothills and water at 17 s. [Watch alongside action](../screenshots/validation/ai-edit/beatlapse/styles/drawing-comparison.mp4) · [Held frames](../screenshots/validation/ai-edit/beatlapse/styles/drawing-stages.json) |
+| **Pick a few highlights** (`highlights`, original default) | Use Apple Vision feature prints to select short moving excerpts that add distinct views. Play them at original speed.                                                                                                                                                                            | The original drawing edit includes the finished boat. It spent some of its budget on other scenes while the sails were being drawn. [Original comparison and decisions](#how-the-original-highlights-style-chooses-excerpts)                                                                                                                                                                                    |
+
+**What the footage can tell Pulse.** A continuously moving view is a reason to suggest **Keep the
+whole sequence**. Repeated bouts of activity followed by quiet views are a reason to preview
+**Watch the work happen** and **Show completed stages** alongside each other. The visual evidence
+can support both edits equally well. In a future phone picker, the user should be able to choose
+either preview, plus pace for motion or the number of cards for stages. The Mac runner takes an
+explicit style. It reports when it cannot find a settled stage. [Shared change and stage rules](../scripts/experiments/beatlapse/activity.py)
+· [Selection and speed policy](../scripts/experiments/beatlapse/preview.py)
+
+The action and stage modes compare downscaled grayscale frames twice per second by default. Camera
+shake, exposure changes or a stationary hand can affect the result. Subtle color-only changes and
+actions between samples can be missed. “Completed” here means the changed picture stayed still
+long enough to choose a representative frame. The selector never had the words _mountain_, _sun_
+or _boat_. [Activity thresholds and hold selection](../scripts/experiments/beatlapse/activity.py)
+· [Moving excerpts and freeze-frame rendering](../scripts/experiments/beatlapse/style_render.py)
+
+```mermaid
+flowchart LR
+  Choice{Viewer preference} -->|Whole sequence| Speed[Set continuous playback speed]
+  Choice -->|Action or stages| Change[Detect movement and pauses]
+  Change -->|Action| Action[Keep moving intervals]
+  Change -->|Stages| Stills[Hold settled source frames]
+  Choice -->|Highlights| Views[Select visually distinct excerpts]
+  Speed --> Preview[Timed preview]
+  Action --> Preview
+  Stills --> Preview
+  Views --> Preview
+```
+
+## How the original highlights style chooses excerpts
 
 We ran the frame analysis and rendering locally on a Mac with an eight-second budget. The prototype
 sampled twice per second, computed Apple Vision revision 2 feature prints, and reserved short
@@ -31,7 +67,7 @@ design needs a bounded comparison strategy for long inputs.
 These runs show the difference between **covering the stages** and **showing the action that
 produced each stage**. For the next iteration, use visual coverage to decide which parts of the
 recording deserve time, then move each excerpt's start back to catch the change in progress.
-That boundary refinement and the iPhone integration are proposals.
+The action style above demonstrates an alternative using the moving intervals directly. Boundary refinement for highlights and the iPhone integration are proposals.
 
 ### Try it on a local recording
 
@@ -40,23 +76,35 @@ later with Python 3.10+, the Swift compiler and FFmpeg (including ffprobe and li
 the repository root. Use a new output directory.
 
 ```sh
-python3 scripts/experiments/beatlapse/preview.py recording.mov beatlapse-output --budget 115
+python3 scripts/experiments/beatlapse/preview.py recording.mov highlights --budget 115
+python3 scripts/experiments/beatlapse/preview.py recording.mov continuous --style continuous --budget 8
+python3 scripts/experiments/beatlapse/preview.py recording.mov action --style action --speed 1
+python3 scripts/experiments/beatlapse/preview.py recording.mov stages --style stages --max-stages 3 --budget 8
 ```
 
-The result is a playable silent preview and a JSON list of the chosen source ranges. The default
-half-second sample spacing gives 1,200 samples for a ten-minute input. The runner caps each scan at
-1,500 samples. Longer inputs can use wider spacing and a matching window duration.
+Each run writes a silent MP4. Highlights also writes `cuts.json`. The new styles write `edit.json`
+with the source intervals and playback rate, or the source timestamps and hold length. For motion
+you can specify a fixed speed or let the budget determine the speed. When you set both, a
+combination that cannot fit reports how much time the requested speed needs. Stage holds last up
+to three seconds each and shorten to fit the budget. The default sampling interval produces 1,200
+samples per ten minutes. Sampled styles accept up to 1,500 samples per run. Continuous playback
+can skip this scan entirely.
 [Preview runner](../scripts/experiments/beatlapse/preview.py) ·
 [Visual scoring and window selection](../scripts/experiments/beatlapse/distances.swift)
 
-For a duration check we looped the drawing to 10:00 at 320 × 180 and 4 fps. With a 115-second
+To repeat the style checks from the repository root, run
+`python3 -B scripts/experiments/beatlapse/test_styles.py`. The checks compare retained action
+intervals and decoded frame holds against the drawing fixture, and verify the length of a
+continuous speed-up. [Style regressions](../scripts/experiments/beatlapse/test_styles.py)
+
+To check the highlights duration budget we looped the drawing to 10:00 at 320 × 180 and 4 fps. With a 115-second
 budget the runner selected 57 two-second excerpts. The ordered source ranges totaled 114 seconds,
 matching the 1:54 MP4 reported by ffprobe. The repeated, low-resolution input tests the budget.
 Editorial quality on ten minutes of original footage and iPhone processing time are still open.
 [Drawing used for the loop](../screenshots/validation/ai-edit/beatlapse/drawing-source.mp4) ·
 [Ten-minute trial cut list](../screenshots/validation/ai-edit/beatlapse/ten-minute-cuts.json)
 
-## How to decide where to cut
+## Further cut refinements to evaluate
 
 Apple Vision can read a saved video and generate a timestamped **feature print** for each sampled
 image. Comparing two prints gives a visual distance. Apple's sample uses this to select distinct
@@ -65,15 +113,6 @@ in/out times**. Research on generic video summarization also uses visual differe
 to select representative frames. How well those ideas transfer to Apple's features and Pulse footage
 needs measurement. [Apple's runnable Vision sample](https://developer.apple.com/documentation/vision/generating-thumbnails-from-videos)
 · [Pang et al., frame scoring for video summarization](https://arxiv.org/abs/2211.10056)
-
-```mermaid
-flowchart LR
-  Input[Saved video or ordered clips] --> Frames[Sample the visible timeline]
-  Frames --> Compare[Compare nearby frames and earlier views]
-  Compare --> Windows[Choose short source ranges around changes]
-  Windows --> Budget[Remove repetition and fit the running time]
-  Budget --> Draft[Preview the cuts in source order]
-```
 
 | Proposed cut decision                                                                                                                                                                                                                                  | What the viewer would see                                                                                                                                                        |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -91,7 +130,7 @@ new scene. The first test should include both. [Visual temporal segmentation res
 
 ## Which on-device model decides what?
 
-- **For the first beatlapse, use Apple Vision feature prints.** The vision model describes the
+- **Highlights uses Apple Vision feature prints.** The vision model describes the
   sampled images numerically. Pulse's selection rules compare them and choose the in/out times.
   Its only inputs are frames, their times and the edit budget. Apple's
   video processor supports a configurable cadence. A first pass can sample coarsely and revisit

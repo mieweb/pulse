@@ -12,7 +12,7 @@ project.
 
 [Project README](../README.md#editing--export) ·
 [Native module and API](../modules/expo-ai-editor/README.md) ·
-[Beatlapse and how a visual edit would choose cuts](on-device-visual-models.md) ·
+[Beatlapse preview styles, sample edits and cut decisions](on-device-visual-models.md) ·
 [Speech and caption engines](captions-engines.md) ·
 [Draft and media ownership](persistence.md#ai-cut-projects) ·
 [iPhone build and test guide](testing/ai-edit-phone-build.md) ·

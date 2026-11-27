@@ -1,0 +1,18 @@
+{
+  "style": "stages",
+  "holdFrames": 80,
+  "framesPerSecond": 30,
+  "stills": [
+    {
+      "sourceTime": 7.5
+    },
+    {
+      "sourceTime": 23.5
+    },
+    {
+      "sourceTime": 30.0
+    }
+  ],
+  "sampledFrames": 64,
+  "changedTransitions": 30
+}

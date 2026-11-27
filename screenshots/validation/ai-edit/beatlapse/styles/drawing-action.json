@@ -1,0 +1,24 @@
+{
+  "style": "action",
+  "playbackRate": 2.0749999999999993,
+  "intervals": [
+    {
+      "start": 1.8,
+      "end": 5.2
+    },
+    {
+      "start": 9.8,
+      "end": 15.2
+    },
+    {
+      "start": 18.8,
+      "end": 22.2
+    },
+    {
+      "start": 24.8,
+      "end": 29.2
+    }
+  ],
+  "sampledFrames": 64,
+  "changedTransitions": 30
+}
